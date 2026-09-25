@@ -68,6 +68,12 @@ That action re-proves its own arguments (appointment exists, visit exists and is
 
 Status labels for the six statuses come from `APPOINTMENT_STATUS_LABEL` / `appointmentStatusLabel()` in `src/lib/appointments/labels.ts`; the pre-registered badge strings from `src/lib/patients/labels.ts`. Use them rather than re-formatting a raw status anywhere new, staff-facing or patient-facing.
 
+## Bookings with no set time — the likely-no-show rule
+
+An untimed booking (`scheduled_at` null — every public lab-request booking) never closes on its own, and nothing auto-closes it (owner decision 2026-09-25: reception clears old ones by hand). `src/lib/appointments/stale.ts` is the ONE rule: `bookingAgeDays` (Manila calendar days), `isStaleUntimedBooking` (confirmed, untimed, >= `STALE_UNTIMED_AFTER_DAYS` = 7), `staleCutoffIso` (the same rule as a `created_at` bound for SQL), `groupBookingRows` (lead = first row; pass rows oldest-first), `countLikelyNoShowBookings`, `unactedBookings` (>= `REMIND_UNTIMED_AFTER_DAYS` = 3) and `splitBookingsByActivePatient`.
+
+Consumers: the Appointments page's "Bookings with no set time" section (anchor `#no-set-time`, "Likely no-show" badge, `likely-no-show-bar.tsx` calling `markLikelyNoShowsAction` / `undoLikelyNoShowsAction` — both re-check the rule in the UPDATE, and Undo holds back bookings whose patient was merged/deleted); the reception dashboard's `reception.likely_no_shows` card; and the daily `/api/cron/stale-bookings` job, which sends the `stale_bookings` staff alert (0186, `stale-bookings-alert.ts` — first name + age only).
+
 ## Patient resolution & dedup (`resolve.ts`)
 
 `resolvePatient(admin, fields)` does **silent dedup**: match on `lower(email) + last_name + birthdate` → reuse; else insert with `pre_registered: true`. It never overwrites an existing row's contact fields. The pure core `resolvePatientCore({findExisting, insertPatient}, fields)` is dependency-injected so it's vitest-tested without a DB.

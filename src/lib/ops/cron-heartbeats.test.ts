@@ -49,7 +49,7 @@ describe("cron drift guards", () => {
 
   it("fails loudly for absent, empty, or partially parsed VALUES", () => {
     expect(() => parseWatched("")).toThrow();
-    expect(() => parseWatched(workflow.replace(/\('sync-accounting'[^\n]+/, ""))).toThrow(/Parsed 6/);
+    expect(() => parseWatched(workflow.replace(/\('sync-accounting'[^\n]+/, ""))).toThrow(new RegExp(`Parsed ${CRON_HEARTBEATS.length - 1} `));
     expect(() => parseWatched(workflow.replace(/\('.*?\)/g, ""))).toThrow(/Parsed 0/);
     expect(() => parseWatched(workflow.replace("VALUES", "VALUES (unsupported_row),"))).toThrow(/Unparsed SQL/);
   });

@@ -16,6 +16,7 @@ export const STAFF_ALERT_KEYS = [
   "released_payment_removed",
   "template_health",
   "dedup_digest",
+  "stale_bookings",
 ] as const;
 export type StaffAlertKey = (typeof STAFF_ALERT_KEYS)[number];
 
@@ -70,6 +71,14 @@ export const STAFF_ALERTS: Record<StaffAlertKey, StaffAlertDef> = {
       "A daily digest of patient records that look like the same person, with a link to review and merge them. Sent only on days when there is something to review.",
     defaultRoles: ["admin"],
     sentAction: "system.dedup_digest.sent",
+  },
+  stale_bookings: {
+    key: "stale_bookings",
+    label: "Bookings not acted on",
+    description:
+      "A morning reminder listing bookings with no set time (diagnostic packages and lab requests, mostly booked online) that nobody has marked arrived, no-show or cancelled for 3 days or more. Sent only on days when there is at least one. It shows each patient’s first name, how long ago they booked, and which are now likely no-shows (7 days or more) — never contact details or which tests.",
+    defaultRoles: ["reception", "admin"],
+    sentAction: "system.stale_bookings.sent",
   },
 };
 
