@@ -45,7 +45,9 @@ export function ImportPatientsForm() {
           Required columns: <code>first_name</code>, <code>last_name</code>,{" "}
           <code>birthdate</code>. Optional: <code>middle_name</code>,{" "}
           <code>sex</code> (male/female/M/F), <code>phone</code>,{" "}
-          <code>email</code>, <code>address</code>. Up to 2000 rows.
+          <code>email</code>, <code>address</code> — leave these columns out
+          of the file entirely, or leave the cells blank, if your
+          spreadsheet doesn&apos;t have that information. Up to 2000 rows.
         </p>
       </div>
 
