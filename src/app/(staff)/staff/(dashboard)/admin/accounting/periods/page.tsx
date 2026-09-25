@@ -4,7 +4,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { requireAdminStaff } from "@/lib/auth/require-admin";
 import { todayManilaISO } from "@/lib/marketing/closures";
 import { PeriodActionsClient } from "./period-actions-client";
-import { postedCountsByMonth } from "@/lib/accounting/period-counts";
+import { entryCountsByMonth } from "@/lib/accounting/period-counts";
 
 export const metadata = { title: ROUTE_NAME["/staff/admin/accounting/periods"] };
 export const dynamic = "force-dynamic";
@@ -39,7 +39,7 @@ export default async function PeriodsPage({
     .eq("fiscal_year", year)
     .order("fiscal_month", { ascending: true });
 
-  const countsByMonth = await postedCountsByMonth(admin, year);
+  const countsByMonth = await entryCountsByMonth(admin, year);
 
   type PeriodRow = NonNullable<typeof periods>[number];
   const byQuarter: Record<1 | 2 | 3 | 4, PeriodRow[]> = { 1: [], 2: [], 3: [], 4: [] };

@@ -86,8 +86,6 @@ const LOOKUPS: Record<string, string> = {
     "Reads back the JE the insert trigger just posted for this till expense, for the audit row.",
   "lib/accounting/journal-entry.ts › reverseJournalEntryBySource":
     "Finds the live entry to reverse; an already-reversed one must not be reversed twice.",
-  "lib/accounting/period-counts.ts › postedCountsByMonth":
-    "Period-close page: how many entries are posted in each month — a count of live entries, not a money total.",
 };
 
 // ---------------------------------------------------------------------------
