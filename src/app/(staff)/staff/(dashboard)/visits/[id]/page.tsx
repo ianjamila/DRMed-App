@@ -23,6 +23,8 @@ import { SelectionProvider } from "./selection-context";
 import { RowSelectCheckbox } from "./row-select-checkbox";
 import { BulkActionBar } from "./bulk-action-bar";
 import { UndoReleaseDialog } from "./undo-release-dialog";
+import { DeleteSampleVisitDialog } from "./delete-sample-visit-dialog";
+import { DeleteBlockedHint } from "@/components/staff/delete-blocked-hint";
 import { WaiveBalanceDialog } from "./waive-balance-dialog";
 import { AttendingPhysicianDialog } from "./attending-physician-dialog";
 import { VoidPaymentDialog } from "../../payments/[id]/void/void-payment-dialog";
@@ -47,7 +49,7 @@ import { paymentStatusLabel } from "@/lib/ui/payment-status";
 import { Panel } from "@/components/ui/panel";
 import {
   testDeletability,
-  visitDeletability,
+  visitDeleteAffordance,
   hasOpenHmoClaim,
   QUEUE_DELETE_ROLES,
   type ResultLinkRow,
@@ -437,19 +439,25 @@ export default async function VisitDetailPage({ params, searchParams }: Props) {
 
   const visitDeleted = visit.deleted_at !== null;
   const canManageDeletion = QUEUE_DELETE_ROLES.has(session.role);
-  const canDeleteVisit = visitDeletability(session.role, {
+  const liveTestStatuses = (tests ?? [])
+    .filter((t) => t.deleted_at === null)
+    .map((t) => t.status);
+  const visitDeleteShape = {
     payment_status: visit.payment_status,
     deleted_at: visit.deleted_at,
-    test_statuses: (tests ?? [])
-      .filter((t) => t.deleted_at === null)
-      .map((t) => t.status),
+    test_statuses: liveTestStatuses,
     // Unfiltered on deleted_at, unlike test_statuses above — the P0050 trigger
     // reaches every line of the visit, since a line deleted earlier whose
     // claim is still open is exactly the receivable it protects.
     has_open_hmo_claim: (tests ?? []).some((t) =>
       hasOpenHmoClaim(t.hmo_claim_items),
     ),
-  }).ok;
+  };
+  const visitDelete = visitDeleteAffordance(session.role, visitDeleteShape);
+  const releasedLineCount = (tests ?? []).filter(
+    (t) =>
+      t.deleted_at === null && t.status === "released" && !t.is_package_header,
+  ).length;
 
   // See-vs-act gate (owner decision, 2026-09-15 — reverses go-live "A4").
   // Reception SEES every bill line — name, code, price, discount, status —
@@ -736,12 +744,20 @@ export default async function VisitDetailPage({ params, searchParams }: Props) {
                 </Link>
               )
             ) : null}
-            {canDeleteVisit ? (
+            {visitDelete.kind === "delete" ? (
               <QueueDeleteDialog
                 visitId={visit.id}
                 mode="delete"
                 entryLabel={`visit #${visit.visit_number}`}
               />
+            ) : visitDelete.kind === "sample" ? (
+              <DeleteSampleVisitDialog
+                visitId={visit.id}
+                visitNumber={visit.visit_number}
+                releasedCount={releasedLineCount}
+              />
+            ) : visitDelete.kind === "blocked" ? (
+              <DeleteBlockedHint hint={visitDelete.hint} />
             ) : null}
           </div>
         )}

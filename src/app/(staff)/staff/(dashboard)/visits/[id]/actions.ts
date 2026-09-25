@@ -7,7 +7,16 @@ import { audit } from "@/lib/audit/log";
 import { requireActiveStaff } from "@/lib/auth/require-staff";
 import { requireAdminStaff } from "@/lib/auth/require-admin";
 import { ipAndAgent } from "@/lib/server/action-helpers";
-import { WaiveBalanceSchema } from "@/lib/validations/accounting";
+import {
+  QueueDeleteReasonSchema,
+  WaiveBalanceSchema,
+} from "@/lib/validations/accounting";
+import { deleteVisitAction } from "@/lib/actions/visits/queue-deletion";
+import {
+  hasOpenHmoClaim,
+  visitDeletability,
+  withoutReleased,
+} from "@/lib/visits/deletion";
 import { sectionsForRole } from "@/lib/auth/role-sections";
 import { notifyResultReleased } from "@/lib/notifications/notify-released";
 import { notifyResultsReleasedBulk } from "@/lib/notifications/notify-released-bulk";
@@ -578,6 +587,38 @@ export async function undoReleaseSelectedAction(
   const session = await requireActiveStaff();
   const supabase = await createClient();
 
+  const result = await undoReleasedRows(
+    supabase,
+    session,
+    visitId,
+    testRequestIds,
+    trimmedReason,
+    { bulk: true },
+  );
+  revalidatePath(`/staff/visits/${visitId}`);
+  return result.ok ? { ok: true, count: result.undoneIds.length } : result;
+}
+
+type UndoRowsResult =
+  | { ok: true; undoneIds: string[] }
+  | { ok: false; error: string };
+
+// The body of undo-release, shared by undoReleaseSelectedAction and
+// deleteSampleVisitAction so a sample-visit delete reverts results through
+// exactly the same scope expansion, status-filtered UPDATE (and so the same
+// 0110 accounting reversal) and per-row audit as a hand-picked undo. The
+// caller has already validated input and owns revalidation; the deleted-visit
+// check lives HERE, next to the line reads it protects (query-surfaces.test.ts
+// looks for it in this function). `auditExtra` is merged into each row's
+// audit metadata.
+async function undoReleasedRows(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  session: Awaited<ReturnType<typeof requireActiveStaff>>,
+  visitId: string,
+  testRequestIds: string[],
+  trimmedReason: string,
+  auditExtra: Record<string, boolean>,
+): Promise<UndoRowsResult> {
   const visitDeleted = await refuseIfVisitDeleted(supabase, visitId);
   if (visitDeleted) return visitDeleted;
 
@@ -656,7 +697,6 @@ export async function undoReleaseSelectedAction(
 
   const scoped = scopeToAllowedSections(candidates ?? [], allowedSections);
   if (scoped.length === 0) {
-    revalidatePath(`/staff/visits/${visitId}`);
     return { ok: false, error: "None of the selected tests can be unreleased." };
   }
   const scopedIds = scoped.map((r) => r.id);
@@ -708,7 +748,6 @@ export async function undoReleaseSelectedAction(
 
   if (error) return { ok: false, error: translatePgError(error) };
   if (!undone || undone.length === 0) {
-    revalidatePath(`/staff/visits/${visitId}`);
     return { ok: false, error: "None of the selected tests can be unreleased." };
   }
 
@@ -735,7 +774,7 @@ export async function undoReleaseSelectedAction(
         prior_release_medium: prior?.release_medium ?? null,
         prior_released_at: prior?.released_at ?? null,
         viewed_count: viewedCountById.get(row.id) ?? 0,
-        bulk: true,
+        ...auditExtra,
         // Present only when this row was reverted as part of a whole-report
         // undo (0172) — the combined result every member shares.
         report_result_id: reportResultIdByTestRequestId.get(row.id) ?? null,
@@ -745,8 +784,105 @@ export async function undoReleaseSelectedAction(
     });
   }
 
-  revalidatePath(`/staff/visits/${visitId}`);
-  return { ok: true, count: undone.length };
+  return { ok: true, undoneIds: undone.map((r) => r.id) };
+}
+
+// Admin-only: delete a visit that was only ever a sample/test entry, even
+// though some of its results were released. A released result blocks a
+// visit delete (P0043), so by hand this is two steps — undo every release,
+// then Delete. This does both, in that order, through the same code paths:
+// undoReleasedRows (0110 reverses each row's journal entry; each row is
+// audit-logged as test_request.release_undone, tagged sample_visit_delete)
+// and deleteVisitAction (the 0125 guard triggers still decide; the visit is
+// restorable afterwards). Every OTHER delete blocker still applies — active
+// payments, a waived balance, an open HMO claim — because those are money,
+// and the sample label does not make them go away.
+//
+// Not atomic: if the delete fails after the undo, the results stay
+// unreleased and the error says so; running it again finishes the job.
+export async function deleteSampleVisitAction(
+  visitId: string,
+  reason: string,
+): Promise<BulkSelectionResult> {
+  const session = await requireActiveStaff();
+  if (session.role !== "admin") {
+    return { ok: false, error: "Only an admin can delete a sample visit." };
+  }
+  const parsed = QueueDeleteReasonSchema.safeParse({ reason });
+  if (!parsed.success) {
+    return {
+      ok: false,
+      error: parsed.error.issues[0]?.message ?? "Reason is required.",
+    };
+  }
+  const trimmedReason = parsed.data.reason;
+
+  const supabase = await createClient();
+  const { data: visit, error: visitErr } = await supabase
+    .from("visits")
+    .select(
+      "id, payment_status, deleted_at, test_requests ( id, status, is_package_header, deleted_at, hmo_claim_items ( batch_voided ) )",
+    )
+    .eq("id", visitId)
+    .maybeSingle();
+  if (visitErr) return { ok: false, error: translatePgError(visitErr) };
+  if (!visit) return { ok: false, error: "Visit not found." };
+
+  const lines = visit.test_requests ?? [];
+  const liveLines = lines.filter((t) => t.deleted_at === null);
+  // Every delete rule except "released" — that one is what this action
+  // exists to clear. The HMO check runs over ALL lines, deleted included,
+  // exactly as the page and the P0050 trigger do.
+  const gate = visitDeletability(
+    session.role,
+    withoutReleased({
+      payment_status: visit.payment_status,
+      deleted_at: visit.deleted_at,
+      test_statuses: liveLines.map((t) => t.status),
+      has_open_hmo_claim: lines.some((t) => hasOpenHmoClaim(t.hmo_claim_items)),
+    }),
+  );
+  if (!gate.ok) return { ok: false, error: gate.hint };
+
+  // Headers are left out on purpose, as in undoReleaseSelectedAction: a
+  // header only ever flips back through the 0110 cascade when its last
+  // released component is undone.
+  const releasedIds = liveLines
+    .filter((t) => t.status === "released" && !t.is_package_header)
+    .map((t) => t.id);
+
+  let unreleased = 0;
+  if (releasedIds.length > 0) {
+    const undo = await undoReleasedRows(
+      supabase,
+      session,
+      visitId,
+      releasedIds,
+      `Sample visit deleted: ${trimmedReason}`,
+      { bulk: true, sample_visit_delete: true },
+    );
+    if (!undo.ok) {
+      revalidatePath(`/staff/visits/${visitId}`);
+      return { ok: false, error: undo.error };
+    }
+    unreleased = undo.undoneIds.length;
+  }
+
+  const deleted = await deleteVisitAction(
+    visitId,
+    `Sample visit: ${trimmedReason}`.slice(0, 500),
+  );
+  if (!deleted.ok) {
+    revalidatePath(`/staff/visits/${visitId}`);
+    return {
+      ok: false,
+      error:
+        unreleased > 0
+          ? `${unreleased} result${unreleased === 1 ? " was" : "s were"} unreleased, but the visit was not deleted: ${deleted.error}`
+          : deleted.error,
+    };
+  }
+  return { ok: true, count: unreleased };
 }
 
 // H3: admin-only escape hatch for visits that will never be cash-paid

@@ -247,7 +247,7 @@
 <div class="layout">
 <nav class="toc" aria-label="Contents">
   <p class="toc-brand">drmed<span>.</span>ph</p>
-  <p class="toc-tag">User guide · v2.24</p>
+  <p class="toc-tag">User guide · v2.25</p>
   <div class="filter" role="group" aria-label="Show chapters for">
     <button type="button" data-filter="all" aria-pressed="true">All roles</button>
     <button type="button" data-filter="reception">Reception</button>
@@ -689,7 +689,8 @@
   <section class="sub" id="rec-fix">
     <h3>3.9 Fix-ups on the visit page</h3>
     <dl class="defs">
-      <dt>Wrong test billed, not yet paid</dt><dd><kbd class="ui">Delete</kbd> the visit and give a reason, then create it again correctly. Nothing is billed for a deleted visit; it moves to <b>Deleted entries</b> and to Admin's <b>Deleted Queue Entries</b> report, and <kbd class="ui">Restore</kbd> brings it back. Removing a single line instead of the whole visit needs Admin, who can see the lines. A test on a finished chemistry report can't be removed on its own (the button says <q>Part of a finished combined report (e.g. Chemistry) — it can’t be deleted on its own.</q>); delete the whole visit instead. Once any payment is recorded, deletion is no longer possible: delete the payment first.</dd>
+      <dt>Wrong test billed, not yet paid</dt><dd><kbd class="ui">Delete</kbd> the visit and give a reason, then create it again correctly. Nothing is billed for a deleted visit; it moves to <b>Deleted entries</b> and to Admin's <b>Deleted Queue Entries</b> report, and <kbd class="ui">Restore</kbd> brings it back. Removing a single line instead of the whole visit needs Admin, who can see the lines. A test on a finished chemistry report can't be removed on its own (the button says <q>Part of a finished combined report (e.g. Chemistry) — it can’t be deleted on its own.</q>); delete the whole visit instead. Once any payment is recorded, deletion is no longer possible: delete the payment first. When a visit can't be deleted, its page shows a greyed-out <b>Delete</b> with the reason under it — <q>Has recorded payments — void them first.</q>, <q>Has a released result — ask an admin to delete it.</q>, <q>Already claimed from an HMO — void the claim batch first.</q></dd>
+      <dt>Sample or test visit with released results (Admin)</dt><dd>A released result normally blocks deleting a visit. When released results are the <i>only</i> thing in the way, Admin sees <kbd class="ui">Delete sample visit</kbd> on the visit page instead. Give a reason, tick <q>This was a sample or test visit, not a real patient visit.</q> and click <kbd class="ui">Unrelease and delete</kbd>: the released results are unreleased first (the patient can no longer open them, and each one is listed under <b>Undone Releases</b>, 5.3), then the visit is deleted. <kbd class="ui">Restore</kbd> brings the visit back; the results stay unreleased. Payments, a waived balance or an open HMO claim still block it — handle those first. Use it only for a visit that was never real.</dd>
       <dt>Patient lost the receipt / PIN</dt><dd>Open the patient's page, <kbd class="ui">Re-issue PIN</kbd>. A fresh 60-day PIN for their latest visit prints on a <b>Patient portal access</b> slip, replacing that visit's PIN in place. If the patient also has an older, separate visit whose PIN hasn't expired yet, that one still works — remind them to destroy any old receipts too. (The visit page's <kbd class="ui">Issue portal PIN</kbd> appears only on consult-only visits, which never had a receipt.)</dd>
       <dt>Forgot the doctor</dt><dd><b>Attending physician</b> section → <kbd class="ui">Assign physician</kbd> (or <kbd class="ui">Change</kbd>).</dd>
       <dt>Result needs correcting after release</dt><dd>Tell the lab. They open the result and click <kbd class="ui">Edit result…</kbd> (chemistry: <kbd class="ui">Edit results</kbd> on the report card), correct the values and give a reason — no need to undo the release first (4.7). If the patient had already opened it, phone them.</dd>
@@ -1241,7 +1242,7 @@
 </section>
 
 <footer class="end">
-  <p>drmed.ph User Guide · v2.24 · 25 September 2026 · Matches the production release at migration 0177, plus 0176 (applied out of order). Every label in this guide was checked against the application code on that date. Print with <b>Ctrl/Cmd + P</b>; each chapter starts on a new page.</p>
+  <p>drmed.ph User Guide · v2.25 · 25 September 2026 · Matches the production release at migration 0177, plus 0176 (applied out of order). Every label in this guide was checked against the application code on that date. Print with <b>Ctrl/Cmd + P</b>; each chapter starts on a new page.</p>
 </footer>
 </main>
 </div>
