@@ -5,8 +5,9 @@
 -- BEGIN/ROLLBACK, leaves no state. Asserts with raise exception; the control
 -- at the end shows the probes can tell "override" from "no override".
 --
--- Run: /opt/homebrew/opt/libpq/bin/psql "$LOCAL_DB_URL" -v ON_ERROR_STOP=1 \
---        -f supabase/tests/0182_staff_view_as_smoke.sql
+-- Run (local stack, from the repo root):
+--   /opt/homebrew/opt/libpq/bin/psql "$(supabase status -o json | jq -r .DB_URL)" \
+--     -v ON_ERROR_STOP=1 -f supabase/tests/0182_staff_view_as_smoke.sql
 --
 -- What it proves:
 --   P1 helper ACLs: anon + authenticated can execute the three predicates.
@@ -69,17 +70,17 @@ declare
   k_reception constant uuid := 'a1000000-0000-4000-8000-000000000182';
   k_medtech   constant uuid := 'a2000000-0000-4000-8000-000000000182';
   k_xray      constant uuid := 'a3000000-0000-4000-8000-000000000182';
-  v_bool boolean; v_text text; v_n int; v_n2 int; v_arr text[]; v_arr2 text[];
+  v_bool boolean; v_text text; v_fn text; v_n int; v_n2 int; v_arr text[]; v_arr2 text[];
 begin
   -- P1 -----------------------------------------------------------------------
-  if not has_function_privilege('anon', 'public.has_role(text[])', 'EXECUTE')
-     or not has_function_privilege('anon', 'public.staff_role()', 'EXECUTE')
-     or not has_function_privilege('anon', 'public.is_staff()', 'EXECUTE')
-     or not has_function_privilege('authenticated', 'public.has_role(text[])', 'EXECUTE')
-     or not has_function_privilege('authenticated', 'public.staff_role()', 'EXECUTE')
-     or not has_function_privilege('authenticated', 'public.is_staff()', 'EXECUTE') then
-    raise exception 'P1: helper ACL lost';
-  end if;
+  -- One check per grantee × helper so a failure names the grant that was lost.
+  foreach v_text in array array['anon', 'authenticated'] loop
+    foreach v_fn in array array['public.has_role(text[])', 'public.staff_role()', 'public.is_staff()'] loop
+      if not has_function_privilege(v_text, v_fn, 'EXECUTE') then
+        raise exception 'P1: % lost EXECUTE on %', v_text, v_fn;
+      end if;
+    end loop;
+  end loop;
   raise notice 'P1 ok: helper ACLs intact';
 
   -- P2 -----------------------------------------------------------------------
@@ -103,6 +104,11 @@ begin
   raise notice 'P2 ok: helpers answer reception; self-read works; self-update denied';
 
   -- P3 -----------------------------------------------------------------------
+  -- Each sub-check re-sets both override columns so the block does not depend
+  -- on P2's setup (P2's own attempt to clear them was blocked by RLS on purpose).
+  update public.staff_profiles
+     set view_as_role = 'reception', view_as_until = now() + interval '4 hours'
+   where id = k_admin;
   perform pg_temp.become(k_admin);
   select count(*) into v_n from public.contact_messages where id = 'c0000000-0000-4000-8000-000000000182';
   perform pg_temp.unbecome();
@@ -111,7 +117,9 @@ begin
   perform pg_temp.unbecome();
   if v_n <> 1 or v_n2 <> 1 then raise exception 'P3: reception equivalence broken (A=% R=%)', v_n, v_n2; end if;
 
-  update public.staff_profiles set view_as_role = 'medtech' where id = k_admin;
+  update public.staff_profiles
+     set view_as_role = 'medtech', view_as_until = now() + interval '4 hours'
+   where id = k_admin;
   perform pg_temp.become(k_admin);
   select count(*) into v_n from public.contact_messages where id = 'c0000000-0000-4000-8000-000000000182';
   perform pg_temp.unbecome();
@@ -120,7 +128,9 @@ begin
   perform pg_temp.unbecome();
   if v_n <> 0 or v_n2 <> 0 then raise exception 'P3: medtech equivalence broken (A=% M=%)', v_n, v_n2; end if;
 
-  update public.staff_profiles set view_as_role = 'xray_technician' where id = k_admin;
+  update public.staff_profiles
+     set view_as_role = 'xray_technician', view_as_until = now() + interval '4 hours'
+   where id = k_admin;
   perform pg_temp.become(k_admin);
   select public.lab_sections_for_role(public.staff_role()) into v_arr;
   perform pg_temp.unbecome();
