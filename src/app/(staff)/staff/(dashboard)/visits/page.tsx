@@ -445,6 +445,11 @@ export default async function VisitsIndexPage({ searchParams }: SearchProps) {
                     </td>
                     <td className="px-4 py-3 text-right font-mono">
                       {PHP.format(r.paid)}
+                      {r.waived > 0 ? (
+                        <div className="font-sans text-xs text-[color:var(--color-brand-text-soft)]">
+                          {PHP.format(r.waived)} waived
+                        </div>
+                      ) : null}
                     </td>
                     <td className="px-4 py-3 text-xs text-[color:var(--color-brand-text-soft)]">
                       {r.methods}
@@ -501,6 +506,11 @@ export default async function VisitsIndexPage({ searchParams }: SearchProps) {
                   </span>
                   <span>
                     Paid: <span className="font-mono">{PHP.format(r.paid)}</span>
+                    {r.waived > 0 ? (
+                      <span className="text-[color:var(--color-brand-text-soft)]">
+                        {" "}· {PHP.format(r.waived)} waived
+                      </span>
+                    ) : null}
                   </span>
                 </div>
                 <div className="mt-1 text-xs text-[color:var(--color-brand-text-soft)]">

@@ -6,6 +6,10 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { createPatientClient } from "@/lib/supabase/patient";
 import { audit } from "@/lib/audit/log";
 import { getPatientSession } from "@/lib/auth/patient-session-cookies";
+import {
+  PORTAL_CONSENT_REQUIRED_ERROR,
+  portalConsentCurrent,
+} from "@/lib/portal/consent-guard";
 import { renderResultPdf } from "@/lib/results/render-pdf";
 import { notePatientDownload, type ServedResultFile } from "@/lib/results/patient-download";
 import { loadConsultantSignatures, resolvePerformer } from "@/lib/results/signatures";
@@ -34,6 +38,9 @@ export async function getPatientConsolidatedResultDownloadUrl(
 ): Promise<DownloadResult> {
   const session = await getPatientSession();
   if (!session) return { ok: false, error: "Session expired. Sign in again." };
+  if (!(await portalConsentCurrent(session.patient_id))) {
+    return { ok: false, error: PORTAL_CONSENT_REQUIRED_ERROR };
+  }
 
   // Ownership verification reads run through the patient-scoped client so RLS
   // backs them (results are only visible when linked to a released test the
@@ -170,6 +177,9 @@ export async function getPatientResultDownloadUrl(
 ): Promise<DownloadResult> {
   const session = await getPatientSession();
   if (!session) return { ok: false, error: "Session expired. Sign in again." };
+  if (!(await portalConsentCurrent(session.patient_id))) {
+    return { ok: false, error: PORTAL_CONSENT_REQUIRED_ERROR };
+  }
 
   // Patient-scoped read (RLS-backed) for the ownership/release check; admin
   // stays only for the Storage signing below. App-level checks kept.
@@ -297,6 +307,9 @@ export async function getPackagePdfDownloadUrl(
 ): Promise<PackageDownloadResult> {
   const session = await getPatientSession();
   if (!session) return { ok: false, error: "Session expired. Sign in again." };
+  if (!(await portalConsentCurrent(session.patient_id))) {
+    return { ok: false, error: PORTAL_CONSENT_REQUIRED_ERROR };
+  }
 
   // Verification reads (header, components, result junctions) run through the
   // patient-scoped client so RLS enforces ownership; admin stays for the
@@ -606,6 +619,9 @@ export async function getPatientLabRequestFormUrl(
 ): Promise<FormUrlResult> {
   const session = await getPatientSession();
   if (!session) return { ok: false, error: "Session expired. Sign in again." };
+  if (!(await portalConsentCurrent(session.patient_id))) {
+    return { ok: false, error: PORTAL_CONSENT_REQUIRED_ERROR };
+  }
 
   const db = await createPatientClient(session.patient_id);
   const admin = createAdminClient();
@@ -650,6 +666,9 @@ export async function deletePatientLabRequestUpload(
 ): Promise<FormDeleteResult> {
   const session = await getPatientSession();
   if (!session) return { ok: false, error: "Session expired. Sign in again." };
+  // No consent check here, deliberately: removing their own upload is the
+  // patient shrinking what the clinic holds, which is what withdrawing consent
+  // asks for. Every action that DISCLOSES a record checks portalConsentCurrent.
 
   // Ownership read is RLS-backed (patient client); admin stays for the Storage
   // remove + the row DELETE (no anon write policy on appointment_attachments)
