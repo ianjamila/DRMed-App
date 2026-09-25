@@ -18,14 +18,14 @@ Key reference artifacts:
 - `IMPLEMENTATION_PLAN.md` — original phase plan (historical; cross-check before relying on it)
 - `README.md` — operational setup
 - `.env.example` — env-var inventory
-- `docs/drmed-user-guide.html` — the staff + patient user guide (v2.29, 25 Sep 2026): every
+- `docs/drmed-user-guide.html` — the staff + patient user guide (v2.30, 25 Sep 2026): every
   screen, label and blocked-message the app shows, checked against the code. Update it in the
   PR that changes a flow it describes.
 - `docs/superpowers/specs/` and `docs/superpowers/audits/` — design specs and audits for
   every post-1.0 programme (partner revisions, release lifecycle, group templates, EOD
   denomination count…). Read the spec before re-deriving a design decision.
 
-Migration ledger: **prod head = 0181** (`visit_sample_flag`, #230 — pushed ahead of merge, additive) as of 2026-09-25, after **0180** (`posted_lookup_comments`, #231 — comments only);
+Migration ledger: **prod head = 0186** (`stale_bookings_staff_alert`, #236) as of 2026-09-25, with **0185** (`eod_reminders_start_date`) and **0182** (`staff_view_as_role`, #237 — pushed with `--include-all` ahead of merge, additive; 0183/0184 are claimed by in-flight branches) also applied, after **0181** (`visit_sample_flag`, #230) and **0180** (`posted_lookup_comments`, #231 — comments only);
 **0178** (`released_payment_removed_alert`, #228), **0176** (`result_patient_download_and_remarks`, #226) and **0177** (`statement_email_claim`, #212) are
 applied too. The prod ledger is not contiguous (no 0165, 0167–0170, 0179):
 **0175** (`patient_billed_catalog_read`) and **0177** (#212), **0174** (`correct_payment_stale_guard`,
