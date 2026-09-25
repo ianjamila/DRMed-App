@@ -161,7 +161,8 @@ export function checkCase(i: number, c: Case, rnd: () => number): CaseResult {
   }
 
   // (3) run-2 stability: replaying run 1, the same sheet asks for nothing more
-  const w1 = applyOps(out1.ops, c.w0);
+  const w1 = applyChecked(out1.ops, c.w0, fail, "");
+  if (!w1) return { violations, orderChecked };
   const out2 = plan(rows, w1, mirrorAsPrev(out1));
   if (out2.ops.length) fail("run-2 ops", JSON.stringify(out2.ops.map((o) => ({ ...o, legacy_intake: undefined }))));
 
@@ -179,9 +180,31 @@ export function checkCase(i: number, c: Case, rnd: () => number): CaseResult {
     extra[11] = "09179999999"; extra[12] = "stranger@example.com"; extra[10] = "Strangertown"; extra[20] = 45900;
     const rows2 = parse([...c.table, extra]);
     const outS = plan(rows2, w1, mirrorAsPrev(out1));
-    checkAttachments(outS, rows2, c.w0, applyOps(outS.ops, w1), fail, "stranger: ");
+    const wS = applyChecked(outS.ops, w1, fail, "stranger: ");
+    if (wS) checkAttachments(outS, rows2, c.w0, wS, fail, "stranger: ");
   }
   return { violations, orderChecked };
+}
+
+/**
+ * Applies a plan through the SQL model and checks (7): a HOLD in the world
+ * before the run is exactly the same after it — the planner never re-decides
+ * a held key, and 0170 refuses to (a create over a hold raises, which the
+ * model turns into a throw, recorded here as a violation).
+ */
+function applyChecked(ops: readonly CustomerOp[], w: World, fail: (what: string, detail?: string) => void, tag: string): World | null {
+  let out: World;
+  try {
+    out = applyOps(ops, w);
+  } catch (e) {
+    fail(`${tag}ops rejected by the SQL model`, e instanceof Error ? e.message : String(e));
+    return null;
+  }
+  for (const [k, l] of w.links) {
+    if (l.decision !== "review") continue;
+    if (JSON.stringify(out.links.get(k)) !== JSON.stringify(l)) fail(`${tag}held key changed`, `${k}: ${JSON.stringify(out.links.get(k))}`);
+  }
+  return out;
 }
 
 /**

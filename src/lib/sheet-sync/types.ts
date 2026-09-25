@@ -128,13 +128,16 @@ export interface PatientRecord {
  * A saved identity decision for one link key (sheet_patient_links).
  * "review" is a HOLD: patient_id is null and the sync never auto-decides the
  * key again — every run sends it to review until an admin resolves it (which
- * replaces the row with an admin link or create).
+ * replaces the row with an admin link or create). The database enforces it
+ * too: link and create never overwrite a hold (0170).
  */
 export interface LinkRecord {
   link_key: string;
   patient_id: string | null;
   decision: "link" | "create" | "review";
   method: "auto_exact" | "auto_loose" | "admin";
+  /** Why a hold was placed (the planner reason, or "undone by an admin"); null otherwise. */
+  hold_reason?: string | null;
 }
 
 export interface FactsRecord {

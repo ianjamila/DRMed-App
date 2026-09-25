@@ -4755,18 +4755,24 @@ export type Database = {
           created_by: string | null
           raw_normalized: string
           referral_source_id: string
+          replaced: Json | null
+          run_id: string | null
         }
         Insert: {
           created_at?: string
           created_by?: string | null
           raw_normalized: string
           referral_source_id: string
+          replaced?: Json | null
+          run_id?: string | null
         }
         Update: {
           created_at?: string
           created_by?: string | null
           raw_normalized?: string
           referral_source_id?: string
+          replaced?: Json | null
+          run_id?: string | null
         }
         Relationships: [
           {
@@ -4774,6 +4780,13 @@ export type Database = {
             columns: ["referral_source_id"]
             isOneToOne: false
             referencedRelation: "referral_sources"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "referral_source_aliases_run_id_fkey"
+            columns: ["run_id"]
+            isOneToOne: false
+            referencedRelation: "sheet_sync_runs"
             referencedColumns: ["id"]
           },
         ]
@@ -5740,6 +5753,7 @@ export type Database = {
           decided_at: string
           decided_by: string | null
           decision: string
+          hold_reason: string | null
           link_key: string
           method: string
           patient_id: string | null
@@ -5749,6 +5763,7 @@ export type Database = {
           decided_at?: string
           decided_by?: string | null
           decision?: string
+          hold_reason?: string | null
           link_key: string
           method: string
           patient_id?: string | null
@@ -5758,6 +5773,7 @@ export type Database = {
           decided_at?: string
           decided_by?: string | null
           decision?: string
+          hold_reason?: string | null
           link_key?: string
           method?: string
           patient_id?: string | null
@@ -7062,6 +7078,10 @@ export type Database = {
       _sheet_sync_fence: {
         Args: { p_lease_token: string; p_write?: boolean }
         Returns: string
+      }
+      _sheet_sync_lease_live: {
+        Args: { p_heartbeat: string }
+        Returns: boolean
       }
       _sheet_sync_record_changes: {
         Args: { p_new: Json; p_old: Json; p_run: string }

@@ -54,27 +54,61 @@
 // ---------------------------------------
 // A green run means nothing unless the same checks go red when the behaviour
 // they name is removed. After an all-PASS run on a fresh `supabase db reset`,
-// apply these two mutations to the LOCAL stack only, re-run, and expect FAILs:
+// apply these mutations to the LOCAL stack only, re-run, and expect exactly
+// the FAILs listed. `mutate` re-creates ONE function from the migration file
+// with one piece of text swapped (run it from the worktree root; it refuses
+// when the text is not there, so a later edit cannot turn a mutation into a
+// silent no-op). Two mutations of the same function overwrite each other, so
+// they run in two rounds with a reset between them.
 //
 //   PSQL=/opt/homebrew/opt/libpq/bin/psql
 //   DB=postgresql://postgres:postgres@127.0.0.1:54322/postgres
+//   mutate() { node -e '
+//     const [fn, from, to] = process.argv.slice(1);
+//     const sql = require("fs").readFileSync("supabase/migrations/0170_sheet_sync_foundation.sql", "utf8");
+//     const start = sql.indexOf("create or replace function public." + fn + "(");
+//     const body = sql.slice(start, sql.indexOf("end $$;", start) + 7);
+//     if (start < 0 || !body.includes(from)) throw new Error("mutation target not found: " + from);
+//     process.stdout.write(body.split(from).join(to));' "$@" | $PSQL $DB -v ON_ERROR_STOP=1 -q; }
 //
-//   # Mutation 1 — open an RPC to logged-in users. Expect: FAIL RPC ACL
-//   # (… sheet_sync_apply_customer_ops as authenticated: expected error 42501).
+//   ## Round A ##
+//   # M1 — open an RPC to logged-in users. Expect: FAIL RPC ACL
+//   # (… sheet_sync_apply_customer_ops as authenticated: expected code 42501, got P0063).
 //   $PSQL $DB -c "grant execute on function public.sheet_sync_apply_customer_ops(uuid, jsonb) to authenticated"
+//   # M2 — drop the preview-lease write fence. Expect: FAIL Dry-run lease
+//   # cannot write (… expected error 22023, but the call succeeded).
+//   mutate _sheet_sync_fence "if coalesce(p_write, true) and v_dry then" "if false then"
+//   # M4 — link / create overwrite a hold. Expect: FAIL Link and create never
+//   # overwrite a hold (… link over a hold: expected skipped …).
+//   mutate sheet_sync_apply_customer_ops "and public.sheet_patient_links.decision <> 'review'" "and true"
+//   # M5 — an undo holds only its own run's links. Expect: FAIL Undo holds
+//   # the auto links of a restored patient (… expected restored=1 held=1 …).
+//   mutate sheet_sync_revert_run "if v_sync_run then" "if false then"
+//   # M7 — map answer moves a patient on ANY row with the answer. Expect: FAIL
+//   # Map answer moves only patients whose earliest answered row carries it
+//   # (… expected 3 patients moved …, got 4).
+//   mutate sheet_alias_apply "where c.patient_id is not null and c.source_norm <> ''" "where c.patient_id is not null and c.source_norm = p_raw_normalized"
+//   npm run sheet-sync:db-proof          # expect exactly those five FAILs
+//   /opt/homebrew/bin/supabase db reset  # undo round A
 //
-//   # Mutation 2 — drop the preview-lease write fence. Expect: FAIL Dry-run
-//   # lease cannot write (… expected error 22023, but the call succeeded).
-//   $PSQL $DB -c "create or replace function public._sheet_sync_fence(p_lease_token uuid, p_write boolean default true)
-//     returns uuid language plpgsql security definer set search_path = '' as \$\$
-//     declare v_id uuid; begin
-//       select r.id into v_id from public.sheet_sync_runs r where r.lease_token = p_lease_token and r.status = 'running' for update;
-//       if v_id is null then raise exception 'lost' using errcode = 'P0063'; end if;
-//       update public.sheet_sync_runs set heartbeat_at = now() where id = v_id; return v_id;
-//     end \$\$"
+//   ## Round B ##
+//   # M3 — the fence ignores a stale heartbeat. Expect: FAIL Review resolve
+//   # refused while a real run is running (… finish by the stale run after a
+//   # resolve …) and FAIL A stale lease cannot write (… stale lease stage …).
+//   mutate _sheet_sync_fence "if not public._sheet_sync_lease_live(v_hb) then" "if false then"
+//   # M6 — an undo leaves the alias behind. Expect: FAIL Undo of a map-answer
+//   # run removes the alias it added … (… expected alias_removed=1 …).
+//   mutate sheet_sync_revert_run "where a.run_id = p_target_run for update loop" "where false for update loop"
+//   npm run sheet-sync:db-proof          # expect exactly those three FAILs
+//   /opt/homebrew/bin/supabase db reset  # undo round B
 //
-//   npm run sheet-sync:db-proof        # expect exactly those two FAILs
-//   /opt/homebrew/bin/supabase db reset  # undo both, then re-run: all PASS
+//   ## Round C ##
+//   # M8 — an undo holds the links of a created patient it had to keep.
+//   # Expect: FAIL Undo holds the auto links of a restored patient; a kept
+//   # patient keeps its links (… expected kept=1 deleted=0 held=0 …).
+//   mutate sheet_sync_revert_run "and not (l.patient_id = any (v_kept))" ""
+//   npm run sheet-sync:db-proof          # expect exactly that FAIL
+//   /opt/homebrew/bin/supabase db reset  # undo round C, then re-run: all PASS
 import "./lib/load-env";
 import { requireLocalOrExplicitProd } from "./lib/env-guard";
 import { Client, type QueryResult, type QueryResultRow } from "pg";
@@ -464,6 +498,14 @@ async function main() {
         {
           name: "sheet_resort_candidates",
           sql: `select * from public.sheet_resort_candidates()`,
+        },
+        {
+          name: "_sheet_sync_fence",
+          sql: `select public._sheet_sync_fence('${NIL}'::uuid, true)`,
+        },
+        {
+          name: "_sheet_sync_lease_live",
+          sql: `select public._sheet_sync_lease_live(now())`,
         },
       ];
 
@@ -1376,14 +1418,15 @@ async function main() {
       );
       await finish(lease.token);
 
-      const rows = await q<{ link_key: string; decision: string; patient_id: string | null; method: string; run_id: string | null }>(
-        `select link_key, decision, patient_id::text as patient_id, method, run_id::text as run_id
+      const rows = await q<{ link_key: string; decision: string; patient_id: string | null; method: string; run_id: string | null; hold_reason: string | null }>(
+        `select link_key, decision, patient_id::text as patient_id, method, run_id::text as run_id, hold_reason
            from public.sheet_patient_links where link_key like 'hold:%' order by link_key`,
       );
       const byKey = Object.fromEntries(rows.rows.map((x) => [x.link_key, x]));
       const n1 = byKey["hold:new-1"];
       assert(
-        n1 && n1.decision === "review" && n1.patient_id === null && n1.method === "auto_exact" && n1.run_id === lease.runId,
+        n1 && n1.decision === "review" && n1.patient_id === null && n1.method === "auto_exact" && n1.run_id === lease.runId &&
+          n1.hold_reason === "ambiguous_patient",
         `hold:new-1: expected a new review hold stamped with this run, got ${JSON.stringify(n1)}`,
       );
       const a1 = byKey["hold:auto-1"];
@@ -1483,6 +1526,14 @@ async function main() {
       assert(
         after.rows[0].source === "other" && after.rows[0].origin === "sheet",
         `revert alias: expected other / sheet (a sheet-owned channel stays sheet-owned), got ${JSON.stringify(after.rows[0])}`,
+      );
+      // An alias run changes channels, not identity: its undo holds no link.
+      const link = await q<{ decision: string; patient_id: string | null }>(
+        `select decision, patient_id::text as patient_id from public.sheet_patient_links where link_key = 'sheet:i2:link-1'`,
+      );
+      assert(
+        link.rows[0].decision === "link" && link.rows[0].patient_id === iId,
+        `revert alias: the patient's link must stay a link (alias undo is not an identity undo), got ${JSON.stringify(link.rows[0])}`,
       );
       await finish(leaseR.token);
     });
@@ -1612,7 +1663,9 @@ async function main() {
       await expectOk("resolve beside a stale run", () =>
         q(`select public.sheet_review_resolve($1::uuid, null, 'dismiss', null)`, [x]),
       );
-      await finish(real.token);
+      // …and that dead run can no longer write anything, not even finish: it
+      // planned from decisions the resolve may just have changed.
+      await expectPgError("finish by the stale run after a resolve", "P0063", () => finish(real.token));
 
       const dry = await acquire("manual", true);
       await expectOk("resolve beside a preview run", () =>
@@ -1663,7 +1716,380 @@ async function main() {
       await finish(lease.token);
     });
 
-    // 19. Timing (M9) ---------------------------------------------------------
+    // 19. Create over a saved admin "create" decision (review round 3, g) -----
+    await check("Create over a saved admin create decision", async () => {
+      await setRole("postgres", null);
+      await q(
+        `insert into public.sheet_patient_links (link_key, decision, method, decided_by)
+         values ('g1:admin-create', 'create', 'admin', $1)`,
+        [fx.adminId],
+      );
+      await setRole("service_role", null);
+      const lease = await acquire("manual", false);
+      const r = await expectOk("create over the admin create", () =>
+        q<{ j: Json }>(`select public.sheet_sync_apply_customer_ops($1::uuid, $2::jsonb) as j`, [
+          lease.token,
+          JSON.stringify([
+            {
+              op: "create", create_key: "g1", method: "admin",
+              fields: { first_name: "Gina", last_name: "Uno", middle_name: null },
+              link_keys: ["g1:admin-create", "g1:joined"], admin_link_keys: ["g1:admin-create"], legacy_intake: {},
+              facts: { registered_on: null, new_repeat: null, source_ref: "g1" },
+            },
+          ]),
+        ]),
+      );
+      const id = r.rows[0].j.created.g1;
+      const links = await q<{ link_key: string; decision: string; method: string; patient_id: string | null; run_id: string | null }>(
+        `select link_key, decision, method, patient_id::text as patient_id, run_id::text as run_id
+           from public.sheet_patient_links where link_key like 'g1:%' order by link_key`,
+      );
+      const [adm, joined] = links.rows;
+      assert(
+        adm.decision === "link" && adm.method === "admin" && adm.patient_id === id && adm.run_id === lease.runId,
+        `admin create key: expected an admin link to the new patient stamped with this run, got ${JSON.stringify(adm)}`,
+      );
+      assert(
+        joined.decision === "link" && joined.method === "auto_exact" && joined.patient_id === id,
+        `joined key: expected an auto_exact link to the new patient, got ${JSON.stringify(joined)}`,
+      );
+      await finish(lease.token);
+    });
+
+    // 20. The create path writes the Senior/PWD pair only as a pair ------------
+    await check("Create writes the Senior/PWD pair only as a pair", async () => {
+      await setRole("service_role", null);
+      const lease = await acquire("manual", false);
+      const mk = (key: string, fields: Record<string, string>) => ({
+        op: "create", create_key: key, method: "auto_exact",
+        fields: { first_name: "Selma", last_name: key, middle_name: null, ...fields },
+        link_keys: [`g2:${key}`], admin_link_keys: [], legacy_intake: {},
+        facts: { registered_on: null, new_repeat: null, source_ref: key },
+      });
+      const r = await q<{ j: Json }>(`select public.sheet_sync_apply_customer_ops($1::uuid, $2::jsonb) as j`, [
+        lease.token,
+        JSON.stringify([mk("Half", { senior_pwd_id_kind: "senior" }), mk("Both", { senior_pwd_id_kind: "pwd", senior_pwd_id_number: "PWD-1" })]),
+      ]);
+      const got = await q<{ last_name: string; k: string | null; n: string | null }>(
+        `select last_name, senior_pwd_id_kind as k, senior_pwd_id_number as n from public.patients
+          where id = any($1::uuid[]) order by last_name`,
+        [[r.rows[0].j.created.Half, r.rows[0].j.created.Both]],
+      );
+      const [both, half] = got.rows;
+      assert(half.k === null && half.n === null, `kind without number: expected neither written, got ${JSON.stringify(half)}`);
+      assert(both.k === "pwd" && both.n === "PWD-1", `kind + number: expected pwd / PWD-1, got ${JSON.stringify(both)}`);
+      await finish(lease.token);
+    });
+
+    // 21. Holds are enforced in SQL too (review round 3, finding 3 + minor a) ---
+    await check("Link and create never overwrite a hold; a link op cannot claim admin", async () => {
+      await setRole("postgres", null);
+      await q(
+        `insert into public.sheet_patient_links (link_key, decision, method, hold_reason)
+         values ('h3:held', 'review', 'auto_exact', 'probe hold')`,
+      );
+      await setRole("service_role", null);
+      const lease = await acquire("manual", false);
+      const apply = (ops: unknown[]) =>
+        q<{ j: Json }>(`select public.sheet_sync_apply_customer_ops($1::uuid, $2::jsonb) as j`, [lease.token, JSON.stringify(ops)]);
+
+      const l = await apply([{ op: "link", link_key: "h3:held", patient_id: fx.patientPId, method: "auto_exact" }]);
+      assert(
+        l.rows[0].j.counts.linked === 0 && l.rows[0].j.counts.skipped === 1,
+        `link over a hold: expected skipped, got ${JSON.stringify(l.rows[0].j.counts)}`,
+      );
+      await expectPgError("create whose key is held", "22023", () =>
+        apply([
+          {
+            op: "create", create_key: "h3", method: "auto_exact",
+            fields: { first_name: "Hilda", last_name: "Heldthree", middle_name: null },
+            link_keys: ["h3:held"], admin_link_keys: [], legacy_intake: {},
+            facts: { registered_on: null, new_repeat: null, source_ref: "h3" },
+          },
+        ]),
+      );
+      const held = await q<{ decision: string; patient_id: string | null; hold_reason: string | null }>(
+        `select decision, patient_id::text as patient_id, hold_reason from public.sheet_patient_links where link_key = 'h3:held'`,
+      );
+      assert(
+        held.rows[0].decision === "review" && held.rows[0].patient_id === null && held.rows[0].hold_reason === "probe hold",
+        `the hold must be untouched, got ${JSON.stringify(held.rows[0])}`,
+      );
+      const orphans = await q<{ n: string }>(`select count(*)::text as n from public.patients where last_name = 'Heldthree'`);
+      assert(orphans.rows[0].n === "0", `a refused create must leave no patient behind, found ${orphans.rows[0].n}`);
+
+      await expectPgError("link op with method admin", "22023", () =>
+        apply([{ op: "link", link_key: "h3:new", patient_id: fx.patientPId, method: "admin" }]),
+      );
+      await expectPgError("link op with no method", "22023", () =>
+        apply([{ op: "link", link_key: "h3:new", patient_id: fx.patientPId }]),
+      );
+      await finish(lease.token);
+    });
+
+    // 22. A stale lease is dead even before a takeover (review round 3, 2 + d) --
+    await check("A stale lease cannot write; a takeover clears its staging", async () => {
+      await setRole("service_role", null);
+      const a = await acquire("manual", false);
+      await q(`select public.sheet_mirror_stage($1::uuid, 'lab', '[{"sheet_row":1}]'::jsonb)`, [a.token]);
+      await q(`update public.sheet_sync_runs set heartbeat_at = now() - interval '11 minutes' where id = $1`, [a.runId]);
+      const calls: [string, string, unknown[]][] = [
+        ["stage", `select public.sheet_mirror_stage($1::uuid, 'lab', '[]'::jsonb)`, [a.token]],
+        ["ops", `select public.sheet_sync_apply_customer_ops($1::uuid, '[]'::jsonb)`, [a.token]],
+        ["heartbeat", `select public.sheet_sync_heartbeat($1::uuid)`, [a.token]],
+        ["finish", `select public.sheet_sync_finish($1::uuid, 'succeeded', '{}'::jsonb, '{}'::jsonb, null)`, [a.token]],
+      ];
+      for (const [label, sql, params] of calls) {
+        await expectPgError(`stale lease ${label}`, "P0063", () => q(sql, params));
+      }
+      const stagedBefore = await q<{ n: string }>(
+        `select count(*)::text as n from public.sheet_mirror_staging where run_id = $1`,
+        [a.runId],
+      );
+      assert(stagedBefore.rows[0].n === "1", `stale run: expected its 1 staged row still there, got ${stagedBefore.rows[0].n}`);
+      const b = await acquire("cli", false);
+      assert(b.status === "running", `takeover: expected running, got ${b.status}`);
+      const stagedAfter = await q<{ n: string }>(
+        `select count(*)::text as n from public.sheet_mirror_staging where run_id = $1`,
+        [a.runId],
+      );
+      assert(stagedAfter.rows[0].n === "0", `takeover: the dead run's staged rows must be gone, got ${stagedAfter.rows[0].n}`);
+      await finish(b.token);
+    });
+
+    // 23. An undo sticks (review round 3, finding 1 + minor c) -----------------
+    await check("Undo holds the auto links of a restored patient; a kept patient keeps its links", async () => {
+      await setRole("postgres", null);
+      const qp = await q<{ id: string }>(
+        `insert into public.patients (first_name, last_name, birthdate) values ('Quino', 'Undo', '1980-01-01') returning id`,
+      );
+      const qId = qp.rows[0].id;
+      await setRole("service_role", null);
+      const apply = (token: string, ops: unknown[]) =>
+        q<{ j: Json }>(`select public.sheet_sync_apply_customer_ops($1::uuid, $2::jsonb) as j`, [token, JSON.stringify(ops)]);
+
+      // Run 1 links the key; run 2 fills through it (no link op of its own).
+      const r1 = await acquire("manual", false);
+      await apply(r1.token, [{ op: "link", link_key: "u1:auto", patient_id: qId, method: "auto_exact" }]);
+      await finish(r1.token);
+      await setRole("postgres", null);
+      await q(
+        `insert into public.sheet_patient_links (link_key, patient_id, decision, method) values ('u1:admin', $1, 'link', 'admin')`,
+        [qId],
+      );
+      await setRole("service_role", null);
+      const r2 = await acquire("manual", false);
+      const f = await apply(r2.token, [{ op: "fill", patient_id: qId, fields: { email: "quino@example.test" } }]);
+      assert(f.rows[0].j.counts.filled === 1, `run 2: expected filled=1, got ${JSON.stringify(f.rows[0].j.counts)}`);
+      await finish(r2.token);
+
+      const rv = await acquire("revert", false);
+      const u = await q<{ j: Json }>(`select public.sheet_sync_revert_run($1::uuid, $2::uuid) as j`, [rv.token, r2.runId]);
+      assert(
+        u.rows[0].j.restored === 1 && u.rows[0].j.held === 1,
+        `undo run 2: expected restored=1 held=1, got ${JSON.stringify(u.rows[0].j)}`,
+      );
+      await finish(rv.token);
+      const links = await q<{ link_key: string; decision: string; patient_id: string | null; run_id: string | null; hold_reason: string | null }>(
+        `select link_key, decision, patient_id::text as patient_id, run_id::text as run_id, hold_reason
+           from public.sheet_patient_links where link_key like 'u1:%' order by link_key`,
+      );
+      const byKey = Object.fromEntries(links.rows.map((x) => [x.link_key, x]));
+      assert(
+        byKey["u1:auto"].decision === "review" && byKey["u1:auto"].patient_id === null &&
+          byKey["u1:auto"].run_id === rv.runId && byKey["u1:auto"].hold_reason === "undone by an admin",
+        `undo: the earlier run's auto link to the restored patient must be held, got ${JSON.stringify(byKey["u1:auto"])}`,
+      );
+      assert(
+        byKey["u1:admin"].decision === "link" && byKey["u1:admin"].patient_id === qId,
+        `undo: an admin link is left alone, got ${JSON.stringify(byKey["u1:admin"])}`,
+      );
+
+      // The next run cannot re-link the held key (the SQL half of "no re-fill").
+      const r3 = await acquire("manual", false);
+      const again = await apply(r3.token, [{ op: "link", link_key: "u1:auto", patient_id: qId, method: "auto_exact" }]);
+      assert(again.rows[0].j.counts.skipped === 1, `next run: the held key must not re-link, got ${JSON.stringify(again.rows[0].j.counts)}`);
+      await finish(r3.token);
+
+      // A created patient the undo must keep (changed since) keeps its links.
+      const r4 = await acquire("manual", false);
+      const c = await apply(r4.token, [
+        {
+          op: "create", create_key: "u1k", method: "auto_exact",
+          fields: { first_name: "Kira", last_name: "Kept", middle_name: null },
+          link_keys: ["u1:kept"], admin_link_keys: [], legacy_intake: {},
+          facts: { registered_on: null, new_repeat: null, source_ref: "u1k" },
+        },
+      ]);
+      const kId = c.rows[0].j.created.u1k;
+      await finish(r4.token);
+      await setRole("postgres", null);
+      await q(`update public.patients set address = 'Touched by reception' where id = $1`, [kId]);
+      await setRole("service_role", null);
+      const rv2 = await acquire("revert", false);
+      const u2 = await q<{ j: Json }>(`select public.sheet_sync_revert_run($1::uuid, $2::uuid) as j`, [rv2.token, r4.runId]);
+      assert(
+        u2.rows[0].j.kept === 1 && u2.rows[0].j.deleted === 0 && u2.rows[0].j.held === 0,
+        `undo of a changed create: expected kept=1 deleted=0 held=0, got ${JSON.stringify(u2.rows[0].j)}`,
+      );
+      await finish(rv2.token);
+      const kept = await q<{ decision: string; patient_id: string | null }>(
+        `select decision, patient_id::text as patient_id from public.sheet_patient_links where link_key = 'u1:kept'`,
+      );
+      assert(
+        kept.rows[0].decision === "link" && kept.rows[0].patient_id === kId,
+        `a kept patient keeps its link, got ${JSON.stringify(kept.rows[0])}`,
+      );
+    });
+
+    // 24. Undoing a map-answer run takes back its alias (review round 3, 1) ----
+    await check("Undo of a map-answer run removes the alias it added and restores one it replaced", async () => {
+      await setRole("service_role", null);
+      const a1 = await acquire("alias", false);
+      await q(`select public.sheet_alias_apply($1::uuid, 'u1b answer', 'flyers', null)`, [a1.token]);
+      await finish(a1.token);
+      const mid = await q<{ src: string; run_id: string | null; replaced: Json }>(
+        `select referral_source_id as src, run_id::text as run_id, replaced from public.referral_source_aliases where raw_normalized = 'u1b answer'`,
+      );
+      assert(
+        mid.rows[0]?.src === "flyers" && mid.rows[0].run_id === a1.runId && mid.rows[0].replaced === null,
+        `alias apply: expected a new alias stamped with its run, got ${JSON.stringify(mid.rows[0])}`,
+      );
+      const rv = await acquire("revert", false);
+      const u = await q<{ j: Json }>(`select public.sheet_sync_revert_run($1::uuid, $2::uuid) as j`, [rv.token, a1.runId]);
+      assert(u.rows[0].j.alias_removed === 1, `undo alias run: expected alias_removed=1, got ${JSON.stringify(u.rows[0].j)}`);
+      await finish(rv.token);
+      const gone = await q<{ n: string }>(
+        `select count(*)::text as n from public.referral_source_aliases where raw_normalized = 'u1b answer'`,
+      );
+      assert(gone.rows[0].n === "0", `undo alias run: the alias it added must be gone, found ${gone.rows[0].n}`);
+
+      // Replacing an existing alias twice in one run, then undoing: the
+      // pre-run alias comes back exactly.
+      const a2 = await acquire("alias", false);
+      await q(`select public.sheet_alias_apply($1::uuid, 'probe-alias-1', 'walk_in', null)`, [a2.token]);
+      await q(`select public.sheet_alias_apply($1::uuid, 'probe-alias-1', 'flyers', null)`, [a2.token]);
+      await finish(a2.token);
+      const rv2 = await acquire("revert", false);
+      const u2 = await q<{ j: Json }>(`select public.sheet_sync_revert_run($1::uuid, $2::uuid) as j`, [rv2.token, a2.runId]);
+      assert(u2.rows[0].j.alias_restored === 1, `undo alias run 2: expected alias_restored=1, got ${JSON.stringify(u2.rows[0].j)}`);
+      await finish(rv2.token);
+      const back = await q<{ src: string; run_id: string | null; replaced: Json }>(
+        `select referral_source_id as src, run_id::text as run_id, replaced from public.referral_source_aliases where raw_normalized = 'probe-alias-1'`,
+      );
+      assert(
+        back.rows[0].src === "other" && back.rows[0].run_id === null && back.rows[0].replaced === null,
+        `undo alias run 2: expected the pre-run alias (other, no run), got ${JSON.stringify(back.rows[0])}`,
+      );
+    });
+
+    // 25. Map answer follows the fill's own channel rule (review round 3, 5) ---
+    await check("Map answer moves only patients whose earliest answered row carries it", async () => {
+      await setRole("postgres", null);
+      const ps = await q<{ id: string; first_name: string }>(
+        `insert into public.patients (first_name, last_name, birthdate) values
+           ('Zeta1', 'Earliest', '1971-01-01'), ('Zeta2', 'Earliest', '1972-01-01'),
+           ('Zeta3', 'Earliest', '1973-01-01'), ('Zeta4', 'Earliest', '1974-01-01')
+         returning id, first_name`,
+      );
+      const z = Object.fromEntries(ps.rows.map((r) => [r.first_name, r.id]));
+      const seedRun = (await q<{ id: string }>(`select id from public.sheet_sync_runs order by started_at, id limit 1`)).rows[0].id;
+      const rows: [string, string, string | null, string][] = [
+        // Zeta1: earliest answered row says "f5 first" → not moved
+        ["Zeta1", "f5-z1a", "2026-01-01", "f5 first"], ["Zeta1", "f5-z1b", "2026-02-01", "f5 later"],
+        // Zeta2: its only row → moved
+        ["Zeta2", "f5-z2a", "2026-02-01", "f5 later"],
+        // Zeta3: the dated row is blank (no answer); the undated one answers → moved
+        ["Zeta3", "f5-z3a", null, "f5 later"], ["Zeta3", "f5-z3b", "2026-01-01", ""],
+        // Zeta4: same day, source_key breaks the tie (f5-z4a first) → moved
+        ["Zeta4", "f5-z4b", "2026-01-05", "f5 other"], ["Zeta4", "f5-z4a", "2026-01-05", "f5 later"],
+      ];
+      let i = 0;
+      for (const [who, key, reg, norm] of rows) {
+        await q(
+          `insert into public.sheet_customer_rows
+             (sheet_row, source_key, full_name_raw, name_norm, loose_key, link_key, registered_on, source_norm,
+              patient_id, link_state, row_hash, run_id)
+           values ($1, $2, 'Earliest, Zeta', 'earliest|zeta', 'earliestzeta', $3, $4::date, $5, $6, 'linked', $2, $7)`,
+          [9000 + i++, key, `f5:${who}`, reg, norm, z[who], seedRun],
+        );
+      }
+      await setRole("service_role", null);
+      const a = await acquire("alias", false);
+      const n = await q<{ n: number }>(`select public.sheet_alias_apply($1::uuid, 'f5 later', 'flyers', null) as n`, [a.token]);
+      await finish(a.token);
+      assert(n.rows[0].n === 3, `map answer: expected 3 patients moved (Zeta2, Zeta3, Zeta4), got ${n.rows[0].n}`);
+      const got = await q<{ first_name: string; src: string | null }>(
+        `select first_name, referral_source as src from public.patients where last_name = 'Earliest' order by first_name`,
+      );
+      assert(
+        JSON.stringify(got.rows.map((r) => r.src)) === JSON.stringify([null, "flyers", "flyers", "flyers"]),
+        `map answer: expected [null, flyers, flyers, flyers], got ${JSON.stringify(got.rows)}`,
+      );
+    });
+
+    // 26. An undo run cannot itself be undone (review round 3, minor b) --------
+    await check("An undo cannot itself be undone", async () => {
+      await setRole("service_role", null);
+      const r = await acquire("manual", false);
+      await finish(r.token);
+      const rv = await acquire("revert", false);
+      await q(`select public.sheet_sync_revert_run($1::uuid, $2::uuid)`, [rv.token, r.runId]);
+      await finish(rv.token);
+      const rv2 = await acquire("revert", false);
+      await expectPgError("undo of an undo", "22023", () =>
+        q(`select public.sheet_sync_revert_run($1::uuid, $2::uuid)`, [rv2.token, rv.runId]),
+      );
+      await finish(rv2.token);
+    });
+
+    // 27. A hold is never hidden by a dismiss (review round 3, minor e) --------
+    await check("A held item cannot be dismissed; a dismissed item re-opens while its key is held", async () => {
+      await setRole("postgres", null);
+      await q(`insert into public.sheet_patient_links (link_key, decision, method) values ('e:held', 'review', 'auto_exact')`);
+      const items = await q<{ id: string; item_key: string }>(
+        `insert into public.sheet_sync_review_items (tab, item_key, kind, payload, status) values
+           ('customers', 'e:held', 'identity_conflict', '{"link_keys":["e:held"]}'::jsonb, 'open'),
+           ('customers', 'e:free', 'ambiguous_patient', '{"link_keys":["e:free"]}'::jsonb, 'open'),
+           ('customers', 'e:row', 'invalid_row', '{}'::jsonb, 'dismissed')
+         returning id, item_key`,
+      );
+      const id = Object.fromEntries(items.rows.map((r) => [r.item_key, r.id]));
+      await setRole("service_role", null);
+      await expectPgError("dismiss a held item", "22023", () =>
+        q(`select public.sheet_review_resolve($1::uuid, $2::uuid, 'dismiss', null)`, [id["e:held"], fx.adminId]),
+      );
+      await expectOk("dismiss an item with no hold", () =>
+        q(`select public.sheet_review_resolve($1::uuid, $2::uuid, 'dismiss', null)`, [id["e:free"], fx.adminId]),
+      );
+      // Later a run holds e:free and reports it again: the item re-opens.
+      // e:row (dismissed, no keys) stays dismissed.
+      await setRole("postgres", null);
+      await q(`insert into public.sheet_patient_links (link_key, decision, method) values ('e:free', 'review', 'auto_exact')`);
+      await setRole("service_role", null);
+      const lease = await acquire("manual", false);
+      const up = await q<{ j: Json }>(`select public.sheet_sync_upsert_review($1::uuid, 'customers', $2::jsonb, false) as j`, [
+        lease.token,
+        JSON.stringify([
+          { kind: "ambiguous_patient", item_key: "e:free", payload: { link_keys: ["e:free"] } },
+          { kind: "invalid_row", item_key: "e:row", payload: {} },
+        ]),
+      ]);
+      await finish(lease.token);
+      assert(
+        up.rows[0].j.opened === 1 && up.rows[0].j.updated === 0,
+        `upsert: expected only the held item re-opened, got ${JSON.stringify(up.rows[0].j)}`,
+      );
+      const open = await q<{ item_key: string }>(
+        `select item_key from public.sheet_sync_review_items where item_key in ('e:free','e:row') and status = 'open'`,
+      );
+      assert(
+        open.rows.length === 1 && open.rows[0].item_key === "e:free",
+        `upsert: expected e:free open again and e:row still dismissed, got ${JSON.stringify(open.rows)}`,
+      );
+    });
+
+    // 28. Timing (M9) ---------------------------------------------------------
     await check("Timing: 5,000-row commit, 500-op create chunk, undo (each < 8,000 ms)", async () => {
       await setRole("service_role", null);
       const LIMIT_MS = 8000;

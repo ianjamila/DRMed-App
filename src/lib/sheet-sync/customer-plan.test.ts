@@ -582,4 +582,35 @@ describe("planCustomers — round 2 (order-independent run-2 check, per-key trus
     expect(w.patients.find((x) => x.id === merged.id)!.email).toBeNull();
     expect(w.patients.find((x) => x.id === "new:k")).toMatchObject({ referral_source: null, referral_source_origin: null });
   });
+  it("applyOps mirrors the SQL: link and create never overwrite a hold; create over an admin create takes the op's method", () => {
+    const p = patient({});
+    const held = { link_key: "h", patient_id: null, decision: "review" as const, method: "auto_exact" as const, hold_reason: "undone by an admin" };
+    const w0 = world([p], [held, { link_key: "c", patient_id: null, decision: "create", method: "admin" }]);
+    const w = applyOps([{ op: "link", link_key: "h", patient_id: p.id, method: "auto_exact" }], w0);
+    expect(w.links.get("h")).toEqual(held);
+    const create = (keys: string[], admin: string[]): CustomerOp => ({ op: "create", create_key: keys[0], method: "admin", link_keys: keys,
+      admin_link_keys: admin, fields: { first_name: "A", last_name: "B", middle_name: null }, legacy_intake: {},
+      facts: { registered_on: null, new_repeat: null, source_ref: "r" } });
+    expect(() => applyOps([create(["h"], [])], w0)).toThrow(/hold/);
+    expect(applyOps([create(["c"], ["c"])], w0).links.get("c")).toMatchObject({ decision: "link", method: "admin", patient_id: "new:c" });
+  });
+  it("an undo sticks: the keys an undo held never re-link or re-fill the patient it restored", () => {
+    // Run 1 links the key (auto) and fills the patient's phone + email.
+    const p = patient({ phone: null, email: null });
+    const rows = rowsOf({ name: "Dela Cruz, Juan Santos", dob: 32874, phone: "09171112222", email: "juan@example.com" });
+    const w0 = world([p]);
+    const out1 = planIn(rows, w0);
+    expect(opsOf(out1, "fill")).toHaveLength(1);
+    const w1 = applyOps(out1.ops, w0);
+    // An admin undoes a LATER run that did the fill: 0170 restores the
+    // patient and holds every auto link of the restored patient — including
+    // this one, which an earlier run made.
+    const key = "dela cruz|juan santos#1990-01-01";
+    const undone: World = { ...w1, patients: w0.patients.map((x) => ({ ...x })), links: new Map([[key,
+      { ...w1.links.get(key)!, patient_id: null, decision: "review", hold_reason: "undone by an admin" }]]) };
+    const out2 = planIn(rows, undone);
+    expect(out2.ops).toEqual([]);
+    expect(reviewFor(out2, key)[0].payload).toMatchObject({ reason: "held for an admin decision", held_because: "undone by an admin" });
+    expect(out2.mirror[0]).toMatchObject({ patient_id: null });
+  });
 });

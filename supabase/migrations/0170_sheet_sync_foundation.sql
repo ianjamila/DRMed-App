@@ -23,14 +23,21 @@
 --     and reporting-only mirror tables + a staging table.
 --  5. Lease-fenced RPCs, all SECURITY DEFINER, search_path '', service_role
 --     only. P0062 = another sync holds the lease (or, for a review resolve,
---     a real sync is mid-run); P0063 = this worker's lease was taken over;
+--     a real sync is mid-run); P0063 = this worker's lease was taken over or
+--     went stale (no heartbeat for 10 minutes — _sheet_sync_lease_live is the
+--     one definition, shared by the fence, acquire and review resolve);
 --     P0064 = review item no longer open. A preview (dry-run) lease may only
 --     heartbeat and finish — every other write raises 22023.
 --  6. Identity decisions (sheet_patient_links) are link / create / review.
 --     "review" is a HOLD: no patient, and the sync never auto-decides that
---     key again. Undoing a run turns its auto links (and the links of a
---     patient the undo deletes) into holds, so an undo sticks instead of the
---     next nightly run re-deriving the same link.
+--     key again — enforced here too, not only by the planner: link and create
+--     never overwrite a hold, and only an admin link / create resolve replaces
+--     one (a held item cannot be dismissed, and a dismissed item re-opens
+--     while its key is held). Undoing a sync run turns its auto links, the
+--     links of a patient the undo deletes, and the auto links of every
+--     patient whose values it restores into holds, so an undo sticks instead
+--     of the next nightly run re-deriving the same link or fill. Undoing a
+--     map-answer run also takes back the alias it wrote.
 -- Nothing here creates visits, payments or journal entries.
 -- =============================================================================
 
@@ -234,6 +241,8 @@ create index sheet_sync_changes_run on public.sheet_sync_changes (run_id, patien
 -- review (a HOLD: no patient; every run sends the key to review until an
 -- admin resolves it). run_id = the sync run that last wrote the decision
 -- (create / link / hold ops and undo); an admin resolve leaves it NULL.
+-- hold_reason = why a hold was placed (the planner's reason, or "undone by
+-- an admin"); NULL on every other decision. No names in it.
 create table public.sheet_patient_links (
   link_key    text primary key,
   patient_id  uuid references public.patients(id) on delete cascade,
@@ -242,7 +251,9 @@ create table public.sheet_patient_links (
   decided_by  uuid references auth.users(id),
   decided_at  timestamptz not null default now(),
   run_id      uuid references public.sheet_sync_runs(id) on delete set null,
-  constraint sheet_patient_links_target check ((decision = 'link') = (patient_id is not null))
+  hold_reason text,
+  constraint sheet_patient_links_target check ((decision = 'link') = (patient_id is not null)),
+  constraint sheet_patient_links_hold_reason check (hold_reason is null or (decision = 'review' and char_length(hold_reason) <= 400))
 );
 create index sheet_patient_links_patient on public.sheet_patient_links (patient_id);
 create index sheet_patient_links_run on public.sheet_patient_links (run_id);
@@ -255,11 +266,16 @@ create table public.patient_acquisition_facts (
   updated_at        timestamptz not null default now()
 );
 
+-- run_id = the alias run that wrote the row; replaced = the row it replaced
+-- (to_jsonb of it, its own `replaced` chain included), NULL when it was new.
+-- Undoing that run puts `replaced` back, or removes the row.
 create table public.referral_source_aliases (
   raw_normalized      text primary key,
   referral_source_id  text not null references public.referral_sources(id),
   created_by          uuid references auth.users(id),
-  created_at          timestamptz not null default now()
+  created_at          timestamptz not null default now(),
+  run_id              uuid references public.sheet_sync_runs(id) on delete set null,
+  replaced            jsonb
 );
 
 create table public.sheet_customer_rows (
@@ -394,18 +410,32 @@ revoke all on public.sheet_mirror_staging from anon;
 revoke all on public.sheet_mirror_staging from authenticated;
 
 -- 5. RPCs --------------------------------------------------------------------
--- The fence: proves the caller still holds the lease and stamps a heartbeat.
+-- The ONE definition of a live lease: a heartbeat within the last 10 minutes.
+-- The fence, acquire's takeover and review resolve all ask this, so a run a
+-- resolve may treat as dead is exactly a run that can no longer write.
+create or replace function public._sheet_sync_lease_live(p_heartbeat timestamptz)
+returns boolean language sql stable set search_path = '' as $$
+  select coalesce(p_heartbeat > now() - interval '10 minutes', false);
+$$;
+
+-- The fence: proves the caller still holds a LIVE lease and stamps a
+-- heartbeat. A lease whose heartbeat is older than the live window is dead
+-- even before another run takes it over: an admin resolve may already have
+-- changed the decisions this worker planned from, so it must not write.
 -- p_write = false only for heartbeat/finish; every other RPC passes true,
 -- which a preview (dry-run) lease can never satisfy.
 create or replace function public._sheet_sync_fence(p_lease_token uuid, p_write boolean default true)
 returns uuid language plpgsql security definer set search_path = '' as $$
-declare v_id uuid; v_dry boolean;
+declare v_id uuid; v_dry boolean; v_hb timestamptz;
 begin
-  select r.id, r.dry_run into v_id, v_dry from public.sheet_sync_runs r
+  select r.id, r.dry_run, r.heartbeat_at into v_id, v_dry, v_hb from public.sheet_sync_runs r
    where r.lease_token = p_lease_token and r.status = 'running'
    for update;
   if v_id is null then
     raise exception 'This sheet sync lost its turn to another run.' using errcode = 'P0063';
+  end if;
+  if not public._sheet_sync_lease_live(v_hb) then
+    raise exception 'This sheet sync went quiet for too long and lost its turn.' using errcode = 'P0063';
   end if;
   if coalesce(p_write, true) and v_dry then
     raise exception 'A preview run cannot change data.' using errcode = '22023';
@@ -449,11 +479,14 @@ begin
   end if;
   select * into v_run from public.sheet_sync_runs r where r.status = 'running' for update;
   if found then
-    if v_run.heartbeat_at > now() - interval '10 minutes' then
+    if public._sheet_sync_lease_live(v_run.heartbeat_at) then
       raise exception 'Another sheet sync is running.' using errcode = 'P0062';
     end if;
     update public.sheet_sync_runs set status = 'failed', ended_at = now(), error = 'lease expired (no heartbeat for 10 minutes)'
      where id = v_run.id;
+    -- The dead run never reached finish, which is what clears staging: its
+    -- staged rows (names, phones) would otherwise stay forever.
+    delete from public.sheet_mirror_staging where run_id = v_run.id;
   end if;
   insert into public.sheet_sync_runs (trigger, actor_id, dry_run, status, lease_token, heartbeat_at)
   values (p_trigger, p_actor, coalesce(p_dry_run, false), 'running', v_token, now())
@@ -541,13 +574,17 @@ end $$;
 -- Applies one chunk of the planner's customer ops. Contract (types.ts CustomerOp):
 --   create — new sheet-owned patient; each link key is written 'admin' when it
 --            is in admin_link_keys (a subset of link_keys) and 'auto_exact'
---            otherwise; never over an admin row unless that row is an admin
---            "create" decision.
---   link   — auto link, never over an admin row.
+--            otherwise (an existing row takes the new method too); never over
+--            a hold, nor over an admin row unless that row is an admin
+--            "create" decision. A key it may not write raises 22023 (the
+--            whole chunk rolls back), so a create never leaves a patient
+--            that no key points at.
+--   link   — auto link (method auto_exact / auto_loose only, else 22023),
+--            never over an admin row or a hold (skipped).
 --   fill   — fill-only-if-empty (+ the channel when unset or sheet-owned).
 --   facts  — acquisition facts upsert.
---   hold   — persist a review: (link_key, no patient, 'review'), never over an
---            admin row.
+--   hold   — persist a review: (link_key, no patient, 'review', reason),
+--            never over an admin row.
 -- create / link / hold stamp sheet_patient_links.run_id with this run.
 create or replace function public.sheet_sync_apply_customer_ops(p_lease_token uuid, p_ops jsonb)
 returns jsonb language plpgsql security definer set search_path = '' as $$
@@ -612,8 +649,14 @@ begin
         values (v_key, v_pid, 'link', case when v_admin_keys ? v_key then 'admin' else 'auto_exact' end, v_run)
         on conflict (link_key) do update
           set patient_id = excluded.patient_id, decision = 'link', method = excluded.method,
-              run_id = excluded.run_id, decided_at = now()
-          where public.sheet_patient_links.method <> 'admin' or public.sheet_patient_links.decision = 'create';
+              run_id = excluded.run_id, decided_at = now(), hold_reason = null
+          where (public.sheet_patient_links.method <> 'admin' or public.sheet_patient_links.decision = 'create')
+            and public.sheet_patient_links.decision <> 'review';
+        get diagnostics v_rows = row_count;
+        if v_rows = 0 then
+          -- No key names in the message: they carry a patient's name and DOB.
+          raise exception 'Bad create op: one of its keys is held for review or decided by an admin.' using errcode = '22023';
+        end if;
       end loop;
       insert into public.patient_acquisition_facts (patient_id, registered_on, sheet_new_repeat, source_ref)
       values (v_pid, nullif(v_op->'facts'->>'registered_on', '')::date,
@@ -622,22 +665,29 @@ begin
       n_created := n_created + 1;
 
     elsif v_op->>'op' = 'link' then
+      -- Only an admin resolve writes an admin decision.
+      if coalesce(v_op->>'method', '') not in ('auto_exact','auto_loose') then
+        raise exception 'Bad link op: method must be auto_exact or auto_loose.' using errcode = '22023';
+      end if;
       insert into public.sheet_patient_links (link_key, patient_id, decision, method, run_id)
       values (v_op->>'link_key', (v_op->>'patient_id')::uuid, 'link', v_op->>'method', v_run)
       on conflict (link_key) do update
         set patient_id = excluded.patient_id, method = excluded.method, decision = 'link',
-            run_id = excluded.run_id, decided_at = now()
-        where public.sheet_patient_links.method <> 'admin';
-      n_linked := n_linked + 1;
+            run_id = excluded.run_id, decided_at = now(), hold_reason = null
+        where public.sheet_patient_links.method <> 'admin'
+          and public.sheet_patient_links.decision <> 'review';
+      get diagnostics v_rows = row_count;
+      if v_rows > 0 then n_linked := n_linked + 1; else n_skipped := n_skipped + 1; end if;
 
     elsif v_op->>'op' = 'hold' then
       if coalesce(v_op->>'link_key', '') = '' then
         raise exception 'Bad hold op.' using errcode = '22023';
       end if;
-      insert into public.sheet_patient_links (link_key, patient_id, decision, method, run_id)
-      values (v_op->>'link_key', null, 'review', 'auto_exact', v_run)
+      insert into public.sheet_patient_links (link_key, patient_id, decision, method, run_id, hold_reason)
+      values (v_op->>'link_key', null, 'review', 'auto_exact', v_run, left(nullif(v_op->>'reason', ''), 400))
       on conflict (link_key) do update
-        set decision = 'review', patient_id = null, run_id = excluded.run_id, decided_at = now()
+        set decision = 'review', patient_id = null, run_id = excluded.run_id, decided_at = now(),
+            hold_reason = excluded.hold_reason
         where public.sheet_patient_links.method <> 'admin';
       get diagnostics v_rows = row_count;
       if v_rows > 0 then n_held := n_held + 1; else n_skipped := n_skipped + 1; end if;
@@ -729,8 +779,16 @@ begin
     raise exception 'Bad review batch.' using errcode = '22023';
   end if;
   for v_item in select e from jsonb_array_elements(p_items) e loop
+    -- A dismissed item stays dismissed — unless one of its keys is HELD: a
+    -- hold waits for an admin link / create, so hiding it would park the key
+    -- forever. Then the item re-opens (as a new open row).
     if exists (select 1 from public.sheet_sync_review_items i
-                where i.kind = v_item->>'kind' and i.item_key = v_item->>'item_key' and i.status = 'dismissed') then
+                where i.kind = v_item->>'kind' and i.item_key = v_item->>'item_key' and i.status = 'dismissed')
+       and not exists (select 1 from public.sheet_patient_links l
+                        where l.decision = 'review'
+                          and l.link_key in (select jsonb_array_elements_text(
+                                case when jsonb_typeof(v_item->'payload'->'link_keys') = 'array'
+                                     then v_item->'payload'->'link_keys' else '[]'::jsonb end))) then
       continue;
     end if;
     update public.sheet_sync_review_items i
@@ -788,11 +846,20 @@ begin
   return v_n;
 end $$;
 
+-- Maps a sheet answer to a channel: writes the alias (remembering the row it
+-- replaced, for an exact undo) and re-applies it now to the patients whose
+-- channel the nightly fill takes from this answer — those whose EARLIEST
+-- answered linked row carries it, in customer-plan.ts `aggregate` order
+-- (registered_on, undated last, then source_key; a blank answer is no
+-- answer). Moving a patient on any other row would be moved back by the
+-- next nightly fill, bumping row_version every night.
 create or replace function public.sheet_alias_apply(
   p_lease_token uuid, p_raw_normalized text, p_source_id text, p_actor uuid
 ) returns integer language plpgsql security definer set search_path = '' as $$
 declare
   v_run uuid := public._sheet_sync_fence(p_lease_token, true);
+  v_prev public.referral_source_aliases%rowtype;
+  v_replaced jsonb;
   v_old public.patients%rowtype;
   v_new public.patients%rowtype;
   v_id uuid;
@@ -801,13 +868,28 @@ begin
   if coalesce(p_raw_normalized, '') = '' or not exists (select 1 from public.referral_sources rs where rs.id = p_source_id) then
     raise exception 'Unknown channel.' using errcode = '22023';
   end if;
-  insert into public.referral_source_aliases (raw_normalized, referral_source_id, created_by)
-  values (p_raw_normalized, p_source_id, p_actor)
+  select * into v_prev from public.referral_source_aliases a where a.raw_normalized = p_raw_normalized for update;
+  v_replaced := case
+    when v_prev.raw_normalized is null then null
+    -- written earlier in this same run: keep what the run first replaced
+    when v_prev.run_id = v_run then v_prev.replaced
+    else to_jsonb(v_prev) end;
+  insert into public.referral_source_aliases (raw_normalized, referral_source_id, created_by, run_id, replaced)
+  values (p_raw_normalized, p_source_id, p_actor, v_run, v_replaced)
   on conflict (raw_normalized) do update
-    set referral_source_id = excluded.referral_source_id, created_by = excluded.created_by, created_at = now();
+    set referral_source_id = excluded.referral_source_id, created_by = excluded.created_by, created_at = now(),
+        run_id = excluded.run_id, replaced = excluded.replaced;
   update public.sheet_customer_rows set referral_source_id = p_source_id where source_norm = p_raw_normalized;
-  for v_id in select distinct c.patient_id from public.sheet_customer_rows c
-               where c.source_norm = p_raw_normalized and c.patient_id is not null loop
+  for v_id in
+    select e.patient_id from (
+      select distinct on (c.patient_id) c.patient_id, c.source_norm
+        from public.sheet_customer_rows c
+       where c.patient_id is not null and c.source_norm <> ''
+       order by c.patient_id, c.registered_on asc nulls last, c.source_key collate "C"
+    ) e
+     where e.source_norm = p_raw_normalized
+     order by e.patient_id
+  loop
     select * into v_old from public.patients p
      where p.id = v_id and p.merged_into_id is null
        and (p.referral_source is null or p.referral_source_origin = 'sheet')
@@ -827,25 +909,56 @@ begin
 end $$;
 
 -- Undo one run. Patient columns go back to their pre-run values unless the
--- patient changed since (row_version). The run's auto identity decisions and
--- every link of a patient the undo deletes become HOLDS (decision 'review'),
--- so the next nightly run sends those rows to review instead of re-deriving
--- the link the admin just undid.
+-- patient changed since (row_version). So that an undo STICKS instead of the
+-- next nightly run re-deriving what the admin just undid, these become HOLDS
+-- (decision 'review', hold_reason 'undone by an admin'):
+--   * the run's own auto identity decisions, except the links of a created
+--     patient the undo has to keep (in use, or changed since) — a kept
+--     patient keeps its links, as "kept" says;
+--   * every link of a created patient the undo deletes (admin ones too:
+--     there is no patient left to point at);
+--   * for a sync run (cron / manual / cli), the AUTO links of every patient
+--     whose values it restored. A fill may come through a link an EARLIER
+--     run made, and the planner fills every linked key, so holding only this
+--     run's links would let the next run fill the same values again. Links an
+--     admin made are left alone: those rows are the patient's by an admin's
+--     decision, so their values come back on the next run (change the link
+--     in the review queue, or fix the sheet, to stop that).
+-- Undoing a map-answer run also puts back the alias row it replaced (or
+-- removes the one it added), unless a later run has rewritten it since. The
+-- mirror's referral_source_id is left to the next nightly run to recompute.
+-- An undo run itself cannot be undone.
 create or replace function public.sheet_sync_revert_run(p_lease_token uuid, p_target_run uuid)
 returns jsonb language plpgsql security definer set search_path = '' as $$
 declare
   v_run uuid := public._sheet_sync_fence(p_lease_token, true);
+  v_target public.sheet_sync_runs%rowtype;
+  v_sync_run boolean;
   v_pid uuid;
   v_ver bigint;
   v_map jsonb;
   v_cur public.patients%rowtype;
   v_new public.patients%rowtype;
+  v_alias public.referral_source_aliases%rowtype;
+  v_kept uuid[] := '{}';
   v_rows int;
   n_restored int := 0; n_blocked int := 0; n_deleted int := 0; n_kept int := 0; n_held int := 0;
+  n_alias_removed int := 0; n_alias_restored int := 0;
 begin
-  if exists (select 1 from public.sheet_sync_runs r where r.id = p_target_run and r.reverted_by_run_id is not null) then
+  select * into v_target from public.sheet_sync_runs r where r.id = p_target_run for update;
+  if not found then
+    raise exception 'Unknown sheet sync run.' using errcode = '22023';
+  end if;
+  if v_target.reverted_by_run_id is not null then
     raise exception 'This run has already been undone.' using errcode = '22023';
   end if;
+  if v_target.trigger = 'revert' then
+    raise exception 'An undo cannot itself be undone.' using errcode = '22023';
+  end if;
+  if v_target.status = 'running' then
+    raise exception 'That run has not finished.' using errcode = '22023';
+  end if;
+  v_sync_run := v_target.trigger in ('cron','manual','cli');
 
   for v_pid, v_ver, v_map in
     -- order by id desc: when one run changed a column twice, the EARLIEST
@@ -880,24 +993,27 @@ begin
     update public.sheet_sync_changes set reverted_at = now()
      where run_id = p_target_run and patient_id = v_pid and change_kind = 'update';
     n_restored := n_restored + 1;
+    if v_sync_run then
+      -- Hold the auto links that would re-fill what was just restored.
+      update public.sheet_patient_links l
+         set decision = 'review', patient_id = null, run_id = v_run, decided_at = now(),
+             hold_reason = 'undone by an admin'
+       where l.patient_id = v_pid and l.decision = 'link' and l.method <> 'admin';
+      get diagnostics v_rows = row_count;
+      n_held := n_held + v_rows;
+    end if;
   end loop;
-
-  -- The run's own auto decisions (still the latest word on their key) -> holds.
-  update public.sheet_patient_links l
-     set decision = 'review', patient_id = null, run_id = v_run, decided_at = now()
-   where l.run_id = p_target_run and l.method <> 'admin' and l.decision <> 'review';
-  get diagnostics v_rows = row_count;
-  n_held := n_held + v_rows;
 
   for v_pid in select c.patient_id from public.sheet_sync_changes c
                 where c.run_id = p_target_run and c.change_kind = 'create' and c.reverted_at is null loop
     select p.row_version into v_ver from public.patients p where p.id = v_pid for update;
     if not found then continue; end if;
-    if v_ver <> 0 then n_kept := n_kept + 1; continue; end if;
+    if v_ver <> 0 then n_kept := n_kept + 1; v_kept := v_kept || v_pid; continue; end if;
     begin
       -- Hold (not cascade-delete) every key that pointed at this patient.
       update public.sheet_patient_links
-         set decision = 'review', patient_id = null, run_id = v_run, decided_at = now()
+         set decision = 'review', patient_id = null, run_id = v_run, decided_at = now(),
+             hold_reason = 'undone by an admin'
        where patient_id = v_pid;
       get diagnostics v_rows = row_count;
       delete from public.patient_acquisition_facts where patient_id = v_pid;
@@ -910,12 +1026,41 @@ begin
       n_held := n_held + v_rows;
     exception when foreign_key_violation then
       n_kept := n_kept + 1;
+      v_kept := v_kept || v_pid;
     end;
+  end loop;
+
+  -- The run's own auto decisions (still the latest word on their key) -> holds,
+  -- except the links of a created patient the undo kept.
+  update public.sheet_patient_links l
+     set decision = 'review', patient_id = null, run_id = v_run, decided_at = now(),
+         hold_reason = 'undone by an admin'
+   where l.run_id = p_target_run and l.method <> 'admin' and l.decision <> 'review'
+     and not (l.patient_id = any (v_kept));
+  get diagnostics v_rows = row_count;
+  n_held := n_held + v_rows;
+
+  -- A map-answer run: take back the alias it wrote, unless rewritten since.
+  for v_alias in select * from public.referral_source_aliases a where a.run_id = p_target_run for update loop
+    if v_alias.replaced is null then
+      delete from public.referral_source_aliases a where a.raw_normalized = v_alias.raw_normalized;
+      n_alias_removed := n_alias_removed + 1;
+    else
+      update public.referral_source_aliases a set
+        referral_source_id = v_alias.replaced->>'referral_source_id',
+        created_by = (select u.id from auth.users u where u.id = (v_alias.replaced->>'created_by')::uuid),
+        created_at = coalesce((v_alias.replaced->>'created_at')::timestamptz, now()),
+        run_id = (select r.id from public.sheet_sync_runs r where r.id = (v_alias.replaced->>'run_id')::uuid),
+        replaced = nullif(v_alias.replaced->'replaced', 'null'::jsonb)
+      where a.raw_normalized = v_alias.raw_normalized;
+      n_alias_restored := n_alias_restored + 1;
+    end if;
   end loop;
 
   update public.sheet_sync_runs set reverted_by_run_id = v_run where id = p_target_run;
   return jsonb_build_object('restored', n_restored, 'blocked', n_blocked, 'deleted', n_deleted,
-                            'kept', n_kept, 'held', n_held);
+                            'kept', n_kept, 'held', n_held,
+                            'alias_removed', n_alias_removed, 'alias_restored', n_alias_restored);
 end $$;
 
 -- Re-sort candidates: May-imported live patients and their original answer
@@ -934,28 +1079,44 @@ $$;
 -- Admin decision on a review item. Refused while a real (non-preview) sync
 -- is mid-run with a live heartbeat, so a decision cannot land between that
 -- run's read of the saved decisions and its writes. A run with no heartbeat
--- for 10 minutes is dead by the lease's own rule and does not block.
+-- in the live window is dead by the lease's own rule and does not block —
+-- and the fence refuses that run's every later write (P0063), so it cannot
+-- act on the decisions it read before this one. The lease lock serialises
+-- with acquire, and locking the running row waits out a write the worker has
+-- in flight (the fence holds that row), then re-reads its heartbeat.
+--
+-- Dismiss is refused for an item any of whose keys is HELD: a hold is only
+-- ever replaced by an admin link or create (the review queue offers those
+-- two for a held item), and a dismissed hold would park the key unseen.
 create or replace function public.sheet_review_resolve(
   p_item_id uuid, p_actor uuid, p_action text, p_patient_id uuid
 ) returns void language plpgsql security definer set search_path = '' as $$
-declare v_item public.sheet_sync_review_items%rowtype;
+declare
+  v_item public.sheet_sync_review_items%rowtype;
+  v_live public.sheet_sync_runs%rowtype;
+  v_keys jsonb;
 begin
-  if exists (select 1 from public.sheet_sync_runs r
-              where r.status = 'running' and not r.dry_run
-                and r.heartbeat_at > now() - interval '10 minutes') then
+  perform pg_advisory_xact_lock(hashtext('sheet_sync_lease'));
+  select * into v_live from public.sheet_sync_runs r where r.status = 'running' for update;
+  if found and not v_live.dry_run and public._sheet_sync_lease_live(v_live.heartbeat_at) then
     raise exception 'Another sheet sync is running.' using errcode = 'P0062';
   end if;
   select * into v_item from public.sheet_sync_review_items i where i.id = p_item_id and i.status = 'open' for update;
   if not found then
     raise exception 'This review item was already handled.' using errcode = 'P0064';
   end if;
+  v_keys := case when jsonb_typeof(v_item.payload->'link_keys') = 'array' then v_item.payload->'link_keys' else '[]'::jsonb end;
   if p_action = 'dismiss' then
+    if exists (select 1 from public.sheet_patient_links l
+                where l.decision = 'review' and l.link_key in (select jsonb_array_elements_text(v_keys))) then
+      raise exception 'This row is held for a decision: link it to a patient or create a new one.' using errcode = '22023';
+    end if;
     update public.sheet_sync_review_items
        set status = 'dismissed', resolved_by = p_actor, resolved_at = now(), resolution = jsonb_build_object('action', 'dismiss')
      where id = p_item_id;
     return;
   end if;
-  if p_action not in ('link','create')
+  if p_action is null or p_action not in ('link','create')
      or v_item.kind not in ('ambiguous_patient','identity_conflict','possible_existing_patient') then
     raise exception 'That action does not fit this item.' using errcode = '22023';
   end if;
@@ -965,10 +1126,10 @@ begin
   -- Overwrites any saved decision for the key, holds included.
   insert into public.sheet_patient_links (link_key, patient_id, decision, method, decided_by, run_id)
   select k, case when p_action = 'link' then p_patient_id end, p_action, 'admin', p_actor, null
-    from jsonb_array_elements_text(coalesce(v_item.payload->'link_keys', '[]'::jsonb)) k
+    from jsonb_array_elements_text(v_keys) k
   on conflict (link_key) do update
     set patient_id = excluded.patient_id, decision = excluded.decision, method = 'admin',
-        decided_by = excluded.decided_by, decided_at = now(), run_id = null;
+        decided_by = excluded.decided_by, decided_at = now(), run_id = null, hold_reason = null;
   update public.sheet_sync_review_items
      set status = 'resolved', resolved_by = p_actor, resolved_at = now(),
          resolution = jsonb_build_object('action', p_action, 'patient_id', p_patient_id)
@@ -981,6 +1142,7 @@ do $$
 declare f text;
 begin
   foreach f in array array[
+    'public._sheet_sync_lease_live(timestamptz)',
     'public._sheet_sync_fence(uuid, boolean)',
     'public._sheet_sync_record_changes(uuid, jsonb, jsonb)',
     'public.sheet_sync_acquire(text, uuid, boolean)',
@@ -999,6 +1161,7 @@ begin
     execute format('revoke execute on function %s from anon, authenticated', f);
   end loop;
 end $$;
+revoke execute on function public._sheet_sync_lease_live(timestamptz) from service_role;
 revoke execute on function public._sheet_sync_fence(uuid, boolean) from service_role;
 revoke execute on function public._sheet_sync_record_changes(uuid, jsonb, jsonb) from service_role;
 grant execute on function public.sheet_sync_acquire(text, uuid, boolean) to service_role;
@@ -1054,8 +1217,8 @@ begin
     end if;
   end loop;
   if (select count(*) from pg_proc p join pg_namespace n on n.oid = p.pronamespace
-       where n.nspname = 'public' and (p.proname like 'sheet\_%' or p.proname like '\_sheet\_sync\_%')) <> 14 then
-    raise exception '0170: expected exactly 14 sheet sync routines (a stale overload survived?)';
+       where n.nspname = 'public' and (p.proname like 'sheet\_%' or p.proname like '\_sheet\_sync\_%')) <> 15 then
+    raise exception '0170: expected exactly 15 sheet sync routines (a stale overload survived?)';
   end if;
 
   -- Tables: anon gets nothing; authenticated may only read, and never the staging table.

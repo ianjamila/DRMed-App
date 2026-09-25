@@ -4,13 +4,17 @@
  * run 1 and re-plan. It must mirror the SQL contract exactly:
  *
  * - create: inserts the patient (an unknown referral_source id → null; origin
- *   'sheet' when a channel is set). Each link key is inserted with method
- *   'admin' when it is in `admin_link_keys`, else 'auto_exact'; an existing
- *   row is re-pointed (decision 'link', method kept) only when its method is
- *   not admin or it was an admin 'create'.
- * - link: upsert, never over an admin row.
- * - hold: upsert (patient_id null, decision 'review', method 'auto_exact');
- *   an existing non-admin row becomes decision 'review', patient_id null.
+ *   'sheet' when a channel is set). Each link key is written with method
+ *   'admin' when it is in `admin_link_keys`, else 'auto_exact' — an existing
+ *   row takes that method too (SQL: `method = excluded.method`) and is
+ *   re-pointed (decision 'link') only when it is not a hold and its method is
+ *   not admin or it was an admin 'create'. Any other existing row makes the
+ *   SQL raise 22023 and roll the chunk back; here it THROWS, so a plan that
+ *   would do it fails the test instead of being modelled.
+ * - link: upsert, never over an admin row or a hold (skipped).
+ * - hold: upsert (patient_id null, decision 'review', method 'auto_exact',
+ *   hold_reason = the op reason); an existing non-admin row becomes decision
+ *   'review', patient_id null, with that reason.
  * - fill: skipped for a missing or merged patient; coalesce per column; the
  *   senior/PWD pair only when both are blank; referral_source only when the
  *   patient has none or the sheet owns it (unknown id → null), and the
@@ -52,31 +56,31 @@ export function applyOps(ops: readonly CustomerOp[], w: World): World {
       patients.push(rec); byId.set(id, rec);
       for (const k of o.link_keys) {
         const ex = links.get(k);
-        if (ex) {
-          if (ex.method === "admin" && ex.decision !== "create") continue;
-          links.set(k, { ...ex, patient_id: id, decision: "link" });
-        } else {
-          links.set(k, { link_key: k, patient_id: id, decision: "link", method: o.admin_link_keys.includes(k) ? "admin" : "auto_exact" });
+        if (ex && (ex.decision === "review" || (ex.method === "admin" && ex.decision !== "create"))) {
+          throw new Error(`create over a ${ex.decision === "review" ? "hold" : "admin decision"} (${k}): 0170 raises 22023`);
         }
+        links.set(k, { link_key: k, patient_id: id, decision: "link", method: o.admin_link_keys.includes(k) ? "admin" : "auto_exact", hold_reason: null });
       }
       facts.set(id, { patient_id: id, registered_on: o.facts.registered_on, sheet_new_repeat: o.facts.new_repeat, source_ref: o.facts.source_ref });
     } else if (o.op === "link") {
       const ex = links.get(o.link_key);
-      if (ex && ex.method === "admin") continue;
-      links.set(o.link_key, { link_key: o.link_key, patient_id: o.patient_id, decision: "link", method: o.method });
+      if (ex && (ex.method === "admin" || ex.decision === "review")) continue;
+      links.set(o.link_key, { link_key: o.link_key, patient_id: o.patient_id, decision: "link", method: o.method, hold_reason: null });
     } else if (o.op === "hold") {
       const ex = links.get(o.link_key);
       if (ex && ex.method === "admin") continue;
-      links.set(o.link_key, ex ? { ...ex, patient_id: null, decision: "review" }
-        : { link_key: o.link_key, patient_id: null, decision: "review", method: "auto_exact" });
+      const hold_reason = o.reason ? o.reason.slice(0, 400) : null;
+      links.set(o.link_key, ex ? { ...ex, patient_id: null, decision: "review", hold_reason }
+        : { link_key: o.link_key, patient_id: null, decision: "review", method: "auto_exact", hold_reason });
     } else if (o.op === "fill") {
       const p = byId.get(o.patient_id);
       if (!p || p.merged_into_id) continue;
       const f = o.fields;
       for (const c of COALESCE) if (p[c] === null && f[c] !== undefined) p[c] = f[c] || null;
-      if (p.senior_pwd_id_kind === null && p.senior_pwd_id_number === null) {
-        p.senior_pwd_id_kind = f.senior_pwd_id_kind || null;
-        p.senior_pwd_id_number = f.senior_pwd_id_number || null;
+      // the pair: only when both are blank on the patient AND both are in the op
+      if (p.senior_pwd_id_kind === null && p.senior_pwd_id_number === null && f.senior_pwd_id_kind && f.senior_pwd_id_number) {
+        p.senior_pwd_id_kind = f.senior_pwd_id_kind;
+        p.senior_pwd_id_number = f.senior_pwd_id_number;
       }
       if ("referral_source" in f && (p.referral_source === null || p.referral_source_origin === "sheet")) {
         const v = knownSource(f.referral_source);

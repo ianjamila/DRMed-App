@@ -8,7 +8,10 @@
  * the same sheet emits no op at all; (4) no filled / created value comes from
  * a row that is not attached to that patient (a reviewed row never is);
  * (5) no auto-attached row conflicts (DOB, or phone without a matching DOB)
- * with the patient it ends up on.
+ * with the patient it ends up on; (6) the same for a stranger arriving on a
+ * later run; (7) a key held before a run (a HOLD, decision "review") is
+ * byte-for-byte the same after that run is applied — and no plan asks the
+ * SQL model for a write 0170 would refuse.
  *
  * Seeded, so it is deterministic: a failure prints its case number and world.
  */

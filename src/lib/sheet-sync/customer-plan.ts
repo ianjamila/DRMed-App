@@ -273,11 +273,14 @@ export function planCustomers(input: Input): CustomerPlan {
    * Rule 0: a HELD key. Candidates are computed as usual so the admin sees
    * them, and a more specific kind this run computes (a DOB conflict, a
    * possible existing patient) is kept — but the answer is always review.
+   * A hold placed by an undo ("undone by an admin") never re-links or
+   * re-fills: that is what makes the undo stick.
    */
   function resolveHeld(g: Group): Resolution {
     const fresh = resolveFresh(g, false);
-    if (fresh.kind === "review") return review(fresh.review, "held for an admin decision", fresh.candidates, { detail: fresh.reason, ...fresh.extra });
-    return review("ambiguous_patient", "held for an admin decision", fresh.kind === "linked" ? [fresh.patientId] : []);
+    const why = g.stored?.hold_reason ? { held_because: g.stored.hold_reason } : {};
+    if (fresh.kind === "review") return review(fresh.review, "held for an admin decision", fresh.candidates, { detail: fresh.reason, ...fresh.extra, ...why });
+    return review("ambiguous_patient", "held for an admin decision", fresh.kind === "linked" ? [fresh.patientId] : [], why);
   }
 
   // ---- Pass 1: one resolution per key group. ----
