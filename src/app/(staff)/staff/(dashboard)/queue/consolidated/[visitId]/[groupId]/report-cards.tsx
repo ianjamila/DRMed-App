@@ -157,7 +157,9 @@ export function ReportCards({
                 >
                   View PDF →
                 </a>
-              ) : null}
+              ) : (
+                <span className="text-sm text-[color:var(--color-brand-text-soft)]">View PDF —</span>
+              )}
               {rep.editHref && editForm?.resultId !== rep.resultId ? (
                 <Link
                   href={rep.editHref}
@@ -180,14 +182,20 @@ export function ReportCards({
                   Edit history
                 </p>
                 <p className="mt-1 text-xs">
-                  <a
-                    href={`/staff/results/${rep.pdfTestRequestId}/pdf`}
-                    target="_blank"
-                    rel="noopener"
-                    className="font-semibold text-[color:var(--color-brand-cyan)] hover:underline"
-                  >
-                    Current version (v{rep.amendmentCount + 1})
-                  </a>
+                  {rep.canViewPdf ? (
+                    <a
+                      href={`/staff/results/${rep.pdfTestRequestId}/pdf`}
+                      target="_blank"
+                      rel="noopener"
+                      className="font-semibold text-[color:var(--color-brand-cyan)] hover:underline"
+                    >
+                      Current version (v{rep.amendmentCount + 1})
+                    </a>
+                  ) : (
+                    <span className="text-[color:var(--color-brand-text-soft)]">
+                      Current version (v{rep.amendmentCount + 1}) —
+                    </span>
+                  )}
                 </p>
                 <ul className="mt-2 grid gap-2 text-xs">
                   {rep.history.map((h) => (
@@ -196,14 +204,20 @@ export function ReportCards({
                         v{h.seq + 1} · {manilaDateTime(h.at)} · {h.by ?? "—"}
                       </p>
                       <p className="mt-1 text-[color:var(--color-brand-text-mid)]">{h.reason}</p>
-                      <a
-                        href={`/staff/results/${rep.pdfTestRequestId}/pdf?version=${h.seq}`}
-                        target="_blank"
-                        rel="noopener"
-                        className="mt-1 inline-block text-[10px] font-semibold text-[color:var(--color-brand-cyan)] hover:underline"
-                      >
-                        View replaced version (v{h.seq})
-                      </a>
+                      {rep.canViewPdf ? (
+                        <a
+                          href={`/staff/results/${rep.pdfTestRequestId}/pdf?version=${h.seq}`}
+                          target="_blank"
+                          rel="noopener"
+                          className="mt-1 inline-block text-[10px] font-semibold text-[color:var(--color-brand-cyan)] hover:underline"
+                        >
+                          View replaced version (v{h.seq})
+                        </a>
+                      ) : (
+                        <span className="mt-1 inline-block text-[10px] font-semibold text-[color:var(--color-brand-text-soft)]">
+                          View replaced version (v{h.seq}) —
+                        </span>
+                      )}
                     </li>
                   ))}
                 </ul>
