@@ -634,30 +634,74 @@ function sourcesOf(mask: string, children: Unit[]): Map<string, string> {
   return out;
 }
 
-/** The branch text with every `filter (where …)` clause blanked. */
-function withoutFilterClauses(b: Branch): string {
-  const text = b.text.split("");
-  for (const m of b.mask.matchAll(/\bfilter\s*\(/gi)) {
-    const open = m.index + m[0].length - 1;
-    for (let k = m.index; k <= closeParen(b.mask, open) && k < text.length; k++) text[k] = " ";
+/** Blank `text` over [a, b]. */
+const blankRange = (text: string[], a: number, b: number) => {
+  for (let k = a; k <= b && k < text.length; k++) text[k] = " ";
+};
+
+/** Every `case … end` expression in masked text, as [start, end] ranges (outermost). */
+function caseRanges(mask: string): [number, number][] {
+  const out: [number, number][] = [];
+  const re = /\b(case|end)\b/gi;
+  let depth = 0;
+  let start = -1;
+  for (const m of mask.matchAll(re)) {
+    if (m[1]!.toLowerCase() === "case") {
+      if (depth++ === 0) start = m.index;
+    } else if (depth > 0 && --depth === 0) {
+      out.push([start, m.index + m[0].length - 1]);
+    }
   }
+  return out;
+}
+
+/**
+ * The part of a branch that filters ROWS: from its first top-level `from`
+ * on (so WHERE, JOIN … ON, HAVING), with every `filter (where …)` clause and
+ * `case … end` expression blanked. A status test inside one aggregate's
+ * FILTER or CASE constrains that aggregate only — never its siblings.
+ */
+function rowFilterText(b: Branch): string {
+  const text = b.text.split("");
+  let depth = 0;
+  let from = b.mask.length;
+  for (let k = 0; k < b.mask.length; k++) {
+    if (b.mask[k] === "(") depth++;
+    else if (b.mask[k] === ")") depth--;
+    else if (depth === 0 && /^from\b/i.test(b.mask.slice(k, k + 5)) && (k === 0 || !/\w/.test(b.mask[k - 1]!))) {
+      from = k;
+      break;
+    }
+  }
+  blankRange(text, 0, from - 1);
+  for (const m of b.mask.matchAll(/\bfilter\s*\(/gi)) {
+    blankRange(text, m.index, closeParen(b.mask, m.index + m[0].length - 1));
+  }
+  for (const [a, e] of caseRanges(b.mask)) blankRange(text, a, e);
   return text.join("");
 }
 
-/** How many `sum(…)` in the branch lack their OWN `filter (where status in (posted, reversed))`. */
+/** How many `sum(…)` in the branch are not protected by their OWN status condition. */
 function sumsWithoutOwnFilter(b: Branch): number {
   let loose = 0;
   for (const m of b.mask.matchAll(/\bsum\s*\(/gi)) {
-    const close = closeParen(b.mask, m.index + m[0].length - 1);
+    const open = m.index + m[0].length - 1;
+    const close = closeParen(b.mask, open);
+    // sum(case when je.status in ('posted', 'reversed') then … end)
+    if (countsBoth(b.text.slice(open, close + 1))) continue;
+    // sum(…) filter (where je.status in ('posted', 'reversed'))
     const filter = /^\s*filter\s*\(/i.exec(b.mask.slice(close + 1));
     if (filter) {
-      const open = close + 1 + filter[0].length - 1;
-      if (countsBoth(b.text.slice(open, closeParen(b.mask, open) + 1))) continue;
+      const fOpen = close + 1 + filter[0].length - 1;
+      if (countsBoth(b.text.slice(fOpen, closeParen(b.mask, fOpen) + 1))) continue;
     }
     loose++;
   }
   return loose;
 }
+
+/** Does the branch sum at all? */
+const sums = (b: Branch) => /\bsum\s*\(/i.test(b.mask);
 
 class Journal {
   /** Views that read journal data, directly or through another such view. */
@@ -767,7 +811,7 @@ class Journal {
     for (const u of a.units) {
       for (const b of branches(a, u)) {
         const loose = sumsWithoutOwnFilter(b);
-        if (loose === 0 || countsBoth(withoutFilterClauses(b))) continue;
+        if (loose === 0 || countsBoth(rowFilterText(b))) continue;
         const sourcesRead = this.branchSources(a, b, new Set());
         if (sourcesRead.length === 0 || sourcesRead.every((src) => src)) continue;
         out.push(b.text.replace(/\s+/g, " ").trim().slice(0, 120));
@@ -780,7 +824,11 @@ class Journal {
   private unitSources(a: Analysed, u: Unit, seen: Set<Unit>): boolean[] {
     if (seen.has(u)) return [];
     seen.add(u);
-    return branches(a, u).flatMap((b) => this.branchSources(a, b, seen));
+    // A branch whose every sum is protected by its own condition exports
+    // subtotals that already count both statuses — summing them again is fine.
+    return branches(a, u).flatMap((b) =>
+      sums(b) && sumsWithoutOwnFilter(b) === 0 ? [true] : this.branchSources(a, b, seen),
+    );
   }
 
   /**
@@ -789,7 +837,7 @@ class Journal {
    * `filter (where …)` clause, which constrains only its own aggregate)?
    */
   private branchSources(a: Analysed, b: Branch, seen: Set<Unit>): boolean[] {
-    const pair = countsBoth(withoutFilterClauses(b));
+    const pair = countsBoth(rowFilterText(b));
     const ctes = this.ctes(a, b.unit);
     const out: boolean[] = [];
     for (const name of new Set(sourcesOf(b.mask, []).values())) {
@@ -1178,5 +1226,45 @@ describe("second-round review reproducers", () => {
     );
     expect(p.sums("view:v_total")).toEqual([]);
     expect(p.sums("view:v_leaky_total")).toHaveLength(1);
+  });
+});
+
+describe("third-round review reproducers", () => {
+  it("does not let a status test inside one CASE protect its sibling sums", () => {
+    const p = probe(`create view public.v_pnl as
+      select je.posting_date,
+        sum(case when coa.type = 'revenue' and je.status in ('posted', 'reversed') then jl.credit_php else 0 end) as revenue,
+        sum(case when coa.type = 'expense' then jl.debit_php else 0 end) as expense
+      from journal_lines jl join journal_entries je on je.id = jl.entry_id
+      join chart_of_accounts coa on coa.id = jl.account_id
+      group by je.posting_date;`);
+    expect(p.sums("view:v_pnl")).toHaveLength(1);
+  });
+
+  it("accepts the same report with the status test in WHERE", () => {
+    const p = probe(`create view public.v_pnl as
+      select je.posting_date,
+        sum(case when coa.type = 'revenue' then jl.credit_php else 0 end) as revenue,
+        sum(case when coa.type = 'expense' then jl.debit_php else 0 end) as expense
+      from journal_lines jl join journal_entries je on je.id = jl.entry_id
+      join chart_of_accounts coa on coa.id = jl.account_id
+      where je.status in ('posted', 'reversed')
+      group by je.posting_date;`);
+    expect(p.sums("view:v_pnl")).toEqual([]);
+  });
+
+  it("accepts re-summing subtotals that were filtered at their own aggregate", () => {
+    const p = probe(
+      `create view public.v_daily as select je.posting_date as d,
+         sum(jl.debit_php) filter (where je.status in ('posted', 'reversed')) as amount
+         from journal_lines jl join journal_entries je on je.id = jl.entry_id group by 1;`,
+      "create view public.v_monthly as select date_trunc('month', d) as m, sum(amount) from v_daily group by 1;",
+      `create function public.f() returns numeric language sql as $$
+         with daily as (select sum(jl.debit_php) filter (where je.status in ('posted', 'reversed')) as amount
+                        from journal_lines jl join journal_entries je on je.id = jl.entry_id)
+         select sum(amount) from daily $$;`,
+    );
+    expect(p.sums("view:v_monthly")).toEqual([]);
+    expect(p.sums("function:f()")).toEqual([]);
   });
 });
