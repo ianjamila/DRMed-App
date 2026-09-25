@@ -195,17 +195,31 @@ function chainRoot(node: ts.Node): ts.Identifier | null {
 const methodOf = (call: ts.CallExpression) =>
   ts.isPropertyAccessExpression(call.expression) ? call.expression.name.text : "";
 
-/** `const X = "…"` anywhere in the file, so `.eq("status", POSTED)` still reads as "posted". */
-function stringConstants(src: ts.SourceFile): Map<string, string> {
-  const out = new Map<string, string>();
+/**
+ * `const X = "…"` bindings, keyed by the block (or file) that declares them,
+ * so `.eq("status", POSTED)` still reads as "posted". Scoped rather than
+ * file-wide: two functions may each declare their own `STATUS`, and a
+ * file-wide map would let the second overwrite the first. `let`/`var` are
+ * left out — a reassignable binding has no single value to resolve.
+ */
+type ScopedConsts = Map<ts.Node, Map<string, string>>;
+
+function stringConstants(src: ts.SourceFile): ScopedConsts {
+  const out: ScopedConsts = new Map();
   const visit = (node: ts.Node) => {
     if (
       ts.isVariableDeclaration(node) &&
       ts.isIdentifier(node.name) &&
       node.initializer &&
-      ts.isStringLiteralLike(node.initializer)
+      ts.isStringLiteralLike(node.initializer) &&
+      ts.isVariableDeclarationList(node.parent) &&
+      (node.parent.flags & ts.NodeFlags.Const) !== 0
     ) {
-      out.set(node.name.text, node.initializer.text);
+      // declaration → list → statement → the block/file that scopes it
+      const container = node.parent.parent.parent;
+      const names = out.get(container) ?? new Map<string, string>();
+      names.set(node.name.text, node.initializer.text);
+      out.set(container, names);
     }
     node.forEachChild(visit);
   };
@@ -213,11 +227,32 @@ function stringConstants(src: ts.SourceFile): Map<string, string> {
   return out;
 }
 
+/** The innermost `const` binding of `id` visible at `id`, if it holds a string. */
+function resolveConst(id: ts.Identifier, consts: ScopedConsts): string | null {
+  for (let cur: ts.Node | undefined = id.parent; cur; cur = cur.parent) {
+    const value = consts.get(cur)?.get(id.text);
+    if (value !== undefined) return value;
+  }
+  return null;
+}
+
 /**
  * `status = 'posted'` / `status in ('posted')` in raw SQL, optionally
- * qualified (`je.status`). The `set` form is a write and is skipped below.
+ * qualified (`je.status`). An assignment inside a SET clause is a write and
+ * is skipped below.
  */
 const RAW_POSTED_SQL = /\b(?:\w+\.)?status\s*(?:=\s*'posted'|in\s*\(\s*'posted'\s*\))/gi;
+
+/**
+ * Is the text ending here inside an UPDATE's SET list? True when the last
+ * `set` keyword comes after the last keyword that starts a predicate or a new
+ * clause — so `set posted_at = now(), status = 'posted'` is an assignment,
+ * while `… set x = 1 where status = 'posted'` is a read.
+ */
+function inSetClause(before: string): boolean {
+  const lastOf = (re: RegExp) => Math.max(-1, ...[...before.matchAll(re)].map((m) => m.index));
+  return lastOf(/\bset\b/gi) > lastOf(/\b(where|from|join|on|select|returning|having)\b/gi);
+}
 
 function scanSource(text: string, full: string): Finding[] {
   if (!/journal_(entries|lines)/.test(text)) return [];
@@ -251,7 +286,7 @@ function scanSource(text: string, full: string): Finding[] {
   const str = (a: ts.Expression | undefined): string | null => {
     if (!a) return null;
     if (ts.isStringLiteralLike(a)) return a.text;
-    if (ts.isIdentifier(a)) return consts.get(a.text) ?? null;
+    if (ts.isIdentifier(a)) return resolveConst(a, consts);
     return null;
   };
   const strArg = (call: ts.CallExpression, i: number) => str(call.arguments[i]);
@@ -410,7 +445,7 @@ function scanSource(text: string, full: string): Finding[] {
       const sql = node.getText(src);
       if (/journal_(entries|lines)/.test(sql)) {
         const reads = [...sql.matchAll(RAW_POSTED_SQL)].filter(
-          (m) => !/\bset\s+$/i.test(sql.slice(0, m.index)),
+          (m) => !inSetClause(sql.slice(0, m.index)),
         );
         if (reads.length > 0) push(node, "posted-only");
       }
@@ -608,6 +643,27 @@ describe("the scanner", () => {
     expect(found.map((f) => f.key)).toEqual(["probe.ts › a", "probe.ts › b"]);
   });
 
+  it("flags a read predicate that follows a SET clause", () => {
+    const found = probe(
+      "const SQL = `update journal_entries set notes = 'x' where status = 'posted'`;",
+    );
+    expect(found).toHaveLength(1);
+  });
+
+  it("resolves each constant in its own scope", () => {
+    const found = probe(`
+      function a(c) { const STATUS = "posted"; return c.from("journal_lines").select("id").eq("journal_entries.status", STATUS); }
+      function b(c) { const STATUS = "reversed"; return c.from("journal_lines").select("id").eq("journal_entries.status", STATUS); }`);
+    expect(found.map((f) => f.key)).toEqual(["probe.ts › a"]);
+  });
+
+  it("does not resolve a reassignable let", () => {
+    expect(
+      probe(`
+        function a(c, x) { let s = "posted"; s = x; return c.from("journal_lines").select("id").eq("journal_entries.status", s); }`),
+    ).toEqual([]);
+  });
+
   it("flags raw SQL spelled status in ('posted')", () => {
     const found = probe("const SQL = `select count(*) from journal_entries where status in ('posted')`;");
     expect(found).toHaveLength(1);
@@ -618,7 +674,8 @@ describe("the scanner", () => {
       probe(`
         const A = "select * from bills where status = 'posted'";
         const B = "update journal_entries set status = 'posted' where id = $1";
-        const C = "update journal_entries je set je.status = 'posted'";`),
+        const C = "update journal_entries je set je.status = 'posted'";
+        const D = "update journal_entries set posted_at = now(), status = 'posted' where id = $1";`),
     ).toEqual([]);
   });
 });
