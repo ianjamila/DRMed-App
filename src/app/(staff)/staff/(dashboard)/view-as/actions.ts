@@ -1,0 +1,32 @@
+"use server";
+
+// Admin "View as role" — Server Actions. Thin: auth → core → invalidate the
+// staff layout → go home. The sidebar, footer and banner are rendered by the
+// shared (dashboard)/layout.tsx, which Next caches across client navigations;
+// without revalidatePath("/staff", "layout") the shell would keep showing the
+// previous role while the database already applies the new one (same reason
+// messages/actions.ts revalidates the layout for its badge).
+//
+// A refused switch (non-admin, bad role) just goes home: no staff member who
+// is not an admin ever sees the control, so there is nothing to explain.
+import { revalidatePath } from "next/cache";
+import { redirect } from "next/navigation";
+import { requireActiveStaff } from "@/lib/auth/require-staff";
+import { exitViewAs, startViewAs } from "@/lib/auth/view-as-switch";
+import { ipAndAgent } from "@/lib/server/action-helpers";
+
+export async function startViewAsAction(formData: FormData): Promise<void> {
+  const session = await requireActiveStaff();
+  const { ip, ua } = await ipAndAgent();
+  await startViewAs(session, formData.get("role"), { ip, ua });
+  revalidatePath("/staff", "layout");
+  redirect("/staff");
+}
+
+export async function exitViewAsAction(): Promise<void> {
+  const session = await requireActiveStaff();
+  const { ip, ua } = await ipAndAgent();
+  await exitViewAs(session, { ip, ua });
+  revalidatePath("/staff", "layout");
+  redirect("/staff");
+}
