@@ -611,7 +611,7 @@ narrow exceptions are defined by *which columns change*, not by who initiated th
 
 | Table | Patient path | Exceptions allowed on an inactive patient |
 |---|---|---|
-| `visits` | `patient_id` | UPDATE touching only the derived columns `paid_php`, `payment_status`, `total_php`, `updated_at` (payment recalc, 0125 total cascade) |
+| `visits` | `patient_id` | none — the payment recalc and 0125 total cascade only fire from payment/line writes, which are refused first |
 | `test_requests` | visit | none (includes `cancelled`/soft delete: cancelling a released test reverses revenue + PF, 0166 — Codex P1-15). Statuses: `requested`, `in_progress`, `result_uploaded`, `ready_for_release`, `released`, `cancelled` — no status change allowed |
 | `payments` | visit | none (insert, void, edit, move, `correct_payment` all refused) |
 | `visit_pins` | visit | DELETE (retention cron); UPDATE of login bookkeeping only (`failed_attempts`, `locked_until`, `last_used_at` — exact names pinned in the plan). **PIN reissue (hash/expiry change) is refused** (Codex P1-16) |
@@ -623,10 +623,10 @@ narrow exceptions are defined by *which columns change*, not by who initiated th
 | `result_values` | result → junction | none (covers `result_save_draft`, Codex P1-2) |
 | `result_amendments` | test_request | none |
 | `critical_alerts` | `patient_id` / test_request | UPDATE of acknowledgement columns only (`acknowledged_by`, `acknowledged_at`, note — pinned in the plan); the existing role restriction on acknowledging is unchanged (Codex P3-23). Owner can flip this default |
-| `hmo_claim_items` | test_request | UPDATE touching only derived rollup columns maintained by allocation/resolution triggers (pinned in the plan); **un-void via batch reopen is refused** (Codex P1-14) |
+| `hmo_claim_items` | test_request | none — rollups only move when an allocation/resolution is written (refused first); **un-void via batch reopen is refused**, because the nested `batch_voided` propagation (0034:315) is checked like any write (Codex P1-14) |
 | `hmo_payment_allocations` | item + payment | none (void refused: it reopens a settled balance — Codex P1-15) |
 | `hmo_claim_resolutions` | item | none (void refused — Codex P1-15) |
-| `hmo_claim_batches` | none (multi-patient header) | own guard: any transition that **increases liability** (un-void / reopen, per 0034:315 propagation) checks every item's patient and refuses if any is inactive; status recompute from `recompute_hmo_batch_status` is allowed |
+| `hmo_claim_batches` | none (multi-patient header) | not guarded itself: `recompute_hmo_batch_status` is unaffected, and a reopen that would un-void an inactive patient's item fails in that item's guard (nested writes are checked) |
 | `doctor_pf_entries` | test_request | UPDATE of disbursement link/unlink columns only (`pf-disbursements.ts:81`: paying a doctor for already-done work adds nothing to the patient — Codex P1-16); void/insert refused |
 | `cogs_send_out_entries` | test_request | none |
 
