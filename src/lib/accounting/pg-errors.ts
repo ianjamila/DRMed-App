@@ -207,6 +207,23 @@ export function translatePgError(err: PgError): string {
         : "This result can't be edited right now. Reload the page and try again.";
     case "P0067":
       return "This test is part of a finished combined report (such as Chemistry), so it can't be deleted on its own.";
+    // 0183 — waived balances
+    case "P0069":
+      // Entering 'waived' outside waive_visit_balance(), leaving it, or
+      // changing a waived visit's total / paid / billing / waiver record.
+      return err.message ?? "A balance can only be waived with Waive balance on the visit page.";
+    case "P0070":
+      // Money or bill lines on a waived visit. Several messages, all written
+      // for staff — pass them through.
+      return err.message ?? "This visit's balance was waived, so its payments and lines are fixed.";
+    case "P0071":
+      // waive_visit_balance refusals (not admin, HMO, already waived/paid,
+      // mixed provenance, total out of step, gift code in flight …).
+      return err.message ?? "This visit's balance cannot be waived.";
+    case "40P01":
+      // deadlock_detected — the 0183 serialization protocol accepts one rare
+      // cycle (waiver vs. an undo cascade) and lets Postgres abort one side.
+      return "Something else changed this visit at the same moment. Try again.";
     default:
       return err.message ?? "Database error. Please try again.";
   }
