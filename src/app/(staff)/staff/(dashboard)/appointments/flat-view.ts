@@ -37,7 +37,7 @@ export const BUCKET_LABEL: Record<BucketKey, string> = {
   pending: "Pending callback",
   walkin: "Walk-in waiting",
   today: "Today",
-  upcoming: "Next 30 days",
+  upcoming: "Upcoming",
 };
 
 export const BUCKET_STYLE: Record<BucketKey, string> = {
