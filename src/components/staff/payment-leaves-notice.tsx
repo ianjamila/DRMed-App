@@ -23,6 +23,7 @@ export function PaymentLeavesNotice({
   visitNumber: string;
   amount: number;
   released: ReleasedCounts;
+  /** Layout only — no text colour, or it fights the amber emphasis. */
   className?: string;
 }) {
   const state = paymentLeavesState(visit, amount, released);

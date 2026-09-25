@@ -110,7 +110,7 @@ export function VoidPaymentDialog({
             visitNumber={visitNumber}
             amount={amount}
             released={released}
-            className="rounded-md bg-[color:var(--color-brand-bg)] p-3 text-xs text-[color:var(--color-brand-text-mid)]"
+            className="rounded-md bg-[color:var(--color-brand-bg)] p-3 text-xs"
           />
           <fieldset className="grid gap-1.5">
             <legend className="mb-1.5 text-sm font-medium">Why are you deleting it? *</legend>

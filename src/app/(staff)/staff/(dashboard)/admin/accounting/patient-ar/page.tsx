@@ -280,17 +280,6 @@ export default async function PatientArPage({ searchParams }: SearchProps) {
     enriched.filter((r) => r.outstanding > 0 && r.v.hmo_provider_id === null).map((r) => r.v.id),
   );
 
-  const grandTotal =
-    totals.current.amount +
-    totals.d31_60.amount +
-    totals.d61_90.amount +
-    totals.d90_plus.amount;
-  const grandCount =
-    totals.current.count +
-    totals.d31_60.count +
-    totals.d61_90.count +
-    totals.d90_plus.count;
-
   // Only rows that actually owe something belong in the table. The bucket
   // cards above have always skipped non-positive balances (`outstanding > 0`
   // when totalling), but the row list did not — so a visit marked unpaid with
@@ -312,6 +301,17 @@ export default async function PatientArPage({ searchParams }: SearchProps) {
     totals[r.bucket].count += 1;
     totals[r.bucket].amount += r.outstanding;
   }
+
+  const grandTotal =
+    totals.current.amount +
+    totals.d31_60.amount +
+    totals.d61_90.amount +
+    totals.d90_plus.amount;
+  const grandCount =
+    totals.current.count +
+    totals.d31_60.count +
+    totals.d61_90.count +
+    totals.d90_plus.count;
   const ordered = [...owing].sort((a, b) => compareArRows(a, b, sort));
   const totalPages = pageCount(ordered.length, size);
   const page = Math.min(currentPage, totalPages);
