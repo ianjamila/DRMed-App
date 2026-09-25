@@ -29,6 +29,7 @@ import { SampleBadge } from "@/components/staff/sample-badge";
 import { SampleToggle } from "./sample-toggle";
 import { canMarkSample } from "@/lib/visits/sample";
 import { WaiveBalanceDialog } from "./waive-balance-dialog";
+import { waiverPreview } from "@/lib/accounting/waiver-allocation";
 import { AttendingPhysicianDialog } from "./attending-physician-dialog";
 import { VoidPaymentDialog } from "../../payments/[id]/void/void-payment-dialog";
 import { EditPaymentDialog } from "../../payments/[id]/edit/edit-payment-dialog";
@@ -90,7 +91,7 @@ const loadDetail = cache(async (id: string) => {
         id, visit_number, visit_date, payment_status,
         total_php, paid_php, notes, created_at,
         deleted_at, deleted_by, delete_reason,
-        visit_group_id, is_sample,
+        visit_group_id, is_sample, legacy_import_run_id,
         hmo_provider_id, hmo_approval_date, hmo_authorization_no,
         attending_physician_id,
         patients!inner ( id, drm_id, first_name, last_name, preferred_release_medium, deleted_at, merged_into_id ),
@@ -515,6 +516,29 @@ export default async function VisitDetailPage({ params, searchParams }: Props) {
     paymentStatus: visit.payment_status,
     hmoProviderId: visit.hmo_provider_id,
   };
+  // The waive dialog's preview of the discount split waive_visit_balance
+  // (0183) would post — nothing for an imported visit (the books never held
+  // the balance), null when the lines don't add up (the amber warning).
+  const waivePreview = (() => {
+    if (visit.legacy_import_run_id) return null;
+    try {
+      return waiverPreview(
+        balance,
+        rawRows.map((t) => {
+          const svc = Array.isArray(t.services) ? t.services[0] : t.services;
+          return {
+            id: t.id,
+            pricePhp: Number(t.final_price_php ?? 0),
+            kind: svc?.kind,
+            isComponent: t.parent_id != null,
+            status: t.status,
+          };
+        }),
+      );
+    } catch {
+      return null;
+    }
+  })();
   // Money on this page is reception/admin-only (the billing block is behind
   // canSeePayments), so the lab roles keep the generic note below.
   const releasedWhileUnpaid = canSeePayments
@@ -862,6 +886,8 @@ export default async function VisitDetailPage({ params, searchParams }: Props) {
               <WaiveBalanceDialog
                 visitId={visit.id}
                 balanceLabel={formatPhp(balance > 0 ? balance : 0)}
+                preview={waivePreview}
+                legacy={visit.legacy_import_run_id != null}
               />
             ) : null}
           </div>
