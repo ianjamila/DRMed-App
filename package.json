@@ -48,7 +48,8 @@
     "perf:rls-prove": "tsx scripts/perf/rls-equivalence-prove.ts",
     "perf:rls-structural": "tsx scripts/perf/rls-structural-prove.ts",
     "perf:rls-fixture": "tsx scripts/perf/seed-rls-fixture.ts",
-    "sheet-sync:db-proof": "tsx scripts/sheet-sync-db-proof.ts"
+    "sheet-sync:db-proof": "tsx scripts/sheet-sync-db-proof.ts",
+    "sheet:sync": "tsx scripts/sheet-sync.ts"
   },
   "dependencies": {
     "@base-ui/react": "^1.4.1",
