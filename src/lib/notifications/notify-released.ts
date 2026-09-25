@@ -7,6 +7,7 @@ import { reviewLinkAbsolute } from "@/lib/seo/review";
 import { sendEmail } from "./email";
 import { STATEMENT_NOTE } from "./statement-note";
 import { sendSms } from "./sms";
+import { PORTAL_URL } from "./portal-url";
 import {
   renderEmailShell, emailParagraph, emailDetailBox, emailButton, emailFinePrint, escapeHtml, emailReviewCta,
 } from "./branded-email";
@@ -98,7 +99,7 @@ export async function notifyResultReleased({
     return;
   }
 
-  const portalUrl = `${SITE.url.replace(/\/$/, "")}/portal`;
+  const portalUrl = PORTAL_URL;
   const greeting = patient.first_name || "there";
   const testName = svc.name;
 
