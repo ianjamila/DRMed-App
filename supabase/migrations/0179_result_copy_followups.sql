@@ -340,3 +340,297 @@ revoke all on function public.result_edit_commit(
 grant execute on function public.result_edit_commit(
   uuid, uuid, int, uuid, text, uuid, text, int, jsonb, jsonb, jsonb
 ) to service_role;
+
+-- 5) Copy state ---------------------------------------------------------------
+-- One row per result: does the patient hold a copy, is it out of date, and has
+-- the latest correction been followed up. p_result_ids null = every corrected
+-- result. A "printed copy" is a result.printed_staff row stamped by reception or
+-- admin (the roles that hand paper over); lab prints are internal. Service role
+-- only — the wrappers below decide who sees which rows and columns.
+create or replace function public.result_copy_states_internal(p_result_ids uuid[])
+returns table (
+  result_id                 uuid,
+  anchor_test_request_id    uuid,
+  visit_id                  uuid,
+  patient_id                uuid,
+  amendment_count           int,
+  amended_at                timestamptz,
+  latest_amendment_id       uuid,
+  portal_downloaded_at      timestamptz,
+  last_handover_print_count int,
+  holds_copy                boolean,
+  portal_outdated           boolean,
+  printed_outdated          boolean,
+  contacted_at              timestamptz,
+  contacted_by              uuid,
+  notified_at               timestamptz,
+  notified_channels         text[],
+  notify_error              text,
+  followed_up               boolean,
+  has_email                 boolean,
+  has_phone                 boolean
+)
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  with r as (
+    select res.id, res.test_request_id, res.amendment_count, res.amended_at,
+           res.patient_last_downloaded_at
+      from public.results res
+     where case when p_result_ids is null then res.amendment_count > 0
+                else res.id = any(p_result_ids) end
+  ),
+  prints as (
+    select (a.metadata->>'result_id')::uuid as result_id,
+           max((a.metadata->>'amendment_count')::int) as last_count
+      from public.audit_log a
+     where a.action = 'result.printed_staff'
+       and a.metadata->>'result_id' in (select r.id::text from r)
+       and a.metadata->>'role' in ('reception', 'admin')
+       and a.metadata->>'amendment_count' ~ '^[0-9]+$'
+     group by 1
+  )
+  select r.id,
+         anchor.test_request_id,
+         anchor.visit_id,
+         v.patient_id,
+         r.amendment_count,
+         r.amended_at,
+         la.id,
+         r.patient_last_downloaded_at,
+         p.last_count,
+         (r.patient_last_downloaded_at is not null or p.last_count is not null),
+         (r.amendment_count > 0
+            and r.patient_last_downloaded_at is not null
+            and r.patient_last_downloaded_at < r.amended_at),
+         (r.amendment_count > 0 and p.last_count is not null and p.last_count < r.amendment_count),
+         la.patient_contacted_at,
+         la.patient_contacted_by,
+         la.patient_notified_at,
+         la.patient_notified_channels,
+         la.patient_notify_error,
+         (la.patient_contacted_at is not null
+            or (la.patient_notified_at is not null
+                and coalesce(cardinality(la.patient_notified_channels), 0) > 0
+                and la.patient_notify_error is null)),
+         nullif(btrim(pt.email), '') is not null,
+         nullif(btrim(pt.phone), '') is not null
+    from r
+    left join lateral (
+      select tr.id as test_request_id, tr.visit_id
+        from public.test_requests tr
+       where tr.id = coalesce(
+               (select rtr.test_request_id
+                  from public.result_test_requests rtr
+                 where rtr.result_id = r.id
+                 order by rtr.test_request_id
+                 limit 1),
+               r.test_request_id)
+    ) anchor on true
+    left join public.visits v    on v.id = anchor.visit_id
+    left join public.patients pt on pt.id = v.patient_id
+    left join lateral (
+      select ra.*
+        from public.result_amendments ra
+       where ra.result_id = r.id
+         and ra.amendment_seq = r.amendment_count
+    ) la on true
+    left join prints p on p.result_id = r.id;
+$$;
+revoke all on function public.result_copy_states_internal(uuid[]) from public, anon, authenticated;
+grant execute on function public.result_copy_states_internal(uuid[]) to service_role;
+
+-- Per-result copy state for staff pages (visit chip, edit-form checkbox).
+-- Reception/admin see every row; lab roles only results they may read
+-- (staff_can_read_finished_result). No reasons, no values, no error text.
+create or replace function public.result_copy_state(p_result_ids uuid[])
+returns table (
+  result_id           uuid,
+  latest_amendment_id uuid,
+  amendment_count     int,
+  amended_at          timestamptz,
+  holds_copy          boolean,
+  portal_outdated     boolean,
+  printed_outdated    boolean,
+  followed_up         boolean,
+  notified_at         timestamptz,
+  notify_failed       boolean,
+  has_email           boolean,
+  has_phone           boolean
+)
+language plpgsql
+stable
+security definer
+set search_path = public
+as $$
+declare
+  v_role text := public.staff_role();
+begin
+  if v_role is null then
+    raise exception 'staff only' using errcode = '42501';
+  end if;
+  if p_result_ids is null or cardinality(p_result_ids) > 200 then
+    raise exception 'pass up to 200 result ids' using errcode = '22023';
+  end if;
+  return query
+    select s.result_id, s.latest_amendment_id, s.amendment_count, s.amended_at,
+           s.holds_copy, s.portal_outdated, s.printed_outdated, s.followed_up,
+           s.notified_at, (s.notify_error is not null), s.has_email, s.has_phone
+      from public.result_copy_states_internal(p_result_ids) s
+     where v_role in ('reception', 'admin')
+        or public.staff_can_read_finished_result(s.result_id);
+end;
+$$;
+revoke all on function public.result_copy_state(uuid[]) from public, anon;
+grant execute on function public.result_copy_state(uuid[]) to authenticated, service_role;
+
+-- The follow-up list: patients holding an out-of-date copy of a corrected
+-- result whose latest correction is not followed up. Reception + admin only.
+create or replace function public.result_outdated_copies(p_include_followed_up boolean default false)
+returns table (
+  result_id           uuid,
+  latest_amendment_id uuid,
+  amendment_count     int,
+  amended_at          timestamptz,
+  visit_id            uuid,
+  patient_id          uuid,
+  patient_name        text,
+  drm_id              text,
+  phone               text,
+  has_email           boolean,
+  test_names          text,
+  portal_outdated     boolean,
+  printed_outdated    boolean,
+  followed_up         boolean,
+  contacted_at        timestamptz,
+  contacted_by_name   text,
+  notified_at         timestamptz,
+  notified_channels   text[],
+  notify_failed       boolean
+)
+language plpgsql
+stable
+security definer
+set search_path = public
+as $$
+declare
+  v_role text := public.staff_role();
+begin
+  if v_role is null or v_role not in ('reception', 'admin') then
+    raise exception 'reception or admin only' using errcode = '42501';
+  end if;
+  return query
+    select s.result_id, s.latest_amendment_id, s.amendment_count, s.amended_at,
+           s.visit_id, s.patient_id,
+           nullif(btrim(concat_ws(' ', pt.first_name, pt.last_name)), ''),
+           pt.drm_id, pt.phone, s.has_email,
+           (select string_agg(x.name, ', ' order by x.name)
+              from (select distinct sv.name
+                      from public.result_test_requests rtr
+                      join public.test_requests tr
+                        on tr.id = rtr.test_request_id and tr.deleted_at is null
+                      join public.services sv on sv.id = tr.service_id
+                     where rtr.result_id = s.result_id) x),
+           s.portal_outdated, s.printed_outdated, s.followed_up,
+           s.contacted_at, sp.full_name, s.notified_at, s.notified_channels,
+           (s.notify_error is not null)
+      from public.result_copy_states_internal(null) s
+      join public.visits v on v.id = s.visit_id and v.deleted_at is null
+      left join public.patients pt       on pt.id = s.patient_id
+      left join public.staff_profiles sp on sp.id = s.contacted_by
+     where (s.portal_outdated or s.printed_outdated)
+       and (p_include_followed_up or not s.followed_up)
+     order by s.amended_at desc, s.result_id;
+end;
+$$;
+revoke all on function public.result_outdated_copies(boolean) from public, anon;
+grant execute on function public.result_outdated_copies(boolean) to authenticated, service_role;
+
+-- Mark the patient contacted about a correction. Only the result's LATEST
+-- correction can be marked (P0068 otherwise: it was corrected again since the
+-- list loaded). Idempotent. Audited in the same transaction.
+create or replace function public.result_mark_copy_contacted(p_amendment_id uuid)
+returns timestamptz
+language plpgsql
+volatile
+security definer
+set search_path = public
+as $$
+declare
+  v_role    text := public.staff_role();
+  v_am      public.result_amendments%rowtype;
+  v_count   int;
+  v_patient uuid;
+begin
+  if v_role is null or v_role not in ('reception', 'admin') then
+    raise exception 'reception or admin only' using errcode = '42501';
+  end if;
+  select * into v_am from public.result_amendments where id = p_amendment_id for update;
+  if not found then
+    raise exception 'correction not found' using errcode = 'P0068';
+  end if;
+  select amendment_count into v_count from public.results where id = v_am.result_id;
+  if v_am.amendment_seq is distinct from v_count then
+    raise exception 'this result was corrected again' using errcode = 'P0068';
+  end if;
+  if v_am.patient_contacted_at is not null then
+    return v_am.patient_contacted_at;
+  end if;
+  update public.result_amendments
+     set patient_contacted_at = now(),
+         patient_contacted_by = auth.uid()
+   where id = p_amendment_id;
+  select s.patient_id into v_patient
+    from public.result_copy_states_internal(array[v_am.result_id]) s;
+  insert into public.audit_log (actor_id, actor_type, patient_id, action, resource_type, resource_id, metadata)
+  values (auth.uid(), 'staff', v_patient, 'result.patient_contacted', 'test_request', v_am.test_request_id,
+          jsonb_build_object('result_id', v_am.result_id, 'amendment_id', v_am.id,
+                             'amendment_seq', v_am.amendment_seq));
+  return now();
+end;
+$$;
+revoke all on function public.result_mark_copy_contacted(uuid) from public, anon;
+grant execute on function public.result_mark_copy_contacted(uuid) to authenticated, service_role;
+
+-- The opt-in notice: claim once (returns a row only the first time), then
+-- record what went out. Server only.
+create or replace function public.result_claim_patient_notify(p_amendment_id uuid)
+returns table (result_id uuid, amendment_seq int, anchor_test_request_id uuid, patient_id uuid)
+language sql
+volatile
+security definer
+set search_path = public
+as $$
+  with c as (
+    update public.result_amendments
+       set patient_notified_at = now()
+     where id = p_amendment_id
+       and patient_notified_at is null
+    returning result_id, amendment_seq
+  )
+  select c.result_id, c.amendment_seq, s.anchor_test_request_id, s.patient_id
+    from c
+    cross join lateral public.result_copy_states_internal(array[c.result_id]) s;
+$$;
+revoke all on function public.result_claim_patient_notify(uuid) from public, anon, authenticated;
+grant execute on function public.result_claim_patient_notify(uuid) to service_role;
+
+create or replace function public.result_record_patient_notify(
+  p_amendment_id uuid, p_channels text[], p_error text
+)
+returns void
+language sql
+volatile
+security definer
+set search_path = public
+as $$
+  update public.result_amendments
+     set patient_notified_channels = coalesce(p_channels, '{}'::text[]),
+         patient_notify_error      = nullif(btrim(coalesce(p_error, '')), '')
+   where id = p_amendment_id
+     and patient_notified_at is not null;
+$$;
+revoke all on function public.result_record_patient_notify(uuid, text[], text) from public, anon, authenticated;
+grant execute on function public.result_record_patient_notify(uuid, text[], text) to service_role;

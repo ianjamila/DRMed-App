@@ -194,6 +194,10 @@ export function translatePgError(err: PgError): string {
         : "This result can't be edited right now. Reload the page and try again.";
     case "P0067":
       return "This test is part of a finished combined report (such as Chemistry), so it can't be deleted on its own.";
+    // 0179: result_mark_copy_contacted — the list row is for an older
+    // correction; the result was corrected again since the page loaded.
+    case "P0068":
+      return "This result was corrected again since the list loaded. Refresh and follow up the newest correction.";
     default:
       return err.message ?? "Database error. Please try again.";
   }
