@@ -675,6 +675,16 @@ export default async function VisitDetailPage({ params, searchParams }: Props) {
               />
             ) : null}
             {canSeePayments ? (
+              // Charges, payments and balance with no PIN — for reimbursement
+              // claims, consult-only visits (no receipt) and the file copy.
+              <Link
+                href={`/staff/visits/${visit.id}/statement`}
+                className="rounded-md border border-[color:var(--color-brand-navy)] px-4 py-2 text-sm font-bold text-[color:var(--color-brand-navy)] hover:bg-[color:var(--color-brand-navy)] hover:text-white"
+              >
+                Statement
+              </Link>
+            ) : null}
+            {canSeePayments ? (
               session.role === "reception" && visit.hmo_provider_id != null ? (
                 // An HMO patient never pays at the counter — the claim is
                 // booked as a receivable when the tests release, then settled

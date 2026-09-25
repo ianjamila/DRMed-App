@@ -99,6 +99,7 @@ Compliance target: **Philippine Data Privacy Act (RA 10173)**. Locale: en-PH, As
 | `supabase start` | Run a local Supabase stack (needs Docker) — the only "staging" |
 | `npm run seed:test` / `seed:services` / `seed:physicians` / `seed:hmo` / `seed:templates` / `seed:signatures` / etc. | Idempotent seed scripts — target the **local** stack by default (see below) |
 | `npm run smoke:results` / `smoke:chemistry` / `smoke:dashboards` | Render-pipeline / consolidated-chemistry / dashboard smoke tests |
+| `npm run smoke:print` | Every staff print surface in real Chrome with scrollbars on (local stack; needs a dev server — `APP_BASE=http://localhost:3007 npm run smoke:print`). Seeds and deletes its own data; checks clip, repeating `<tfoot>`, required text and PDF page count |
 
 There is **no PR-triggered CI** — `.github/workflows/` holds only scheduled jobs:
 `db-backup.yml` and `cron-watchdog.yml` (independent jobs for Vercel cron heartbeats

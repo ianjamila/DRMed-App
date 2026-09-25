@@ -78,3 +78,40 @@ export function coveredByPickedPackage(
   }
   return covered;
 }
+
+export interface QuoteSearchMatch<S> {
+  service: S;
+  /**
+   * The included tests that made a package match, when it matched ONLY
+   * through them — so the row can say why a search for "urinalysis" turned
+   * up the Executive Package. Empty for a direct name/code match.
+   */
+  viaIncludes: string[];
+}
+
+/**
+ * The Quick Quote search: services whose name or code contains the query,
+ * then packages that don't match themselves but include a test that does.
+ * Direct matches come first — someone typing "urinalysis" most likely wants
+ * the test itself — and each group keeps the catalog's own order.
+ */
+export function matchQuoteServices<
+  S extends { name: string; code: string; includes: readonly PackageIncludedTest[] },
+>(services: readonly S[], query: string): QuoteSearchMatch<S>[] {
+  const q = query.trim().toLowerCase();
+  if (!q) return services.map((service) => ({ service, viaIncludes: [] }));
+
+  const direct: QuoteSearchMatch<S>[] = [];
+  const viaPackage: QuoteSearchMatch<S>[] = [];
+  for (const service of services) {
+    if (`${service.name} ${service.code}`.toLowerCase().includes(q)) {
+      direct.push({ service, viaIncludes: [] });
+      continue;
+    }
+    const hits = service.includes
+      .filter((t) => t.name.toLowerCase().includes(q))
+      .map((t) => t.name);
+    if (hits.length > 0) viaPackage.push({ service, viaIncludes: hits });
+  }
+  return [...direct, ...viaPackage];
+}

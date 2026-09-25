@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { packageContents, coveredByPickedPackage } from "./quote-packages";
+import { packageContents, coveredByPickedPackage, matchQuoteServices } from "./quote-packages";
 
 const comp = (id: string, name: string) => ({ id, name });
 
@@ -57,5 +57,45 @@ describe("coveredByPickedPackage", () => {
   it("never flags the package itself, even if it lists itself", () => {
     const odd = { id: "odd", name: "Odd", includes: [comp("odd", "Odd")] };
     expect(coveredByPickedPackage([odd]).size).toBe(0);
+  });
+});
+
+describe("matchQuoteServices", () => {
+  const svc = (id: string, name: string, code: string, includes: { id: string; name: string }[] = []) => ({
+    id,
+    name,
+    code,
+    includes,
+  });
+  const catalog = [
+    svc("exec", "Executive Package", "EXEC_PKG", [comp("ua", "Urinalysis"), comp("cbc", "CBC + PC")]),
+    svc("basic", "Basic Package", "BASIC_PKG", [comp("cbc", "CBC + PC")]),
+    svc("ua", "Urinalysis", "URINALYSIS"),
+    svc("xray", "Chest X-Ray", "XRAYCHEST"),
+  ];
+
+  it("returns everything, unmarked, for an empty query", () => {
+    const out = matchQuoteServices(catalog, "  ");
+    expect(out.map((m) => m.service.id)).toEqual(["exec", "basic", "ua", "xray"]);
+    expect(out.every((m) => m.viaIncludes.length === 0)).toBe(true);
+  });
+
+  it("lists direct name/code matches first, then packages that include a match", () => {
+    const out = matchQuoteServices(catalog, "urinalysis");
+    expect(out.map((m) => m.service.id)).toEqual(["ua", "exec"]);
+    expect(out[1]!.viaIncludes).toEqual(["Urinalysis"]);
+  });
+
+  it("does not mark a package that matches by its own name", () => {
+    const out = matchQuoteServices(catalog, "package");
+    expect(out.map((m) => [m.service.id, m.viaIncludes])).toEqual([
+      ["exec", []],
+      ["basic", []],
+    ]);
+  });
+
+  it("is case-insensitive and matches codes", () => {
+    expect(matchQuoteServices(catalog, "xraychest").map((m) => m.service.id)).toEqual(["xray"]);
+    expect(matchQuoteServices(catalog, "cbc").map((m) => m.service.id)).toEqual(["exec", "basic"]);
   });
 });

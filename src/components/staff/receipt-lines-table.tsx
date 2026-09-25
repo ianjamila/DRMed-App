@@ -16,6 +16,8 @@ interface Props {
   total: number;
   /** Printed after "Discount" in the totals, e.g. the Senior/PWD ID. */
   discountNote?: ReactNode;
+  /** The grand-total label: "Total Due" on a receipt, "Total charges" on a statement. */
+  totalLabel?: string;
 }
 
 /**
@@ -59,6 +61,7 @@ export function ReceiptLinesTable({
   totalDiscount,
   total,
   discountNote,
+  totalLabel = "Total Due",
 }: Props) {
   const rows = arrangeReceiptRows(lines);
   return (
@@ -136,7 +139,7 @@ export function ReceiptLinesTable({
         )}
         <tr className="border-t-2 border-[color:var(--color-brand-navy)]">
           <td colSpan={4} className="py-3 pr-2 text-right font-bold">
-            Total Due
+            {totalLabel}
           </td>
           <td className="whitespace-nowrap py-3 pl-3 text-right font-heading text-xl font-extrabold tabular-nums">
             {formatPhp(total)}

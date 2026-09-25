@@ -12,6 +12,7 @@ import {
 } from "@/lib/pricing/senior";
 import {
   coveredByPickedPackage,
+  matchQuoteServices,
   type PackageIncludedTest,
 } from "@/lib/staff/quote-packages";
 import { updateMessageStatusAction } from "../messages/actions";
@@ -93,15 +94,13 @@ export function QuoteWorkbench({ services, messageContext = null }: Props) {
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
-  // Filter the full catalog by query; pagination wraps the filtered set
-  // so the page count reflects whatever the user is actually browsing.
-  const matched = useMemo(() => {
-    const q = deferredQuery.trim().toLowerCase();
-    if (!q) return services;
-    return services.filter((s) =>
-      `${s.name} ${s.code}`.toLowerCase().includes(q),
-    );
-  }, [services, deferredQuery]);
+  // Filter the full catalog by query — a package also matches through the
+  // tests it includes, listed after the direct hits. Pagination wraps the
+  // filtered set so the page count reflects whatever the user is browsing.
+  const matched = useMemo(
+    () => matchQuoteServices(services, deferredQuery),
+    [services, deferredQuery],
+  );
 
   const totalPages = Math.max(1, Math.ceil(matched.length / pageSize));
   // Clamp page to the available range during render — when the user
@@ -239,7 +238,7 @@ export function QuoteWorkbench({ services, messageContext = null }: Props) {
           id="quote-search"
           ref={inputRef}
           type="search"
-          placeholder="Search by name or code (CBC, lipid, ultrasound…)"
+          placeholder="Search by name or code (CBC, lipid, ultrasound…) — packages that include it show too"
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           className="w-full rounded-lg border border-[color:var(--color-brand-bg-mid)] bg-white px-4 py-3 text-sm shadow-sm focus:border-[color:var(--color-brand-cyan)] focus:outline-none focus:ring-2 focus:ring-[color:var(--color-brand-cyan)]/20"
@@ -300,7 +299,7 @@ export function QuoteWorkbench({ services, messageContext = null }: Props) {
                 </td>
               </tr>
             ) : (
-              filtered.map((s) => {
+              filtered.map(({ service: s, viaIncludes }) => {
                 const eligible = isSeniorPwdEligible(s);
                 const sp = seniorPriceOf(s);
                 return (
@@ -326,6 +325,11 @@ export function QuoteWorkbench({ services, messageContext = null }: Props) {
                       {s.is_send_out ? (
                         <span className="ml-2 rounded-md bg-amber-100 px-1.5 py-0.5 text-[10px] font-bold uppercase text-amber-900">
                           Send-out
+                        </span>
+                      ) : null}
+                      {viaIncludes.length > 0 ? (
+                        <span className="ml-2 rounded-md bg-[color:var(--color-brand-bg)] px-1.5 py-0.5 text-[10px] font-bold uppercase text-[color:var(--color-brand-cyan)]">
+                          Includes {viaIncludes.join(", ")}
                         </span>
                       ) : null}
                       {s.includes.length > 0 ? (
