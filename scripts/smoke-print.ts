@@ -875,6 +875,14 @@ async function main(): Promise<void> {
          values ($1, 'withdrawn', 'staff', $2, 'print smoke: withdrawal check')`,
         [s.patientId, s.staffId],
       );
+      // statement.viewed is de-duplicated over 5 minutes (statement-audit.ts),
+      // and the stale tab just wrote one — clear it, or a post-withdrawal view
+      // would be swallowed and this assertion could never fail.
+      await db.query(
+        `delete from audit_log where actor_type = 'patient' and action = 'statement.viewed'
+            and patient_id = $1 and resource_id = $2`,
+        [s.patientId, s.visitId],
+      );
       const viewedBefore = await auditCount(["statement.viewed"]);
       const sentBefore = await auditCount(["statement.emailed", "statement.email_failed"]);
 
