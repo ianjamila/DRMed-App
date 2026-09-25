@@ -64,14 +64,8 @@ vi.mock("@/lib/supabase/admin", () => ({
       if (table === "result_test_requests") {
         return {
           select: () => ({
-            eq: () => ({
-              is: () => ({
-                is: () => ({
-                  returns: async () =>
-                    fx.releaseCheck ? fx.releaseCheck() : { data: [releasedRow], error: null },
-                }),
-              }),
-            }),
+            eq: async () =>
+              fx.releaseCheck ? fx.releaseCheck() : { data: [releasedRow], error: null },
           }),
         };
       }
@@ -344,6 +338,25 @@ describe("notifyResultCorrected", () => {
     expect(sendEmail).not.toHaveBeenCalled();
     expect(sendSms).not.toHaveBeenCalled();
     expect(fx.errors.some((e) => e.scope === "notify/result-corrected:release-check")).toBe(true);
+  });
+
+  // X1: the portal's rule (isResultDownloadEligible) counts every linked
+  // test_request, deleted ones included — a "live members only" check would
+  // pass here while the portal still refuses the shared PDF. Reusing
+  // fetchLinkedTestRequestStatusesStrict means a deleted, unreleased sibling
+  // correctly blocks the notice too.
+  it("X1: a deleted, unreleased sibling still blocks the notice — not_released", async () => {
+    fx.releaseCheck = () =>
+      Promise.resolve({
+        data: [releasedRow, { test_requests: { status: "ready_for_release" } }],
+        error: null,
+      });
+    const out = await notifyResultCorrected(args);
+    expect(out).toBe("not_released");
+    expect(fx.claimCalls).toBe(0);
+    expect(sendEmail).not.toHaveBeenCalled();
+    expect(sendSms).not.toHaveBeenCalled();
+    expect(fx.recordCalls).toHaveLength(0);
   });
 });
 

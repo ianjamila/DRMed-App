@@ -12,6 +12,7 @@ import { checkPatientRecipient } from "./active-patient-recipient";
 import { auditSkippedInactiveRecipient } from "./inactive-recipient-audit";
 import { shouldOfferNotify } from "@/lib/results/copy-followups";
 import { fetchCopyStateAdmin } from "@/lib/results/copy-followups.server";
+import { allLinksReleased, fetchLinkedTestRequestStatusesStrict } from "@/lib/results/release-eligibility";
 
 export type NotifyOutcome = "sent" | "failed" | "already" | "inactive" | "not_released";
 
@@ -36,36 +37,6 @@ interface Args {
   /** The visit's patient (0167) — checked BEFORE the claim so a deleted or
    * merged record never consumes the once-only send slot. */
   patientId: string;
-}
-
-// R1: the portal only serves RELEASED results — result_edit_commit allows
-// edits on result_uploaded / ready_for_release / released (undo-release can
-// walk a released test back to ready_for_release, then a correction with
-// "notify patient" ticked would promise a portal copy the patient can't yet
-// open). True/false decide whether to send; null means the check itself
-// failed, which the caller treats as "failed" rather than guessing either
-// way. Every LIVE test linked to the result must be released — a withdrawn
-// or deleted sibling doesn't count.
-async function everyLiveTestReleased(
-  admin: ReturnType<typeof createAdminClient>,
-  resultId: string,
-): Promise<boolean | null> {
-  type LiveTestRow = { test_requests: { status: string } | { status: string }[] };
-  const { data, error } = await admin
-    .from("result_test_requests")
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    .select("test_requests!inner(status, deleted_at, visits!inner(deleted_at))" as any)
-    .eq("result_id", resultId)
-    .is("test_requests.deleted_at", null)
-    .is("test_requests.visits.deleted_at", null)
-    .returns<LiveTestRow[]>();
-  if (error) return null;
-  const rows = data ?? [];
-  if (rows.length === 0) return false;
-  return rows.every((row) => {
-    const tr = Array.isArray(row.test_requests) ? row.test_requests[0] : row.test_requests;
-    return tr?.status === "released";
-  });
 }
 
 type ClaimRow = {
@@ -123,8 +94,16 @@ export async function notifyResultCorrected({
     return "inactive";
   }
 
-  const released = await everyLiveTestReleased(admin, resultId);
-  if (released === null) {
+  // R1 (revised by X1): the portal only serves a shared PDF when EVERY test
+  // linked to the result is released, deleted siblings included — the same
+  // rule isResultDownloadEligible uses for the download itself
+  // (release-eligibility.ts). Reusing that rule here, rather than a
+  // "live members only" variant, means a deleted-but-unreleased sibling
+  // can't make this check pass while the portal still refuses the download.
+  // True/false decide whether to send; null means the check itself failed,
+  // which the caller treats as "failed" rather than guessing either way.
+  const linkedStatuses = await fetchLinkedTestRequestStatusesStrict(admin, resultId);
+  if (linkedStatuses === null) {
     await reportError({
       scope: "notify/result-corrected:release-check",
       error: new Error("could not verify release status before notify"),
@@ -132,7 +111,7 @@ export async function notifyResultCorrected({
     });
     return "failed";
   }
-  if (!released) {
+  if (!allLinksReleased(linkedStatuses)) {
     return "not_released";
   }
 

@@ -33,6 +33,30 @@ export function allLinksReleased(linkStatuses: string[]): boolean {
   return linkStatuses.length > 0 && linkStatuses.every((s) => s === "released");
 }
 
+// Shared select behind both readers below, so the "every linked member,
+// deleted ones included" query can't drift between the lenient (portal) and
+// error-aware (notify-corrected, X1) forms.
+function selectLinkedTestRequestStatuses(
+  admin: SupabaseClient<Database>,
+  resultId: string,
+) {
+  return admin
+    .from("result_test_requests")
+    .select("test_requests!inner(status)")
+    .eq("result_id", resultId);
+}
+
+function mapLinkedTestRequestStatuses(
+  data: { test_requests: { status: string } | { status: string }[] }[] | null,
+): string[] {
+  return (data ?? []).map((row) => {
+    const tr = Array.isArray(row.test_requests)
+      ? row.test_requests[0]
+      : row.test_requests;
+    return tr?.status ?? "";
+  });
+}
+
 // Fetches every test_request status currently linked to `resultId` via
 // result_test_requests, using the caller's ADMIN client (bypasses RLS) —
 // an RLS-scoped patient client can't be trusted here because the policy
@@ -40,20 +64,32 @@ export function allLinksReleased(linkStatuses: string[]): boolean {
 // simply be missing from the result set instead of showing up as
 // unreleased (see N6 in the portal actions). Callers own client
 // construction; this module never imports the admin client itself.
+//
+// Swallows a read error (`data ?? []`) — used by the portal, which has no
+// better fallback than "not eligible" for either case. Do NOT change this
+// behaviour; a caller that must tell the two apart (X1) uses the strict
+// sibling below instead.
 export async function fetchLinkedTestRequestStatuses(
   admin: SupabaseClient<Database>,
   resultId: string,
 ): Promise<string[]> {
-  const { data } = await admin
-    .from("result_test_requests")
-    .select("test_requests!inner(status)")
-    .eq("result_id", resultId);
-  return (data ?? []).map((row) => {
-    const tr = Array.isArray(row.test_requests)
-      ? row.test_requests[0]
-      : row.test_requests;
-    return tr?.status ?? "";
-  });
+  const { data } = await selectLinkedTestRequestStatuses(admin, resultId);
+  return mapLinkedTestRequestStatuses(data);
+}
+
+// X1: same query as fetchLinkedTestRequestStatuses (so the two can't drift),
+// but error-aware — returns null on a read error instead of silently
+// treating it as "no links" (which allLinksReleased would in turn treat as
+// "not released" rather than "could not tell"). Used by notify-corrected so
+// a transient read failure reports "failed" rather than a false
+// "not_released".
+export async function fetchLinkedTestRequestStatusesStrict(
+  admin: SupabaseClient<Database>,
+  resultId: string,
+): Promise<string[] | null> {
+  const { data, error } = await selectLinkedTestRequestStatuses(admin, resultId);
+  if (error) return null;
+  return mapLinkedTestRequestStatuses(data);
 }
 
 // Convenience combining both: true only when the shared PDF for `resultId`
