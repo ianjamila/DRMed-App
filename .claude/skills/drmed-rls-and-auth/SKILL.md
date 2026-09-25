@@ -30,7 +30,8 @@ src/lib/
 ├── storage/
 │   └── signed-url.ts               ← createStorageSignedUrl — the single service-role choke point for patient downloads
 ├── portal/
-│   └── portal-scoping.test.ts      ← guard test: portal files may import admin.ts only if allowlisted (with a reason)
+│   ├── portal-scoping.test.ts      ← guard test: portal files may import admin.ts only if allowlisted (with a reason)
+│   └── statement-audit.ts          ← auditPatientStatement — statement.viewed (5-min dedupe via audit_log) / statement.printed, actor_type patient
 ├── audit/
 │   └── log.ts                      ← audit() — append-only audit_log writer
 ├── server/
@@ -74,6 +75,8 @@ Patients aren't postgres-authenticated, so there is no Postgres role for them. S
 `set_patient_context()` still exists in the schema but **no app code calls it any more** — don't reintroduce the admin-client-plus-GUC pattern.
 
 **The admin client is allowed in the portal only where RLS cannot help:** Storage signed-URL minting/downloads (`src/lib/storage/signed-url.ts`), `audit_log` reads/writes, pre-auth login, and the `appointment_attachments` delete. `src/lib/portal/portal-scoping.test.ts` fails the build-time test suite if any other portal file imports `admin.ts` — add to its `ADMIN_ALLOWLIST` with a justifying comment only when RLS genuinely can't express the access.
+
+**Portal statement of account** (`/portal/visits/[id]/statement`): `fetchStatement(createPatientClient(...), id)` — the SAME loader the staff page uses, run under the patient client, so `visits` / `test_requests` / `payments: patient self select` RLS scopes it (another patient's visit id → null → 404; the page also compares `data.patient.id` as defense in depth). It renders the shared `StatementSheet` (no PIN). Audits go through `src/lib/portal/statement-audit.ts`, the one service-role use: the view dedupe reads `audit_log`, which patients cannot read. Both portal files are in the scoping test's `REQUIRE_PATIENT_CLIENT`; `smoke:print` signs in as a seeded patient (DRM-ID + bcrypt PIN + a `patient_consents` grant) and asserts another patient's visit 404s. **Local dev needs `SUPABASE_JWT_SECRET`** (neither env file sets it): start the dev server with it exported from `supabase status -o env` (`JWT_SECRET`) or every portal page throws.
 
 Portal policies worth knowing (0114): `test_requests: patient own visits` (own-visit rows, including in-progress — so "still in progress" cards render), `results` / `result_test_requests: patient released only` (result *content* stays release-gated), `appointments: patient self`, `report_groups: public read active`.
 

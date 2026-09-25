@@ -19,7 +19,10 @@
 //   4. Clicks through the statement's other two doors: "Email to patient"
 //      (confirm shows the address on file; the send leaves one audit row —
 //      the patient's address is .invalid, so nothing can be delivered) and
-//      the Statement link on the visit's Patient AR row.
+//      the Statement link on the visit's Patient AR row. Then the patient's
+//      own copy: signs in to the portal with a seeded DRM-ID + PIN, prints
+//      /portal/visits/[id]/statement like the surfaces above, checks the view
+//      was audited, and that another patient's visit 404s (RLS).
 //   5. Deletes everything it made — including the journal entries the GL
 //      bridges post for the payment, payout and cash close — even on failure.
 //
@@ -36,6 +39,7 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import pg from "pg";
+import bcrypt from "bcryptjs";
 import { PDFDocument } from "pdf-lib";
 import { chromium, type Page } from "playwright-core";
 
@@ -69,6 +73,8 @@ interface Target {
   mustContain: string[];
   minPages: number;
   maxPages: number;
+  /** Printed from the patient portal, signed in as the seeded patient. */
+  portal?: boolean;
 }
 
 interface Seed {
@@ -85,6 +91,12 @@ interface Seed {
   physicianId: string;
   serviceIds: string[];
   paymentId: string;
+  /** Portal sign-in for the seeded patient: DRM-ID + a visit PIN. */
+  drmId: string;
+  pin: string;
+  /** Someone else's visit — the portal must 404 it. */
+  otherPatientId: string;
+  otherVisitId: string;
 }
 
 async function createAuthUser(email: string, password: string): Promise<string> {
@@ -128,6 +140,10 @@ async function seed(db: pg.Client, staffId: string, email: string, password: str
     physicianId: randomUUID(),
     serviceIds: [],
     paymentId: randomUUID(),
+    drmId: "",
+    pin: randomBytes(6).toString("base64url").slice(0, 8).toUpperCase(),
+    otherPatientId: randomUUID(),
+    otherVisitId: randomUUID(),
   };
   const q = (sql: string, params: unknown[] = []) => db.query(sql, params);
 
@@ -223,6 +239,24 @@ async function seed(db: pg.Client, staffId: string, email: string, password: str
     [s.paymentId, s.visitId, staffId],
   );
 
+  // Portal access for the seeded patient: a live PIN on the package visit and
+  // full consent on file (the portal shows nothing before consent).
+  await q("insert into visit_pins (visit_id, pin_hash) values ($1, $2)", [
+    s.visitId,
+    await bcrypt.hash(s.pin, 10),
+  ]);
+  await q(
+    `insert into patient_consents (patient_id, event_type, method, notice_version, signatory, actor_kind)
+     values ($1, 'granted', 'portal_acceptance', 'smoke', 'self', 'patient')`,
+    [s.patientId],
+  );
+  s.drmId = (await q("select drm_id from patients where id = $1", [s.patientId])).rows[0].drm_id;
+  // A second patient with a visit of their own, for the RLS check.
+  await q("insert into patients (id, first_name, last_name, birthdate) values ($1, 'Other', 'Smoke', '1990-02-02')", [
+    s.otherPatientId,
+  ]);
+  await q("insert into visits (id, patient_id) values ($1, $2)", [s.otherVisitId, s.otherPatientId]);
+
   // A doctor payout of 30 fees — two copies that each run onto a 2nd page.
   await q("insert into visits (id, patient_id) values ($1, $2)", [s.consultVisitId, s.patientId]);
   await q(
@@ -264,7 +298,8 @@ async function cleanup(db: pg.Client, s: Partial<Seed> & { staffId: string }): P
   // protect real books; these rows are this run's alone, so skip triggers for
   // the teardown. Local only — the host check at the top guarantees it.
   await q("set local session_replication_role = replica");
-  const visitIds = [s.visitId, s.consultVisitId].filter(Boolean);
+  const visitIds = [s.visitId, s.consultVisitId, s.otherVisitId].filter(Boolean);
+  const patientIds = [s.patientId, s.otherPatientId].filter(Boolean);
   const sourceIds = [s.paymentId, s.eodId, s.disbursementId].filter(Boolean);
   await q(
     `create temp table smoke_je on commit drop as
@@ -291,7 +326,11 @@ async function cleanup(db: pg.Client, s: Partial<Seed> & { staffId: string }): P
   }
   if (s.physicianId) await q("delete from physicians where id = $1", [s.physicianId]);
   if (s.shiftId) await q("delete from cash_shifts where id = $1", [s.shiftId]);
-  if (s.patientId) await q("delete from patients where id = $1", [s.patientId]);
+  await q("delete from visit_pins where visit_id = any($1::uuid[])", [visitIds]);
+  await q("delete from patient_consents where patient_id = any($1::uuid[])", [patientIds]);
+  // The portal's own audit rows carry no actor — catch them by patient.
+  await q("delete from audit_log where patient_id = any($1::uuid[])", [patientIds]);
+  await q("delete from patients where id = any($1::uuid[])", [patientIds]);
   await q("delete from audit_log where actor_id = $1", [s.staffId]);
   await q("delete from rate_limit_attempts where identifier = $1", [`email:${s.email ?? ""}`]);
   await q("delete from staff_profiles where id = $1", [s.staffId]);
@@ -394,6 +433,15 @@ async function main(): Promise<void> {
         maxPages: 2,
       },
       {
+        name: "portal-statement",
+        path: `/portal/visits/${s.visitId}/statement`,
+        sheet: "article.receipt-sheet",
+        mustContain: ["Statement of account", "Payments received", "Balance due", "not an official receipt"],
+        minPages: 1,
+        maxPages: 2,
+        portal: true,
+      },
+      {
         name: "count-sheet",
         path: `/staff/payments/eod/${s.eodId}/count-sheet`,
         sheet: ".cash-count-sheet",
@@ -436,16 +484,29 @@ async function main(): Promise<void> {
       page.click('button[type="submit"]'),
     ]);
 
+    // The patient signs in the way a patient does — DRM-ID + PIN on the
+    // portal login — in a context of their own, so no staff cookie leaks in.
+    const portalCtx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const portalPage = await portalCtx.newPage();
+    await portalPage.goto(`${APP_BASE}/portal/login`);
+    await portalPage.fill('input[name="drm_id"]', s.drmId);
+    await portalPage.fill('input[name="pin"]', s.pin);
+    await Promise.all([
+      portalPage.waitForURL((u) => !u.pathname.endsWith("/login"), { timeout: 60_000 }),
+      portalPage.click('button[type="submit"]'),
+    ]);
+
     for (const t of targets) {
+      const tp = t.portal ? portalPage : page;
       const problems: string[] = [];
       try {
-        await page.emulateMedia({ media: "screen" });
-        await page.goto(APP_BASE + t.path, { timeout: 180_000 });
-        await page.waitForSelector(t.sheet, { timeout: 180_000 });
-        await page.waitForFunction(() => [...document.images].every((i) => i.complete));
-        await page.emulateMedia({ media: "print" });
-        problems.push(...(await domProblems(page, t)));
-        const pdf = await page.pdf({ preferCSSPageSize: true, printBackground: true });
+        await tp.emulateMedia({ media: "screen" });
+        await tp.goto(APP_BASE + t.path, { timeout: 180_000 });
+        await tp.waitForSelector(t.sheet, { timeout: 180_000 });
+        await tp.waitForFunction(() => [...document.images].every((i) => i.complete));
+        await tp.emulateMedia({ media: "print" });
+        problems.push(...(await domProblems(tp, t)));
+        const pdf = await tp.pdf({ preferCSSPageSize: true, printBackground: true });
         const file = join(outDir, `${t.name}.pdf`);
         writeFileSync(file, pdf);
         const pages = (await PDFDocument.load(pdf)).getPageCount();
@@ -525,6 +586,29 @@ async function main(): Promise<void> {
       return [
         `no Statement link on the seeded visit's row (visit ${JSON.stringify(rows[0] ?? null)}; its number appears ${onPage}× on the page)`,
       ];
+    });
+
+    await check("portal-statement-audited", async () => {
+      const { rows } = await db.query(
+        `select 1 from audit_log
+          where actor_type = 'patient' and action = 'statement.viewed'
+            and patient_id = $1 and resource_id = $2`,
+        [s.patientId, s.visitId],
+      );
+      return rows.length === 1 ? [] : [`expected 1 patient statement.viewed row, found ${rows.length}`];
+    });
+
+    await check("portal-other-patient-404", async () => {
+      // RLS, not the app, decides: the patient client cannot see this visit.
+      const res = await portalPage.goto(`${APP_BASE}/portal/visits/${s.otherVisitId}/statement`, {
+        timeout: 180_000,
+      });
+      const problems: string[] = [];
+      if (res?.status() !== 404) problems.push(`expected 404, got ${res?.status()}`);
+      if ((await portalPage.locator("article.receipt-sheet").count()) > 0) {
+        problems.push("another patient's statement rendered");
+      }
+      return problems;
     });
   } finally {
     await browser.close();

@@ -590,7 +590,7 @@
     </ol>
     <div class="note stop"><span class="k">Never</span><div><p>Never write the PIN anywhere else, read it over the phone to a caller you cannot identify, or send it by chat. Anyone holding the DRM-ID and PIN can read that patient's results. A PIN from an earlier visit is not automatically cancelled by a new one, so tear up or shred any old receipt once a fresh one is printed.</p></div></div>
     <h4>Statement of account</h4>
-    <div class="screen"><div class="where"><code class="route">/staff/visits/[visit]/statement</code> · <kbd class="ui">Statement</kbd> on any visit page (Reception and Admin only) · Admin: <b>Open</b> in the Statement column of <b>Patient AR aging</b></div>
+    <div class="screen"><div class="where"><code class="route">/staff/visits/[visit]/statement</code> · <kbd class="ui">Statement</kbd> on any visit page (Reception and Admin only) · the <b>Statement</b> column of a patient's <b>Visits</b> list (<b>Open</b> · <b>Email</b>) · Admin: <b>Open</b> in the Statement column of <b>Patient AR aging</b></div>
       <dl><dt>Shows</dt><dd>Clinic header · patient and DRM-ID · every bill line with packages laid out as on the receipt · <b>Total charges</b> · <b>Payments received</b> (date, method, reference, amount — voided payments are left out) · <b>Total paid</b> and the balance</dd>
       <dt>Balance line</dt><dd><q>Paid in full</q> · <q>Balance due</q> · <q>Overpaid</q>. On an HMO visit an open balance reads <q>Balance</q>, with a note that the HMO&apos;s share is settled through the claim, not at the counter.</dd>
       <dt>Ends with</dt><dd><kbd class="ui">Print statement</kbd> — the same A5 page as the receipt — or <kbd class="ui">Email to patient</kbd></dd></dl></div>
@@ -600,7 +600,7 @@
       <li><p class="step-title">Click <kbd class="ui">Send email</kbd>.</p><p><q>Statement emailed to &lt;address&gt;</q> confirms it. The email carries the same lines, payments and balance as the paper, and no PIN.</p></li>
       <li><p class="step-title">If the address is wrong or missing, fix it on the patient's page first.</p><p>With no email on file the button reads <q>No email on file — add one to email this statement</q>, linking to the patient's edit page.</p></li>
     </ol>
-    <p>A second send of the same statement within two minutes is refused (<q>This statement was emailed in the last 2 minutes…</q>) so a double-click cannot send it twice. If sending fails the message says so — print the statement instead. Every attempt, sent or not, is recorded in the audit log with the address used.</p>
+    <p>A second send of the same statement within two minutes is refused (<q>This statement was emailed in the last 2 minutes…</q>) so a double-click cannot send it twice. If sending fails the message says so — print the statement instead. Every attempt, sent or not, is recorded in the audit log with the address used — Admin can list them with the <b>Statement emails</b> quick filter on the Audit Log. The same <b>Email</b> link sits beside each visit in the Statement column of the patient's page, with the same confirm step. Patients can also open, print or save their own statement from the portal (6.1), so you only need to email it when they ask.</p>
     <p>Use it whenever a patient needs proof of what a visit cost and what they paid: a reimbursement claim for their company or HMO, a consultation-only visit (which prints no receipt), proof of a partial payment, or a copy for the file after the PIN has gone. It never carries the portal PIN, so it is safe to reprint as often as needed. Opening and printing it are both recorded in the audit log.</p>
   </section>
 
@@ -1012,7 +1012,7 @@
         <tr><td>Payment corrections</td><td>Books &amp; Reports › <b>Payment Changes</b></td><td>Every payment deleted, edited or moved: when, by whom, why, and what it became (a moved payment links to its new visit). Filter by date and by kind of change; the tiles count each kind and name who made the most changes, which is where a habit like keying GCash as Cash shows up. The last 90 days by default. <kbd class="ui">Export CSV</kbd>.</td></tr>
         <tr><td>Consent coverage</td><td>Books &amp; Reports › <b>Patients Without Consent</b></td><td>Who still needs the form signed before you turn the consent gate on. <kbd class="ui">Export CSV</kbd> is the call list — it includes phone and email. <kbd class="ui">Print</kbd> on each row opens that patient's pre-filled consent form.</td></tr>
         <tr><td>HMO money</td><td>Admin › <b>HMO Claims</b> · Daily Monitoring › <span class="tab">HMO Receivables</span></td><td>Unbilled claims, batches sent, aging by provider.</td></tr>
-        <tr><td>Who did what</td><td>Admin Tools › <b>Audit Log</b></td><td>Filter by action, DRM-ID, actor (Staff · Patient · System · Anonymous) and dates. Read-only by design.</td></tr>
+        <tr><td>Who did what</td><td>Admin Tools › <b>Audit Log</b></td><td>Filter by action, DRM-ID, actor (Staff · Patient · System · Anonymous) and dates. Quick filters: <b>Statement emails</b> (sent and failed, with the address), <b>All statement access</b>, <b>Receipts</b>, <b>Result downloads</b> — each keeps the DRM-ID and dates you set, and clicking it again clears it. Read-only by design.</td></tr>
         <tr><td>Did the emails go out</td><td>Admin Tools › <b>Emails Sent</b></td><td>Every result-ready, booking, reminder, welcome, newsletter, website-message-alert and online-booking-alert email with Sent / Failed / No email on file. <kbd class="ui">Failures only</kbd> is the useful button.</td></tr>
       </tbody>
     </table></div>
@@ -1101,6 +1101,8 @@
       <li><p class="step-title">Your released results are listed newest first. Tap <kbd class="ui">Download</kbd> to get the signed PDF.</p><p>Each download link works for 5 minutes and opens in a new tab. Tests still being processed are listed under <b>Still in progress</b>.</p></li>
       <li><p class="step-title">Tap <kbd class="ui">Sign out</kbd> when you are done, especially on a shared device.</p></li>
     </ol>
+    <h4>Your statement of account</h4>
+    <p>Open a visit and tap <kbd class="ui">Statement of account</kbd>. It shows every charge on that visit (a package with its tests listed underneath), every payment you made, and the balance: <q>Paid in full</q>, <q>Balance due</q> or <q>Overpaid</q>. Tap <kbd class="ui">Print or save as PDF</kbd> and choose <q>Save as PDF</q> to keep a copy for your HMO or employer. It is the same statement reception prints, it never shows your PIN, and opening or printing it is recorded, like a download.</p>
     <h4>If something goes wrong</h4>
     <dl class="defs">
       <dt><q>Invalid DRM-ID or PIN.</q></dt><dd>Check the receipt again. If the receipt is more than 60 days old, the PIN has expired: visit reception with an ID and they will print a new one. PINs cannot be given over the phone.</dd>

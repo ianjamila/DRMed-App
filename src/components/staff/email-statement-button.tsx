@@ -3,19 +3,25 @@
 import { useState, useTransition } from "react";
 import Link from "next/link";
 import { toast } from "sonner";
-import { emailStatementAction } from "./email-action";
+import { emailStatementAction } from "@/lib/actions/visits/email-statement";
 
 // "Email to patient" — same inline-expand confirm as undo-release: the
 // address is shown before anything is sent, so reception can read it back to
 // the patient. It only ever goes to the email on the patient's record.
+// "compact" is the table-row variant (patient page Visits list).
 export function EmailStatementButton({
   visitId,
   patientId,
   patientEmail,
+  size = "default",
+  accessibleName,
 }: {
   visitId: string;
   patientId: string;
   patientEmail: string | null;
+  size?: "default" | "compact";
+  /** Tells one row's compact "Email" apart from the next for screen readers. */
+  accessibleName?: string;
 }) {
   const [open, setOpen] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -24,6 +30,11 @@ export function EmailStatementButton({
   const email = patientEmail?.trim() || null;
 
   if (!email) {
+    if (size === "compact") {
+      return (
+        <span className="text-xs text-[color:var(--color-brand-text-soft)]">No email</span>
+      );
+    }
     return (
       <p className="max-w-56 text-right text-xs text-[color:var(--color-brand-text-soft)]">
         No email on file —{" "}
@@ -39,6 +50,18 @@ export function EmailStatementButton({
   }
 
   if (!open) {
+    if (size === "compact") {
+      return (
+        <button
+          type="button"
+          onClick={() => setOpen(true)}
+          aria-label={accessibleName}
+          className="text-xs font-semibold text-[color:var(--color-brand-cyan)] hover:underline"
+        >
+          Email
+        </button>
+      );
+    }
     return (
       <button
         type="button"
@@ -67,7 +90,7 @@ export function EmailStatementButton({
     <div
       role="group"
       aria-label="Email the statement"
-      className="w-72 space-y-2 rounded-md border border-[color:var(--color-brand-bg-mid)] bg-[color:var(--color-brand-bg)] p-3 text-left text-xs"
+      className="w-72 max-w-full space-y-2 rounded-md border border-[color:var(--color-brand-bg-mid)] bg-[color:var(--color-brand-bg)] p-3 text-left text-xs"
     >
       <p className="text-[color:var(--color-brand-text-mid)]">
         Send this statement to <b className="break-all">{email}</b>? Read the
