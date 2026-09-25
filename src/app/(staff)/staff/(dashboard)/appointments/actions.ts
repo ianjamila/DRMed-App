@@ -14,6 +14,12 @@ import { AttachPatientSchema, type AttachPatientInput } from "@/lib/appointments
 import { matchArrivedAppointmentsForServices } from "@/lib/appointments/match-arrived";
 import { MAX_BULK_RECORDS } from "@/lib/ui/bulk-selection";
 import { BULK_DELETABLE_STATUSES } from "@/lib/appointments/bulk-eligibility";
+import { chunkIds } from "@/lib/patients/require-active-core";
+
+// Mirrors require-active.ts's CHUNK: keep every `.in("id", …)` here to at
+// most 200 ids even though MAX_BULK_RECORDS allows up to 500 in one
+// selection — a URL with hundreds of UUIDs risks proxy/PostgREST limits.
+const ID_CHUNK = 200;
 
 type Transition =
   | "arrived"
@@ -68,27 +74,39 @@ function flattenBatch(batch: ReadonlyArray<BatchEntry>): {
 
 // Sibling ids per appointment WITHIN this batch, derived from booking_group_id
 // on the server — the client's grouping is never what the audit trail records.
+// Chunked at ID_CHUNK because a bulk batch can carry up to MAX_BULK_RECORDS
+// (500) ids. Returns null on any lookup failure — callers must stop BEFORE
+// any write rather than fall back to treating each id as its own singleton
+// group: for a hard delete that would record `group_appointment_ids: [id]`
+// in the audit row and the real group membership would be lost for good.
 async function bookingSiblings(
   supabase: Awaited<ReturnType<typeof createClient>>,
   ids: string[],
-): Promise<Map<string, string[]>> {
-  const { data } = await supabase
-    .from("appointments")
-    .select("id, booking_group_id")
-    .in("id", ids);
+): Promise<Map<string, string[]> | null> {
+  const rows: Array<{ id: string; booking_group_id: string | null }> = [];
+  for (const chunk of chunkIds(ids, ID_CHUNK)) {
+    const { data, error } = await supabase
+      .from("appointments")
+      .select("id, booking_group_id")
+      .in("id", chunk);
+    if (error) return null;
+    rows.push(...(data ?? []));
+  }
   const byGroup = new Map<string, string[]>();
-  for (const row of data ?? []) {
+  for (const row of rows) {
     if (!row.booking_group_id) continue;
     const list = byGroup.get(row.booking_group_id) ?? [];
     list.push(row.id);
     byGroup.set(row.booking_group_id, list);
   }
   const out = new Map<string, string[]>();
-  for (const row of data ?? []) {
+  for (const row of rows) {
     out.set(row.id, row.booking_group_id ? byGroup.get(row.booking_group_id)! : [row.id]);
   }
   return out;
 }
+
+const SIBLINGS_LOOKUP_FAILED = "Could not load the bookings — try again.";
 
 const TOO_MANY = `Too many appointments in one go — the limit is ${MAX_BULK_RECORDS}. Select fewer bookings.`;
 
@@ -125,18 +143,23 @@ async function transitionGroups(
 
   const supabase = await createClient();
   const siblings = await bookingSiblings(supabase, ids);
+  if (!siblings) return { ok: false, error: SIBLINGS_LOOKUP_FAILED };
 
-  // One UPDATE per expected status. `eq("status", from)` is the stale-click
-  // guard: ALLOWED_FROM alone would let a "Confirm" prepared on a pending
-  // callback un-cancel a booking a colleague cancelled a second earlier.
+  // One UPDATE per expected status, per ID_CHUNK-sized slice of that status's
+  // ids (a single `from` bucket can carry up to MAX_BULK_RECORDS ids).
+  // `eq("status", from)` is the stale-click guard: ALLOWED_FROM alone would
+  // let a "Confirm" prepared on a pending callback un-cancel a booking a
+  // colleague cancelled a second earlier.
   const writes = await Promise.all(
-    [...idsByFrom].map(([from, groupIds]) =>
-      supabase
-        .from("appointments")
-        .update({ status: to })
-        .in("id", groupIds)
-        .in("status", from === null ? allowed : [from])
-        .select("id, patient_id"),
+    [...idsByFrom].flatMap(([from, groupIds]) =>
+      chunkIds(groupIds, ID_CHUNK).map((chunk) =>
+        supabase
+          .from("appointments")
+          .update({ status: to })
+          .in("id", chunk)
+          .in("status", from === null ? allowed : [from])
+          .select("id, patient_id"),
+      ),
     ),
   );
   const failed = writes.find((w) => w.error);
@@ -561,16 +584,20 @@ async function deleteGroups(batch: ReadonlyArray<BatchEntry>): Promise<ApptResul
 
   const supabase = await createClient();
   const siblings = await bookingSiblings(supabase, ids);
+  if (!siblings) return { ok: false, error: SIBLINGS_LOOKUP_FAILED };
   // Audit from what the DELETE actually returned — never from a pre-read, so
   // two admins deleting overlapping selections cannot audit rows the other
   // one removed. With an expected status (bulk) a booking that changed since
-  // selection is left alone and reported as unchanged.
+  // selection is left alone and reported as unchanged. Chunked at ID_CHUNK
+  // per `from` bucket, same reasoning as transitionGroups above.
   const writes = await Promise.all(
-    [...idsByFrom].map(([from, groupIds]) => {
-      let query = supabase.from("appointments").delete().in("id", groupIds);
-      if (from !== null) query = query.eq("status", from);
-      return query.select("id, patient_id, status, scheduled_at");
-    }),
+    [...idsByFrom].flatMap(([from, groupIds]) =>
+      chunkIds(groupIds, ID_CHUNK).map((chunk) => {
+        let query = supabase.from("appointments").delete().in("id", chunk);
+        if (from !== null) query = query.eq("status", from);
+        return query.select("id, patient_id, status, scheduled_at");
+      }),
+    ),
   );
   const failed = writes.find((w) => w.error);
   const deleted = writes.flatMap((w) => w.data ?? []);

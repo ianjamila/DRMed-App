@@ -96,6 +96,43 @@ export function summariseOutcome(
   return out;
 }
 
+/**
+ * The four appointment sections (Pending callback, Walk-ins waiting, Today,
+ * Upcoming) are independently-queried snapshots of `appointments`, so the
+ * same booking group (same `ApptGroup.key` — a shared `booking_group_id`)
+ * can legitimately appear in two of them at once — e.g. a pending-callback
+ * booking scheduled for today shows in both Pending AND Today, with the
+ * SAME status and ids; that's expected and both checkboxes must keep
+ * ticking together. But if a colleague changes the booking BETWEEN the two
+ * queries, the two snapshots disagree (different status, or a different id
+ * set), and there is no way to tell which one is current. Selecting the
+ * stale copy would send the server the wrong `from` — the very predicate
+ * meant to catch a stale click — and could fire a transition the operator
+ * never actually saw on screen. Callers exclude every key this returns from
+ * selection entirely: the row still renders with its own single-row
+ * buttons, it just gets no checkbox.
+ */
+export function conflictingGroupKeys(
+  groups: ReadonlyArray<{ key: string; status: string; ids: readonly string[] }>,
+): Set<string> {
+  const byKey = new Map<string, Array<{ status: string; ids: readonly string[] }>>();
+  for (const g of groups) {
+    const list = byKey.get(g.key) ?? [];
+    list.push({ status: g.status, ids: g.ids });
+    byKey.set(g.key, list);
+  }
+  const conflicting = new Set<string>();
+  for (const [key, snapshots] of byKey) {
+    if (snapshots.length < 2) continue;
+    const first = snapshots[0]!;
+    const firstIds = new Set(first.ids);
+    const matchesFirst = (s: { status: string; ids: readonly string[] }) =>
+      s.status === first.status && s.ids.length === firstIds.size && s.ids.every((id) => firstIds.has(id));
+    if (!snapshots.every(matchesFirst)) conflicting.add(key);
+  }
+  return conflicting;
+}
+
 /** null when every booking changed; otherwise the alert text. */
 export function outcomeMessage(verb: string, pastTense: string, outcome: Outcome): string | null {
   const total = outcome.changed.length + outcome.partly.length + outcome.unchanged.length;

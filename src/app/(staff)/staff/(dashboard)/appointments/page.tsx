@@ -9,7 +9,7 @@ import { SelectionProvider } from "@/components/staff/row-selection/selection-co
 import { RowSelectCheckbox } from "@/components/staff/row-selection/row-select-checkbox";
 import { SelectAllCheckbox } from "@/components/staff/row-selection/select-all-checkbox";
 import type { SelectionEntry } from "@/lib/ui/bulk-selection";
-import type { GroupInfo } from "@/lib/appointments/bulk-eligibility";
+import { conflictingGroupKeys, type GroupInfo } from "@/lib/appointments/bulk-eligibility";
 import { AppointmentsBulkBar } from "./appointments-bulk-bar";
 import {
   NewAppointmentSheet,
@@ -210,17 +210,23 @@ function groupRows(rows: ApptRow[]): ApptGroup[] {
   return groups;
 }
 
-// Bulk selection: a row is a booking group; nothing acts on completed ones.
-function isSelectableGroup(g: ApptGroup): boolean {
-  return g.lead.status !== "completed";
+// Bulk selection: a row is a booking group; nothing acts on completed ones,
+// and nothing acts on a group whose two independently-queried snapshots
+// disagree (see conflictingGroupKeys's doc comment) — the operator can't
+// trust which status they actually saw.
+function isSelectableGroup(g: ApptGroup, unselectableKeys: ReadonlySet<string>): boolean {
+  return g.lead.status !== "completed" && !unselectableKeys.has(g.key);
 }
 
 function selectionEntry(g: ApptGroup): SelectionEntry {
   return { rowKey: g.key, kinds: [g.lead.status], weight: g.rows.length };
 }
 
-function selectableEntries(groups: readonly ApptGroup[]): SelectionEntry[] {
-  return groups.filter(isSelectableGroup).map(selectionEntry);
+function selectableEntries(
+  groups: readonly ApptGroup[],
+  unselectableKeys: ReadonlySet<string>,
+): SelectionEntry[] {
+  return groups.filter((g) => isSelectableGroup(g, unselectableKeys)).map(selectionEntry);
 }
 
 function groupPatientActive(r: ApptRow): boolean {
@@ -231,10 +237,13 @@ function groupPatientActive(r: ApptRow): boolean {
   });
 }
 
-function groupInfoMap(groups: readonly ApptGroup[]): Record<string, GroupInfo> {
+function groupInfoMap(
+  groups: readonly ApptGroup[],
+  unselectableKeys: ReadonlySet<string>,
+): Record<string, GroupInfo> {
   const out: Record<string, GroupInfo> = {};
   for (const g of groups) {
-    if (!isSelectableGroup(g)) continue;
+    if (!isSelectableGroup(g, unselectableKeys)) continue;
     out[g.key] = {
       ids: g.rows.map((row) => row.id),
       status: g.lead.status,
@@ -646,9 +655,21 @@ export default async function AppointmentsPage({ searchParams }: SearchProps) {
     String(size),
     rawSource,
   ].join("|");
-  const groupsByKey = groupInfoMap(
-    isFlatView ? flatGroups : [...pendingGroups, ...walkInGroups, ...todayGroups, ...upcomingGroups],
+  // Computed once over every group the page actually renders (the flat
+  // view's already-paginated flatGroups, or the four grouped-view section
+  // arrays) — see conflictingGroupKeys's doc comment for why a repeated key
+  // with disagreeing snapshots must not be selectable.
+  const renderedGroups = isFlatView
+    ? flatGroups
+    : [...pendingGroups, ...walkInGroups, ...todayGroups, ...upcomingGroups];
+  const unselectableKeys = conflictingGroupKeys(
+    renderedGroups.map((g) => ({
+      key: g.key,
+      status: g.lead.status,
+      ids: g.rows.map((row) => row.id),
+    })),
   );
+  const groupsByKey = groupInfoMap(renderedGroups, unselectableKeys);
 
   return (
     <div className="px-4 py-8 sm:px-6 lg:px-8">
@@ -794,6 +815,7 @@ export default async function AppointmentsPage({ searchParams }: SearchProps) {
             sortHref={sortHref}
             isAdmin={session.role === "admin"}
             attachmentsByGroup={attachmentsByGroup}
+            unselectableKeys={unselectableKeys}
           />
           <ListPagination
             page={page}
@@ -830,6 +852,7 @@ export default async function AppointmentsPage({ searchParams }: SearchProps) {
             empty="No pending callbacks. Nice."
             isAdmin={session.role === "admin"}
             attachmentsByGroup={attachmentsByGroup}
+            unselectableKeys={unselectableKeys}
             truncatedNotice={
               pendingResult.truncated
                 ? `Showing the first ${REPORT_EXPORT_MAX_ROWS.toLocaleString("en-PH")} pending-callback appointment rows (oldest first) — there are more than that still open.`
@@ -842,6 +865,7 @@ export default async function AppointmentsPage({ searchParams }: SearchProps) {
             empty="No walk-ins waiting — diagnostic packages and untimed lab requests land here until reception acts on them."
             isAdmin={session.role === "admin"}
             attachmentsByGroup={attachmentsByGroup}
+            unselectableKeys={unselectableKeys}
             truncatedNotice={
               walkInsResult.truncated
                 ? `Showing the first ${REPORT_EXPORT_MAX_ROWS.toLocaleString("en-PH")} walk-in appointment rows (oldest first) — there are more than that still open.`
@@ -854,6 +878,7 @@ export default async function AppointmentsPage({ searchParams }: SearchProps) {
             empty="No appointments today."
             isAdmin={session.role === "admin"}
             attachmentsByGroup={attachmentsByGroup}
+            unselectableKeys={unselectableKeys}
             truncatedNotice={
               todayResult.truncated
                 ? `Showing the first ${REPORT_EXPORT_MAX_ROWS.toLocaleString("en-PH")} of today's appointment rows (earliest first) — there are more than that today.`
@@ -866,6 +891,7 @@ export default async function AppointmentsPage({ searchParams }: SearchProps) {
             empty="No upcoming appointments."
             isAdmin={session.role === "admin"}
             attachmentsByGroup={attachmentsByGroup}
+            unselectableKeys={unselectableKeys}
             truncatedNotice={
               upcomingResult.truncated
                 ? `Showing the first ${REPORT_EXPORT_MAX_ROWS.toLocaleString("en-PH")} upcoming appointment rows (earliest first) — there are more than that in the next 30 days.`
@@ -886,6 +912,7 @@ function Section({
   empty,
   isAdmin,
   attachmentsByGroup,
+  unselectableKeys,
   truncatedNotice = null,
 }: {
   title: string;
@@ -893,6 +920,7 @@ function Section({
   empty: string;
   isAdmin: boolean;
   attachmentsByGroup: Map<string, LabRequestAttachment[]>;
+  unselectableKeys: ReadonlySet<string>;
   // N13: set only when the loader's row ceiling actually bit — never silent.
   truncatedNotice?: string | null;
 }) {
@@ -915,7 +943,7 @@ function Section({
             <tr>
               <th className="w-12 px-2 py-3">
                 <SelectAllCheckbox
-                  entries={selectableEntries(groups)}
+                  entries={selectableEntries(groups, unselectableKeys)}
                   label={`Select all bookings in ${title.replace(/\s*\(\d+\)\s*$/, "")}`}
                 />
               </th>
@@ -943,6 +971,7 @@ function Section({
                   key={g.key}
                   group={g}
                   isAdmin={isAdmin}
+                  unselectableKeys={unselectableKeys}
                   attachments={
                     g.lead.booking_group_id
                       ? attachmentsByGroup.get(g.lead.booking_group_id) ?? []
@@ -972,12 +1001,14 @@ function FlatTable({
   sortHref,
   isAdmin,
   attachmentsByGroup,
+  unselectableKeys,
 }: {
   groups: BucketedGroup[];
   sort: SortSpec<FlatSortColumn>;
   sortHref: (key: FlatSortColumn) => string;
   isAdmin: boolean;
   attachmentsByGroup: Map<string, LabRequestAttachment[]>;
+  unselectableKeys: ReadonlySet<string>;
 }) {
   return (
     <Panel className="overflow-x-auto">
@@ -985,7 +1016,10 @@ function FlatTable({
         <thead className="bg-[color:var(--color-brand-bg)] text-left text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
           <tr>
             <th className="w-12 px-2 py-3">
-              <SelectAllCheckbox entries={selectableEntries(groups)} label="Select all bookings on this page" />
+              <SelectAllCheckbox
+                entries={selectableEntries(groups, unselectableKeys)}
+                label="Select all bookings on this page"
+              />
             </th>
             <SortableTh
               label="Requested"
@@ -1026,6 +1060,7 @@ function FlatTable({
                 group={g}
                 isAdmin={isAdmin}
                 bucket={g.bucket}
+                unselectableKeys={unselectableKeys}
                 attachments={
                   g.lead.booking_group_id
                     ? attachmentsByGroup.get(g.lead.booking_group_id) ?? []
@@ -1045,6 +1080,7 @@ function GroupRow({
   isAdmin,
   attachments,
   bucket,
+  unselectableKeys,
 }: {
   group: ApptGroup;
   isAdmin: boolean;
@@ -1052,13 +1088,14 @@ function GroupRow({
   // Only set from FlatTable — renders an extra "From" cell so a row mixed
   // in with the other three sections still says which one it came from.
   bucket?: BucketKey;
+  unselectableKeys: ReadonlySet<string>;
 }) {
   const r = group.lead;
   const ids = group.rows.map((row) => row.id);
   return (
     <tr className="align-top hover:bg-[color:var(--color-brand-bg)]">
       <td className="px-2 py-2 align-middle">
-        {isSelectableGroup(group) ? (
+        {isSelectableGroup(group, unselectableKeys) ? (
           <RowSelectCheckbox
             rowKey={group.key}
             kinds={[r.status]}

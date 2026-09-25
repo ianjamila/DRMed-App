@@ -95,7 +95,7 @@ export function AppointmentsBulkBar({ groupsByKey, isAdmin }: Props) {
     <BulkBar noun="booking">
       {inactiveCount > 0 ? (
         <span className="text-[11px] text-amber-700">
-          {inactiveCount} skipped for Mark arrived, Confirm and Revert — patient record deleted
+          {inactiveCount} skipped for Mark arrived, Confirm and Revert — patient record deleted or merged
         </span>
       ) : null}
       {BUTTONS.map((button) => {

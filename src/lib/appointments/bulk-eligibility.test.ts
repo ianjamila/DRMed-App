@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   BULK_TARGET,
   bulkActionPlan,
+  conflictingGroupKeys,
   outcomeMessage,
   summariseOutcome,
   type BulkGroup,
@@ -54,6 +55,48 @@ describe("bulkActionPlan", () => {
       confirm: "confirmed",
       revert: "confirmed",
     });
+  });
+});
+
+describe("conflictingGroupKeys", () => {
+  it("is not conflicting when the same key repeats with the same status and same ids", () => {
+    const groups = [
+      { key: "k1", status: "pending_callback", ids: ["a1"] },
+      { key: "k1", status: "pending_callback", ids: ["a1"] },
+    ];
+    expect(conflictingGroupKeys(groups)).toEqual(new Set());
+  });
+
+  it("flags a key that repeats with a different status", () => {
+    const groups = [
+      { key: "k1", status: "pending_callback", ids: ["a1"] },
+      { key: "k1", status: "confirmed", ids: ["a1"] },
+    ];
+    expect(conflictingGroupKeys(groups)).toEqual(new Set(["k1"]));
+  });
+
+  it("flags a key that repeats with a different id set (order-insensitive on the matching set)", () => {
+    const groups = [
+      { key: "k1", status: "confirmed", ids: ["a1", "a2"] },
+      { key: "k1", status: "confirmed", ids: ["a1"] },
+    ];
+    expect(conflictingGroupKeys(groups)).toEqual(new Set(["k1"]));
+  });
+
+  it("is not conflicting when the id set is the same but reordered", () => {
+    const groups = [
+      { key: "k1", status: "confirmed", ids: ["a1", "a2"] },
+      { key: "k1", status: "confirmed", ids: ["a2", "a1"] },
+    ];
+    expect(conflictingGroupKeys(groups)).toEqual(new Set());
+  });
+
+  it("returns an empty set when every key is unique", () => {
+    const groups = [
+      { key: "k1", status: "confirmed", ids: ["a1"] },
+      { key: "k2", status: "pending_callback", ids: ["b1"] },
+    ];
+    expect(conflictingGroupKeys(groups)).toEqual(new Set());
   });
 });
 
