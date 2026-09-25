@@ -54,6 +54,7 @@ import {
 } from "@/lib/visits/receipt-policy";
 import { isDoctorKind } from "@/lib/visits/order-lines";
 import { moneySettled } from "@/lib/visits/money-settled";
+import { waivedAmount } from "@/lib/visits/statement";
 import { canManuallyReleasePackageHeader } from "@/lib/visits/package-header-release";
 import { QueueDeleteDialog } from "@/components/staff/queue-delete-dialog";
 import { ReissuePinButton } from "@/components/staff/reissue-pin-button";
@@ -400,7 +401,7 @@ export default async function VisitDetailPage({ params, searchParams }: Props) {
   const balance = Number(visit.total_php) - Number(visit.paid_php);
   // Waiving writes no payment row, so paid_php stays short of the total: the
   // remainder is waived, not owed (same rule as the statement of account).
-  const waivedBalance = visit.payment_status === "waived" && balance > 0 ? balance : 0;
+  const waivedBalance = waivedAmount(visit);
   const activePayments = (payments ?? []).filter((p) => !p.voided_at);
   const voidedPayments = (payments ?? []).filter((p) => p.voided_at);
   // Edit / Move (0161) link a corrected row to the original it voided. A move

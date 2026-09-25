@@ -22,7 +22,7 @@ import {
 } from "@/lib/patients/labels";
 import { Panel } from "@/components/ui/panel";
 import { EmailStatementButton } from "@/components/staff/email-statement-button";
-import { STATEMENT_ROLES } from "@/lib/visits/statement";
+import { STATEMENT_ROLES, waivedAmount } from "@/lib/visits/statement";
 import { manilaDate, manilaDateTime } from "@/lib/dates/manila";
 import { linkPayments, paymentMethodLabel } from "@/lib/visits/payment-history";
 import {
@@ -294,7 +294,17 @@ export default async function PatientDetailPage({ params }: Props) {
                       {manilaDate(v.visit_date)}
                     </td>
                     <td className="px-4 py-3">{formatPhp(v.total_php)}</td>
-                    <td className="px-4 py-3">{formatPhp(v.paid_php)}</td>
+                    <td className="px-4 py-3">
+                      {formatPhp(v.paid_php)}
+                      {/* Waiving writes no payment, so Paid alone falls short
+                          of Total; name the remainder (same rule as the
+                          visit page and the statement). */}
+                      {waivedAmount(v) > 0 ? (
+                        <div className="text-xs text-[color:var(--color-brand-text-soft)]">
+                          {formatPhp(waivedAmount(v))} waived
+                        </div>
+                      ) : null}
+                    </td>
                     <td className="px-4 py-3">
                       <span
                         className={`rounded-md px-2 py-0.5 text-xs font-semibold ${

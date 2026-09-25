@@ -794,6 +794,133 @@ async function main(): Promise<void> {
       }
       return problems;
     });
+
+    // A waived visit reads "Paid ₱0" on a ₱550 bill; every list that shows
+    // Paid must name the waived remainder (Reception Queue's Processing tab
+    // shows tests, not payment, in its status column — the worst case).
+    await check("waived-amount-lists", async () => {
+      const problems: string[] = [];
+      await page.emulateMedia({ media: "screen" });
+      await page.goto(`${APP_BASE}/staff/patients/${s.patientId}`, { timeout: 180_000 });
+      const onPatient = page.locator("table").getByText("₱550 waived", { exact: true });
+      await onPatient.first().waitFor({ timeout: 30_000 }).catch(() => undefined);
+      if ((await onPatient.count()) !== 1) problems.push(`patient page Visits: ${await onPatient.count()}× "₱550 waived"`);
+
+      let inQueue = 0;
+      for (const stage of ["processing", "completed"]) {
+        await page.goto(`${APP_BASE}/staff/visits/queue?stage=${stage}`, { timeout: 180_000 });
+        inQueue += await page.locator("table").getByText("₱550.00 waived", { exact: true }).count();
+      }
+      if (inQueue !== 1) problems.push(`Reception Queue: ${inQueue}× "₱550.00 waived" across Processing + Completed`);
+
+      await page.goto(`${APP_BASE}/staff/visits?q=${encodeURIComponent(s.drmId)}`, { timeout: 180_000 });
+      const inRecords = await page.locator("table").getByText("₱550.00 waived", { exact: true }).count();
+      if (inRecords !== 1) problems.push(`Visit Records: ${inRecords}× "₱550.00 waived"`);
+
+      const csv = await (await page.request.get(`${APP_BASE}/api/admin/visits.csv?q=${encodeURIComponent(s.drmId)}`)).text();
+      const [head = "", ...lines] = csv.split(/\r?\n/);
+      if (!head.includes("Paid PHP,Waived PHP")) problems.push("CSV has no Waived PHP column after Paid PHP");
+      if (!lines.some((l) => l.includes(",550.00,0.00,550.00,"))) problems.push("CSV has no row with 550.00 waived");
+      return problems;
+    });
+
+    await check("portal-your-visits", async () => {
+      const problems: string[] = [];
+      await portalPage.emulateMedia({ media: "screen" });
+      await portalPage.goto(`${APP_BASE}/portal`, { timeout: 180_000 });
+      const section = portalPage.locator("section", {
+        has: portalPage.getByRole("heading", { name: "Your visits" }),
+      });
+      await section.waitFor({ timeout: 30_000 }).catch(() => undefined);
+      if ((await section.count()) !== 1) return ["no Your visits section"];
+      // Every live visit once — the package visit, the consult-only one and the waived one.
+      for (const id of [s.visitId, s.consultVisitId, s.waivedVisitId]) {
+        if ((await section.locator(`a[href="/portal/visits/${id}/statement"]`).count()) !== 1) {
+          problems.push(`no Statement link for visit ${id}`);
+        }
+        if ((await section.locator(`a[href="/portal/visits/${id}"]`).count()) !== 1) {
+          problems.push(`no Details link for visit ${id}`);
+        }
+      }
+      const waivedRow = section.locator("li", { has: portalPage.locator(`a[href="/portal/visits/${s.waivedVisitId}/statement"]`) });
+      if (!((await waivedRow.textContent()) ?? "").includes("Nothing due")) problems.push("the waived visit does not read Nothing due");
+      if ((await section.locator(`a[href="/portal/visits/${s.otherVisitId}/statement"]`).count()) !== 0) {
+        problems.push("another patient's visit is listed");
+      }
+      return problems;
+    });
+
+    // Staff record a withdrawal while the patient still has the portal open.
+    // Neither the layout (it does not re-render on client navigation) nor a
+    // stale tab may keep handing out the record.
+    await check("portal-consent-withdrawn", async () => {
+      const problems: string[] = [];
+      const auditCount = async (actions: string[]) =>
+        (
+          await db.query(
+            `select count(*)::int as n from audit_log
+              where actor_type = 'patient' and patient_id = $1 and resource_id = $2 and action = any($3)`,
+            [s.patientId, s.visitId, actions],
+          )
+        ).rows[0].n as number;
+
+      await portalPage.goto(`${APP_BASE}/portal`, { timeout: 180_000 });
+      const staleTab = await portalCtx.newPage();
+      await staleTab.goto(`${APP_BASE}/portal/visits/${s.visitId}/statement`, { timeout: 180_000 });
+      await staleTab.getByRole("button", { name: "Email it to me" }).waitFor({ timeout: 60_000 });
+      await db.query("delete from rate_limit_attempts where identifier like $1", [`${s.visitId}:%`]);
+
+      await db.query(
+        `insert into patient_consents (patient_id, event_type, actor_kind, created_by, reason)
+         values ($1, 'withdrawn', 'staff', $2, 'print smoke: withdrawal check')`,
+        [s.patientId, s.staffId],
+      );
+      const viewedBefore = await auditCount(["statement.viewed"]);
+      const sentBefore = await auditCount(["statement.emailed", "statement.email_failed"]);
+
+      // 1. Client-side navigation from the already-rendered home page.
+      await portalPage
+        .locator("section", { has: portalPage.getByRole("heading", { name: "Your visits" }) })
+        .locator(`a[href="/portal/visits/${s.visitId}/statement"]`)
+        .click();
+      await portalPage.waitForURL((u) => u.pathname.endsWith("/statement"), { timeout: 60_000 });
+      await portalPage.getByRole("button", { name: "I Agree" }).waitFor({ timeout: 60_000 }).catch(() => undefined);
+      if ((await portalPage.getByRole("button", { name: "I Agree" }).count()) === 0) {
+        problems.push("client-side navigation did not show the consent notice");
+      }
+      if ((await portalPage.locator("article.receipt-sheet").count()) > 0) {
+        problems.push("client-side navigation rendered the statement after withdrawal");
+      }
+
+      // 2. The stale tab's Email button — a direct Server Action call.
+      await staleTab.getByRole("button", { name: "Email it to me" }).click();
+      await staleTab.getByRole("group", { name: "Email my statement" }).getByRole("button", { name: "Send email" }).click();
+      const refused = staleTab.locator("p[role=alert]").filter({ hasText: "privacy notice" });
+      await refused.waitFor({ timeout: 60_000 }).catch(() => undefined);
+      if ((await refused.count()) !== 1) problems.push("the stale tab's Email it to me was not refused");
+      await staleTab.close();
+
+      // 3. The data export link.
+      const exp = await portalCtx.request.get(`${APP_BASE}/portal/data-export`, { maxRedirects: 0 });
+      const loc = exp.headers()["location"] ?? "";
+      if (exp.status() < 300 || exp.status() >= 400 || !loc.endsWith("/portal")) {
+        problems.push(`data export answered ${exp.status()} ${loc || "(no redirect)"}, expected a redirect to /portal`);
+      }
+
+      // 4. A hard load: nothing of the record in the HTML or RSC payload.
+      for (const path of ["/portal", `/portal/visits/${s.visitId}`, `/portal/visits/${s.visitId}/statement`]) {
+        const html = await (await portalCtx.request.get(APP_BASE + path)).text();
+        if (html.includes(`/portal/visits/${s.visitId}/statement`) || html.includes(PATIENT_EMAIL)) {
+          problems.push(`${path} still ships the record in its payload after withdrawal`);
+        }
+      }
+
+      if ((await auditCount(["statement.viewed"])) !== viewedBefore) problems.push("a statement.viewed row was written after withdrawal");
+      if ((await auditCount(["statement.emailed", "statement.email_failed"])) !== sentBefore) {
+        problems.push("a statement send was attempted after withdrawal");
+      }
+      return problems;
+    });
   } finally {
     await launched?.close();
     await cleanup(db, seeded).catch((e) => {

@@ -8,6 +8,8 @@ import {
 import { createClient } from "@/lib/supabase/server";
 import { physicianPhotoUrl } from "@/lib/physicians/photo";
 import { requirePatientProfile } from "@/lib/auth/require-patient";
+import { portalConsentCurrent } from "@/lib/portal/consent-guard";
+import { PortalConsentGate } from "../consent/consent-gate";
 import { BookingForm } from "@/app/(marketing)/schedule/booking-form";
 import { BookingPausedNotice } from "@/components/marketing/booking-paused-notice";
 import { getOnlineBookingStatus } from "@/lib/booking/online-booking";
@@ -24,6 +26,7 @@ export const dynamic = "force-dynamic";
 
 export default async function PortalBookPage() {
   const patient = await requirePatientProfile();
+  if (!(await portalConsentCurrent(patient.patient_id))) return <PortalConsentGate />;
 
   // Same admin pause switch as public /schedule (booking_settings, 0153). The
   // flag is a global clinic setting, not patient data, so reading it through

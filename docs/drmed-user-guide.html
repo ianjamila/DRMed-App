@@ -247,7 +247,7 @@
 <div class="layout">
 <nav class="toc" aria-label="Contents">
   <p class="toc-brand">drmed<span>.</span>ph</p>
-  <p class="toc-tag">User guide · v2.23</p>
+  <p class="toc-tag">User guide · v2.24</p>
   <div class="filter" role="group" aria-label="Show chapters for">
     <button type="button" data-filter="all" aria-pressed="true">All roles</button>
     <button type="button" data-filter="reception">Reception</button>
@@ -593,6 +593,7 @@
     <div class="screen"><div class="where"><code class="route">/staff/visits/[visit]/statement</code> · <kbd class="ui">Statement</kbd> on any visit page (Reception and Admin only) · the <b>Statement</b> column of a patient's <b>Visits</b> list (<b>Open</b> · <b>Email</b>) · Admin: <b>Open</b> in the Statement column of <b>Patient AR aging</b></div>
       <dl><dt>Shows</dt><dd>Clinic header · patient and DRM-ID · every bill line with packages laid out as on the receipt · <b>Total charges</b> · <b>Payments received</b> (date, method, reference, amount — voided payments are left out) · <b>Total paid</b> and the balance</dd>
       <dt>Visit page</dt><dd>A waived visit shows <b>Balance waived</b> in place of Balance, so the waived remainder is never mistaken for money owed.</dd>
+      <dt>Lists</dt><dd>The Reception Queue, the patient page's <b>Visits</b> list and <kbd class="ui">Visit Records</kbd> show the waived amount under Paid as <q>₱… waived</q>. The Visit Records CSV has a <b>Waived PHP</b> column; a split visit adds up what was waived on each half.</dd>
       <dt>Balance line</dt><dd><q>Paid in full</q> · <q>Balance due</q> · <q>Overpaid</q> · <q>Nothing due</q> when Admin waived the rest (the waived amount shows as <b>Balance waived</b>). On an HMO visit an open balance reads <q>Balance</q>, with a note that the HMO&apos;s share is settled through the claim, not at the counter.</dd>
       <dt>Ends with</dt><dd><kbd class="ui">Print statement</kbd> — the same A5 page as the receipt — or <kbd class="ui">Email to patient</kbd></dd></dl></div>
     <h4>Emailing the statement</h4>
@@ -659,7 +660,7 @@
     <p>This is today's worklist. It updates on its own as payments land and tests finish.</p>
     <dl class="defs">
       <dt>Waiting for payment</dt><dd>Visits the counter still has money to collect on, so the lab cannot see them. Collect and <kbd class="ui">Record payment</kbd>. HMO-billed visits are <b>not</b> here: their balance is owed by the insurer, not the patient, so they move straight to <span class="tab">Processing</span> and carry an <span class="status">HMO · provider</span> chip instead of a payment badge (3.6).</dd>
-      <dt>Processing</dt><dd>Paid or waived, and the lab or imaging still owes at least one result. The row itself lists what is outstanding, which is all you need to answer <q>is it ready?</q></dd>
+      <dt>Processing</dt><dd>Paid or waived, and the lab or imaging still owes at least one result. The row itself lists what is outstanding, which is all you need to answer <q>is it ready?</q> On a waived visit the amount the clinic waived shows under <b>Paid</b> (for example <q>₱1,300.00 waived</q>), so a short Paid figure is never mistaken for money still owed.</dd>
       <dt>Completed</dt><dd>Paid and every lab and imaging line released. <kbd class="ui">Print billing</kbd> reprints the receipt (without the PIN).</dd>
     </dl>
     <div class="note why"><span class="k">What reception sees on a visit page, and what it doesn't</span><div><p>Reception sees the <b>bill</b>: every test line with its name, code, price, discount and status chip, plus the doctor's clinic fee and professional fee exactly as they were typed in at intake, the internal notes, and the deleted-entries panel. That is the same information reception enters and collects on, so withholding it only made the counter guess.</p><p>What reception does <b>not</b> get is the <b>work on the result</b>: no Release, Undo or Mark-done buttons, no bulk actions, no link through to the lab bench, and no result until it is released. Once a lab or imaging line is <b>released</b>, its row shows <b>Print result</b> and <b>View PDF →</b>, so the counter can hand the patient a paper copy. Releasing stays the lab's job, and the results archive remains closed to reception. (Changed September 2026; before that reception saw no test lines at all, and until 24 September it could not open a released PDF either.)</p></div></div>
@@ -1051,7 +1052,7 @@
       <dt>Lost authenticator phone</dt><dd>The code is required on every sign-in route once enrolled, Google included, so losing the phone locks them out just the same. No screen removes an enrolled authenticator, so clearing the stale factor still needs someone with access to the Supabase project. Warn staff before they enrol (2.2) and see <a href="#limits">Known limitations</a>.</dd>
       <dt>Waive a balance</dt><dd>On the visit: <kbd class="ui">Waive balance</kbd> → <kbd class="ui">Confirm waive</kbd>. Admin-only, and irreversible in the sense that a waived visit can't be deleted.</dd>
       <dt>Unclaim or reassign a test</dt><dd>Open the test from the queue; the <b>Assignment (admin)</b> panel has <kbd class="ui">Unclaim</kbd> and <kbd class="ui">Reassign to…</kbd>. You only need it now for someone else's stuck claim or to hand work to a named person — staff release their own claims themselves (4.2). The queue row's own <kbd class="ui">Unclaim</kbd> does the same unclaim without opening the test. Reassignment only offers active staff who could claim that test themselves — so an x-ray lists X-ray technicians only; when nobody else qualifies the panel says <q>No one else can take this test right now</q>.</dd>
-      <dt>Withdraw a patient's consent</dt><dd>Patient page › Consent panel › <kbd class="ui">Withdraw consent</kbd>, with a reason. Their results stay; future releases are blocked if the gate is on.</dd>
+      <dt>Withdraw a patient's consent</dt><dd>Patient page › Consent panel › <kbd class="ui">Withdraw consent</kbd>, with a reason. Their results stay; future releases are blocked if the gate is on. Their portal closes too: every page shows the consent notice again, and downloads, <kbd class="ui">Email it to me</kbd> and the data export are refused (<q>Please review and accept the privacy notice on your portal home page first.</q>) until they agree again in the portal. Until then, give them printouts at the front desk.</dd>
     </dl>
   </section>
 
@@ -1103,12 +1104,12 @@
       <li><p class="step-title">Go to <code class="route">drmed.ph/portal</code> on any phone or computer.</p></li>
       <li><p class="step-title">Type your <b>DRM-ID</b> (it looks like <code class="id">DRM-0001</code>) and the 8-character <b>Secure PIN</b> printed on your receipt, then tap <kbd class="ui">Access my results</kbd>.</p><p>The PIN is printed under <b>Patient Portal Access</b> on the receipt. It uses capital letters and digits only, and never 0, 1, O or I, so there is nothing to confuse.</p></li>
       <li><p class="step-title">The first time, read the <b>Data Privacy Consent</b> notice, tick <q>I have read and understood this notice…</q>, and tap <kbd class="ui">I Agree</kbd>.</p><p>This appears only if you have not already signed the consent form at the clinic.</p></li>
-      <li><p class="step-title">Your released results are listed newest first. Tap <kbd class="ui">Download</kbd> to get the signed PDF.</p><p>Each download link works for 5 minutes and opens in a new tab. Tests still being processed are listed under <b>Still in progress</b>.</p></li>
+      <li><p class="step-title">Your released results are listed newest first. Tap <kbd class="ui">Download</kbd> to get the signed PDF.</p><p>Each download link works for 5 minutes and opens in a new tab. Tests still being processed are listed under <b>Still in progress</b>. <b>Your visits</b>, further down, lists every visit once — date, total and whether anything is left to pay (<q>Paid in full</q>, <q>Balance due</q>, <q>Nothing due</q>, or <q>Billed to your HMO</q>) — with <kbd class="ui">Statement</kbd> and <kbd class="ui">Details</kbd> links.</p></li>
       <li><p class="step-title">Tap <kbd class="ui">Sign out</kbd> when you are done, especially on a shared device.</p></li>
     </ol>
     <div class="note why"><span class="k">Result updated</span><div><p>If the clinic corrects a result after you already downloaded it, an amber <b>Result updated</b> chip appears next to <b>Released</b> in your results list, under the package name on a package card, under the test when you tap <kbd class="ui">Show individual results</kbd>, and on the visit page next to the status. Hover or tap it to read <q>The clinic has updated this result since you downloaded it. Download it again for the latest copy.</q> Downloading it again — the whole package, a single result, or a clinic-issued data-export link — all count, and any of them makes the chip go away. If you never downloaded the earlier copy you won't see it at all, since your first download is already the corrected one. The clinic never shows you why a result was corrected.</p></div></div>
     <h4>Your statement of account</h4>
-    <p>Open a visit and tap <kbd class="ui">Statement of account</kbd>. It shows every charge on that visit (a package with its tests listed underneath), every payment you made, and the balance: <q>Paid in full</q>, <q>Balance due</q>, <q>Overpaid</q>, or <q>Nothing due</q> if the clinic waived the rest. Tap <kbd class="ui">Email it to me</kbd> to have it sent to the email address on your record (it asks you to confirm the address first), or <kbd class="ui">Print or save as PDF</kbd> and choose <q>Save as PDF</q> to keep a copy for your HMO or employer. Every <q>Your lab result is ready</q> email now reminds you the statement is there. It is the same statement reception prints, it never shows your PIN, and opening or printing it is recorded, like a download.</p>
+    <p>Tap <kbd class="ui">Statement</kbd> next to the visit under <b>Your visits</b> (or open a visit and tap <kbd class="ui">Statement of account</kbd>). It shows every charge on that visit (a package with its tests listed underneath), every payment you made, and the balance: <q>Paid in full</q>, <q>Balance due</q>, <q>Overpaid</q>, or <q>Nothing due</q> if the clinic waived the rest. Tap <kbd class="ui">Email it to me</kbd> to have it sent to the email address on your record (it asks you to confirm the address first), or <kbd class="ui">Print or save as PDF</kbd> and choose <q>Save as PDF</q> to keep a copy for your HMO or employer. Every <q>Your lab result is ready</q> email now reminds you the statement is there. It is the same statement reception prints, it never shows your PIN, and opening or printing it is recorded, like a download.</p>
     <h4>If something goes wrong</h4>
     <dl class="defs">
       <dt><q>Invalid DRM-ID or PIN.</q></dt><dd>Check the receipt again. If the receipt is more than 60 days old, the PIN has expired: visit reception with an ID and they will print a new one. PINs cannot be given over the phone.</dd>
@@ -1237,7 +1238,7 @@
 </section>
 
 <footer class="end">
-  <p>drmed.ph User Guide · v2.23 · 25 September 2026 · Matches the production release at migration 0177, plus 0176 (applied out of order). Every label in this guide was checked against the application code on that date. Print with <b>Ctrl/Cmd + P</b>; each chapter starts on a new page.</p>
+  <p>drmed.ph User Guide · v2.24 · 25 September 2026 · Matches the production release at migration 0177, plus 0176 (applied out of order). Every label in this guide was checked against the application code on that date. Print with <b>Ctrl/Cmd + P</b>; each chapter starts on a new page.</p>
 </footer>
 </main>
 </div>
