@@ -245,6 +245,9 @@ create table public.sheet_sync_changes (
   constraint sheet_sync_changes_update_has_column check ((change_kind = 'create') = (column_name is null))
 );
 create index sheet_sync_changes_run on public.sheet_sync_changes (run_id, patient_id);
+-- Retention deletes old runs; the undo_run_id FK (on delete set null) then
+-- looks rows up by it.
+create index sheet_sync_changes_undo_run on public.sheet_sync_changes (undo_run_id) where undo_run_id is not null;
 
 -- decision: link (patient_id set) | create (admin: make a new patient) |
 -- review (a HOLD: no patient; every run sends the key to review until an
@@ -473,31 +476,52 @@ declare
   v_paused boolean;
   v_run public.sheet_sync_runs%rowtype;
   v_id uuid;
+  v_busy boolean := false;
   v_token uuid := gen_random_uuid();
 begin
   if p_trigger is null or p_trigger not in ('cron','manual','cli','resort','alias','revert') then
     raise exception 'Unknown sheet sync trigger.' using errcode = '22023';
   end if;
   perform pg_advisory_xact_lock(hashtext('sheet_sync_lease'));
-  -- Lock the running row FIRST (it waits out a write the worker has in
-  -- flight — the fence holds that row — and then re-reads its heartbeat).
-  -- Sweeping before this lock could delete a live worker's staging while
-  -- that worker, holding the row, is itself deleting it: a deadlock.
-  select * into v_run from public.sheet_sync_runs r where r.status = 'running' for update;
-  -- Staged rows (names, phones) belong only to a LIVE run: finish clears a
-  -- run's own, but a run that crashed never finishes. Sweep them — also on
-  -- the paused path below, which returns before any takeover.
-  delete from public.sheet_mirror_staging s
-   where not exists (select 1 from public.sheet_sync_runs r
-                      where r.id = s.run_id and r.status = 'running'
-                        and public._sheet_sync_lease_live(r.heartbeat_at));
   select s.paused into v_paused from public.sheet_sync_settings s where s.id;
+  -- The running row is locked BEFORE staging is swept (it waits out a write
+  -- the worker has in flight — the fence holds that row — and re-reads its
+  -- heartbeat). Sweeping first could delete a live worker's staging while
+  -- that worker, holding the row, is itself deleting it: a deadlock.
+  -- Staged rows (names, phones) belong only to a LIVE run: finish clears a
+  -- run's own, but a run that crashed never finishes.
   if coalesce(v_paused, true) and p_trigger in ('cron','manual','cli') and not coalesce(p_dry_run, false) then
+    -- Paused: record the skip whatever else is going on. A revert / resort /
+    -- alias / preview call holding the running row must not turn a skip into
+    -- a lock wait (a raw lock_timeout for the cron): NOWAIT, and when the row
+    -- is busy the sweep simply waits for the next acquire.
+    begin
+      select * into v_run from public.sheet_sync_runs r where r.status = 'running' for update nowait;
+    exception when lock_not_available then
+      v_busy := true;
+    end;
+    if not v_busy then
+      delete from public.sheet_mirror_staging s
+       where not exists (select 1 from public.sheet_sync_runs r
+                          where r.id = s.run_id and r.status = 'running'
+                            and public._sheet_sync_lease_live(r.heartbeat_at));
+    end if;
     insert into public.sheet_sync_runs (trigger, actor_id, dry_run, status, ended_at)
     values (p_trigger, p_actor, false, 'skipped_paused', now())
     returning id into v_id;
     return jsonb_build_object('status', 'skipped_paused', 'run_id', v_id);
   end if;
+  -- Not paused: wait out an in-flight write, but a wait that outlives
+  -- lock_timeout means a live worker is busy — P0062, never a raw 55P03.
+  begin
+    select * into v_run from public.sheet_sync_runs r where r.status = 'running' for update;
+  exception when lock_not_available then
+    raise exception 'Another sheet sync is running.' using errcode = 'P0062';
+  end;
+  delete from public.sheet_mirror_staging s
+   where not exists (select 1 from public.sheet_sync_runs r
+                      where r.id = s.run_id and r.status = 'running'
+                        and public._sheet_sync_lease_live(r.heartbeat_at));
   if v_run.id is not null then
     if public._sheet_sync_lease_live(v_run.heartbeat_at) then
       raise exception 'Another sheet sync is running.' using errcode = 'P0062';
