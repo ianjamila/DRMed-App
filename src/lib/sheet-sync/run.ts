@@ -46,13 +46,23 @@ function errText(e: unknown): string {
   if (e instanceof Error) {
     const code = (e as Error & { code?: string }).code;
     if (code && !OUR_CODE.test(code)) {
-      console.error("sheet sync: redacted database error", { code, message: e.message });
+      // The message itself is withheld: a foreign SQLSTATE (22P02, 23505, …)
+      // routinely echoes the offending cell value, and console.error is a
+      // Sentry breadcrumb — logging it would leak patient data into Sentry
+      // the same way it would into per_tab.error. Only the code is safe.
+      console.error("sheet sync: redacted database error — message withheld (may contain sheet data)", { code });
       return `database error ${code}`;
     }
     return e.message;
   }
   return String(e);
 }
+
+/** Shown on lab/consult when a partial Customers failure left identity data
+ * possibly stale and the post-failure reload (below) could not refresh it —
+ * never a good idea to resolve names against patients/links that predate a
+ * hold or create this run already committed. */
+const IDENTITY_STALE_MESSAGE = "Skipped because the patient list could not be refreshed after a partial Customers update.";
 
 function lineToRow(l: IdentifiedLine): Json {
   return {
@@ -77,7 +87,9 @@ export async function runSheetSync(opts: {
   const now = opts.now ?? Date.now;
   const started = now();
   const today = opts.today ?? todayManilaISODate();
-  const actorType = opts.trigger === "cron" ? "system" : "staff";
+  // cli runs (scripts/sheet-sync.ts) have no admin actor either — audit them
+  // as 'system' like cron, not 'staff' with a null id.
+  const actorType = opts.trigger === "cron" || opts.trigger === "cli" ? "system" : "staff";
   const audit = (action: string, runId: string | null, metadata: Record<string, unknown>) =>
     store.audit({ actor_id: opts.actorId, actor_type: actorType, action, resource_type: "sheet_sync_run", resource_id: runId, metadata: metadata as Json });
 
@@ -101,6 +113,13 @@ export async function runSheetSync(opts: {
     let index: PatientIndex = buildPatientIndex(patients);
     const links = new Map<string, LinkRecord>(linkRows.map((l) => [l.link_key, l]));
     const facts = new Map(factRows.map((f) => [f.patient_id, f]));
+    // Set when a Customers ops chunk committed (a hold/create/link/fill) and a
+    // LATER chunk then failed, so the reload below (which normally runs right
+    // after every chunk applies) never ran — links/index can now disagree with
+    // what the database actually holds. Checked before lab/consult resolve
+    // identity: running them against stale state could link/unlink the wrong
+    // person, which is worse than skipping them for this run.
+    let identityStale = false;
 
     /** Shared snapshot gate: false ⇒ tab skipped as suspect (item raised when not dry). */
     const snapshotOk = async (tab: TabKey, parsed: TabParse<unknown>) => {
@@ -129,20 +148,40 @@ export async function runSheetSync(opts: {
           const created: Record<string, string> = {};
           const applied: Record<string, number> = {};
           let touchedLinks = false;
-          for (const batch of chunks<CustomerOp>(plan.ops, OPS_CHUNK)) {
-            const res = await store.applyCustomerOps(lease, batch);
-            Object.assign(created, res.created);
-            for (const [k, v] of Object.entries(res.counts)) applied[k] = (applied[k] ?? 0) + v;
-            if (batch.some((op) => op.op !== "fill" && op.op !== "facts")) touchedLinks = true;
-          }
           // Reload BEFORE staging/committing the mirror: a `hold` op stops a doubted
           // auto link from speaking for that name right away (customer-plan.ts's hold
           // ops; encounter-identity.ts treats decision "review" as a block), and a
           // `link`/`create` op needs the lab/consult tabs to see it too. Reloading here
           // — not after stage/commit — means a later stage/commit failure still leaves
           // lab/consult resolving identity against the FRESH state, not the stale one.
-          if (touchedLinks) for (const l of await store.loadLinks()) links.set(l.link_key, l);
-          if (Object.keys(created).length) index = buildPatientIndex(await store.loadPatients());
+          const reloadIdentity = async () => {
+            if (touchedLinks) for (const l of await store.loadLinks()) links.set(l.link_key, l);
+            if (Object.keys(created).length) index = buildPatientIndex(await store.loadPatients());
+          };
+          try {
+            for (const batch of chunks<CustomerOp>(plan.ops, OPS_CHUNK)) {
+              const res = await store.applyCustomerOps(lease, batch);
+              Object.assign(created, res.created);
+              for (const [k, v] of Object.entries(res.counts)) applied[k] = (applied[k] ?? 0) + v;
+              if (batch.some((op) => op.op !== "fill" && op.op !== "facts")) touchedLinks = true;
+            }
+            await reloadIdentity();
+          } catch (opsErr) {
+            if (opsErr instanceof LeaseLostError) throw opsErr;
+            // A prior chunk in this same loop may have already committed a
+            // hold/create/link/fill before this one failed — reloadIdentity()
+            // no-ops unless touchedLinks/created say otherwise, so this is safe
+            // to call unconditionally. If the reload itself fails, lab/consult
+            // must not run against whatever links/index happened to be loaded
+            // before this run started.
+            try {
+              await reloadIdentity();
+            } catch (reloadErr) {
+              if (reloadErr instanceof LeaseLostError) throw reloadErr;
+              identityStale = true;
+            }
+            throw opsErr;
+          }
 
           // Every pending_create_key must come from a create op this run just
           // applied. A missing id means the store's response silently dropped a
@@ -175,6 +214,10 @@ export async function runSheetSync(opts: {
     // Lab + consult (reporting mirror only)
     for (const tab of ["lab", "consult"] as const) {
       try {
+        if (identityStale) {
+          perTab[tab] = { status: "failed", error: IDENTITY_STALE_MESSAGE };
+          continue;
+        }
         const parse = tab === "lab" ? parseLabTab : parseConsultTab;
         const parsed = parse(raw[tab], { today, windowStart: settings.mirrorWindowStart });
         if (!(await snapshotOk(tab, parsed))) continue;

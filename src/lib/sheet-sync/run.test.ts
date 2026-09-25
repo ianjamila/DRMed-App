@@ -216,6 +216,116 @@ describe("runSheetSync — identity reload after customer ops (review fix #1)", 
   });
 });
 
+describe("runSheetSync — identity reload after a PARTIAL customers ops failure (review fix #1b)", () => {
+  // 499 distinct new-patient rows — customer-plan.ts always sorts every
+  // `create` op before every `hold` op (two separate loops over `ops`,
+  // regardless of sheet row order), so 499 creates + the ONE hold that
+  // matters for this test lands exactly at ops[499] — the LAST slot of
+  // OPS_CHUNK (500). A second, unrelated hold then lands at ops[500], the
+  // first slot of chunk #2, which the store below fails.
+  const fillerRow = (i: number): Cell[] => custRow({ 4: `Filler${i}, Person${i}`, 6: 32000 + i, 11: 9300000000 + i });
+  const fillers = Array.from({ length: 499 }, (_, i) => fillerRow(i));
+
+  // Same stale-link scenario as review fix #1 above: a conflicting Customers
+  // row against a stored auto_loose link resolves to a `hold` op for the
+  // same undated key the lab line's name would otherwise still resolve to.
+  const p1: PatientRecord = {
+    id: "p1", drm_id: "DRM-P1", first_name: "Juanito", middle_name: null, last_name: "Reyes",
+    birthdate: null, phone: "9170000000", phone_normalized: null, email: null, sex: null, address: null,
+    referred_by_doctor: null, preferred_release_medium: null, senior_pwd_id_kind: null, senior_pwd_id_number: null,
+    referral_source: null, referral_source_origin: null, merged_into_id: null,
+  };
+  const staleLink: LinkRecord = { link_key: "dela cruz|juan#", patient_id: "p1", decision: "link", method: "auto_loose", hold_reason: null };
+  const custHoldRow = custRow({ 4: "Dela Cruz, Juan", 6: "", 11: "9181234567" });
+
+  // A second, unrelated conflict — pads the ops list past 500 so its hold
+  // lands in chunk #2, which the mocked store below fails.
+  const p2: PatientRecord = { ...p1, id: "p2", drm_id: "DRM-P2", last_name: "Santos", first_name: "Maria", phone: "9170000001" };
+  const staleLink2: LinkRecord = { link_key: "santos maria|maria#", patient_id: "p2", decision: "link", method: "auto_loose", hold_reason: null };
+  const custHoldRow2 = custRow({ 4: "Santos, Maria", 6: "", 11: "9191234567" });
+
+  const customers = customersTab([...fillers, custHoldRow, custHoldRow2]);
+
+  it("reloads links after chunk #2 fails, so lab never resolves identity against the stale (pre-hold) link", async () => {
+    class FailSecondChunkStore extends FakeStore {
+      private opsCalls = 0;
+      async applyCustomerOps(lease: string, ops: CustomerOp[]) {
+        this.opsCalls++;
+        if (this.opsCalls === 2) throw new Error("simulated chunk 2 failure");
+        return super.applyCustomerOps(lease, ops);
+      }
+    }
+    const store = new FailSecondChunkStore({ patients: [p1, p2], links: [staleLink, staleLink2] });
+    const result = await run(store, {}, async () => tabs({
+      customers,
+      lab: [LAB_H0, LAB_H1, labRow(1)], // nameRaw "Dela Cruz, Juan" — same nameNorm as the held key
+    }));
+
+    // Chunk #1 (499 creates + the hold) committed; chunk #2 (the padding hold) failed.
+    expect(result.perTab.customers?.status).toBe("failed");
+    expect(result.perTab.customers?.error).toBe("simulated chunk 2 failure");
+
+    // The reload after the failure picked up chunk #1's hold — lab runs
+    // normally (not marked stale) and correctly sees the name as unlinked.
+    expect(result.perTab.lab?.status).toBe("succeeded");
+    expect(store.stagedRows.lab).toHaveLength(1);
+    const stagedLab = store.stagedRows.lab[0] as Record<string, unknown>;
+    expect(stagedLab.patient_id).toBeNull();
+    expect(result.perTab.lab?.planned?.linked).toBe(0);
+  });
+
+  it("marks lab and consult failed with a plain message when the reload itself fails after a partial customers update", async () => {
+    class FailSecondChunkAndReloadStore extends FakeStore {
+      private opsCalls = 0;
+      private linksCalls = 0;
+      async applyCustomerOps(lease: string, ops: CustomerOp[]) {
+        this.opsCalls++;
+        if (this.opsCalls === 2) throw new Error("simulated chunk 2 failure");
+        return super.applyCustomerOps(lease, ops);
+      }
+      async loadLinks() {
+        this.linksCalls++;
+        if (this.linksCalls > 1) throw new Error("network down reloading links"); // 1st call = the initial load
+        return super.loadLinks();
+      }
+    }
+    const store = new FailSecondChunkAndReloadStore({ patients: [p1, p2], links: [staleLink, staleLink2] });
+    const result = await run(store, {}, async () => tabs({ customers, lab: [LAB_H0, LAB_H1, labRow(1)] }));
+
+    expect(result.perTab.customers?.status).toBe("failed");
+    expect(result.perTab.customers?.error).toBe("simulated chunk 2 failure");
+    expect(result.perTab.lab?.status).toBe("failed");
+    expect(result.perTab.lab?.error).toBe("Skipped because the patient list could not be refreshed after a partial Customers update.");
+    expect(result.perTab.consult?.status).toBe("failed");
+    expect(result.perTab.consult?.error).toBe("Skipped because the patient list could not be refreshed after a partial Customers update.");
+    // Never a stale patient_id staged for either tab.
+    expect(store.stagedRows.lab).toHaveLength(0);
+    expect(store.stagedRows.consult).toHaveLength(0);
+  });
+
+  it("a lease lost during the post-failure reload is still reported as lease_lost, not swallowed into identityStale", async () => {
+    class FailSecondChunkThenLoseLeaseStore extends FakeStore {
+      private opsCalls = 0;
+      private linksCalls = 0;
+      async applyCustomerOps(lease: string, ops: CustomerOp[]) {
+        this.opsCalls++;
+        if (this.opsCalls === 2) throw new Error("simulated chunk 2 failure");
+        return super.applyCustomerOps(lease, ops);
+      }
+      async loadLinks() {
+        this.linksCalls++;
+        if (this.linksCalls > 1) throw new LeaseLostError(); // 1st call = the initial load
+        return super.loadLinks();
+      }
+    }
+    const store = new FailSecondChunkThenLoseLeaseStore({ patients: [p1, p2], links: [staleLink, staleLink2] });
+    const result = await run(store, {}, async () => tabs({ customers }));
+    expect(result.status).toBe("failed");
+    expect(store.calls.some((c) => c[0] === "finish")).toBe(false);
+    expect(store.audits.some((a) => a.action === "sheet_sync.failed" && (a.metadata as Record<string, unknown>).error === "lease_lost")).toBe(true);
+  });
+});
+
 describe("runSheetSync — errText redacts foreign PG error text (review fix #4)", () => {
   it("a SQLSTATE that isn't ours is redacted to 'database error <code>', and the full message is logged server-side only", async () => {
     class BadDateCommitStore extends FakeStore {
@@ -234,10 +344,13 @@ describe("runSheetSync — errText redacts foreign PG error text (review fix #4)
 
     expect(result.perTab.lab?.status).toBe("failed");
     expect(result.perTab.lab?.error).toBe("database error 22P02");
-    expect(consoleErrorSpy).toHaveBeenCalledWith(
-      "sheet sync: redacted database error",
-      expect.objectContaining({ code: "22P02", message: expect.stringContaining("not-a-real-date") }),
-    );
+    // Fix #6: only the SQLSTATE code is logged, never the raw PG message — it
+    // is a Sentry breadcrumb, and 22P02's own message echoes the offending cell.
+    expect(consoleErrorSpy).toHaveBeenCalledTimes(1);
+    const [loggedDescription, loggedMeta] = consoleErrorSpy.mock.calls[0];
+    expect(loggedDescription).toMatch(/redacted database error/);
+    expect(loggedMeta).toEqual({ code: "22P02" });
+    expect(JSON.stringify(consoleErrorSpy.mock.calls[0])).not.toContain("not-a-real-date");
     consoleErrorSpy.mockRestore();
   });
 

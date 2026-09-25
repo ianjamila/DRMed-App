@@ -9,12 +9,19 @@ export class HeaderMismatchError extends Error {
 
 const norm = (c: Cell) => String(c ?? "").replace(/\s+/g, " ").trim().toUpperCase();
 
-/** Each expectation: [row, column, required prefix]. */
+/**
+ * Each expectation: [row, column, required prefix]. The error never includes
+ * the cell's observed value — a header row that was deleted or sorted away
+ * puts a patient's name (or any other cell content) in that slot, and this
+ * message lands verbatim in sheet_sync_runs.per_tab / .error, both surfaced
+ * on the admin Run history screen. Coordinates + the expected prefix are
+ * enough to fix a header; the observed cell adds nothing safe.
+ */
 export function assertHeaders(tab: string, rows: Cell[][], expect: ReadonlyArray<[number, number, string]>): void {
   for (const [r, c, prefix] of expect) {
     const got = norm(rows[r]?.[c]);
     if (!got.startsWith(prefix.toUpperCase())) {
-      throw new HeaderMismatchError(tab, `row ${r + 1} col ${c + 1}: expected "${prefix}…", got "${got}"`);
+      throw new HeaderMismatchError(tab, `row ${r + 1} col ${c + 1}: expected "${prefix}…"`);
     }
   }
 }
