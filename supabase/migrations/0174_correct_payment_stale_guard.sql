@@ -2,7 +2,8 @@
 -- 0174_correct_payment_stale_guard.sql
 -- =============================================================================
 -- Follow-ups to 0161 (Edit / Move payment) from the post-merge reviews of #213.
--- correct_payment keeps every 0161 rule; three things change.
+-- correct_payment keeps every 0161 rule; three things change there, and the
+-- PF clawback on a payment void is removed (4).
 --
 -- 1. STALE-STATE GUARD (p_expected). The Edit dialog sends the whole payment
 --    as it was when the dialog opened; Move re-sends the reference and notes
@@ -27,14 +28,19 @@
 --    99,999,999.99 raised a raw 22003 "numeric field overflow" at the INSERT.
 --    Refused up front with a readable P0054.
 --
--- Not changed here, on purpose: the PF clawback trigger order on payments
--- (trg_bridge_payment_void_pf_cascade fires before trg_payments_recalc_on_void,
--- so the cascade never sees a visit turn unpaid). Fixing the order would
--- switch on 0064's never-exercised clawback, which reverses ALL doctor PF on
--- any visit that drops below paid and never re-accrues it when the visit is
--- paid again — so "delete the wrong payment, record the right one" would
--- strip a doctor's fee for good. doctor_pf_entries was empty on prod on
--- 2026-09-25. That is an owner decision about PF semantics, not a fix.
+-- 4. NO PF CLAWBACK ON A PAYMENT VOID (owner decision, 2026-09-25). A doctor's
+--    fee is recorded at release, and release needs the visit's money settled;
+--    deleting, editing or moving a payment afterwards must never take the fee
+--    back. 0064's trg_bridge_payment_void_pf_cascade did exactly that whenever
+--    the voided payment's visit did not read 'paid' — which on a CASH visit it
+--    never saw (AFTER triggers fire alphabetically, so it ran before
+--    trg_payments_recalc_on_void), but on an HMO visit it always did: 0133
+--    releases HMO visits unpaid, so voiding (or Editing, which voids) a co-pay
+--    voided the doctor's pending HMO fee for good (reproduced locally). The
+--    trigger and its function are dropped. It was the only writer of
+--    recognition_basis = 'clawback' rows; doctor_pf_entries was empty on prod.
+--    Releasing a result and taking it back (undo release / cancel) keep their
+--    own PF handling — this only removes the payment-void path.
 -- =============================================================================
 
 drop function public.correct_payment(uuid, numeric, text, text, text, text, uuid, uuid);
@@ -179,6 +185,9 @@ begin
   return v_new_id;
 end;
 $$;
+
+drop trigger trg_bridge_payment_void_pf_cascade on public.payments;
+drop function public.bridge_payment_void_pf_cascade();
 
 comment on function public.correct_payment(uuid, numeric, text, text, text, text, uuid, uuid, jsonb) is
   'Edit / Move a payment (0161, stale guard 0174): re-create then void in one transaction; reference/notes-only edits in place. p_expected = the payment as the caller saw it; any difference is refused (P0054).';

@@ -16,6 +16,9 @@
 --      method is a counter method (pre-0139 redemptions)
 --   F  an amount past numeric(10,2) → P0054, not a raw 22003
 --   G  ACL: only the 9-argument function exists, service_role only
+--   H  NO PF CLAWBACK: voiding — or Editing — a co-pay on an HMO visit (which
+--      0133 keeps unpaid) leaves the doctor's pending HMO fee untouched. Before
+--      0174 the payment-void cascade voided it for good.
 --
 -- Run it against the LOCAL stack, not prod:
 --   supabase db reset && psql "$(supabase status -o json | jq -r .DB_URL)" \
@@ -41,6 +44,12 @@ declare
   v_key     text;
   v_bad     jsonb;
   v_snap    jsonb;
+  v_hmo     uuid;
+  v_hvisit  uuid;
+  v_doc     uuid;
+  v_svc     uuid;
+  v_tr      uuid;
+  v_pfe     uuid;
 begin
   insert into auth.users (id, instance_id, aud, role, email, encrypted_password,
                           email_confirmed_at, created_at, updated_at)
@@ -148,6 +157,33 @@ begin
     raise exception 'G FAIL: correct_payment EXECUTE is not service_role-only';
   end if;
   raise notice 'PASS G: one 9-argument function, service_role only';
+
+  -- ---- H: no PF clawback on a payment void ---------------------------------------
+  if exists (select 1 from pg_trigger where tgname = 'trg_bridge_payment_void_pf_cascade') then
+    raise exception 'H FAIL: the payment-void PF cascade trigger still exists';
+  end if;
+  insert into public.hmo_providers (name) values ('SMOKE 0174 HMO') returning id into v_hmo;
+  insert into public.physicians (slug, full_name, specialty)
+  values ('smoke-0174-dr', 'Dr Smoke 0174', 'General Medicine') returning id into v_doc;
+  insert into public.services (code, name, price_php, kind, section)
+  values ('SMK-0174-CONS', 'Smoke consult', 1000, 'doctor_consultation', 'consultation') returning id into v_svc;
+  insert into public.visits (patient_id, total_php, payment_status, hmo_provider_id)
+  values (v_patient, 1000, 'unpaid', v_hmo) returning id into v_hvisit;
+  insert into public.test_requests (visit_id, service_id, requested_by, status)
+  values (v_hvisit, v_svc, v_actor, 'requested') returning id into v_tr;
+  insert into public.doctor_pf_entries (test_request_id, physician_id, pf_php, recognition_basis)
+  values (v_tr, v_doc, 300, 'hmo_at_settlement') returning id into v_pfe;
+  -- An Edit of the co-pay (voids the original) …
+  insert into public.payments (visit_id, amount_php, method, received_by, received_at)
+  values (v_hvisit, 200, 'cash', v_actor, v_at) returning id into v_p;
+  v_p := public.correct_payment(v_p, 200, 'gcash', null, null, 'was gcash', v_actor);
+  -- … and a Delete of it.
+  update public.payments set voided_at = now(), voided_by = v_actor, void_reason = 'smoke' where id = v_p;
+  if exists (select 1 from public.doctor_pf_entries where id = v_pfe and voided_at is not null)
+     or exists (select 1 from public.doctor_pf_entries where test_request_id = v_tr and recognition_basis = 'clawback') then
+    raise exception 'H FAIL: a payment void touched the doctor fee';
+  end if;
+  raise notice 'PASS H: editing / deleting an HMO co-pay leaves the doctor fee alone';
 
   raise notice 'ALL PASS: 0174 correct_payment stale guard';
 end;
