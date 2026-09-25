@@ -47,7 +47,12 @@ export default async function StaffDashboardLayout({
   return (
     <>
       <StaffShell session={session} badges={badges}>{children}</StaffShell>
-      <Toaster position="top-right" richColors />
+      {/* Toasts never belong on paper — and sonner's empty live region sits
+          in flow after the shell, which is enough to push a blank last page
+          onto a printed receipt or slip. */}
+      <div className="print:hidden">
+        <Toaster position="top-right" richColors />
+      </div>
     </>
   );
 }

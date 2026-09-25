@@ -17,6 +17,7 @@ import {
 } from "@/lib/ui/table-params";
 import { SortableTh, PlainTh } from "@/components/staff/sortable-th";
 import { ListPagination, PAGE_SIZES } from "@/components/staff/list-pagination";
+import { AUDIT_PRESETS } from "@/lib/audit/presets";
 
 export const metadata = {
   title: "Audit Log",
@@ -270,6 +271,34 @@ export default async function AuditLogPage({ searchParams }: Props) {
           ) : null}
         </div>
       </form>
+
+      {/* One-click action filters. Each keeps the patient and date filters
+          already set, so "this patient's statement emails last month" is two
+          clicks; clicking the active chip clears it. */}
+      <nav aria-label="Quick filters" className="mb-3 flex flex-wrap items-center gap-2 text-xs">
+        <span className="font-semibold text-[color:var(--color-brand-text-soft)]">Quick filters:</span>
+        {AUDIT_PRESETS.map((p) => {
+          const active = params.action === p.action;
+          return (
+            <Link
+              key={p.action}
+              href={buildListHref(BASE_PATH, baseParams, {
+                action: active ? null : p.action,
+                page: null,
+              })}
+              title={p.hint}
+              aria-current={active ? "true" : undefined}
+              className={`rounded-full border px-3 py-1 font-semibold ${
+                active
+                  ? "border-[color:var(--color-brand-navy)] bg-[color:var(--color-brand-navy)] text-white"
+                  : "border-[color:var(--color-brand-bg-mid)] bg-white text-[color:var(--color-brand-navy)] hover:border-[color:var(--color-brand-cyan)]"
+              }`}
+            >
+              {p.label}
+            </Link>
+          );
+        })}
+      </nav>
 
       {patientFilter ? (
         <p className="mb-3 text-xs text-[color:var(--color-brand-text-soft)]">

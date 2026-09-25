@@ -6395,6 +6395,14 @@ export type Database = {
         Args: { p_business_date: string; p_shift_id: string }
         Returns: Json
       }
+      claim_statement_email: {
+        Args: {
+          p_recipient: string
+          p_visit_id: string
+          p_window_seconds?: number
+        }
+        Returns: number
+      }
       coa_account_has_open_period_postings: {
         Args: { p_account_id: string }
         Returns: boolean

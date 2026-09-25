@@ -21,6 +21,8 @@ import {
   PRE_REGISTERED_BADGE_CLASS,
 } from "@/lib/patients/labels";
 import { Panel } from "@/components/ui/panel";
+import { EmailStatementButton } from "@/components/staff/email-statement-button";
+import { STATEMENT_ROLES } from "@/lib/visits/statement";
 import { manilaDate, manilaDateTime } from "@/lib/dates/manila";
 import { linkPayments, paymentMethodLabel } from "@/lib/visits/payment-history";
 import {
@@ -101,6 +103,8 @@ export default async function PatientDetailPage({ params }: Props) {
   // so other roles would get an empty list — don't render the section at all.
   // Uncapped: the most any patient has on prod is 39 payments over 72 visits.
   const canSeePayments = session.role === "reception" || session.role === "admin";
+  // Each visit's statement of account (print or email) — the same audience.
+  const canUseStatement = STATEMENT_ROLES.has(session.role);
   const visitIds = (visits ?? []).map((v) => v.id);
   let payments: LoadedPayment[] = [];
   let linked: LoadedPayment[] = [];
@@ -259,13 +263,14 @@ export default async function PatientDetailPage({ params }: Props) {
                 <th className="px-4 py-3">Total</th>
                 <th className="px-4 py-3">Paid</th>
                 <th className="px-4 py-3">Status</th>
+                {canUseStatement ? <th className="px-4 py-3">Statement</th> : null}
               </tr>
             </thead>
             <tbody className="divide-y divide-[color:var(--color-brand-bg-mid)]">
               {(visits ?? []).length === 0 ? (
                 <tr>
                   <td
-                    colSpan={5}
+                    colSpan={canUseStatement ? 6 : 5}
                     className="px-4 py-8 text-center text-sm text-[color:var(--color-brand-text-soft)]"
                   >
                     No visits yet.
@@ -299,6 +304,26 @@ export default async function PatientDetailPage({ params }: Props) {
                         {paymentStatusLabel(v.payment_status)}
                       </span>
                     </td>
+                    {canUseStatement ? (
+                      <td className="px-4 py-3">
+                        <div className="flex flex-wrap items-start gap-x-3 gap-y-1">
+                          <Link
+                            href={`/staff/visits/${v.id}/statement`}
+                            aria-label={`Statement of account for visit ${v.visit_number}`}
+                            className="text-xs font-semibold text-[color:var(--color-brand-cyan)] hover:underline"
+                          >
+                            Open
+                          </Link>
+                          <EmailStatementButton
+                            visitId={v.id}
+                            patientId={patient.id}
+                            patientEmail={patient.email}
+                            size="compact"
+                            accessibleName={`Email the statement for visit ${v.visit_number}`}
+                          />
+                        </div>
+                      </td>
+                    ) : null}
                   </tr>
                 ))
               )}

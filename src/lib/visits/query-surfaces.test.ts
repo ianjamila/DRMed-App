@@ -544,6 +544,18 @@ const LIFECYCLES: Record<string, LifecycleSurface> = {
     lifecycle: "any",
     why: "Hydrates the ATTRIBUTION on a receipt.printed audit row (RA 10173), not a read of current data. The receipt page 404s on a deleted visit, so the only way here with one is a delete between render and print — and window.print() has already run. Filtering would blank the patient id, visit number and total on the record of a disclosure that did happen.",
   },
+  "lib/visits/statement-data.ts": {
+    lifecycle: "live",
+    why: "The statement of account, printed and emailed (one loader for both) — same rule as the receipt: a deleted visit bills nothing, so there is nothing to state.",
+  },
+  "app/(patient)/portal/(authenticated)/visits/[id]/statement/print-action.ts": {
+    lifecycle: "any",
+    why: "Hydrates the attribution on a patient statement.printed audit row, for the staff print action's reason: a visit deleted between render and print must not drop the record of a disclosure that did happen. Ownership is still enforced by the patient-scoped client and the patient_id match.",
+  },
+  "app/(staff)/staff/(dashboard)/visits/[id]/statement/log-print-action.ts": {
+    lifecycle: "any",
+    why: "Hydrates the attribution on a statement.printed audit row, for the receipt print action's reason: a delete between render and print must not blank the record of a disclosure that happened.",
+  },
   "app/(staff)/staff/(dashboard)/visits/group/[groupId]/receipt/page.tsx": {
     lifecycle: "live",
     why: "The split-encounter receipt — same rule as the single-visit one.",

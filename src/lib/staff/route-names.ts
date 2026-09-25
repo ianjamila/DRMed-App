@@ -111,6 +111,7 @@ export const ROUTE_NAME: Record<string, string> = {
   "/staff/queue/consolidated/[visitId]/[groupId]": "Chemistry report",
   "/staff/visits/[id]": "Visit",
   "/staff/visits/[id]/receipt": "Receipt",
+  "/staff/visits/[id]/statement": "Statement",
   "/staff/visits/group/[groupId]/receipt": "Combined receipt"
 };
 

@@ -25,7 +25,7 @@ Key reference artifacts:
   every post-1.0 programme (partner revisions, release lifecycle, group templates, EOD
   denomination count…). Read the spec before re-deriving a design decision.
 
-Migration ledger: **prod head = 0160** (`queue_claim_remarks` — the lab queue Remarks reader, #214,
+Migration ledger: **0175** (`patient_billed_catalog_read`) and **0177** (`statement_email_claim`), #212, pushed by Claude and verified by object 2026-09-25 (0174/0176 are claimed by other branches, not on prod). Earlier: **prod head = 0160** (`queue_claim_remarks` — the lab queue Remarks reader, #214,
 pushed by Claude before merge and verified by object 2026-09-24). **0159** (`retire_send_out_accrual`,
 #211) and **0158** (`resolve_patient_referral_source`, #206) are applied. **0157**
 (`online_booking_staff_alert`) and **0156** (`contact_message_form_location`, #200) are applied. **0155**
@@ -99,6 +99,7 @@ Compliance target: **Philippine Data Privacy Act (RA 10173)**. Locale: en-PH, As
 | `supabase start` | Run a local Supabase stack (needs Docker) — the only "staging" |
 | `npm run seed:test` / `seed:services` / `seed:physicians` / `seed:hmo` / `seed:templates` / `seed:signatures` / etc. | Idempotent seed scripts — target the **local** stack by default (see below) |
 | `npm run smoke:results` / `smoke:chemistry` / `smoke:dashboards` | Render-pipeline / consolidated-chemistry / dashboard smoke tests |
+| `npm run smoke:print` | Every staff print surface in real Chrome with scrollbars on (local stack; needs a dev server — `APP_BASE=http://localhost:3007 npm run smoke:print`). Seeds and deletes its own data; checks clip, repeating `<tfoot>`, required text and PDF page count, plus the statement's Email-to-patient, Patient AR link and the patient's own portal statement (start the dev server with `SUPABASE_JWT_SECRET` from `supabase status -o env`) |
 
 There is **no PR-triggered CI** — `.github/workflows/` holds only scheduled jobs:
 `db-backup.yml` and `cron-watchdog.yml` (independent jobs for Vercel cron heartbeats
