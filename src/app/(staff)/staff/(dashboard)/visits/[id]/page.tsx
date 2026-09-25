@@ -538,6 +538,7 @@ export default async function VisitDetailPage({ params, searchParams }: Props) {
             status: t.status,
           };
         }),
+        Number(visit.total_php),
       );
     } catch {
       return null;

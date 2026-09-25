@@ -44,6 +44,13 @@ describe("allocateWaiver (mirror of waive_visit_balance's split, 0183)", () => {
   it("refuses a remainder bigger than the lines add up to (visit total out of step)", () => {
     expect(() => allocateWaiver(700, [line("a", 500)])).toThrow(/more than its lines/);
   });
+  it("preview refuses a visit total out of step with its lines in EITHER direction (0183 [CR-6])", () => {
+    // total 1,000, one ₱900 line, ₱200 paid → remainder 800 fits under the
+    // lines, so allocateWaiver alone would happily split it; the RPC refuses.
+    expect(() => waiverPreview(800, [line("a", 900)], 1000)).toThrow(/does not match its lines/);
+    expect(() => waiverPreview(300, [line("a", 1000)], 500)).toThrow(/does not match its lines/);
+    expect(waiverPreview(300, [line("a", 500)], 500)).toEqual({ labPhp: 300, doctorPhp: 0, lines: 1 });
+  });
   it("preview groups the split by account", () => {
     expect(waiverPreview(600, [line("a", 500), line("b", 500, "doctor_procedure")])).toEqual({
       labPhp: 300,

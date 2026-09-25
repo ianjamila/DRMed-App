@@ -63,11 +63,24 @@ export function allocateWaiver(remainderPhp: number, lines: readonly WaiverLine[
     .map((x) => ({ id: x.id, amountPhp: x.share / 100, account: x.account }));
 }
 
-/** What the waive dialog says: how much lands on each discount account. */
+/**
+ * What the waive dialog says: how much lands on each discount account.
+ * `totalPhp` is the visit total; the RPC refuses unless it equals the priced
+ * live lines EXACTLY (either direction — 0183 [CR-6]), so the preview mirrors
+ * that check rather than only the "remainder bigger than the lines" half that
+ * `allocateWaiver` can see on its own.
+ */
 export function waiverPreview(
   remainderPhp: number,
   lines: readonly WaiverLine[],
+  totalPhp?: number,
 ): { labPhp: number; doctorPhp: number; lines: number } {
+  if (totalPhp !== undefined) {
+    const sum = allocatableLines(lines).reduce((s, l) => s + toC(l.pricePhp), 0);
+    if (toC(totalPhp) !== sum) {
+      throw new Error("This visit's total does not match its lines; fix the lines before waiving.");
+    }
+  }
   const out = allocateWaiver(remainderPhp, lines);
   const sum = (acct: "4910" | "4920") =>
     out.filter((o) => o.account === acct).reduce((s, o) => s + toC(o.amountPhp), 0) / 100;
