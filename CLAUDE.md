@@ -25,7 +25,7 @@ Key reference artifacts:
   every post-1.0 programme (partner revisions, release lifecycle, group templates, EOD
   denomination count…). Read the spec before re-deriving a design decision.
 
-Migration ledger: **prod head = 0160** (`queue_claim_remarks` — the lab queue Remarks reader, #214,
+Migration ledger: **0175** (`patient_billed_catalog_read`) and **0177** (`statement_email_claim`), #212, pushed by Claude and verified by object 2026-09-25 (0174/0176 are claimed by other branches, not on prod). Earlier: **prod head = 0160** (`queue_claim_remarks` — the lab queue Remarks reader, #214,
 pushed by Claude before merge and verified by object 2026-09-24). **0159** (`retire_send_out_accrual`,
 #211) and **0158** (`resolve_patient_referral_source`, #206) are applied. **0157**
 (`online_booking_staff_alert`) and **0156** (`contact_message_form_location`, #200) are applied. **0155**
