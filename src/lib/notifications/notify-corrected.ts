@@ -14,7 +14,7 @@ import { shouldOfferNotify } from "@/lib/results/copy-followups";
 import { fetchCopyStateAdmin } from "@/lib/results/copy-followups.server";
 import { allLinksReleased, fetchLinkedTestRequestStatusesStrict } from "@/lib/results/release-eligibility";
 
-export type NotifyOutcome = "sent" | "failed" | "already" | "inactive" | "not_released";
+export type NotifyOutcome = "sent" | "sent_unrecorded" | "failed" | "already" | "inactive" | "not_released";
 
 /** Every outcome an edit form's "let the patient know" checkbox can settle
  * on, including the two that are decided before notifyResultCorrected is
@@ -221,6 +221,10 @@ export async function notifyResultCorrected({
   // result_claim_patient_notify — best-effort record the outcome even after
   // a throw above, so the row shows "Send failed" instead of no record at
   // all (which staff would read as "status unknown").
+  // X3: a real send whose outcome could not be recorded is told to the
+  // editor ("sent_unrecorded") — reception would otherwise see "Send status
+  // unknown" with nobody knowing why. Never resent, never fails the edit.
+  let recorded = true;
   try {
     const { error: recErr } = await admin.rpc("result_record_patient_notify", {
       p_amendment_id: amendmentId,
@@ -229,6 +233,7 @@ export async function notifyResultCorrected({
     });
     if (recErr) throw new Error(recErr.message);
   } catch (e) {
+    recorded = false;
     await reportError({
       scope: "notify/result-corrected:record",
       error: e,
@@ -261,7 +266,8 @@ export async function notifyResultCorrected({
     });
   }
 
-  return channels.length > 0 ? "sent" : "failed";
+  if (channels.length === 0) return "failed";
+  return recorded ? "sent" : "sent_unrecorded";
 }
 
 // R6: the single place every edit action calls to decide-and-send the opt-in

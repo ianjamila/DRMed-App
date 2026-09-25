@@ -82,6 +82,8 @@ export const PATIENT_CONTACTED_ACTION = "result.patient_contacted";
 /** What an edit form's notify outcome ("sent" | "failed" | "already" | "inactive" | "not_offered") reads as. */
 export const NOTIFY_OUTCOME_TEXT: Record<string, string> = {
   sent: " The patient was sent an update notice.",
+  // X3: sent, but the follow-up record failed — the list may still show them.
+  sent_unrecorded: " The patient was sent an update notice, but that couldn't be saved — Result follow-ups may still list them.",
   failed: " The patient notice could not be sent — they're on Result follow-ups.",
   already: " The patient was already notified about this correction.",
   inactive: " No patient notice was sent (the patient's record is no longer active).",

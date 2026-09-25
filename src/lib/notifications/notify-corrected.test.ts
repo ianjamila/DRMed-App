@@ -273,7 +273,7 @@ describe("notifyResultCorrected", () => {
     expect(fx.errors.some((e) => e.scope === "notify/result-corrected:send")).toBe(true);
   });
 
-  it("R4: the record RPC returning an error (not throwing) still reports and returns the send outcome", async () => {
+  it("R4: the record RPC returning an error (not throwing) reports and returns sent_unrecorded (X3)", async () => {
     vi.mocked(sendEmail).mockResolvedValue({ ok: true, id: "em-1" });
     vi.mocked(sendSms).mockResolvedValue({ ok: false, kind: "skipped", reason: "patient has no phone on file" });
     fx.patient = {
@@ -288,13 +288,13 @@ describe("notifyResultCorrected", () => {
 
     const out = await notifyResultCorrected(args);
 
-    expect(out).toBe("sent");
+    expect(out).toBe("sent_unrecorded");
     expect(fx.recordCalls).toHaveLength(1);
     expect(fx.errors.some((e) => e.scope === "notify/result-corrected:record")).toBe(true);
     expect(fx.audits).toHaveLength(1);
   });
 
-  it("the record RPC throwing is swallowed and still returns the send outcome", async () => {
+  it("the record RPC throwing is reported and returns sent_unrecorded (X3)", async () => {
     vi.mocked(sendEmail).mockResolvedValue({ ok: true, id: "em-1" });
     vi.mocked(sendSms).mockResolvedValue({ ok: false, kind: "skipped", reason: "patient has no phone on file" });
     fx.patient = {
@@ -311,7 +311,7 @@ describe("notifyResultCorrected", () => {
 
     const out = await notifyResultCorrected(args);
 
-    expect(out).toBe("sent");
+    expect(out).toBe("sent_unrecorded");
     expect(fx.errors.some((e) => e.scope === "notify/result-corrected:record")).toBe(true);
     expect(fx.audits).toHaveLength(1);
   });
