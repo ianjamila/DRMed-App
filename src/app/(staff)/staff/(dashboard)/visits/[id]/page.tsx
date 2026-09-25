@@ -11,6 +11,7 @@ import { manilaDate, manilaDateTime } from "@/lib/dates/manila";
 import {
   canActOnResult,
   canSeeLine,
+  canViewResultPdf,
   roleCanActOnResults,
 } from "@/lib/visits/line-visibility";
 import { ReleaseButton } from "./release-button";
@@ -56,6 +57,8 @@ import { ReissuePinButton } from "@/components/staff/reissue-pin-button";
 import { handedBack } from "@/lib/queue/claim-remarks";
 import { fetchClaimEvents } from "@/lib/queue/fetch-claim-events";
 import { HandedBackBadge } from "@/components/staff/claim-remarks-list";
+import { PrintResultButton } from "@/components/staff/print-result-button";
+import { resultPdfStates } from "@/lib/results/pdf-availability";
 
 // Share the existing header lookup with metadata within this request.
 const loadDetail = cache(async (id: string) => {
@@ -201,24 +204,12 @@ export default async function VisitDetailPage({ params, searchParams }: Props) {
     (discountRows ?? []).map((d) => [d.code, d.label]),
   );
 
-  // Which test_requests have a released PDF in storage. Single query keyed
-  // by test_request_id so the TestAction component can render a "View PDF"
-  // link without each row firing its own join.
+  // Which test_requests have a result PDF the staff PDF route would stream,
+  // and whether all of it is released (a consolidated chemistry PDF is shared
+  // by the panel). Read once for the page, so TestAction can draw "Print
+  // result" / "View PDF" without each row firing its own join.
   const allTestIds = (tests ?? []).map((t) => t.id);
-  const hasPdfByTrId = new Map<string, boolean>();
-  if (allTestIds.length > 0) {
-    const { data: pdfLinks } = await supabase
-      .from("result_test_requests")
-      .select("test_request_id, results!inner ( storage_path )")
-      .in("test_request_id", allTestIds);
-    for (const link of pdfLinks ?? []) {
-      const r = (link as { results: { storage_path: string | null } | { storage_path: string | null }[] | null }).results;
-      const resolved = Array.isArray(r) ? r[0] : r;
-      if (resolved?.storage_path) {
-        hasPdfByTrId.set(link.test_request_id as string, true);
-      }
-    }
-  }
+  const pdfStates = await resultPdfStates(supabase, allTestIds);
 
   // "handed back" chip: tests that were unclaimed at least once. Read through
   // queue_claim_remarks (0160) on the signed-in client — it answers only a
@@ -927,7 +918,14 @@ export default async function VisitDetailPage({ params, searchParams }: Props) {
                                       moneySettled={canRelease}
                                       consentOnFile={consent.current}
                                       gateRequired={gateRequired}
-                                      hasPdf={hasPdfByTrId.get(c.id) === true}
+                                      hasPdf={pdfStates.has(c.id)}
+                                      canViewPdf={canViewResultPdf(session.role, {
+                                        section: rowSection(c),
+                                        status: c.status,
+                                        kind: csvc.kind,
+                                        reportReleased:
+                                          pdfStates.get(c.id)?.reportReleased ?? false,
+                                      })}
                                       kind={csvc.kind}
                                       viewedCount={viewedCountByTrId.get(c.id) ?? 0}
                                       preferredMedium={
@@ -1132,7 +1130,13 @@ export default async function VisitDetailPage({ params, searchParams }: Props) {
                         moneySettled={canRelease}
                         consentOnFile={consent.current}
                         gateRequired={gateRequired}
-                        hasPdf={hasPdfByTrId.get(t.id) === true}
+                        hasPdf={pdfStates.has(t.id)}
+                        canViewPdf={canViewResultPdf(session.role, {
+                          section: rowSection(t),
+                          status: t.status,
+                          kind: svc.kind,
+                          reportReleased: pdfStates.get(t.id)?.reportReleased ?? false,
+                        })}
                         kind={svc.kind}
                         viewedCount={viewedCountByTrId.get(t.id) ?? 0}
                         preferredMedium={
@@ -1489,6 +1493,10 @@ interface TestActionProps {
   consentOnFile: boolean;
   gateRequired: boolean;
   hasPdf?: boolean;
+  // May this role open the result PDF (canViewResultPdf)? True wherever
+  // canAct is, and ALSO for reception on a released lab line — the one door
+  // into a result reception has, so the counter can print the patient's copy.
+  canViewPdf: boolean;
   kind: string;
   // Patient viewed/downloaded count for a released row — drives the undo
   // dialog's "already viewed" warning.
@@ -1512,6 +1520,7 @@ function TestAction({
   consentOnFile,
   gateRequired,
   hasPdf,
+  canViewPdf,
   kind,
   viewedCount,
   size = "default",
@@ -1533,12 +1542,39 @@ function TestAction({
 
   // Reception is the role this branch exists for (see-vs-act split,
   // 2026-09-15): it sees every bill line but may not act on the result
-  // behind it. Render a read-only status hint ONLY — reusing the same words
-  // this column already shows for each status — with none of MarkDoneButton,
-  // ReleaseButton, UndoReleaseDialog, the "View PDF →" anchor, or the "Open
-  // in queue →" bench link. Those are all doors into a result reception must
-  // not have; the status chip in the row plus this hint is all it gets.
+  // behind it. Render a read-only status hint — reusing the same words this
+  // column already shows for each status — with none of MarkDoneButton,
+  // ReleaseButton, UndoReleaseDialog or the "Open in queue →" bench link.
+  //
+  // The one exception (owner decision 2026-09-24): once a lab line is
+  // RELEASED, reception may print it for the patient, so a released line with
+  // a file gets "Print result" and "View PDF →". canViewPdf is false for every
+  // other status, so nothing on the bench is reachable from here.
   if (!canAct) {
+    if (status === "released" && canViewPdf && hasPdf) {
+      return (
+        <ReleasedPdfActions
+          testRequestId={testRequestId}
+          sizeCls={sizeCls}
+          size={size}
+        />
+      );
+    }
+    // Released, with a file, yet not printable: this line shares a
+    // consolidated PDF with a test that is not released (or was withdrawn),
+    // and printing it would hand over that test's values too.
+    if (status === "released" && hasPdf) {
+      return (
+        <div className="flex flex-col items-end gap-0.5">
+          <span className={`${sizeCls} font-semibold text-emerald-700`}>
+            Released ✓
+          </span>
+          <span className={`${sizeCls} max-w-48 text-right text-[color:var(--color-brand-text-soft)]`}>
+            Rest of this report isn&apos;t released yet — print once the lab releases it
+          </span>
+        </div>
+      );
+    }
     const hint =
       status === "requested"
         ? "Awaiting claim"
@@ -1639,19 +1675,17 @@ function TestAction({
   if (status === "released") {
     return (
       <div className="flex flex-col items-end gap-0.5">
-        <span className={`${sizeCls} font-semibold text-emerald-700`}>
-          Released ✓
-        </span>
         {hasPdf ? (
-          <a
-            href={`/staff/results/${testRequestId}/pdf`}
-            target="_blank"
-            rel="noopener"
-            className={`${sizeCls} font-bold text-[color:var(--color-brand-cyan)] hover:underline`}
-          >
-            View PDF →
-          </a>
-        ) : null}
+          <ReleasedPdfActions
+            testRequestId={testRequestId}
+            sizeCls={sizeCls}
+            size={size}
+          />
+        ) : (
+          <span className={`${sizeCls} font-semibold text-emerald-700`}>
+            Released ✓
+          </span>
+        )}
         {/* Headers never reach TestAction (only components + standalones
             render it), so every released row here may offer Undo — the 0110
             cascade flips the header when its last component is undone. */}
@@ -1674,4 +1708,35 @@ function TestAction({
   }
 
   return null;
+}
+
+// A released line with a file on record: the status word, then the two ways to
+// hand it over — Print (the counter's paper copy, audited as a print) and
+// View PDF (on screen, and the fallback where a browser won't print from a
+// frame). Shared by the lab's released cell and reception's read-only one.
+function ReleasedPdfActions({
+  testRequestId,
+  sizeCls,
+  size,
+}: {
+  testRequestId: string;
+  sizeCls: string;
+  size: "default" | "compact";
+}) {
+  return (
+    <div className="flex flex-col items-end gap-1">
+      <span className={`${sizeCls} font-semibold text-emerald-700`}>
+        Released ✓
+      </span>
+      <PrintResultButton testRequestId={testRequestId} size={size} />
+      <a
+        href={`/staff/results/${testRequestId}/pdf`}
+        target="_blank"
+        rel="noopener"
+        className={`${sizeCls} font-bold text-[color:var(--color-brand-cyan)] hover:underline`}
+      >
+        View PDF →
+      </a>
+    </div>
+  );
 }

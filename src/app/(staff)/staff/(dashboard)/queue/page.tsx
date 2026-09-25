@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { requireActiveStaff } from "@/lib/auth/require-staff";
 import {
@@ -47,6 +48,13 @@ import { testDeletability, hasOpenHmoClaim } from "@/lib/visits/deletion";
 import { LAB_QUEUE_GATE_VISITS_OR } from "@/lib/visits/lab-gate";
 import { DOCTOR_KINDS_PG_LIST } from "@/lib/visits/classification";
 import { QueueDeleteDialog } from "@/components/staff/queue-delete-dialog";
+import { PrintResultButton } from "@/components/staff/print-result-button";
+import {
+  reportCardKey,
+  resultPdfStates,
+  type PdfState,
+} from "@/lib/results/pdf-availability";
+import { canViewResultPdf } from "@/lib/visits/line-visibility";
 
 const LAB_QUEUE_SUBSCRIPTIONS = [
   { table: "test_requests", event: "INSERT" },
@@ -73,10 +81,19 @@ type QueueCardSingle = {
   claimedBy: string | null;
   href: string;
   canDelete: boolean;
+  // The test whose PDF "Print result" fetches, when this role may open it
+  // and a file is on record (released tab only); null otherwise.
+  printTestId: string | null;
+  // A file is on record (released tab only), printable or not — tells "no
+  // file" apart from "shared report not fully released" for reception.
+  hasFile: boolean;
 };
 
 type QueueCardGrouped = {
   kind: "grouped";
+  // The fold key (reportCardKey) — also the row's React key, since one
+  // panel can yield a card per PDF on Released today.
+  cardKey: string;
   visitId: string;
   groupId: string;
   groupCode: string;
@@ -95,6 +112,10 @@ type QueueCardGrouped = {
   // Only when EVERY member is deletable (a package component in the panel
   // makes the whole group non-deletable; the package deletes from the visit).
   canDelete: boolean;
+  // One consolidated report is ONE PDF shared by every member, so any member
+  // with a file prints the whole panel. null when none qualifies.
+  printTestId: string | null;
+  hasFile: boolean;
 };
 
 type QueueCard = QueueCardSingle | QueueCardGrouped;
@@ -179,15 +200,27 @@ interface SearchProps {
 
 export default async function QueuePage({ searchParams }: SearchProps) {
   const params = await searchParams;
+  const session = await requireActiveStaff();
+
+  // Reception opens this page for ONE thing: printing the patient's copy of a
+  // released result (owner decision 2026-09-24). Every other tab is the lab's
+  // bench worklist — work reception must not see — so any other tab sends it
+  // to "Released today". Its sidebar link lands here too, so the redirect is
+  // the normal way in, not an edge case.
+  const receptionView = session.role === "reception";
+  if (receptionView && params.filter !== "released_today") {
+    redirect(`${BASE_PATH}?filter=released_today`);
+  }
+
   const filter = params.filter ?? "all";
-  const mineOnly = params.mine === "1";
+  // "Only mine" means tests YOU claimed — reception claims none.
+  const mineOnly = params.mine === "1" && !receptionView;
   const start = isISODate(params.start) ? params.start : "";
   const end = isISODate(params.end) ? params.end : "";
   const q = params.q?.trim() ?? "";
   const visit = params.visit?.trim() ?? "";
   const todayISO = todayManilaISODate();
 
-  const session = await requireActiveStaff();
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
 
@@ -223,7 +256,7 @@ export default async function QueuePage({ searchParams }: SearchProps) {
       `
         id, status, requested_at, released_at, assigned_to, started_at, visit_id, parent_id,
         hmo_claim_items ( batch_voided ),
-        services!inner ( id, code, name, turnaround_hours, section, report_group_id,
+        services!inner ( id, code, name, kind, turnaround_hours, section, report_group_id,
           report_groups ( code, name ) ),
         visits!inner (
           id, visit_number, payment_status,
@@ -299,12 +332,20 @@ export default async function QueuePage({ searchParams }: SearchProps) {
   // an empty result set, not fall through unfiltered, which is how the sibling
   // /staff/results gate is written. Guarding only on `length > 0` skipped the
   // filter entirely and showed reception every section's worklist.
-  if (allowedSections !== null) {
-    if (allowedSections.length === 0) {
+  //
+  // Reception is the one role the gate deliberately lifts, and only on
+  // "Released today" (the redirect above guarantees it is on no other tab):
+  // the counter prints ANY released lab or imaging result, whatever the
+  // section, and the doctor-kind filter above already keeps consultations out.
+  // Everywhere else reception keeps its [] = deny.
+  const querySections =
+    receptionView && releasedTab ? null : allowedSections;
+  if (querySections !== null) {
+    if (querySections.length === 0) {
       // Force an empty result set without breaking the query shape.
       query = query.eq("id", "00000000-0000-0000-0000-000000000000");
     } else {
-      query = query.in("services.section", allowedSections);
+      query = query.in("services.section", querySections);
     }
   }
 
@@ -336,10 +377,18 @@ export default async function QueuePage({ searchParams }: SearchProps) {
 
   const { data: rows, count } = await query;
   const queueTitle = queueTitleForRole(session.role);
+  const pageTestIds = (rows ?? []).map((r) => r.id);
+
+  // Print buttons live on "Released today" only — the other tabs are work
+  // still on the bench, with no finished file to hand over.
+  const pdfStates = releasedTab
+    ? await resultPdfStates(supabase, pageTestIds)
+    : new Map<string, PdfState>();
 
   // -------------------------------------------------------------------------
-  // Fold chemistry rows by (visit_id, report_group_id). Non-grouped rows
-  // stay as single cards; grouped rows collapse to one card per group.
+  // Fold chemistry rows by (visit_id, report_group_id) — and, on Released
+  // today, by result file too (reportCardKey). Non-grouped rows stay as
+  // single cards; grouped rows collapse to one card per group.
   //
   // `cards` keeps the QUERY's order: a grouped card is pushed when its FIRST
   // member is seen and mutated in place afterwards, so it sits exactly where
@@ -376,14 +425,29 @@ export default async function QueuePage({ searchParams }: SearchProps) {
       has_open_hmo_claim: hasOpenHmoClaim(r.hmo_claim_items),
     }).ok;
 
+    const pdfState = pdfStates.get(r.id);
+    const printable =
+      pdfState !== undefined &&
+      canViewResultPdf(session.role, {
+        section: svc.section,
+        status: r.status,
+        kind: svc.kind,
+        reportReleased: pdfState.reportReleased,
+      });
+    // Reception never opens the bench pages; its patient link goes to the
+    // visit, the page it already works from.
+    const visitHref = `/staff/visits/${r.visit_id}`;
+
     if (svc.report_group_id && rg) {
-      const key = `${r.visit_id}|${svc.report_group_id}`;
+      const key = reportCardKey(r.visit_id, svc.report_group_id, pdfState?.resultId, releasedTab);
       const existing = groupedAcc.get(key);
       const test = { code: svc.code, name: svc.name };
       if (existing) {
         existing.orderedTests.push(test);
         existing.memberIds.push(r.id);
         existing.canDelete = existing.canDelete && rowDeletable;
+        if (!existing.printTestId && printable) existing.printTestId = r.id;
+        existing.hasFile = existing.hasFile || pdfState !== undefined;
         existing.label = `${rg.name} (${existing.orderedTests.length} tests)`;
         if (statusRank(r.status) < statusRank(existing.status)) {
           existing.status = r.status;
@@ -401,6 +465,7 @@ export default async function QueuePage({ searchParams }: SearchProps) {
       } else {
         const created: QueueCardGrouped = {
           kind: "grouped",
+          cardKey: key,
           visitId: r.visit_id,
           groupId: svc.report_group_id,
           groupCode: rg.code,
@@ -413,9 +478,13 @@ export default async function QueuePage({ searchParams }: SearchProps) {
           patientDrmId: patient.drm_id,
           status: r.status,
           claimedBy: r.assigned_to,
-          href: `/staff/queue/consolidated/${r.visit_id}/${svc.report_group_id}`,
+          href: receptionView
+            ? visitHref
+            : `/staff/queue/consolidated/${r.visit_id}/${svc.report_group_id}`,
           memberIds: [r.id],
           canDelete: rowDeletable,
+          printTestId: printable ? r.id : null,
+          hasFile: pdfState !== undefined,
         };
         groupedAcc.set(key, created);
         cards.push(created);
@@ -435,8 +504,10 @@ export default async function QueuePage({ searchParams }: SearchProps) {
         patientDrmId: patient.drm_id,
         status: r.status,
         claimedBy: r.assigned_to,
-        href: `/staff/queue/${r.id}`,
+        href: receptionView ? visitHref : `/staff/queue/${r.id}`,
         canDelete: rowDeletable,
+        printTestId: printable ? r.id : null,
+        hasFile: pdfState !== undefined,
       });
     }
   }
@@ -469,8 +540,11 @@ export default async function QueuePage({ searchParams }: SearchProps) {
   // from the audit log, via the queue_claim_remarks reader (0160) — audit_log
   // itself is admin-only, and the technicians are who need to see it. One call
   // for the whole page (≤ 100 rows; the function caps at 200).
-  const pageTestIds = (rows ?? []).map((r) => r.id);
-  const remarksByTest = await fetchClaimEvents(supabase, pageTestIds);
+  // Reception gets no Remarks column (claim history is bench detail), so it
+  // skips the read too — the function would answer it nothing anyway.
+  const remarksByTest = receptionView
+    ? new Map<string, ClaimEvent[]>()
+    : await fetchClaimEvents(supabase, pageTestIds);
   const cardRemarks = (card: QueueCard) =>
     claimRemarks(
       (card.kind === "grouped" ? card.memberIds : [card.testRequestId]).flatMap(
@@ -556,7 +630,9 @@ export default async function QueuePage({ searchParams }: SearchProps) {
         title={queueTitle}
         subtitle={
           <>
-            Tests requested or in progress, oldest first.
+            {releasedTab
+              ? "Results released today, newest first. Print the patient's copy from the Action column."
+              : "Tests requested or in progress, oldest first."}
             {worklistTab
               ? " Visits waiting for payment appear once they're paid or HMO-covered."
               : null}
@@ -580,33 +656,37 @@ export default async function QueuePage({ searchParams }: SearchProps) {
           sit in the same place no matter what the subtitle says — and this is
           the shared tab-bar treatment every other staff section page uses
           (visits/queue, appointments, patient-ar). */}
-      <nav className={sectionTabsNavClass} aria-label="Queue filter">
-        <FilterTab
-          href={buildHref({ filter: null, page: null })}
-          label="All"
-          active={filter === "all"}
-        />
-        <FilterTab
-          href={buildHref({ filter: "unclaimed", page: null })}
-          label="Unclaimed"
-          active={filter === "unclaimed"}
-        />
-        <FilterTab
-          href={buildHref({ filter: "pending_release", page: null })}
-          label="Pending release"
-          active={filter === "pending_release"}
-        />
-        <FilterTab
-          href={buildHref({ filter: "released_today", page: null })}
-          label="Released today"
-          active={filter === "released_today"}
-        />
-        <FilterTab
-          href={buildHref({ filter: "mine", page: null })}
-          label="Mine"
-          active={filter === "mine"}
-        />
-      </nav>
+      {/* Reception has one tab (see the redirect at the top), so it gets no
+          tab bar — a single tab is a heading, not a choice. */}
+      {receptionView ? null : (
+        <nav className={sectionTabsNavClass} aria-label="Queue filter">
+          <FilterTab
+            href={buildHref({ filter: null, page: null })}
+            label="All"
+            active={filter === "all"}
+          />
+          <FilterTab
+            href={buildHref({ filter: "unclaimed", page: null })}
+            label="Unclaimed"
+            active={filter === "unclaimed"}
+          />
+          <FilterTab
+            href={buildHref({ filter: "pending_release", page: null })}
+            label="Pending release"
+            active={filter === "pending_release"}
+          />
+          <FilterTab
+            href={buildHref({ filter: "released_today", page: null })}
+            label="Released today"
+            active={filter === "released_today"}
+          />
+          <FilterTab
+            href={buildHref({ filter: "mine", page: null })}
+            label="Mine"
+            active={filter === "mine"}
+          />
+        </nav>
+      )}
 
       {/* "Only mine" narrows whichever tab is open. It sits below the tab bar
           for the same reason the tabs are not in the header's actions slot —
@@ -614,7 +694,7 @@ export default async function QueuePage({ searchParams }: SearchProps) {
           that row visibly jumps. The Mine tab already IS mine, so the toggle
           would be a no-op there — and on Unclaimed it could only ever empty
           the list. */}
-      {filter !== "mine" && filter !== "unclaimed" ? (
+      {filter !== "mine" && filter !== "unclaimed" && !receptionView ? (
         <div className="mb-4">
           <Link
             href={buildHref({ mine: mineOnly ? null : "1", page: null })}
@@ -780,21 +860,23 @@ export default async function QueuePage({ searchParams }: SearchProps) {
               <PlainTh label="Test" />
               {th("status", "Status")}
               <PlainTh label="Action" align="right" />
-              <PlainTh label="Remarks" />
+              {receptionView ? null : <PlainTh label="Remarks" />}
             </tr>
           </thead>
           <tbody className="divide-y divide-[color:var(--color-brand-bg-mid)]">
             {matched.length === 0 ? (
               <tr>
                 <td
-                  colSpan={7}
+                  colSpan={receptionView ? 6 : 7}
                   className="px-4 py-8 text-center text-sm text-[color:var(--color-brand-text-soft)]"
                 >
                   {hasFilters
                     ? "No queued tests match these filters."
                     : filter === "unclaimed"
                       ? "Nothing is waiting to be picked up."
-                      : "Queue is empty."}
+                      : releasedTab
+                        ? "Nothing has been released yet today."
+                        : "Queue is empty."}
                 </td>
               </tr>
             ) : (
@@ -850,7 +932,14 @@ export default async function QueuePage({ searchParams }: SearchProps) {
                         ) : null}
                       </td>
                       <td className="px-4 py-3 text-right">
-                        {card.status === "requested" &&
+                        {releasedTab ? (
+                          <ReleasedPrintActions
+                            printTestId={card.printTestId}
+                            hasFile={card.hasFile}
+                            explain={receptionView}
+                          />
+                        ) : null}
+                        {receptionView ? null : card.status === "requested" &&
                         canClaimSection(session.role, card.section) ? (
                           <ClaimButton
                             testRequestId={card.testRequestId}
@@ -888,7 +977,9 @@ export default async function QueuePage({ searchParams }: SearchProps) {
                           </div>
                         ) : null}
                       </td>
-                      <RemarksCell remarks={cardRemarks(card)} />
+                      {receptionView ? null : (
+                        <RemarksCell remarks={cardRemarks(card)} />
+                      )}
                     </tr>
                   );
                 }
@@ -896,7 +987,7 @@ export default async function QueuePage({ searchParams }: SearchProps) {
                 // Grouped card (chemistry consolidated report)
                 return (
                   <tr
-                    key={`${card.visitId}|${card.groupId}`}
+                    key={card.cardKey}
                     className="hover:bg-[color:var(--color-brand-bg)]"
                   >
                     <td className="px-4 py-3 text-[color:var(--color-brand-text-mid)]">
@@ -947,12 +1038,21 @@ export default async function QueuePage({ searchParams }: SearchProps) {
                       ) : null}
                     </td>
                     <td className="px-4 py-3 text-right">
-                      <Link
-                        href={card.href}
-                        className="text-xs font-bold text-[color:var(--color-brand-cyan)] hover:underline"
-                      >
-                        Open →
-                      </Link>
+                      {releasedTab ? (
+                        <ReleasedPrintActions
+                          printTestId={card.printTestId}
+                          hasFile={card.hasFile}
+                          explain={receptionView}
+                        />
+                      ) : null}
+                      {receptionView ? null : (
+                        <Link
+                          href={card.href}
+                          className="text-xs font-bold text-[color:var(--color-brand-cyan)] hover:underline"
+                        >
+                          Open →
+                        </Link>
+                      )}
                       {canUnclaim(card) ? (
                         <div className="mt-1 flex justify-end">
                           <QueueUnclaimButton
@@ -972,7 +1072,9 @@ export default async function QueuePage({ searchParams }: SearchProps) {
                         </div>
                       ) : null}
                     </td>
-                    <RemarksCell remarks={cardRemarks(card)} />
+                    {receptionView ? null : (
+                      <RemarksCell remarks={cardRemarks(card)} />
+                    )}
                   </tr>
                 );
               })
@@ -1056,5 +1158,45 @@ function FilterTab({
     >
       {label}
     </Link>
+  );
+}
+
+// "Released today" Action cell: Print result + View PDF for a line this role
+// may open (canViewResultPdf) with a file on record. Reception has nothing
+// else in the cell, so when it can't print it says why instead of rendering
+// an empty cell; lab roles keep their "Open →" below it.
+function ReleasedPrintActions({
+  printTestId,
+  hasFile,
+  explain,
+}: {
+  printTestId: string | null;
+  hasFile: boolean;
+  explain: boolean;
+}) {
+  if (!printTestId) {
+    if (!explain) return null;
+    return (
+      <span className="block max-w-56 text-right text-xs text-[color:var(--color-brand-text-soft)]">
+        {hasFile
+          ? // A consolidated PDF shared with a test that isn't released yet
+            // (or was withdrawn) — printing it would hand over those values.
+            "Part of this report isn't released yet — ask the lab"
+          : "No PDF on file — ask the lab"}
+      </span>
+    );
+  }
+  return (
+    <div className="mb-1.5 flex flex-col items-end gap-1">
+      <PrintResultButton testRequestId={printTestId} />
+      <a
+        href={`/staff/results/${printTestId}/pdf`}
+        target="_blank"
+        rel="noopener"
+        className="text-xs font-bold text-[color:var(--color-brand-cyan)] hover:underline"
+      >
+        View PDF →
+      </a>
+    </div>
   );
 }
