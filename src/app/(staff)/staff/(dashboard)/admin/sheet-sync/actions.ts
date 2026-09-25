@@ -63,7 +63,13 @@ function fail(e: unknown): ErrResult {
     console.error("sheet sync action failed (finish not recorded)", e);
     return { ok: false, error: "The change ran but couldn't be recorded as finished — check Run history in a few minutes." };
   }
-  console.error("sheet sync action failed", e);
+  // Anything else may carry a foreign SQLSTATE (22P02, 23505, …) whose
+  // message routinely echoes the offending cell/column value — same reasoning
+  // as run.ts's errText(). console.error is a Sentry breadcrumb, so logging
+  // e.message here would leak sheet/patient data into Sentry the same way it
+  // would into per_tab.error. Withhold the message; the code is enough to
+  // find the real row server-side if needed.
+  console.error("sheet sync action failed — message withheld (may contain sheet data)", { code: err?.code ?? null });
   return { ok: false, error: "Something went wrong. Please try again." };
 }
 
@@ -240,7 +246,7 @@ export async function mapAnswerToChannelAction(
   try {
     const store = createSupabaseStore(admin);
     const { runId, result } = await withAdminLease(store, "alias", session.user_id, (lease) =>
-      store.aliasApply(lease, item.item_key, parsed.data.sourceId, session.user_id),
+      store.aliasApply(lease, item.item_key, parsed.data.sourceId, session.user_id, parsed.data.itemId),
     );
     const { ip, ua } = await ipAndAgent();
     await audit({
