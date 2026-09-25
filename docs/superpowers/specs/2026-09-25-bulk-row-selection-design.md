@@ -1,10 +1,17 @@
 # Bulk row selection on staff lists — design
 
 **Date:** 2026-09-25 · **Branch:** `feat/bulk-select` · **Migration:** none
-**Revision 2** — after a Codex (Astra, high) plan review; §4–§8 rewritten where the review
-found the first draft contradicted the code (queue delete is per-visit, the inbox action
-has no source-status guard, chemistry cards fold after paging, search params do not
-remount a provider, the delete audit read rows before deleting, unclaim is all-or-nothing).
+**Revision 3** — after two Codex (Astra, high) plan reviews. Revision 2 fixed: queue delete
+is per-visit, the inbox action has no source-status guard, chemistry cards fold after
+paging, search params do not remount a provider, the delete audit read rows before
+deleting, unclaim is all-or-nothing. Revision 3 fixed: every bulk write now carries the
+status the operator SAW (`from`) as a predicate, so a stale click never overwrites a
+colleague's change (`ALLOWED_FROM.confirmed` accepts `cancelled`, so a stale "Confirm"
+would otherwise un-cancel a booking); the queue delete coordinator authenticates before
+its service-role read and gets ids back from a shared per-visit core; the existing panel
+unclaim keeps its all-or-nothing behaviour; the inbox matrix keeps `booked → new` and the
+bulk update stamps `handled_by`/`handled_at`; booking-group audit membership is derived
+server-side; pruning wins over partial retention; hard deletes have no restore path.
 
 ## 1. Problem
 
@@ -150,26 +157,40 @@ refused with its existing message and nothing is written (browser check in §9).
 **Server actions** (`appointments/actions.ts`, additive, `TransitionButtons` unchanged):
 
 - `ApptResult` success becomes `{ ok: true; changedIds: string[] }` — the appointment ids
-  the write actually returned. `transitionGroup` already selects them; the bar maps them
-  back to bookings: a booking is *changed* when every id came back, *partly changed* when
-  some did, *unchanged* otherwise. Message: "Marked 3 of 5 bookings arrived; 1 partly
-  changed — open it to check; 1 had already changed". Partly-changed keys stay selected.
-- `deleteAppointmentAction(ids, opts?: { allowedStatuses?: string[] })`: deletes with
-  `.delete().in("id", ids).select("id, patient_id, status, scheduled_at")` and audits
-  **only the returned rows** (today it audits a pre-read, so two admins deleting
-  overlapping selections can audit rows they did not delete). The bulk bar passes
-  `allowedStatuses` = the non-completed set, so a booking that completes between
-  selection and click is not deleted; the single-row button passes nothing and keeps
-  today's behaviour. Audit metadata keeps `group_appointment_ids` (the booking's actual
-  siblings, from the page's group) separate from a new `bulk_batch_size` (ids in this call).
-- Both reject `ids.length > MAX_BULK_RECORDS` (500) before any query; the client never
-  builds such a batch because the kit bounds records, but the server does not trust it.
-- Audit rows stay one per appointment. `metadata.bulk_batch_size` is added when > 1 row
-  key was involved so a trail can tell a sweep from a click.
+  the write actually returned. The bar maps them back to bookings: a booking is *changed*
+  when every id came back, *partly changed* when some did, *unchanged* otherwise. Message:
+  "Marked 3 of 5 bookings arrived. 1 partly changed — open it to check. 1 had already
+  changed."
+- **Expected-status writes.** The bar sends `batch: { ids: string[]; from: string }[]` —
+  each booking with the status the operator saw. New `bulkTransitionAction(batch, to)`
+  (zod-validated; `to` ∈ arrived | no_show | cancelled | confirmed — never completed)
+  refuses any entry whose `from` is not in `ALLOWED_FROM[to]`, then writes **one UPDATE
+  per `from` value**: `.in("id", idsWithThatFrom).eq("status", from).select("id, patient_id")`.
+  `ALLOWED_FROM` alone is not a stale-click guard — `confirmed` accepts `cancelled`, so
+  operator A's stale "Confirm" on a pending callback that B cancelled a second earlier
+  would silently un-cancel it. With `eq("status", from)` that row comes back unchanged and
+  is reported as "had already changed". The single-row buttons keep calling the existing
+  actions, which keep the broader `ALLOWED_FROM` predicate (a deliberate revert is their
+  job).
+- **Server-derived group membership.** Before writing, the action reads
+  `id, booking_group_id` for the batch with the RLS client and builds each row's sibling
+  list from `booking_group_id` (rows with none are their own group). Audit metadata's
+  `group_appointment_ids` comes from that read, never from the client's grouping; a new
+  `bulk_batch_size` (ids in this call) sits beside it so a trail can tell a sweep from a
+  click. The active-patient check runs on the whole batch, all-or-nothing, as today.
+- `bulkDeleteAction(batch)`: same shape; one `DELETE … .in("id", ids).eq("status", from)
+  .select("id, patient_id, status, scheduled_at")` per `from`, `from` restricted to the
+  non-completed set; audits **only the returned rows**. The single-row
+  `deleteAppointmentAction(ids)` is rewritten onto the same core with no status predicate
+  (today's behaviour) but also audits from the returned rows — today it audits a pre-read,
+  so two admins deleting overlapping selections can audit rows they did not delete.
+- Both bulk actions reject `ids.length > MAX_BULK_RECORDS` (500) before any query; the
+  client never builds such a batch because the kit bounds records, but the server does
+  not trust it. Audit rows stay one per appointment.
 
-**After an action:** `clearKeys(fullyChangedKeys)` then `router.refresh()` (what
-`TransitionButtons` does; the action's `revalidatePath` covers other tabs). Errors use
-`alert()` like every sibling on this page.
+**After an action:** `clearKeys(allSentKeys)` (pruning wins, §4) then `router.refresh()`
+(what `TransitionButtons` does; the action's `revalidatePath` covers other tabs). Errors
+use `alert()` like every sibling on this page.
 
 **User guide:** §3 Appointments (the section holding the Row actions list) — new "Act on
 several bookings at once" step after the Mark arrived step; Row actions `<dt>` gains
@@ -210,17 +231,30 @@ audit row per changed record, `revalidatePath("/staff/queue")` plus each touched
   (`assigned_to is null` / status guard) → a write that returns no row is skipped as
   "claimed by someone else just now". Atomicity: per row; one skip never blocks the rest.
 - `unclaimTestsAction({ testRequestIds, reason })`. `performUnclaim` today refuses the
-  whole batch if any id fails preflight and, after a partial race, audits the successes
-  but returns only an error. Refactor it to evaluate per row (deleted, not yours unless
-  admin, wrong status) and write per row with the ownership predicate, returning
-  `changedIds` + `skipped`. The existing single-id and array callers keep their `ok |
-  error` shape by wrapping the new result (error when nothing changed).
+  whole batch if any id fails preflight (that is what a chemistry PANEL needs — the panel
+  button closes on success and shows no partial outcome) and, after a partial race,
+  audits the successes but returns only an error. **Leave `performUnclaim` and every
+  existing caller exactly as they are.** Extract only the per-row predicate
+  (`evaluateUnclaim(row, session)`: deleted, not yours unless admin, wrong status) so
+  both paths share it, and build the bulk action as a separate per-row loop: evaluate →
+  write with the ownership predicate (`.eq("assigned_to", …)` + status) → returned row =
+  changed, else skipped. Independent single-test rows only (§6 excludes panels), so
+  per-row atomicity is the right contract here and the panel's all-or-nothing contract
+  is untouched.
 - `deleteTestRequestsManyAction({ testRequestIds, reason })` in
-  `src/lib/actions/visits/queue-deletion.ts`: reads the candidates' `visit_id` with the
-  admin client (no role trust — the per-visit path re-checks everything), groups by
-  visit, calls the existing per-visit delete for each group, and aggregates. A refused
-  group (0125 guard, HMO claim P0050, paid visit) is reported as skipped with the
-  translated message; other groups still complete. Each visit gets its own revalidate.
+  `src/lib/actions/visits/queue-deletion.ts`. Order of operations: `requireActiveStaff()`
+  → `QUEUE_DELETE_ROLES` check → zod-validate ids (uuid, 1..100) and the required reason
+  → **only then** read the candidates' `visit_id` with the admin client, group by visit
+  and run the per-visit core for each group. Refactor the existing per-visit delete into
+  a core `deleteTestRequestsForVisit(session, visitId, ids, reason)` that returns
+  `{ deletedIds }` from the mutation's existing `.select("id")`; the existing
+  `deleteTestRequestsAction` wraps it and keeps returning `count` (its callers are
+  unchanged). The coordinator aggregates `deletedIds` across groups; ids not returned are
+  skipped ("already deleted or not deletable"). A refused group (0125 guard, HMO claim
+  P0050, paid visit) is reported as skipped with the translated message; groups that
+  already committed stay committed and are reported as changed. Each visit gets its own
+  revalidate. An empty or unknown-id batch returns the role error first, then "nothing to
+  delete" — never a candidate-dependent message before the role check.
 
 Guide: §4.2 The queue — bulk claim/unclaim/delete paragraph; note that panels are claimed
 from their page.
@@ -235,7 +269,7 @@ status, each as "Mark <status> (n)" over the eligible subset:
 |---|---|
 | new | replied, closed |
 | replied | closed, new |
-| booked | closed |
+| booked | closed, new (the detail page's Reopen) |
 | closed | new |
 
 The implementer copies the matrix from `message-actions.tsx` into
@@ -243,10 +277,12 @@ The implementer copies the matrix from `message-actions.tsx` into
 reads it too, so the two cannot drift.
 
 New `updateMessageStatusManyAction(entries: { id, from }[], to)`: role check once; for
-each `from` group one write `update({ status: to }).in("id", ids).eq("status", from)
-.select("id")` — the `eq("status", from)` is the concurrency guard the single action
-lacks (it reads then updates by id alone, so a message booked between selection and
-click would be overwritten). Only returned ids are changed and audited (`from → to`);
+each `from` group one write `update({ status: to, handled_by: session.user_id,
+handled_at: now }).in("id", ids).eq("status", from).select("id")` — the same three
+columns the single action writes (the detail page shows who last changed the status),
+and the `eq("status", from)` is the concurrency guard the single action lacks (it reads
+then updates by id alone, so a message booked between selection and click would be
+overwritten). Only returned ids are changed and audited (`from → to`);
 the rest are skipped as "changed since you selected it". Cap 100. Revalidate the inbox,
 each changed message page and the layout (sidebar "new" badge). Returns `changedIds` +
 `skipped`.
@@ -268,7 +304,9 @@ Guide: §3.11 Website Messages — one paragraph.
 - Keyboard: native checkboxes; Escape clears (no open dialog, not in a text field).
 - **Rollback.** Reverting the code does not undo mutations already applied; every bulk
   write is audited per record with `bulk_batch_size`, and the existing per-row revert
-  paths (Revert to confirmed, Unclaim, Restore, Reopen) are the operator's undo.
+  paths (Revert to confirmed, Unclaim, Restore, Reopen) are the operator's undo — except
+  appointment delete, which is a **hard delete with no restore path in the app**
+  (that is why it is admin-only, red, and confirmed with a count).
 
 ## 9. Acceptance checks per PR
 
@@ -279,11 +317,20 @@ stack (dev server on port 3007, admin + the page's role) recorded in the PR:
 2. Escape clears; Escape inside an open sheet/dialog does not.
 3. Sorting / paging / filtering drops the selection (resetKey).
 4. Two tabs: change a selected row in tab B, act in tab A → partial result reported,
-   nothing overwritten, audit rows only for changed records (`audit_log` query).
-5. Role check: the page's other roles get no checkboxes and the actions refuse them.
-6. PR 1: inactive patient in a batch → whole batch refused, no writes. PR 2: x-ray row
-   for a non-x-ray tech is skipped with its reason; paid/HMO/deleted gates skip. PR 3:
-   a `booked` message is never moved except to `closed`.
+   nothing overwritten, audit rows only for changed records (`audit_log` query). PR 1
+   specifically: A ticks a pending callback and B cancels it; A's "Confirm" reports it as
+   already changed and the booking stays cancelled.
+5. Role check: the page's other roles get no checkboxes and the actions refuse them —
+   including an empty batch and a batch of unknown ids, which must get the role error
+   before any candidate-dependent message.
+6. PR 1: inactive patient in a batch → whole batch refused, no writes. PR 2: an x-ray row
+   for a non-x-ray tech is skipped with its reason; an unpaid non-HMO visit's row is
+   skipped by the payment gate (paid, waived and HMO-covered rows pass); a row on a
+   deleted visit is skipped; a delete batch spanning two visits where the second visit is
+   paid deletes the first visit's rows and reports the second as skipped; the chemistry
+   panel's own Unclaim button still refuses a partly ineligible panel. PR 3: a `booked`
+   message moves only to `closed` or `new`; the detail page shows the bulk actor under
+   "handled by".
 7. 390px layout: bar visible, checkboxes tappable, no horizontal page scroll added.
 
 ## 10. Out of scope (surfaced for the owner)
