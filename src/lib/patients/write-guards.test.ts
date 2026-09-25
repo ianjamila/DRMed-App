@@ -105,8 +105,6 @@ const EXEMPT: Record<string, string> = {
     "Reassigning an already-claimed line does not put new work or money on the record.",
   [`src/app/(staff)/staff/(dashboard)/queue/consolidated/[visitId]/[groupId]/actions.ts:claimConsolidated`]:
     "Same as claimTestAction, for a consolidated report — claiming does not bill.",
-  [`src/app/(staff)/staff/(dashboard)/admin/closures/actions.ts:bulkRescheduleForClosureAction`]:
-    "Reschedules off a closure day; reduces conflict, doesn't put new work on an inactive record (Task 22 note).",
   [`src/app/(marketing)/appointments/cancel/[id]/actions.ts:cancelAppointmentAction`]:
     "Public cancel-by-link reduces work (cancels), same reasoning as staff cancel.",
   [`src/app/(marketing)/schedule/actions.ts:storeLabRequestFiles`]:
