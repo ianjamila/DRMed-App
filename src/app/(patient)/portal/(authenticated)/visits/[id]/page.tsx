@@ -3,6 +3,8 @@ import { notFound } from "next/navigation";
 import { createPatientClient } from "@/lib/supabase/patient";
 import { requirePatientProfile } from "@/lib/auth/require-patient";
 import { DownloadButton } from "../../download-button";
+import { ResultUpdatedBadge } from "../../result-updated-badge";
+import { isUpdatedSinceDownload } from "@/lib/results/patient-update-marker";
 import { Panel } from "@/components/ui/panel";
 import { manilaDate, manilaLongDate } from "@/lib/dates/manila";
 import { testStatusLabel } from "@/lib/results/status-filter";
@@ -30,7 +32,7 @@ export default async function PatientVisitDetailPage({ params }: Props) {
   const { data: visitRaw } = await db
     .from("visits")
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    .select("id, patient_id, visit_number, visit_date, payment_status, test_requests(id, status, released_at, deleted_at, legacy_import_run_id, services!inner(name, code), result_test_requests(result_id, results!inner(id, storage_path)))" as any)
+    .select("id, patient_id, visit_number, visit_date, payment_status, test_requests(id, status, released_at, deleted_at, legacy_import_run_id, services!inner(name, code), result_test_requests(result_id, results!inner(id, storage_path, amended_at, patient_last_downloaded_at)))" as any)
     .eq("id", id)
     .eq("patient_id", patient.patient_id)
     // Queue-deleted visits (0125) are not part of the patient's record view.
@@ -48,7 +50,12 @@ export default async function PatientVisitDetailPage({ params }: Props) {
     services: { name: string; code: string } | { name: string; code: string }[] | null;
     result_test_requests: {
       result_id: string;
-      results: { id: string; storage_path: string | null } | null;
+      results: {
+        id: string;
+        storage_path: string | null;
+        amended_at: string | null;
+        patient_last_downloaded_at: string | null;
+      } | null;
     }[] | null;
   };
   type VisitShape = {
@@ -138,6 +145,11 @@ export default async function PatientVisitDetailPage({ params }: Props) {
                       >
                         {testStatusLabel(t.status)}
                       </span>
+                      {result?.storage_path && isUpdatedSinceDownload(result) ? (
+                        <div className="mt-1">
+                          <ResultUpdatedBadge show />
+                        </div>
+                      ) : null}
                     </td>
                     <td className="px-4 py-3 text-right">
                       {result?.storage_path ? (

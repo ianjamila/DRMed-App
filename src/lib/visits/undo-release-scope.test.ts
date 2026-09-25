@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   expandUndoReleaseScope,
+  undoUpdateIds,
   type UndoScopeMemberRow,
 } from "./undo-release-scope";
 
@@ -174,5 +175,33 @@ describe("expandUndoReleaseScope", () => {
     expect(got.ok).toBe(true);
     if (!got.ok) throw new Error("unreachable");
     expect(new Set(got.expandedIds)).toEqual(new Set(["t1", "t2"]));
+  });
+});
+
+describe("undoUpdateIds — whole-report undo racing a release", () => {
+  it("targets a member released AFTER the candidate read, so the report never splits", () => {
+    // Report r1 = t1 + t2. The candidate read (status = released) saw only t1;
+    // t2 was released a moment later. The expansion still knows t2 is a member.
+    const expansion = expandUndoReleaseScope({
+      selectedIds: ["t1"],
+      members: [
+        member({ testRequestId: "t1", resultId: "r1" }),
+        member({ testRequestId: "t2", resultId: "r1" }),
+      ],
+      visitId: VISIT,
+      allowedSections: null,
+    });
+    if (!expansion.ok) throw new Error("unreachable");
+    const scopedCandidates = ["t1"]; // what the candidate read returned
+    const ids = undoUpdateIds(scopedCandidates, expansion.reportResultIdByTestRequestId.keys());
+    expect(new Set(ids)).toEqual(new Set(["t1", "t2"]));
+  });
+
+  it("keeps a plain (single-test) selection to the candidates it read", () => {
+    expect(undoUpdateIds(["a", "b"], [])).toEqual(["a", "b"]);
+  });
+
+  it("lists each id once", () => {
+    expect(undoUpdateIds(["t1", "t2"], ["t2", "t1", "t3"]).sort()).toEqual(["t1", "t2", "t3"]);
   });
 });

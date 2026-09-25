@@ -17,9 +17,11 @@ type LinkRow = {
   results: LinkResult | LinkResult[] | null;
 };
 
+type SiblingSvc = { section: string | null };
+type SiblingTest = { status: string; services?: SiblingSvc | SiblingSvc[] | null };
 type SiblingRow = {
   result_id: string;
-  test_requests: { status: string } | { status: string }[] | null;
+  test_requests: SiblingTest | SiblingTest[] | null;
 };
 
 export type PdfState = {
@@ -38,6 +40,10 @@ export type PdfState = {
   // `reportReleased`). A single-test result has one link, so it reduces to
   // "this line is released".
   reportReleased: boolean;
+  // Section of every test linked to that file (deleted ones included) — what
+  // canViewResultPdf's `memberSections` needs so a lab role is offered a
+  // shared report only when it covers every member (report-section-gate.ts).
+  memberSections: (string | null)[];
 };
 
 /**
@@ -79,7 +85,7 @@ export async function resultPdfStates(
   for (let i = 0; i < resultIds.length; i += CHUNK) {
     const { data } = await supabase
       .from("result_test_requests")
-      .select("result_id, test_requests!inner ( status )")
+      .select("result_id, test_requests!inner ( status, services!inner ( section ) )")
       .in("result_id", resultIds.slice(i, i + CHUNK));
     if (data) siblings.push(...(data as SiblingRow[]));
   }
@@ -118,11 +124,16 @@ export function pdfStates(
   versions: ReadonlyMap<string, number> = new Map(),
 ): Map<string, PdfState> {
   const statusesByResult = new Map<string, string[]>();
+  const sectionsByResult = new Map<string, (string | null)[]>();
   for (const row of siblings) {
     const tr = Array.isArray(row.test_requests) ? row.test_requests[0] : row.test_requests;
     const list = statusesByResult.get(row.result_id) ?? [];
     list.push(tr?.status ?? "");
     statusesByResult.set(row.result_id, list);
+    const svc = tr?.services ? (Array.isArray(tr.services) ? tr.services[0] : tr.services) : null;
+    const sections = sectionsByResult.get(row.result_id) ?? [];
+    sections.push(svc?.section ?? null);
+    sectionsByResult.set(row.result_id, sections);
   }
   const out = new Map<string, PdfState>();
   for (const [testId, resultId] of newest) {
@@ -131,6 +142,8 @@ export function pdfStates(
       resultId,
       version: versions.get(resultId) ?? 0,
       reportReleased: allLinksReleased(statusesByResult.get(resultId) ?? []),
+      // No sibling rows → [] → membersWithinSections denies a restricted role.
+      memberSections: sectionsByResult.get(resultId) ?? [],
     });
   }
   return out;
@@ -188,7 +201,7 @@ export function printAllFiles(
   for (const line of lines) {
     const state = states.get(line.id);
     if (line.deleted || line.status !== "released" || !state?.reportReleased) continue;
-    if (!canViewResultPdf(role, { ...line, reportReleased: true })) continue;
+    if (!canViewResultPdf(role, { ...line, reportReleased: true, memberSections: state.memberSections })) continue;
     const file = files.get(state.resultId);
     if (file) file.testIds.push(line.id);
     else files.set(state.resultId, { resultId: state.resultId, testIds: [line.id] });

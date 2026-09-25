@@ -95,3 +95,27 @@ export function codeDuplicatesName(code: string, name: string): boolean {
   const c = norm(code);
   return c.length > 0 && c === norm(name);
 }
+
+/**
+ * Whether a combined report's edit may proceed on what was just read. An edit
+ * REPLACES the whole value set, so an editor opened over values that failed to
+ * load would save a partial set and erase the rest (Codex, #223). Any failed
+ * read — template, stored values, or the service → parameter mapping — is
+ * `load_failed`, and wins over "no template" (a failed template read also
+ * comes back empty). Shared by the consolidated page (whether to render the
+ * form) and amendConsolidatedReport (whether to accept a save).
+ */
+export type ReportEditLoadState = "load_failed" | "no_template" | "ready";
+
+export function reportEditLoadState(r: {
+  templateError: unknown;
+  valuesError: unknown;
+  mappingError: unknown;
+  hasTemplate: boolean;
+}): ReportEditLoadState {
+  if (r.templateError || r.valuesError || r.mappingError) return "load_failed";
+  return r.hasTemplate ? "ready" : "no_template";
+}
+
+export const REPORT_VALUES_LOAD_FAILED =
+  "This report's values couldn't be loaded, so it can't be edited right now. Reload the page to try again.";

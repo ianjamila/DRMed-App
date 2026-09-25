@@ -2,6 +2,7 @@ import { sectionsForRole } from "@/lib/auth/role-sections";
 import type { StaffSession } from "@/lib/auth/require-staff";
 import type { ServiceSection } from "@/lib/auth/role-sections";
 import { isDoctorKind } from "./order-lines";
+import { membersWithinSections } from "@/lib/results/report-section-gate";
 
 /**
  * Two different questions about a visit's bill line, deliberately kept apart:
@@ -96,9 +97,21 @@ export function canViewResultPdf(
     status: string;
     kind: string | null | undefined;
     reportReleased: boolean;
+    /**
+     * Sections of EVERY test on the line's result file (deleted ones
+     * included). When given, a lab role must cover all of them — a shared
+     * chemistry report prints every member's values, not only this line's
+     * (report-section-gate.ts). Omit only where no file is known yet.
+     */
+    memberSections?: readonly (string | null)[];
   },
 ): boolean {
-  if (canActOnResult(role, line.section)) return true;
+  if (canActOnResult(role, line.section)) {
+    return (
+      line.memberSections === undefined ||
+      membersWithinSections(sectionsForRole(role), line.memberSections)
+    );
+  }
   return (
     role === "reception" &&
     line.status === "released" &&

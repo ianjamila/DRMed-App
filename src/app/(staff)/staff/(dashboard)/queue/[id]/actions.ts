@@ -19,6 +19,7 @@ import {
   type ResultLayout,
   type TemplateParam,
 } from "@/lib/results/types";
+import { membersWithinSections, resultMemberSections } from "@/lib/results/report-section-gate";
 import { loadTemplateParams } from "@/lib/results/loaders";
 import {
   buildValueRows,
@@ -161,13 +162,21 @@ async function prepareStructured(
     };
   }
 
+  // Active templates only. An inactive per-service template is history — 0053
+  // deactivated the 12 per-service chemistry templates when the consolidated
+  // one replaced them, and entering values against one would write a result
+  // no current template renders. (Prod 2026-09-25: the only other inactive
+  // single-service template is the NA send-out placeholder, which the
+  // send-out check above already refuses.) amendStructuredResultAction has the
+  // same filter.
   const { data: tpl } = await supabase
     .from("result_templates")
     .select("id")
     .eq("service_id", tr.service_id)
+    .eq("is_active", true)
     .maybeSingle();
   if (!tpl) {
-    return { ok: false, error: "No template configured for this service." };
+    return { ok: false, error: "No active template is configured for this service." };
   }
 
   // Restrict the payload to params that actually belong to this template.
@@ -1122,7 +1131,7 @@ export async function amendStructuredResultAction(
     .eq("is_active", true)
     .maybeSingle();
   if (!tpl) {
-    return { ok: false, error: "No template configured for this service." };
+    return { ok: false, error: "No active template is configured for this service." };
   }
   const params = await loadTemplateParams(admin, tpl.id);
   const paramsById = new Map(params.map((p) => [p.id, p]));
@@ -1380,6 +1389,15 @@ export async function getResultDownloadUrl(
   if (!result) return { ok: false, error: "No result file." };
   if (!result.storage_path) {
     return { ok: false, error: "Result is still a draft — no PDF yet." };
+  }
+
+  // A shared (chemistry) report is one file carrying every member's values,
+  // so the gate above — THIS test's section — is not enough: every linked
+  // test, deleted ones included, must be in the caller's sections too. Same
+  // rule as the staff PDF route (report-section-gate.ts). A failed read denies.
+  const memberSections = await resultMemberSections(admin, result.id);
+  if (!membersWithinSections(sectionsForRole(session.role), memberSections ?? [])) {
+    return { ok: false, error: "This report includes tests outside your sections." };
   }
 
   const { data: signed, error } = await admin.storage

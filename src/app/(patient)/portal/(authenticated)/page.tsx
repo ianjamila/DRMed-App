@@ -3,6 +3,8 @@ import { createPatientClient } from "@/lib/supabase/patient";
 import { createStorageSignedUrl } from "@/lib/storage/signed-url";
 import { requirePatientProfile } from "@/lib/auth/require-patient";
 import { DownloadButton } from "./download-button";
+import { ResultUpdatedBadge } from "./result-updated-badge";
+import { isUpdatedSinceDownload } from "@/lib/results/patient-update-marker";
 import { PackageCard, type PackageComponentRow } from "./package-card";
 import { LabRequestUploads, type UploadRow } from "./lab-request-uploads";
 import { Panel } from "@/components/ui/panel";
@@ -62,6 +64,8 @@ interface ReleasedRow {
   /** True when this row came from the historical backfill (legacy_import_run_id IS NOT NULL).
    *  Used to show a more informative label when no digital copy exists. */
   is_legacy: boolean;
+  /** The clinic corrected this result after the patient downloaded it. */
+  updated: boolean;
 }
 
 // Package header surfaced as a card. Components hang off it via
@@ -82,6 +86,8 @@ interface PackageGroup {
   releasedCount: number;
   totalCount: number;
   consolidatedAvailable: boolean;
+  /** Any component result was corrected after the patient downloaded it. */
+  updated: boolean;
 }
 
 interface VisitWithPending {
@@ -248,19 +254,28 @@ async function loadResults(patientId: string): Promise<PortalData> {
     .flat()
     .map((c) => c.id);
   const componentResultSet = new Set<string>();
+  const componentUpdatedSet = new Set<string>();
   if (allComponentIds.length > 0) {
     const { data: compJunctionsRaw } = await db
       .from("result_test_requests")
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      .select("test_request_id, results!inner(storage_path)" as any)
+      .select("test_request_id, results!inner(storage_path, amended_at, patient_last_downloaded_at)" as any)
       .in("test_request_id", allComponentIds);
-    type CompJunction = { test_request_id: string; results: { storage_path: string | null } | null };
+    type CompJunction = {
+      test_request_id: string;
+      results: {
+        storage_path: string | null;
+        amended_at: string | null;
+        patient_last_downloaded_at: string | null;
+      } | null;
+    };
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const compJunctions = (compJunctionsRaw as any as CompJunction[]) ?? [];
     for (const j of compJunctions) {
       const r = Array.isArray(j.results) ? j.results[0] : j.results;
       if (r?.storage_path) {
         componentResultSet.add(j.test_request_id);
+        if (isUpdatedSinceDownload(r)) componentUpdatedSet.add(j.test_request_id);
       }
     }
   }
@@ -279,6 +294,8 @@ async function loadResults(patientId: string): Promise<PortalData> {
         test_name: csvc?.name ?? "",
         test_code: csvc?.code ?? "",
         has_result: componentResultSet.has(c.id),
+        // Only a RELEASED component's file is the patient's to re-download.
+        updated: c.status === "released" && componentUpdatedSet.has(c.id),
       };
     });
     const nonCancelled = components.filter((c) => c.status !== "cancelled");
@@ -300,6 +317,7 @@ async function loadResults(patientId: string): Promise<PortalData> {
         h.status === "released" &&
         nonCancelled.length > 0 &&
         released.length === nonCancelled.length,
+      updated: components.some((c) => c.updated),
     });
   }
 
@@ -338,7 +356,7 @@ async function loadResults(patientId: string): Promise<PortalData> {
     const { data: junctionsRaw } = await db
       .from("result_test_requests")
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      .select("result_id, test_request_id, results!inner(id, storage_path, report_group_id, report_groups(name))" as any)
+      .select("result_id, test_request_id, results!inner(id, storage_path, report_group_id, amended_at, patient_last_downloaded_at, report_groups(name))" as any)
       .in("test_request_id", standaloneIds);
 
     type JRow = {
@@ -348,6 +366,8 @@ async function loadResults(patientId: string): Promise<PortalData> {
         id: string;
         storage_path: string | null;
         report_group_id: string | null;
+        amended_at: string | null;
+        patient_last_downloaded_at: string | null;
         report_groups: { name: string } | null;
       } | null;
     };
@@ -420,6 +440,7 @@ async function loadResults(patientId: string): Promise<PortalData> {
         has_result: Boolean(result.storage_path),
         // A result row exists but has no storage_path — not a legacy concern.
         is_legacy: false,
+        updated: Boolean(result.storage_path) && isUpdatedSinceDownload(result),
       });
     }
 
@@ -441,6 +462,7 @@ async function loadResults(patientId: string): Promise<PortalData> {
         released_at: tr.released_at,
         has_result: false,
         is_legacy: Boolean(tr.legacy_import_run_id),
+        updated: false,
       });
     }
   }
@@ -558,6 +580,7 @@ export default async function PatientPortalPage() {
               releasedCount={pkg.releasedCount}
               totalCount={pkg.totalCount}
               consolidatedAvailable={pkg.consolidatedAvailable}
+              updated={pkg.updated}
             />
           ))}
         </section>
@@ -623,9 +646,12 @@ export default async function PatientPortalPage() {
                       : "—"}
                   </td>
                   <td className="px-4 py-3">
-                    <span className="rounded-md bg-emerald-100 px-2 py-0.5 text-xs font-semibold text-emerald-900">
-                      Released
-                    </span>
+                    <div className="flex flex-wrap items-center gap-1">
+                      <span className="rounded-md bg-emerald-100 px-2 py-0.5 text-xs font-semibold text-emerald-900">
+                        Released
+                      </span>
+                      <ResultUpdatedBadge show={row.updated} />
+                    </div>
                   </td>
                   <td className="px-4 py-3 text-right">
                     {row.has_result ? (
@@ -681,9 +707,12 @@ export default async function PatientPortalPage() {
                       </p>
                     ) : null}
                   </div>
-                  <span className="shrink-0 rounded-md bg-emerald-100 px-2 py-0.5 text-xs font-semibold text-emerald-900">
-                    Released
-                  </span>
+                  <div className="flex shrink-0 flex-col items-end gap-1">
+                    <span className="rounded-md bg-emerald-100 px-2 py-0.5 text-xs font-semibold text-emerald-900">
+                      Released
+                    </span>
+                    <ResultUpdatedBadge show={row.updated} />
+                  </div>
                 </div>
                 <div className="mt-2 flex items-center justify-between text-xs text-[color:var(--color-brand-text-soft)]">
                   <Link

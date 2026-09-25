@@ -129,3 +129,22 @@ export function expandUndoReleaseScope(input: {
     reportResultIdByTestRequestId,
   };
 }
+
+/**
+ * Whole-report undo [R4], the race half: the ids the final UPDATE targets.
+ *
+ * The action reads the released candidates one round trip BEFORE its UPDATE.
+ * A member of an expanded report released in that window was not a candidate,
+ * so targeting only the candidates would undo the rest of its report and leave
+ * it released — one report, two statuses. So the UPDATE targets the candidates
+ * PLUS every member of every expanded report, whatever it looked like when
+ * read; the UPDATE's own `status = 'released'` filter decides which rows
+ * actually revert. `expandUndoReleaseScope` has already proved every such
+ * member is in the caller's sections, on this visit, and not a package header.
+ */
+export function undoUpdateIds(
+  scopedCandidateIds: readonly string[],
+  reportMemberIds: Iterable<string>,
+): string[] {
+  return Array.from(new Set([...scopedCandidateIds, ...reportMemberIds]));
+}

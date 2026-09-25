@@ -13,9 +13,9 @@ const link = (id: string, result: string, at: string, path: string | null) => ({
   created_at: at,
   results: { storage_path: path },
 });
-const sib = (result: string, status: string) => ({
+const sib = (result: string, status: string, section: string | null = "chemistry") => ({
   result_id: result,
-  test_requests: { status },
+  test_requests: { status, services: { section } },
 });
 
 describe("newestLinkWithPdf", () => {
@@ -61,7 +61,17 @@ describe("pdfStates", () => {
       resultId: "r1",
       version: 0,
       reportReleased: true,
+      memberSections: ["chemistry"],
     });
+  });
+
+  it("lists the section of every member of the file, so a lab role must cover them all", () => {
+    const states = pdfStates(new Map([["fbs", "r1"]]), [
+      sib("r1", "released", "chemistry"),
+      sib("r1", "released", "imaging_xray"),
+      sib("r1", "released", null),
+    ]);
+    expect(states.get("fbs")?.memberSections).toEqual(["chemistry", "imaging_xray", null]);
   });
 
   it("marks EVERY member of a shared report unreleased while one sibling is not released", () => {
@@ -82,6 +92,7 @@ describe("pdfStates", () => {
 
   it("fails closed when no sibling statuses were read", () => {
     expect(pdfStates(new Map([["a", "r1"]]), []).get("a")?.reportReleased).toBe(false);
+    expect(pdfStates(new Map([["a", "r1"]]), []).get("a")?.memberSections).toEqual([]);
   });
 });
 
@@ -110,7 +121,11 @@ describe("printAllFiles", () => {
     deleted: false,
     ...over,
   });
-  const state = (resultId: string, reportReleased = true): PdfState => ({ resultId, version: 0, reportReleased });
+  const state = (
+    resultId: string,
+    reportReleased = true,
+    memberSections: (string | null)[] = ["chemistry"],
+  ): PdfState => ({ resultId, version: 0, reportReleased, memberSections });
 
   it("combines each released file once, in line order, with its lines", () => {
     const files = printAllFiles(
@@ -148,5 +163,14 @@ describe("printAllFiles", () => {
     const states = new Map([["xr", state("r1")]]);
     expect(printAllFiles("medtech", [line("xr", { section: "imaging_xray" })], states)).toEqual([]);
     expect(printAllFiles("admin", [line("xr", { section: "imaging_xray" })], states)).toHaveLength(1);
+  });
+
+  it("leaves a shared file out for a lab role unless it covers EVERY member (reception unaffected)", () => {
+    const mixed = new Map([["fbs", state("chem", true, ["chemistry", "imaging_xray"])]]);
+    expect(printAllFiles("medtech", [line("fbs")], mixed)).toEqual([]);
+    expect(printAllFiles("reception", [line("fbs")], mixed)).toHaveLength(1);
+    expect(printAllFiles("admin", [line("fbs")], mixed)).toHaveLength(1);
+    const allChem = new Map([["fbs", state("chem", true, ["chemistry", "chemistry"])]]);
+    expect(printAllFiles("medtech", [line("fbs")], allChem)).toHaveLength(1);
   });
 });

@@ -9,7 +9,11 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { sectionsForRole } from "@/lib/auth/role-sections";
 import { isSectionAllowed } from "@/lib/auth/section-access";
 import { deriveEnabledParamIds } from "@/lib/results/enabled-params";
-import { partitionConsolidatedMembers } from "@/lib/results/consolidated-reports";
+import {
+  partitionConsolidatedMembers,
+  REPORT_VALUES_LOAD_FAILED,
+  reportEditLoadState,
+} from "@/lib/results/consolidated-reports";
 import { labQueueGate } from "@/lib/visits/lab-gate";
 import { audit } from "@/lib/audit/log";
 import { hasRecentAudit, ipAndAgent } from "@/lib/server/action-helpers";
@@ -18,7 +22,7 @@ import { ReportCards, type ReportCardData } from "./report-cards";
 import { ReportEditForm } from "./report-edit-form";
 import type { ValueCells } from "./consolidated-values-table";
 import { normalisePatientSex } from "@/lib/results/types";
-import { claimRemarks } from "@/lib/queue/claim-remarks";
+import { claimRemarks, type ClaimEvent } from "@/lib/queue/claim-remarks";
 import { fetchClaimEvents } from "@/lib/queue/fetch-claim-events";
 import { ClaimHistory } from "@/components/staff/claim-remarks-list";
 import { QueueUnclaimButton } from "../../../queue-unclaim-button";
@@ -171,7 +175,7 @@ export default async function ConsolidatedQueuePage({
     }),
   );
 
-  // Every amendment per report (newest first): the "Edited <when> — <reason>"
+  // Every amendment per report (newest first): the "Updated <when> — <reason>"
   // line uses the latest, the edit-history panel lists them all. Read through
   // the signed-in client — 0172 limits it to staff who may read the values.
   type Amendment = { reason: string; amended_at: string; amended_by: string; amendment_seq: number };
@@ -216,6 +220,14 @@ export default async function ConsolidatedQueuePage({
     for (const p of profs ?? []) staffName.set(p.id, p.full_name);
   }
 
+  // Each finished report's History: its members' claims plus every edit
+  // ("Updated … by … — reason", 0176). The edit rows come back only when the
+  // viewer passes staff_can_read_finished_result — the same rule as the card's
+  // edit details above. One batched read for every report on the page.
+  const reportMemberIds = partition.reports.flatMap((rep) => rep.memberIds);
+  const reportEvents =
+    reportMemberIds.length > 0 ? await fetchClaimEvents(supabase, reportMemberIds) : new Map<string, ClaimEvent[]>();
+
   const gate = labQueueGate(visit);
   const reports: ReportCardData[] = partition.reports.map((rep) => {
     const res = reportResults.get(rep.resultId)!;
@@ -253,6 +265,7 @@ export default async function ConsolidatedQueuePage({
         reason: a.reason,
         by: staffName.get(a.amended_by) ?? null,
       })),
+      remarks: claimRemarks(rep.memberIds.flatMap((id) => reportEvents.get(id) ?? [])),
       editHref: canEdit.get(rep.resultId)
         ? `/staff/queue/consolidated/${visitId}/${groupId}?edit=${rep.resultId}#result-${rep.resultId}`
         : null,
@@ -289,7 +302,12 @@ export default async function ConsolidatedQueuePage({
     // An edit REPLACES the whole value set, so a form opened over values that
     // failed to load would save a partial set and erase the rest. Refuse to
     // render it instead.
-    const loadFailed = Boolean(templateErr || valuesErr || mapErr);
+    const loadState = reportEditLoadState({
+      templateError: templateErr,
+      valuesError: valuesErr,
+      mappingError: mapErr,
+      hasTemplate: Boolean(template),
+    });
     // Editable = what the members' services enable, plus anything already
     // holding a value (a mapping changed since finalise must not strand it).
     const stored = new Set((valueRows ?? []).map((v) => v.parameter_id));
@@ -307,12 +325,11 @@ export default async function ConsolidatedQueuePage({
     }
     editForm = {
       resultId: editing.resultId,
-      node: loadFailed ? (
+      node: loadState === "load_failed" ? (
         <p role="alert" className="mt-4 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">
-          This report&apos;s values couldn&apos;t be loaded, so it can&apos;t be edited right now.
-          Reload the page to try again.
+          {REPORT_VALUES_LOAD_FAILED}
         </p>
-      ) : template ? (
+      ) : loadState === "ready" ? (
         <ReportEditForm
           key={`${editing.resultId}:${res.amendment_count}`}
           resultId={editing.resultId}

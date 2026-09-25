@@ -457,6 +457,7 @@ export default async function QueuePage({ searchParams }: SearchProps) {
         status: r.status,
         kind: svc.kind,
         reportReleased: pdfState.reportReleased,
+        memberSections: pdfState.memberSections,
       });
     // Reception never opens the bench pages; its patient link goes to the
     // visit, the page it already works from.

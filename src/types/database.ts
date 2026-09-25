@@ -5181,6 +5181,7 @@ export type Database = {
           image_uploaded_at: string | null
           image_uploaded_by: string | null
           notes: string | null
+          patient_last_downloaded_at: string | null
           report_group_id: string | null
           storage_path: string | null
           updated_at: string
@@ -5204,6 +5205,7 @@ export type Database = {
           image_uploaded_at?: string | null
           image_uploaded_by?: string | null
           notes?: string | null
+          patient_last_downloaded_at?: string | null
           report_group_id?: string | null
           storage_path?: string | null
           updated_at?: string
@@ -5227,6 +5229,7 @@ export type Database = {
           image_uploaded_at?: string | null
           image_uploaded_by?: string | null
           notes?: string | null
+          patient_last_downloaded_at?: string | null
           report_group_id?: string | null
           storage_path?: string | null
           updated_at?: string
@@ -6666,6 +6669,18 @@ export type Database = {
         }
         Returns: Json
       }
+      result_amendment_remarks: {
+        Args: { p_test_request_ids: string[] }
+        Returns: {
+          action: string
+          actor_name: string
+          created_at: string
+          new_holder_name: string
+          previous_holder_name: string
+          reason: string
+          test_request_id: string
+        }[]
+      }
       result_finalise_commit: {
         Args: {
           p_alerts: Json
@@ -6678,6 +6693,10 @@ export type Database = {
           p_values: Json
         }
         Returns: Json
+      }
+      result_note_patient_download: {
+        Args: { p_served: Json }
+        Returns: number
       }
       result_save_draft: {
         Args: { p_result_id: string; p_values: Json }

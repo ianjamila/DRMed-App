@@ -1,7 +1,14 @@
 // The lab queue's Remarks column: a test's claim history (claimed, unclaimed,
-// reassigned) turned into short plain-English lines. The rows come from the
-// queue_claim_remarks RPC (0160); this module is pure so it can be tested
-// without a database.
+// reassigned) and its edits after it was finished, turned into short
+// plain-English lines. The rows come from the queue_claim_remarks (0160) and
+// result_amendment_remarks (0176) RPCs, which share one row shape; this module
+// is pure so it can be tested without a database.
+//
+// An edit reads "Updated <when> by <who> — “reason”" (owner decision
+// 2026-09-25): clinic-only — never on the PDF or the portal, and the RPC gives
+// reception no rows.
+
+import { manilaDateTime } from "@/lib/dates/manila";
 
 export interface ClaimEvent {
   test_request_id: string;
@@ -18,16 +25,23 @@ export interface ClaimRemark {
   key: string;
   text: string;
   at: string;
-  /** Unclaims and reassignments are the "something happened" rows. */
+  /** Unclaims, reassignments and edits are the "something happened" rows. */
   notable: boolean;
+  /** The text already says when (an edit) — the list doesn't repeat it. */
+  timeInText?: boolean;
 }
+
+/** Action name result_amendment_remarks (0176) returns for an edit. */
+export const RESULT_AMENDED_ACTION = "result.amended";
 
 // A queue row shows at most this many lines; older ones fold into "+N earlier".
 export const MAX_REMARKS_SHOWN = 3;
 
 const SOMEONE = "someone";
 
-function describe(e: ClaimEvent): { text: string; notable: boolean } | null {
+function describe(
+  e: ClaimEvent,
+): { text: string; notable: boolean; timeInText?: boolean } | null {
   const actor = e.actor_name ?? SOMEONE;
   const reason = e.reason ? ` — “${e.reason}”` : "";
   switch (e.action) {
@@ -48,6 +62,12 @@ function describe(e: ClaimEvent): { text: string; notable: boolean } | null {
       return {
         text: `Reassigned ${e.previous_holder_name ?? SOMEONE} → ${e.new_holder_name ?? SOMEONE} by ${actor}`,
         notable: true,
+      };
+    case RESULT_AMENDED_ACTION:
+      return {
+        text: `Updated ${manilaDateTime(e.created_at)} by ${actor}${reason}`,
+        notable: true,
+        timeInText: true,
       };
     default:
       return null;
@@ -75,7 +95,13 @@ export function claimRemarks(events: readonly ClaimEvent[]): ClaimRemark[] {
     const dedupe = `${d.text}|${e.created_at.slice(0, 16)}`;
     if (seen.has(dedupe)) continue;
     seen.add(dedupe);
-    out.push({ key: `${e.test_request_id}|${e.action}|${e.created_at}`, text: d.text, at: e.created_at, notable: d.notable });
+    out.push({
+      key: `${e.test_request_id}|${e.action}|${e.created_at}`,
+      text: d.text,
+      at: e.created_at,
+      notable: d.notable,
+      ...(d.timeInText ? { timeInText: true } : {}),
+    });
   }
   return out;
 }

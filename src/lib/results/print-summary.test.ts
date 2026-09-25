@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { foldPrintEvents } from "./print-summary";
+import { foldPrintEvents, servedAmendmentCount } from "./print-summary";
 
 const names = new Map([["u1", "Ana Cruz"], ["u2", "Ben Reyes"]]);
 
@@ -55,5 +55,34 @@ describe("foldPrintEvents — amended files", () => {
       new Map([["r1", 1], ["r2", 0]]),
     );
     expect(out.size).toBe(0);
+  });
+});
+
+describe("servedAmendmentCount — the version a print row stamps", () => {
+  it("stamps the current file when no ?version is asked for", () => {
+    expect(servedAmendmentCount(null, 1)).toBe(0);
+    expect(servedAmendmentCount(null, 3)).toBe(2);
+  });
+
+  it("stamps the replaced version a ?version=N request served", () => {
+    expect(servedAmendmentCount(1, 2)).toBe(0);
+    expect(servedAmendmentCount(2, 3)).toBe(1);
+    expect(servedAmendmentCount(3, 3)).toBe(2);
+  });
+
+  it("printing version 1 after version 2 exists leaves version 2's Printed note empty", () => {
+    // r1 has been edited once: current file = version 2 (amendment_count 1).
+    const current = new Map([["r1", 1]]);
+    const printOfV1 = {
+      result_id: "r1",
+      amendment_count: String(servedAmendmentCount(1, 2)),
+      created_at: "2026-09-25T06:00:00+00:00",
+      actor_id: "u1",
+    };
+    expect(foldPrintEvents([printOfV1], names, current).get("r1")).toBeUndefined();
+
+    // …whereas printing the current file (no ?version) does count.
+    const printOfCurrent = { ...printOfV1, amendment_count: String(servedAmendmentCount(null, 2)) };
+    expect(foldPrintEvents([printOfV1, printOfCurrent], names, current).get("r1")?.count).toBe(1);
   });
 });

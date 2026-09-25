@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   codeDuplicatesName,
   partitionConsolidatedMembers,
+  reportEditLoadState,
   reportHeadlineStatus,
   type ConsolidatedMemberRow,
 } from "./consolidated-reports";
@@ -94,5 +95,30 @@ describe("codeDuplicatesName", () => {
     expect(codeDuplicatesName("ECG", "12-Lead ECG")).toBe(false);
     expect(codeDuplicatesName("XRAY_CHEST_PA_LAT_ADULT", "XRAY - CHEST PA/LAT (ADULT)")).toBe(true);
     expect(codeDuplicatesName("", "")).toBe(false);
+  });
+});
+
+describe("reportEditLoadState — never edit over values that failed to load", () => {
+  const ok = { templateError: null, valuesError: null, mappingError: null, hasTemplate: true };
+
+  it("is ready when every read came back", () => {
+    expect(reportEditLoadState(ok)).toBe("ready");
+  });
+
+  it("refuses when the stored values failed to load (an edit replaces the whole set)", () => {
+    expect(reportEditLoadState({ ...ok, valuesError: { message: "timeout" } })).toBe("load_failed");
+  });
+
+  it("refuses when the template or the service mapping failed to load", () => {
+    expect(reportEditLoadState({ ...ok, templateError: { message: "x" } })).toBe("load_failed");
+    expect(reportEditLoadState({ ...ok, mappingError: { message: "x" } })).toBe("load_failed");
+  });
+
+  it("reports a failed template read as a load failure, not as 'no template'", () => {
+    expect(reportEditLoadState({ ...ok, templateError: { message: "x" }, hasTemplate: false })).toBe("load_failed");
+  });
+
+  it("says no template only when the reads succeeded and none is active", () => {
+    expect(reportEditLoadState({ ...ok, hasTemplate: false })).toBe("no_template");
   });
 });

@@ -308,9 +308,13 @@ export default async function AllResultsPage({ searchParams }: SearchProps) {
     }
   }
 
-  // The latest edit's reason per amended result, for the Edited column. Only
+  // The latest edit's reason per amended result, for the Updated column. Only
   // results on this page with amendment_count > 0, so this is empty on almost
-  // every render and bounded by the page size when it isn't.
+  // every render and bounded by the page size when it isn't. Read through the
+  // SIGNED-IN client, not `admin`: RLS on result_amendments (0172,
+  // staff_can_read_finished_result) keeps the reason from a medtech whose
+  // sections cover only part of a combined report — the date still shows.
+  const staffDb = await createClient();
   const amendedIds = Array.from(
     new Set(
       Array.from(linkByTrId.values())
@@ -320,7 +324,7 @@ export default async function AllResultsPage({ searchParams }: SearchProps) {
   );
   const lastEditReason = new Map<string, string>();
   if (amendedIds.length > 0) {
-    const { data: amends } = await admin
+    const { data: amends } = await staffDb
       .from("result_amendments")
       .select("result_id, reason, amendment_seq")
       .in("result_id", amendedIds)
@@ -334,7 +338,7 @@ export default async function AllResultsPage({ searchParams }: SearchProps) {
   // lab queue. Called through the signed-in staff client, NOT `admin` above —
   // queue_claim_remarks gates on the caller's role, and the service role has
   // none, so it would answer empty.
-  const claimEvents = await fetchClaimEvents(await createClient(), trIds);
+  const claimEvents = await fetchClaimEvents(staffDb, trIds);
   const remarksFor = (testIds: string[]) =>
     claimRemarks(testIds.flatMap((id) => claimEvents.get(id) ?? []));
 
@@ -585,14 +589,14 @@ export default async function AllResultsPage({ searchParams }: SearchProps) {
             <table className="w-full min-w-[1100px] text-sm">
               <thead className="bg-[color:var(--color-brand-bg)] text-left text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
                 <tr>
-                  {/* Patient, Tests, Edited and PDF can't be ordered — see SORTABLE_COLUMNS. */}
+                  {/* Patient, Tests, Updated and PDF can't be ordered — see SORTABLE_COLUMNS. */}
                   <PlainTh label="Patient" />
                   <PlainTh label="Tests" />
                   {th("status", "Status")}
                   {th("requested_at", "Requested")}
                   {th("completed_at", "Completed")}
                   {th("released_at", "Released")}
-                  <PlainTh label="Edited" />
+                  <PlainTh label="Updated" />
                   <PlainTh label="PDF" />
                   <PlainTh label="Remarks" />
                   {th("visit_number", "Visit", "right")}
@@ -681,7 +685,7 @@ export default async function AllResultsPage({ searchParams }: SearchProps) {
                               <div key={item.key} className="max-w-[16rem]">
                                 <span className="font-semibold text-violet-800">
                                   {g.items.length > 1 ? `${item.label}: ` : ""}
-                                  Edited {manilaDateTime(item.amendedAt)}
+                                  Updated {manilaDateTime(item.amendedAt)}
                                   {item.amendmentCount > 1 ? ` (×${item.amendmentCount})` : ""}
                                 </span>
                                 {lastEditReason.get(item.resultId!) ? (

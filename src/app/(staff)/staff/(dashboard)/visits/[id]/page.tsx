@@ -252,14 +252,15 @@ export default async function VisitDetailPage({ params, searchParams }: Props) {
   // queue_claim_remarks (0160) on the signed-in client — it answers only a
   // lab role (admin/pathologist/medtech/xray); reception gets nothing, and
   // the chip is a bench detail reception has no use for.
-  const claimEvents = await fetchClaimEvents(supabase, allTestIds);
+  // Only unclaims drive the handed-back chip; edits are not needed here.
+  const claimEvents = await fetchClaimEvents(supabase, allTestIds, { includeEdits: false });
   const handedBackFor = (id: string) => handedBack(claimEvents.get(id) ?? []);
 
   // Which tests sit on a FINISHED COMBINED report (0172, P0067/§5/§6.1) —
   // one junction query keyed by test_request_id feeds the delete-guard
   // mirror (has_shared_report below), the whole-report undo scope shown to
   // the operator before they confirm, and the per-result amendment data the
-  // Edited note needs. No N+1.
+  // Updated note needs. No N+1.
   const resultLinkRows: ResultLinkRow[] = [];
   const resultIdByTrId = new Map<string, string>();
   const amendedAtByTrId = new Map<string, string | null>();
@@ -541,7 +542,7 @@ export default async function VisitDetailPage({ params, searchParams }: Props) {
   );
   const viewedCountRecord = Object.fromEntries(viewedCountByTrId);
 
-  // "Edited <date/time> — <reason>" notes (0172 §6.1). result_amendments is
+  // "Updated <date/time> — <reason>" notes (0172 §6.1). result_amendments is
   // readable only through the SIGNED-IN client — RLS (staff_can_read_
   // finished_result) restricts it to pathologist/admin and an in-section
   // medtech/xray_technician; reception's read comes back empty, which is
@@ -1105,6 +1106,7 @@ export default async function VisitDetailPage({ params, searchParams }: Props) {
                                         kind: csvc.kind,
                                         reportReleased:
                                           pdfStates.get(c.id)?.reportReleased ?? false,
+                                        memberSections: pdfStates.get(c.id)?.memberSections,
                                       })}
                                       kind={csvc.kind}
                                       viewedCount={componentViewedCount}
@@ -1327,6 +1329,7 @@ export default async function VisitDetailPage({ params, searchParams }: Props) {
                           status: t.status,
                           kind: svc.kind,
                           reportReleased: pdfStates.get(t.id)?.reportReleased ?? false,
+                          memberSections: pdfStates.get(t.id)?.memberSections,
                         })}
                         kind={svc.kind}
                         viewedCount={viewedCountForRow}
@@ -1700,7 +1703,7 @@ interface TestActionProps {
   // dialog's "already viewed" warning. Already aggregated across a combined
   // report's members when `reportScope` is set (0172 §5/§9 R6).
   viewedCount: number;
-  // "Edited <date/time> — <reason>" (0172 §6.1), or null when unamended or
+  // "Updated <date/time> — <reason>" (0172 §6.1), or null when unamended or
   // when RLS returned no reason (reception). Shown on released rows (under
   // View PDF) and on ready_for_release rows.
   editNote?: string | null;
