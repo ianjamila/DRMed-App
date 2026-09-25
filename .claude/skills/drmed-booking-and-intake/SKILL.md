@@ -66,6 +66,19 @@ An appointment is intent; the visit is the encounter — but the two are now lin
 
 That action re-proves its own arguments (appointment exists, visit exists and is not deleted, and the two share a `patient_id` — else "That appointment belongs to a different patient.") because **every export of a `"use server"` file is a callable endpoint**, then transitions the whole `booking_group_id` to `completed` via `transitionGroup`. `ALLOWED_FROM.completed = ["arrived"]` and this call path is the only way to reach `completed` — there is no manual button. A failure is logged and swallowed: it must never roll back a created visit.
 
+- `appointments/appointments-bulk-bar.tsx` + `src/lib/appointments/bulk-eligibility.ts` — the
+  multi-select bar. `bulkTransitionAction(batch, to)` / `bulkDeleteAction(batch)` take a batch of
+  `{ ids: string[]; from: string }[]` — one entry per booking group, carrying the status the
+  operator saw when they ticked it — never `completed`; the server groups the batch by `from` and
+  writes one `.in("status", [from])` update per distinct value (a booking changed since selection
+  falls outside that filter and comes back untouched instead of being overwritten), and every
+  audit row carries `bulk_batch_size`. A batch where every group already moved returns
+  `{ ok: true, changedIds: [] }` rather than an error; a partial write failure still audits and
+  counts the rows it did commit before reporting `ok: false`. Legacy single-row buttons call
+  `transitionGroup`/`deleteGroups` with `from: null`, which skips the per-group status filter and
+  falls back to the full `ALLOWED_FROM` list instead. `ApptResult` success is
+  `{ ok: true; changedIds }`.
+
 Status labels for the six statuses come from `APPOINTMENT_STATUS_LABEL` / `appointmentStatusLabel()` in `src/lib/appointments/labels.ts`; the pre-registered badge strings from `src/lib/patients/labels.ts`. Use them rather than re-formatting a raw status anywhere new, staff-facing or patient-facing.
 
 ## Patient resolution & dedup (`resolve.ts`)

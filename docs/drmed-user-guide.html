@@ -247,7 +247,7 @@
 <div class="layout">
 <nav class="toc" aria-label="Contents">
   <p class="toc-brand">drmed<span>.</span>ph</p>
-  <p class="toc-tag">User guide · v2.28</p>
+  <p class="toc-tag">User guide · v2.29</p>
   <div class="filter" role="group" aria-label="Show chapters for">
     <button type="button" data-filter="all" aria-pressed="true">All roles</button>
     <button type="button" data-filter="reception">Reception</button>
@@ -480,7 +480,7 @@
     <div class="screen"><div class="where">Sidebar › Messages &amp; Bookings › <kbd class="ui">Appointments</kbd> · <code class="route">/staff/appointments</code></div>
       <dl><dt>Tabs</dt><dd><span class="tab">All</span> · <span class="tab">Consultations</span> · <span class="tab">Home service</span></dd>
       <dt>Sections</dt><dd><span class="tab">Pending callback</span> · <span class="tab">Walk-ins waiting</span> · <span class="tab">Today</span> · <span class="tab">Next 30 days</span></dd>
-      <dt>Row actions</dt><dd><kbd class="ui">Mark arrived</kbd> · <kbd class="ui">No-show</kbd> · <kbd class="ui">Cancel</kbd> · <kbd class="ui">↶ Revert</kbd> · <kbd class="ui">+ Start visit</kbd></dd></dl></div>
+      <dt>Row actions</dt><dd><kbd class="ui">Mark arrived</kbd> · <kbd class="ui">No-show</kbd> · <kbd class="ui">Cancel</kbd> · <kbd class="ui">↶ Revert</kbd> · <kbd class="ui">+ Start visit</kbd> · tick boxes at the start of each row → a bar at the bottom of the page acts on all ticked bookings</dd></dl></div>
     <p>A search box sits beside <kbd class="ui">+ New appointment</kbd>. Typing a name, DRM-ID or phone number — or clicking <kbd class="ui">Sort this list →</kbd> to sort a column without searching — switches the page from the four grouped sections above to one flat list, each row tagged with a small badge (<span class="tab">Pending callback</span>, <span class="tab">Walk-in waiting</span>, <span class="tab">Today</span> or <span class="tab">Upcoming</span>) showing which section it came from. A search also finds scheduled appointments more than 30 days ahead. Click any column heading to sort, and a page-size picker (5/10/25/50/100) appears once you're in this view. <kbd class="ui">← Back to grouped view</kbd> returns to the normal four sections.</p>
     <div class="note warn"><span class="k">Search doesn't reach everywhere</span><div><p>The search box only looks inside the same four sections this page always shows — pending callbacks, walk-ins waiting, today, and the next 30 days. It will not find an appointment that is older, cancelled, or already completed. Use Visit Records (3.7) for those.</p></div></div>
     <p>Every booking made on the public <code class="route">/schedule</code> page lands here, one row per service. Bookings for a doctor who has no published schedule, and all home-service requests, arrive as <span class="status">pending callback</span>: the patient has been told you will call within one working day to agree a time. Reception and Admin are also emailed about each one (never for a booking reception makes) — see Email Alerts, 5.2.</p>
@@ -489,6 +489,7 @@
     <ol class="steps">
       <li><p class="step-title">Work the <span class="tab">Pending callback</span> section first thing.</p><p>Call the patient, agree the time, and confirm the booking.</p></li>
       <li><p class="step-title">When a booked patient walks in, click <kbd class="ui">Mark arrived</kbd> on their row.</p><p>Only a confirmed booking can be marked arrived. Grouped multi-service bookings show one button for all of them.</p></li>
+      <li><p class="step-title">To act on several bookings at once, tick the boxes at the start of their rows.</p><p>A bar appears at the bottom of the page with only the actions that apply to what you ticked — <kbd class="ui">Mark arrived</kbd>, <kbd class="ui">No-show</kbd>, <kbd class="ui">Cancel</kbd>, <kbd class="ui">Confirm</kbd>, <kbd class="ui">Revert to confirmed</kbd> and, for admins, <kbd class="ui">Delete</kbd>. The number on each button is how many of the ticked bookings it will change; a booking it cannot change is left alone and the bar says why (for example a deleted patient record). The box in a section's header ticks every booking in that section. You can tick up to 100 bookings at a time; searching, sorting, filtering or changing page clears the ticks, and so does <b>Esc</b>. If someone else changed a booking after you ticked it, the bar tells you how many were skipped instead of overwriting their change.</p></li>
       <li><p class="step-title">Click <kbd class="ui">+ Start visit</kbd>.</p><p>It opens New Visit with the patient already picked. The button appears only after <q>arrived</q> and only if the booking has a patient record. A walk-in booking taken by phone has no record yet, so register the patient first (3.2) and start the visit from their page.</p><p>When you save the visit, the appointment moves to <span class="status">Completed</span> on its own — and so do the others in the same multi-service booking. Nothing else marks an appointment done, so always start the visit from the appointment row rather than from the patient's page when there is a booking: that is what keeps the <b>Walk-ins waiting</b> count on your dashboard honest.</p></li>
     </ol>
 
@@ -1247,7 +1248,7 @@
 </section>
 
 <footer class="end">
-  <p>drmed.ph User Guide · v2.28 · 25 September 2026 · Matches the production release at migration 0177, plus 0176 (applied out of order) and 0167 (patient delete and restore). Every label in this guide was checked against the application code on that date. Print with <b>Ctrl/Cmd + P</b>; each chapter starts on a new page.</p>
+  <p>drmed.ph User Guide · v2.29 · 25 September 2026 · Matches the production release at migration 0177, plus 0176 (applied out of order) and 0167 (patient delete and restore). Every label in this guide was checked against the application code on that date. Print with <b>Ctrl/Cmd + P</b>; each chapter starts on a new page.</p>
 </footer>
 </main>
 </div>
