@@ -232,6 +232,9 @@ create unique index sheet_sync_review_items_open_key on public.sheet_sync_review
   ((case when kind in ('ambiguous_patient','identity_conflict','possible_existing_patient') then 'identity' else kind end), item_key)
   where status = 'open';
 create index sheet_sync_review_items_list on public.sheet_sync_review_items (status, kind, last_seen_at desc, id);
+-- sheet_sync_upsert_review looks every reported item up by key (identity kinds
+-- share one item per key, so the kind is not part of that lookup).
+create index sheet_sync_review_items_key on public.sheet_sync_review_items (item_key, status);
 
 -- Before-images. No FK to patients: the history must outlive a reverted create.
 create table public.sheet_sync_changes (
@@ -966,6 +969,38 @@ begin
   return jsonb_build_object('opened', n_opened, 'updated', n_updated, 'cleared', n_cleared, 'kept_dismissed', n_kept, 'kept_undone', n_auto);
 end $$;
 
+-- Resolves the tab's OPEN review items the sheet no longer reports, given the
+-- full list of what this run reported (kind + item_key only). The runner
+-- upserts a large review list in chunks (each call stays well inside the 8 s
+-- statement_timeout — the first sync after undoing a catch-up run reports
+-- ~4.8k items) and then clears once with this. Same rule as
+-- sheet_sync_upsert_review's p_clear_absent: an identity item counts as
+-- reported when its key is reported under ANY identity kind.
+create or replace function public.sheet_sync_clear_absent_review(p_lease_token uuid, p_tab text, p_present jsonb)
+returns integer language plpgsql security definer set search_path = '' as $$
+declare
+  v_run uuid := public._sheet_sync_fence(p_lease_token, true);
+  v_n integer;
+begin
+  if p_tab not in ('customers','lab','consult') or jsonb_typeof(p_present) is distinct from 'array' then
+    raise exception 'Bad review batch.' using errcode = '22023';
+  end if;
+  with present as (
+    select e->>'item_key' as item_key,
+           case when e->>'kind' in ('ambiguous_patient','identity_conflict','possible_existing_patient')
+                then 'identity' else e->>'kind' end as ns
+      from jsonb_array_elements(p_present) e)
+  update public.sheet_sync_review_items i
+     set status = 'resolved', resolution = jsonb_build_object('auto', 'no longer reported by the sheet'), resolved_at = now()
+   where i.tab = p_tab and i.status = 'open'
+     and not exists (select 1 from present p
+                      where p.item_key = i.item_key
+                        and p.ns = case when i.kind in ('ambiguous_patient','identity_conflict','possible_existing_patient')
+                                        then 'identity' else i.kind end);
+  get diagnostics v_n = row_count;
+  return v_n;
+end $$;
+
 -- Re-sort only ever moves patients the May import created (the same set
 -- sheet_resort_candidates lists); a stray id is skipped, never re-sorted.
 create or replace function public.sheet_resort_apply(
@@ -1468,6 +1503,7 @@ begin
     'public.sheet_mirror_commit(uuid, text, integer)',
     'public.sheet_sync_apply_customer_ops(uuid, jsonb)',
     'public.sheet_sync_upsert_review(uuid, text, jsonb, boolean)',
+    'public.sheet_sync_clear_absent_review(uuid, text, jsonb)',
     'public.sheet_resort_apply(uuid, uuid[], text, text)',
     'public.sheet_alias_apply(uuid, text, text, uuid)',
     'public.sheet_sync_revert_run(uuid, uuid, integer)',
@@ -1488,6 +1524,7 @@ grant execute on function public.sheet_mirror_stage(uuid, text, jsonb) to servic
 grant execute on function public.sheet_mirror_commit(uuid, text, integer) to service_role;
 grant execute on function public.sheet_sync_apply_customer_ops(uuid, jsonb) to service_role;
 grant execute on function public.sheet_sync_upsert_review(uuid, text, jsonb, boolean) to service_role;
+grant execute on function public.sheet_sync_clear_absent_review(uuid, text, jsonb) to service_role;
 grant execute on function public.sheet_resort_apply(uuid, uuid[], text, text) to service_role;
 grant execute on function public.sheet_alias_apply(uuid, text, text, uuid) to service_role;
 grant execute on function public.sheet_sync_revert_run(uuid, uuid, integer) to service_role;
@@ -1535,8 +1572,8 @@ begin
     end if;
   end loop;
   if (select count(*) from pg_proc p join pg_namespace n on n.oid = p.pronamespace
-       where n.nspname = 'public' and (p.proname like 'sheet\_%' or p.proname like '\_sheet\_sync\_%')) <> 16 then
-    raise exception '0170: expected exactly 16 sheet sync routines (a stale overload survived?)';
+       where n.nspname = 'public' and (p.proname like 'sheet\_%' or p.proname like '\_sheet\_sync\_%')) <> 17 then
+    raise exception '0170: expected exactly 17 sheet sync routines (a stale overload survived?)';
   end if;
 
   -- Tables: anon gets nothing; authenticated may only read, and never the staging table.

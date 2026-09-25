@@ -9,7 +9,8 @@
 import { describe, expect, it } from "vitest";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "../../types/database";
-import { createSupabaseStore } from "./store";
+import { createSupabaseStore, REVIEW_CHUNK } from "./store";
+import type { ReviewItemInput } from "./types";
 
 /** Serves `pages` in order off `.range()`; every other chain link just returns itself. */
 function makeRunsClient(pages: ReadonlyArray<Array<{ per_tab: unknown }>>) {
@@ -70,5 +71,49 @@ describe("createSupabaseStore — lastGoodRowsRead", () => {
 
     expect(out).toEqual({ customers: 1 });
     expect(rangeCallCount()).toBe(1); // page1.length (5) < PAGE (30) — the loop stops rather than paging past the end
+  });
+});
+
+/** A client whose rpc() records calls and answers from `reply`. */
+function recordingClient(reply: (fn: string, args: Record<string, unknown>) => unknown) {
+  const calls: Array<{ fn: string; args: Record<string, unknown> }> = [];
+  const client = {
+    rpc: async (fn: string, args: Record<string, unknown>) => {
+      calls.push({ fn, args });
+      return { data: reply(fn, args), error: null };
+    },
+  };
+  return { calls, store: createSupabaseStore(client as never) };
+}
+
+const items = (n: number): ReviewItemInput[] =>
+  Array.from({ length: n }, (_, i) => ({ kind: i % 2 ? "ambiguous_patient" : "unparseable_date", item_key: `k${i}`, payload: { i } }));
+
+describe("store.upsertReview — chunked upserts, one set-based clear (0170)", () => {
+  it("upserts in REVIEW_CHUNK slices without clearing, then clears once against the whole list", async () => {
+    const { calls, store } = recordingClient((fn, args) =>
+      fn === "sheet_sync_upsert_review" ? { opened: (args.p_items as unknown[]).length, updated: 1 } : 7);
+    const n = REVIEW_CHUNK * 2 + 500;
+    const counts = await store.upsertReview("lease", "customers", items(n), true);
+    const upserts = calls.filter((c) => c.fn === "sheet_sync_upsert_review");
+    expect(upserts.map((c) => (c.args.p_items as unknown[]).length)).toEqual([REVIEW_CHUNK, REVIEW_CHUNK, 500]);
+    expect(upserts.every((c) => c.args.p_clear_absent === false)).toBe(true);
+    const clears = calls.filter((c) => c.fn === "sheet_sync_clear_absent_review");
+    expect(clears).toHaveLength(1);
+    expect(calls[calls.length - 1].fn).toBe("sheet_sync_clear_absent_review"); // after every upsert
+    expect(clears[0].args.p_present).toHaveLength(n);
+    expect((clears[0].args.p_present as Array<Record<string, unknown>>)[1]).toEqual({ kind: "ambiguous_patient", item_key: "k1" });
+    expect(counts).toEqual({ opened: n, updated: 3, cleared: 7 });
+  });
+  it("an empty report still clears (every open item of the tab is absent)", async () => {
+    const { calls, store } = recordingClient(() => 3);
+    const counts = await store.upsertReview("lease", "lab", [], true);
+    expect(calls.map((c) => c.fn)).toEqual(["sheet_sync_clear_absent_review"]);
+    expect(counts).toEqual({ cleared: 3 });
+  });
+  it("no clear call when clearAbsent is false", async () => {
+    const { calls, store } = recordingClient(() => ({ opened: 1 }));
+    await store.upsertReview("lease", "lab", items(1), false);
+    expect(calls.map((c) => c.fn)).toEqual(["sheet_sync_upsert_review"]);
   });
 });

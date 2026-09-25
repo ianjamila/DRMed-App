@@ -540,6 +540,10 @@ async function main() {
           sql: `select * from public.sheet_resort_candidates()`,
         },
         {
+          name: "sheet_sync_clear_absent_review",
+          sql: `select public.sheet_sync_clear_absent_review('${NIL}'::uuid, 'lab', '[]'::jsonb)`,
+        },
+        {
           name: "sheet_sync_release_undo",
           sql: `select public.sheet_sync_release_undo('${NIL}'::uuid, '${NIL}'::uuid)`,
         },
@@ -2565,6 +2569,18 @@ async function main() {
       // Non-identity kinds still keep one item per (kind, key).
       const o4 = await upsert([item("identity_conflict", "ns:k1"), item("unparseable_date", "ns:row")], true);
       assert(o4.opened === 1 && o4.cleared >= 1, `non-identity kinds do not share: expected a new item and the old one cleared, got ${JSON.stringify(o4)}`);
+
+      // The runner upserts big lists in chunks and clears once with
+      // sheet_sync_clear_absent_review — same namespace rule.
+      await upsert([item("possible_existing_patient", "ns:k2")], false);
+      const lc = await acquire("manual", false);
+      const cleared = (await q<{ n: number }>(`select public.sheet_sync_clear_absent_review($1::uuid, 'consult', $2::jsonb) as n`, [
+        lc.token, JSON.stringify([{ kind: "ambiguous_patient", item_key: "ns:k2" }])])).rows[0].n;
+      await finish(lc.token);
+      const k2 = await rows("ns:k2");
+      const row = await rows("ns:row");
+      assert(k2.length === 1 && k2[0].status === "open", `clear: an identity key reported under another identity kind stays open, got ${JSON.stringify(k2)}`);
+      assert(cleared >= 1 && row.every((r) => r.status === "resolved"), `clear: unreported items are resolved, got ${cleared} / ${JSON.stringify(row)}`);
     });
 
     // 33. An undo's items are raised kept undone; "Let the sync decide again"

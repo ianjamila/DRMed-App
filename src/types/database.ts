@@ -7299,6 +7299,10 @@ export type Database = {
         Args: { p_lease_token: string; p_ops: Json }
         Returns: Json
       }
+      sheet_sync_clear_absent_review: {
+        Args: { p_lease_token: string; p_present: Json; p_tab: string }
+        Returns: number
+      }
       sheet_sync_finish: {
         Args: {
           p_error: string

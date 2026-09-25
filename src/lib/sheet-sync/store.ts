@@ -105,6 +105,9 @@ const PATIENT_COLUMNS = "id, drm_id, first_name, middle_name, last_name, birthda
   "address, referred_by_doctor, preferred_release_medium, senior_pwd_id_kind, senior_pwd_id_number, referral_source, " +
   "referral_source_origin, merged_into_id";
 
+/** Review items per sheet_sync_upsert_review call (see upsertReview below). */
+export const REVIEW_CHUNK = 1000;
+
 const ALL = 200_000; // ceiling for the paged loaders — far above today's ~8k patients
 
 export function createSupabaseStore(client: Client): SheetSyncStore {
@@ -191,8 +194,24 @@ export function createSupabaseStore(client: Client): SheetSyncStore {
     applyCustomerOps: (lease, ops) => rpc("sheet_sync_apply_customer_ops", { p_lease_token: lease, p_ops: ops }),
     async stage(lease, tab, rows) { await rpc("sheet_mirror_stage", { p_lease_token: lease, p_tab: tab, p_rows: rows }); },
     commit: (lease, tab, expected) => rpc("sheet_mirror_commit", { p_lease_token: lease, p_tab: tab, p_expected: expected }),
-    upsertReview: (lease, tab, items, clearAbsent) =>
-      rpc("sheet_sync_upsert_review", { p_lease_token: lease, p_tab: tab, p_items: items, p_clear_absent: clearAbsent }),
+    // Chunked (REVIEW_CHUNK items a call): one item costs a few indexed
+    // lookups, and the first sync after undoing a catch-up run reports ~4.8k
+    // items — a single call measured 4.6 s locally, too close to the 8 s
+    // statement_timeout. Clearing absent items needs the WHOLE list, so it
+    // runs once at the end, set-based (sheet_sync_clear_absent_review, 0170).
+    async upsertReview(lease, tab, items, clearAbsent) {
+      const counts: Record<string, number> = {};
+      for (let i = 0; i < items.length; i += REVIEW_CHUNK) {
+        const res = await rpc<Record<string, number>>("sheet_sync_upsert_review",
+          { p_lease_token: lease, p_tab: tab, p_items: items.slice(i, i + REVIEW_CHUNK), p_clear_absent: false });
+        for (const [k, v] of Object.entries(res)) counts[k] = (counts[k] ?? 0) + v;
+      }
+      if (clearAbsent) {
+        counts.cleared = (counts.cleared ?? 0) + await rpc<number>("sheet_sync_clear_absent_review",
+          { p_lease_token: lease, p_tab: tab, p_present: items.map((it) => ({ kind: it.kind, item_key: it.item_key })) });
+      }
+      return counts;
+    },
     resortApply: (lease, ids, expectedOld, next) =>
       rpc("sheet_resort_apply", { p_lease_token: lease, p_patient_ids: ids, p_expected_old: expectedOld, p_new: next }),
     aliasApply: (lease, answerNorm, sourceId, actorId) =>
