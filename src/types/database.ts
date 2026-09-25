@@ -3283,6 +3283,10 @@ export type Database = {
           consent_withdrawn_at: string | null
           created_at: string
           created_by: string | null
+          delete_note: string | null
+          delete_reason: string | null
+          deleted_at: string | null
+          deleted_by: string | null
           drm_id: string
           email: string | null
           first_name: string
@@ -3316,6 +3320,10 @@ export type Database = {
           consent_withdrawn_at?: string | null
           created_at?: string
           created_by?: string | null
+          delete_note?: string | null
+          delete_reason?: string | null
+          deleted_at?: string | null
+          deleted_by?: string | null
           drm_id?: string
           email?: string | null
           first_name: string
@@ -3349,6 +3357,10 @@ export type Database = {
           consent_withdrawn_at?: string | null
           created_at?: string
           created_by?: string | null
+          delete_note?: string | null
+          delete_reason?: string | null
+          deleted_at?: string | null
+          deleted_by?: string | null
           drm_id?: string
           email?: string | null
           first_name?: string
@@ -3373,6 +3385,13 @@ export type Database = {
         }
         Relationships: [
           {
+            foreignKeyName: "patients_deleted_by_fkey"
+            columns: ["deleted_by"]
+            isOneToOne: false
+            referencedRelation: "staff_profiles"
+            referencedColumns: ["id"]
+          },
+          {
             foreignKeyName: "patients_legacy_import_run_fk"
             columns: ["legacy_import_run_id"]
             isOneToOne: false
@@ -3391,6 +3410,13 @@ export type Database = {
             columns: ["merged_into_id"]
             isOneToOne: false
             referencedRelation: "v_patients_directory"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "patients_merged_into_id_fkey"
+            columns: ["merged_into_id"]
+            isOneToOne: false
+            referencedRelation: "v_patients_directory_admin"
             referencedColumns: ["id"]
           },
           {
@@ -6256,6 +6282,8 @@ export type Database = {
       }
       v_patients_directory: {
         Row: {
+          consent_current: boolean | null
+          consent_signed_at: string | null
           created_at: string | null
           drm_id: string | null
           email: string | null
@@ -6270,6 +6298,45 @@ export type Database = {
           referral_source_label: string | null
         }
         Relationships: [
+          {
+            foreignKeyName: "patients_referral_source_fk"
+            columns: ["referral_source"]
+            isOneToOne: false
+            referencedRelation: "referral_sources"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      v_patients_directory_admin: {
+        Row: {
+          consent_current: boolean | null
+          consent_signed_at: string | null
+          created_at: string | null
+          delete_note: string | null
+          delete_reason: string | null
+          deleted_at: string | null
+          deleted_by: string | null
+          deleted_by_name: string | null
+          drm_id: string | null
+          email: string | null
+          first_name: string | null
+          id: string | null
+          last_name: string | null
+          last_visit_date: string | null
+          middle_name: string | null
+          phone: string | null
+          pre_registered: boolean | null
+          referral_source: string | null
+          referral_source_label: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "patients_deleted_by_fkey"
+            columns: ["deleted_by"]
+            isOneToOne: false
+            referencedRelation: "staff_profiles"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "patients_referral_source_fk"
             columns: ["referral_source"]
@@ -6429,6 +6496,16 @@ export type Database = {
         Returns: string
       }
       current_patient_id: { Args: never; Returns: string }
+      delete_patient: {
+        Args: {
+          p_actor: string
+          p_context: Json
+          p_note: string
+          p_patient_id: string
+          p_reason: string
+        }
+        Returns: Json
+      }
       employee_leave_balance: {
         Args: { p_as_of_date?: string; p_employee_id: string; p_kind: string }
         Returns: number
@@ -6446,6 +6523,17 @@ export type Database = {
       next_pf_disbursement_batch_number: {
         Args: { p_year: number }
         Returns: number
+      }
+      patient_delete_blockers: { Args: { p_patient_id: string }; Returns: Json }
+      patient_kept_counts: {
+        Args: { p_patient_ids: string[] }
+        Returns: {
+          appointments: number
+          consents: number
+          patient_id: string
+          payments: number
+          visits: number
+        }[]
       }
       period_status_for: { Args: { p_date: string }; Returns: string }
       queue_claim_remarks: {
@@ -6509,6 +6597,10 @@ export type Database = {
           id: string
           name: string
         }[]
+      }
+      restore_patient: {
+        Args: { p_actor: string; p_context: Json; p_patient_id: string }
+        Returns: Json
       }
       result_edit_commit: {
         Args: {

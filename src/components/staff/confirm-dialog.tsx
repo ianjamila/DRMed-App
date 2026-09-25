@@ -7,10 +7,12 @@ import { useFocusTrap } from "@/lib/a11y/use-focus-trap";
 // Generic ConfirmDialog
 // =============================================================================
 //
-// Shared by run-review actions: Re-import DTR (nav-only), Finalise (success),
-// Void run (danger + reason), Void payout (danger + reason), Reopen voided
-// (primary). The dialog is intentionally dumb — the caller owns the action,
-// useTransition, and any router.refresh() side-effects.
+// Shared by payroll run review, patient delete/restore and Admin Tools ›
+// Deleted Patients: run-review actions (Re-import DTR (nav-only), Finalise
+// (success), Void run (danger + reason), Void payout (danger + reason),
+// Reopen voided (primary)), and the patient delete confirm dialog. The
+// dialog is intentionally dumb — the caller owns the action, useTransition,
+// and any router.refresh() side-effects.
 //
 // Behaviour:
 // - Backdrop click + ESC both call onCancel.
@@ -19,6 +21,9 @@ import { useFocusTrap } from "@/lib/a11y/use-focus-trap";
 // - When reasonRequired is true, the confirm button is disabled until the
 //   caller-managed reasonValue has non-whitespace text (caller can disable
 //   further via isPending).
+// - confirmDisabled lets the caller keep confirm disabled for its own reason
+//   (e.g. a reason picker not yet chosen, or open blockers) — OR'd with the
+//   built-in checks below.
 
 type ConfirmVariant = "primary" | "danger" | "success";
 
@@ -38,6 +43,9 @@ interface Props {
   // Inline error rendered above the footer. Stays open until the caller
   // dismisses by closing or retrying.
   errorMessage?: string | null;
+  // Caller-owned extra reason to keep confirm disabled (e.g. a reason picker
+  // not yet chosen, or open blockers). OR'd with the built-in checks.
+  confirmDisabled?: boolean;
 }
 
 export function ConfirmDialog({
@@ -54,6 +62,7 @@ export function ConfirmDialog({
   reasonValue = "",
   onReasonChange,
   errorMessage,
+  confirmDisabled: confirmDisabledProp = false,
 }: Props) {
   const panelRef = useFocusTrap<HTMLDivElement>(open);
 
@@ -81,7 +90,7 @@ export function ConfirmDialog({
 
   const reasonBlocks =
     reasonRequired && reasonValue.trim().length === 0;
-  const confirmDisabled = isPending || reasonBlocks;
+  const confirmDisabled = isPending || reasonBlocks || confirmDisabledProp;
 
   const confirmClass =
     confirmVariant === "danger"

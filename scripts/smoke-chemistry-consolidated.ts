@@ -56,6 +56,7 @@ import { createClient } from "@supabase/supabase-js";
 import type { Database } from "../src/types/database";
 import { renderResultPdf } from "../src/lib/results/render-pdf";
 import { loadResultDocumentInput } from "../src/lib/results/loaders";
+import { PATIENT_LIFECYCLE_COLUMNS } from "../src/lib/patients/active";
 import type { ResultDocumentInput } from "../src/lib/results/types";
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -127,9 +128,12 @@ async function deleteStaffUser(email: string): Promise<void> {
 }
 
 async function cleanup(): Promise<void> {
+  // Must delete in FK-safe order due to ON DELETE RESTRICT constraints. Not
+  // active-filtered on purpose: teardown must find and remove this fixture
+  // whatever lifecycle state a prior run left it in (including soft-deleted).
   const { data: patient } = await admin
     .from("patients")
-    .select("id")
+    .select(`id, ${PATIENT_LIFECYCLE_COLUMNS}`)
     .eq("drm_id", SMOKE_DRM_ID)
     .maybeSingle();
 

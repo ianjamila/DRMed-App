@@ -112,6 +112,60 @@ Admin-managed `discount_types` catalog. Kinds `percent` / `fixed` / `custom` (cu
 - `cash_drawer_state` is **service_role-only** (0118; re-created in 0132 with the ACL restated). Don't re-grant `authenticated`.
 - **Trends panel wording is deliberately loose** ("consistent with …"): payments record amounts, not the notes handed over, so no per-denomination expectation exists. Attribution is arithmetic only; centavo residue = keyed amount, not a miscount. Don't tighten it.
 
+## Patient delete/restore (0167) blocks writes on inactive patients
+
+A deleted or merged patient's history stays readable, but nothing new can be written
+against it until an admin restores the record — this is enforced app-side first (the
+DB-side child-table guards are a PR 3 follow-up, so until then these ARE the only
+barrier). `src/lib/patients/require-active.ts` exports one `assert*Active(db, id(s))`
+helper per write surface — `assertPatientActive`, `assertVisitPatientActive` /
+`assertVisitsPatientsActive`, `assertTestRequestsPatientsActive`,
+`assertPaymentPatientActive`, `assertAppointmentsPatientsActive`,
+`assertClaimItemsPatientsActive`, `assertBatchPatientsActive`,
+`assertResolutionPatientActive` — each resolving to the patient(s) behind the row(s) and
+checking `deleted_at`/`merged_into_id` via the admin client (so the check sees the
+lifecycle columns regardless of the caller's RLS). **Every write to `visits`,
+`test_requests`, `payments`, `appointments`, `patient_consents`, `visit_pins`,
+`hmo_claim_items`, `hmo_claim_batches`, `hmo_payment_allocations`,
+`hmo_claim_resolutions`, `results`, `result_test_requests`, `appointment_attachments` or
+`patients` must go through one of these** — payments, voids, waives, HMO claims and
+releases all refuse on an inactive record's rows. `src/lib/patients/write-guards.test.ts`
+is the standing gate: an AST pass that walks every `"use server"` file and
+`src/app/api/**/route.ts`, resolves every write on those tables back through same-file
+helpers to a guard call, and fails on anything it can't — a genuine gap or an
+undocumented exception, not a maybe. Removing the guard call from a write action makes
+this test fail (proven 2026-09-25); do not weaken `EXEMPT` to make it pass instead of
+adding the guard.
+
+## Deletability blockers — the amended money/HMO rules (0167)
+
+`patient_delete_blockers(patient_id)` is the read the delete dialog calls before
+enabling confirmation; its `balance` / `hmo_*` predicates were amended after a
+2026-09-25 prod-count review and the **migration is the authority**, not the original
+design spec:
+- **`balance` only blocks when `total_php > paid_php`.** A visit showing
+  `payment_status='unpaid'` with `total_php = 0` (4,147 historical H- imports on prod)
+  does NOT block — the recalc trigger only ever ran on a real payment insert/void, so
+  these would otherwise be permanently undeletable for money nobody owes.
+- **Unrecorded HMO coverage is treated as fully covered, not a blocker.** A `NULL
+  hmo_approved_amount_php` on an unclaimed line is NOT flagged for reconciliation — the
+  patient's share is 0 by construction. (Owner may revisit; flagged in the migration
+  comments, not changed.)
+- **`hmo_unbilled` blocks on approved-but-not-yet-claimed coverage** — a line with
+  `hmo_approved_amount_php > 0` and no claim item yet.
+- **Undated confirmed/arrived appointments DO block** (`appointment` kind) — online
+  lab-request walk-in bookings insert `confirmed` with `scheduled_at = NULL`, and the
+  appointments page already treats a NULL-dated confirmed/arrived row as open forever
+  (30 prod patients as of the 2026-09-25 review), so the blocker follows the same rule
+  rather than treating "no date" as harmless.
+- **A claim amount already transferred to the patient's bill (`hmo_patient_share`)
+  stays a blocker even after its line or visit is soft-deleted** — the `share` CTE joins
+  `visits` directly, not the `live_visits` (undeleted-only) CTE the other blockers use,
+  because the money is real and owed regardless of the row's lifecycle state.
+Any TS mirror of these kinds/labels (`src/lib/patients/deletion.ts`'s `BLOCKER_KINDS` /
+`BLOCKER_GROUP_LABEL`) must match the migration's `blockers as (...)` CTE, not the
+original plan text — `deletion.test.ts` pins them.
+
 ## HMO
 
 `hmo_providers` (seeded by `scripts/seed-hmo-providers.ts`), `visits.hmo_provider_id` / `test_requests.hmo_provider_id`, `due_days_for_invoice`. **An HMO-billed visit passes both the lab gate and the release gate while unpaid** (0133) — the patient gets the result at the counter and the GL bridge books the receivable into 1110 AR HMO on release, which is what creates the claim. Do NOT reach for admin "waive balance" to unblock an HMO visit: waiving writes off a collectible. The reception queue's stage helper (`queue-stage.ts`) stays payment-only on purpose — "waiting" means the counter has cash to collect, and an HMO visit has none. HMO settlements are ordinary `payments` rows with `method='hmo'`; claims tracking lives under `admin/accounting/hmo-claims` + `patient-ar`. No approval-gating trigger — `hmo_approval_date` is informational. The claims index reads four views; `v_hmo_unbilled` and `v_hmo_stuck` are the two that grow with visit volume and are walked with `fetchAllRows` (unbilled passed 2,000 rows on prod in September 2026 and was being silently cut at PostgREST's 1000-row cap, so the detail tabs disagreed with the provider cards by the missing half). `v_hmo_ar_aging` and `v_hmo_provider_summary` are aggregates bounded by provider × bucket × kind and stay single-shot.

@@ -247,7 +247,7 @@
 <div class="layout">
 <nav class="toc" aria-label="Contents">
   <p class="toc-brand">drmed<span>.</span>ph</p>
-  <p class="toc-tag">User guide · v2.25</p>
+  <p class="toc-tag">User guide · v2.26</p>
   <div class="filter" role="group" aria-label="Show chapters for">
     <button type="button" data-filter="all" aria-pressed="true">All roles</button>
     <button type="button" data-filter="reception">Reception</button>
@@ -323,7 +323,7 @@
   <div class="meta">
     <div><strong>Audience</strong>Reception · Medtech · X-ray · Pathologist · Admin · Patients</div>
     <div><strong>Covers</strong>Everything live in production as of the September 2026 release</div>
-    <div><strong>Version</strong>2.13 · 24 September 2026</div>
+    <div><strong>Version</strong>2.17 · 25 September 2026</div>
     <div><strong>Replaces</strong>Staff User Guide v1.0 (22 May 2026)</div>
   </div>
 </header>
@@ -1065,7 +1065,9 @@
     <h3>5.6 Patient tools</h3>
     <dl class="defs">
       <dt>Import Patients</dt><dd>Paste CSV rows with <code class="id">first_name, last_name, birthdate</code> (plus optional middle name, sex, phone, email, address — leave those columns out or blank if you do not have them), up to 2,000 at a time. Tick <b>Mark imported rows as pre-registered</b> so reception verifies them at the counter.</dd>
-      <dt>Merge Duplicate Patients</dt><dd><b>Possible duplicate patients</b> lists likely pairs (<span class="tab">Probable+</span> or <span class="tab">Include weak</span>); <kbd class="ui">Merge into DRM-…</kbd> moves every visit and result to the surviving record and can be <kbd class="ui">Undo</kbd>ne within 30 days. For a pair the detector missed, <kbd class="ui">Manual merge by DRM-ID →</kbd> opens a separate form that takes <b>Keep this patient</b> and <b>Merge in this patient</b> and asks you to type <code class="id">MERGE</code>.</dd>
+      <dt>Merge Duplicate Patients</dt><dd><b>Possible duplicate patients</b> lists likely pairs (<span class="tab">Probable+</span> or <span class="tab">Include weak</span>); <kbd class="ui">Merge into DRM-…</kbd> moves every visit, appointment, result, consent record and lab-request upload to the surviving record and can be <kbd class="ui">Undo</kbd>ne within 30 days. For a pair the detector missed, <kbd class="ui">Manual merge by DRM-ID →</kbd> opens a separate form that takes <b>Keep this patient</b> and <b>Merge in this patient</b> and asks you to type <code class="id">MERGE</code>.</dd>
+      <dt>Delete a patient record</dt><dd>Admins only. On the patient's page, <kbd class="ui">Delete patient</kbd> opens a box that shows what stays on file (visits, payments, appointments, consent records) and asks why: <b>Duplicate record</b>, <b>Test record</b>, <b>Requested by the patient</b> or <b>Other</b> (Other needs a note). Nothing is erased: the record disappears from the patient list, the pickers, online booking and the patient portal, and the patient stops getting result and appointment emails/texts. Old visits, receipts, results and reports keep working and show <q>This patient record was deleted on … by … (…)</q> — admins also see the note, other staff don't. <kbd class="ui">Delete patient</kbd> stays disabled while anything is still open, grouped under: <b>Open appointments</b> (a callback request, or a confirmed/arrived appointment today or later — including an undated online lab-request booking, which stays open until it's given a date), <b>Unfinished tests and consultations</b>, <b>Visits with nothing on them</b>, <b>Unpaid balances</b> (an old imported visit showing ₱0 owed doesn't block), <b>Unpaid patient share (HMO)</b>, <b>HMO claims not yet settled</b>, <b>HMO coverage not yet claimed</b>, and <b>HMO records to reconcile first</b>. Coverage the clinic never got an approved amount for from the HMO is treated as fully covered and doesn't block. After deleting, <kbd class="ui">Undo</kbd> on the confirmation toast restores it.</dd>
+      <dt>Deleted Patients</dt><dd>Admin Tools › <b>Deleted Patients</b> lists every deleted record with who deleted it, when, why, and what stays on file. <kbd class="ui">Restore</kbd> puts it back everywhere with the same DRM-ID; a patient portal sign-in that hadn't already expired works again. If the person registered again while their record was deleted, they got a new DRM-ID — restore the old one, then merge the two. <kbd class="ui">Export CSV</kbd> downloads the list (logged as an export).</dd>
       <dt>Visit Records export</dt><dd>Billing › <kbd class="ui">Visit Records</kbd> › <kbd class="ui">Export CSV</kbd>. Capped at 20,000 rows, logged as an export.</dd>
     </dl>
   </section>
@@ -1116,7 +1118,8 @@
     <p>Tap <kbd class="ui">Statement</kbd> next to the visit under <b>Your visits</b> (or open a visit and tap <kbd class="ui">Statement of account</kbd>). It shows every charge on that visit (a package with its tests listed underneath), every payment you made, and the balance: <q>Paid in full</q>, <q>Balance due</q>, <q>Overpaid</q>, or <q>Nothing due</q> if the clinic waived the rest. Tap <kbd class="ui">Email it to me</kbd> to have it sent to the email address on your record (it asks you to confirm the address first), or <kbd class="ui">Print or save as PDF</kbd> and choose <q>Save as PDF</q> to keep a copy for your HMO or employer. Every <q>Your lab result is ready</q> email now reminds you the statement is there. It is the same statement reception prints, it never shows your PIN, and opening or printing it is recorded, like a download.</p>
     <h4>If something goes wrong</h4>
     <dl class="defs">
-      <dt><q>Invalid DRM-ID or PIN.</q></dt><dd>Check the receipt again. If the receipt is more than 60 days old, the PIN has expired: visit reception with an ID and they will print a new one. PINs cannot be given over the phone.</dd>
+      <dt><q>Invalid DRM-ID or PIN.</q></dt><dd>Check the receipt again. If the receipt is more than 60 days old, the PIN has expired: visit reception with an ID and they will print a new one. PINs cannot be given over the phone. A DRM-ID that was deleted or merged into another record shows this same generic message — reception can tell them apart and point the patient at their current DRM-ID.</dd>
+      <dt><q>Session expired. Sign in again.</q></dt><dd>If a record is deleted or merged while the patient is already signed in, their next action in the portal shows this instead of finishing — sign in again with the current DRM-ID and PIN.</dd>
       <dt><q>Too many failed attempts. Try again in 15 minutes.</q></dt><dd>Five wrong PINs lock the account for 15 minutes. Wait, then try once, carefully.</dd>
       <dt>Forgot the DRM-ID</dt><dd>Tap <kbd class="ui">Forgot your DRM-ID?</kbd> (<code class="route">drmed.ph/find-my-id</code>), enter last name, email and date of birth, and it is emailed to the address on file. If there is no email on file, reception can look it up.</dd>
       <dt>Lost the receipt</dt><dd>Visit reception with an ID. They print a new portal-access slip with a fresh PIN for your latest visit.</dd>
@@ -1242,7 +1245,7 @@
 </section>
 
 <footer class="end">
-  <p>drmed.ph User Guide · v2.25 · 25 September 2026 · Matches the production release at migration 0177, plus 0176 (applied out of order). Every label in this guide was checked against the application code on that date. Print with <b>Ctrl/Cmd + P</b>; each chapter starts on a new page.</p>
+  <p>drmed.ph User Guide · v2.26 · 25 September 2026 · Matches the production release at migration 0177, plus 0176 (applied out of order) and 0167 (patient delete and restore). Every label in this guide was checked against the application code on that date. Print with <b>Ctrl/Cmd + P</b>; each chapter starts on a new page.</p>
 </footer>
 </main>
 </div>

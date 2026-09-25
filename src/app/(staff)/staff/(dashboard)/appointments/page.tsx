@@ -53,6 +53,8 @@ import {
 } from "@/lib/ui/table-params";
 import { SortableTh, PlainTh } from "@/components/staff/sortable-th";
 import { ListPagination, PAGE_SIZES } from "@/components/staff/list-pagination";
+import { InactivePatientBadge } from "@/components/staff/inactive-patient-badge";
+import { isActivePatient } from "@/lib/patients/active";
 
 const APPOINTMENTS_SUBSCRIPTIONS = [
   { table: "appointments", event: "INSERT" },
@@ -86,6 +88,8 @@ interface ApptRow {
   patient_drm_id: string | null;
   patient_name: string | null;
   patient_phone: string | null;
+  patient_deleted_at: string | null;
+  patient_merged_into_id: string | null;
   service_name: string | null;
   service_code: string | null;
   service_kind: string | null;
@@ -107,7 +111,7 @@ interface ApptGroup {
 const APPT_SELECT = `
   id, scheduled_at, created_at, status, notes,
   walk_in_name, walk_in_phone, booking_group_id, home_service_requested, source,
-  patients ( id, drm_id, first_name, last_name, phone ),
+  patients ( id, drm_id, first_name, last_name, phone, deleted_at, merged_into_id ),
   services ( name, code, kind ),
   physicians ( full_name )
 `;
@@ -132,6 +136,8 @@ interface ApptSourceRow {
         first_name: string;
         last_name: string;
         phone: string | null;
+        deleted_at: string | null;
+        merged_into_id: string | null;
       }
     | Array<{
         id: string;
@@ -139,6 +145,8 @@ interface ApptSourceRow {
         first_name: string;
         last_name: string;
         phone: string | null;
+        deleted_at: string | null;
+        merged_into_id: string | null;
       }>
     | null;
   services?:
@@ -167,6 +175,8 @@ function rowFrom(a: ApptSourceRow): ApptRow {
     patient_drm_id: p?.drm_id ?? null,
     patient_name: p ? `${p.last_name}, ${p.first_name}` : null,
     patient_phone: p?.phone ?? null,
+    patient_deleted_at: p?.deleted_at ?? null,
+    patient_merged_into_id: p?.merged_into_id ?? null,
     service_name: s?.name ?? null,
     service_code: s?.code ?? null,
     service_kind: s?.kind ?? null,
@@ -980,6 +990,12 @@ function GroupRow({
         </p>
         <p className="font-mono text-xs text-[color:var(--color-brand-text-soft)]">
           {r.patient_drm_id ?? r.walk_in_phone ?? r.patient_phone ?? "—"}
+          {r.patient_id ? (
+            <InactivePatientBadge
+              deletedAt={r.patient_deleted_at}
+              mergedIntoId={r.patient_merged_into_id}
+            />
+          ) : null}
         </p>
         {r.home_service_requested ? (
           <p className="mt-1 inline-block rounded-md bg-violet-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-violet-900">
@@ -1075,6 +1091,11 @@ function GroupRow({
           status={r.status}
           isAdmin={isAdmin}
           groupSize={group.rows.length}
+          patientActive={isActivePatient({
+            drm_id: r.patient_drm_id ?? "",
+            deleted_at: r.patient_deleted_at,
+            merged_into_id: r.patient_merged_into_id,
+          })}
         />
       </td>
     </tr>

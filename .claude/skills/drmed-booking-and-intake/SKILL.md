@@ -107,6 +107,10 @@ Rate-limit buckets on these surfaces: `public_booking` (`/schedule`), `patient_r
 
 `physician_slot_blocks` (spec §7, empty-slot holds) is **still not built** as of 2026-09-02 — no migration exists for it.
 
+## Patient delete/restore (0167) touches every lookup here
+
+`resolve_patient_guarded`'s dedup match (`email + last_name + birthdate`) now filters `deleted_at is null and merged_into_id is null` — a deleted or merged identity does NOT get reused; the same person booking or registering again gets a **fresh DRM-ID** and a new row (reception restores + merges afterward if that's wrong, see `drmed-migrations`/the user guide's Deleted Patients section). Any TS-side patient lookup this subsystem does directly (not through that RPC) must wrap the query in `activePatients(...)` from `src/lib/patients/active.ts` the same way — `new-appointment-actions.ts` (existing-patient search, upcoming-appointments lookup) and `appointments/actions.ts` already do. A new lookup added here that queries `patients` directly and skips `activePatients(...)` will surface a deleted/merged record as bookable; `src/lib/patients/query-surfaces.test.ts` is the inventory test that catches an unclassified `.from("patients")` read.
+
 ## The online-booking pause switch (0153)
 
 An admin can pause **patient** self-booking without a deploy: `/staff/admin/settings/online-booking` (Admin Tools › Online Booking, admin-only) flips the `booking_settings` singleton (`id boolean = true`, `online_booking_paused`, optional `paused_message` ≤ 400 chars — the CHECK and `PAUSED_MESSAGE_MAX` are pinned together by `online-booking-copy.test.ts`). Audited as `online_booking.paused` / `.resumed` / `.message_updated`.

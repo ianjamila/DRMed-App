@@ -19,6 +19,7 @@ import { shouldAlertReleasedPaymentRemoved } from "@/lib/visits/released-payment
 import { sendReleasedPaymentRemovedAlert } from "@/lib/visits/released-payment-alert";
 import { moneySettled } from "@/lib/visits/money-settled";
 import { loadReleasedResultCounts } from "@/lib/visits/released-results";
+import { assertPaymentPatientActive } from "@/lib/patients/require-active";
 
 // "Voided" is not a word staff see (the button says Delete), and the row may
 // equally have been edited or moved (both void it) by someone else. Not
@@ -46,6 +47,10 @@ export async function voidPaymentAction(
     return { ok: false, error: "Forbidden." };
   }
 
+  const admin = createAdminClient();
+  const active = await assertPaymentPatientActive(admin, paymentId);
+  if (!active.ok) return { ok: false, error: active.error };
+
   const parsed = VoidPaymentSchema.safeParse(input);
   if (!parsed.success) {
     return {
@@ -56,8 +61,6 @@ export async function voidPaymentAction(
   // "Recorded twice: <note>" — the same prefix scheme as correct_payment's
   // "Edited: " / "Moved: " (payment-history.ts parses it back).
   const voidReason = formatDeleteReason(parsed.data.category, parsed.data.reason);
-
-  const admin = createAdminClient();
 
   // 1. Read payment to check state.
   const { data: payment, error: readErr } = await admin

@@ -23,6 +23,11 @@ interface Props {
   // When this card represents a multi-service booking, the buttons fire
   // bulk transitions across all sibling rows. Used in confirmation copy.
   groupSize: number;
+  // 0167: false only when patientId is set AND that patient is deleted/merged.
+  // Hides the buttons that would bring the appointment back into active work
+  // (Mark arrived, Confirm, Revert) — the server refuses these regardless
+  // (Task 22 Step 6). Cancel/No-show/Delete stay available.
+  patientActive?: boolean;
 }
 
 export function TransitionButtons({
@@ -33,6 +38,7 @@ export function TransitionButtons({
   status,
   isAdmin,
   groupSize,
+  patientActive = true,
 }: Props) {
   const router = useRouter();
   const [pending, start] = useTransition();
@@ -69,15 +75,17 @@ export function TransitionButtons({
     <div className="flex flex-wrap items-center justify-end gap-2">
       {status === "confirmed" ? (
         <>
-          <Button
-            type="button"
-            size="sm"
-            variant="success"
-            disabled={pending}
-            onClick={() => fire(markArrivedAction)}
-          >
-            {pending ? "…" : `Mark arrived${groupSuffix}`}
-          </Button>
+          {patientActive ? (
+            <Button
+              type="button"
+              size="sm"
+              variant="success"
+              disabled={pending}
+              onClick={() => fire(markArrivedAction)}
+            >
+              {pending ? "…" : `Mark arrived${groupSuffix}`}
+            </Button>
+          ) : null}
           <Button
             type="button"
             size="sm"
@@ -111,16 +119,18 @@ export function TransitionButtons({
 
       {status === "pending_callback" ? (
         <>
-          <Button
-            type="button"
-            size="sm"
-            variant="success"
-            disabled={pending}
-            onClick={() => fire(revertToConfirmedAction)}
-            title="Reception called back and the booking is on — this becomes a normal confirmed appointment."
-          >
-            {pending ? "…" : "Confirm"}
-          </Button>
+          {patientActive ? (
+            <Button
+              type="button"
+              size="sm"
+              variant="success"
+              disabled={pending}
+              onClick={() => fire(revertToConfirmedAction)}
+              title="Reception called back and the booking is on — this becomes a normal confirmed appointment."
+            >
+              {pending ? "…" : "Confirm"}
+            </Button>
+          ) : null}
           <Button
             type="button"
             size="sm"
@@ -166,7 +176,7 @@ export function TransitionButtons({
         />
       ) : null}
 
-      {showRevert ? (
+      {showRevert && patientActive ? (
         <Button
           type="button"
           size="sm"

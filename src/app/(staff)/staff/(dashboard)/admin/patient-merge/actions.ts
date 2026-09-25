@@ -4,10 +4,12 @@ import { headers } from "next/headers";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { activePatients } from "@/lib/patients/active";
 import { audit } from "@/lib/audit/log";
 import { reportError } from "@/lib/observability/report-error";
 import { requireAdminStaff } from "@/lib/auth/require-admin";
 import { sendEmail } from "@/lib/notifications/email";
+import { checkPatientRecipient } from "@/lib/notifications/active-patient-recipient";
 import {
   renderEmailShell,
   emailParagraph,
@@ -39,7 +41,19 @@ export interface PatientPreview {
 }
 
 export type MergeResult =
-  | { ok: true; kept_drm_id: string; merged_drm_id: string; moved: { visits: number; appointments: number; audit_log: number; critical_alerts: number; patient_consents: number } }
+  | {
+      ok: true;
+      kept_drm_id: string;
+      merged_drm_id: string;
+      moved: {
+        visits: number;
+        appointments: number;
+        audit_log: number;
+        critical_alerts: number;
+        patient_consents: number;
+        appointment_attachments: number;
+      };
+    }
   | { ok: false; error: string };
 
 const LookupSchema = z.object({
@@ -57,11 +71,13 @@ const MergeSchema = z.object({
 
 async function previewByDrmId(drmId: string): Promise<PatientPreview | null> {
   const admin = createAdminClient();
-  const { data: row } = await admin
-    .from("patients")
-    .select(
-      "id, drm_id, first_name, last_name, middle_name, birthdate, sex, phone, email, address, merged_into_id",
-    )
+  const { data: row } = await activePatients(
+    admin
+      .from("patients")
+      .select(
+        "id, drm_id, first_name, last_name, middle_name, birthdate, sex, phone, email, address, merged_into_id",
+      ),
+  )
     .eq("drm_id", drmId.toUpperCase())
     .maybeSingle();
   if (!row) return null;
@@ -138,11 +154,11 @@ export async function mergePatientsAction(
 
   const admin = createAdminClient();
 
-  // Both rows must exist and not already be merged.
+  // Both rows must exist and not already be merged or deleted.
   const { data: rows } = await admin
     .from("patients")
     .select(
-      "id, drm_id, first_name, last_name, middle_name, sex, phone, email, address, merged_into_id",
+      "id, drm_id, first_name, last_name, middle_name, sex, phone, email, address, merged_into_id, deleted_at",
     )
     .in("id", [keep_id, source_id]);
   const keep = rows?.find((r) => r.id === keep_id);
@@ -154,6 +170,12 @@ export async function mergePatientsAction(
     return {
       ok: false,
       error: "One of the patients has already been merged. Refresh and try again.",
+    };
+  }
+  if (keep.deleted_at || source.deleted_at) {
+    return {
+      ok: false,
+      error: "One of the patients is deleted. Restore it from Admin Tools › Deleted Patients before merging.",
     };
   }
 
@@ -184,6 +206,15 @@ export async function mergePatientsAction(
     .select("id");
   const { data: consents } = await admin
     .from("patient_consents")
+    .update({ patient_id: keep_id })
+    .eq("patient_id", source_id)
+    .select("id");
+  // 0167: current_patient_id() is active-only, so a portal token for the
+  // (now-merged) source patient can no longer reach these through RLS. Move
+  // them the same way as the other FK tables, or they become unreachable —
+  // nobody else owns them.
+  const { data: attachments } = await admin
+    .from("appointment_attachments")
     .update({ patient_id: keep_id })
     .eq("patient_id", source_id)
     .select("id");
@@ -223,6 +254,7 @@ export async function mergePatientsAction(
     audit_log: (auditRows ?? []).map((r) => r.id),
     critical_alerts: (criticalAlerts ?? []).map((r) => r.id),
     patient_consents: (consents ?? []).map((r) => r.id),
+    appointment_attachments: (attachments ?? []).map((r) => r.id),
   };
   const { error: ledgerErr } = await admin.from("patient_merges").insert({
     keep_id,
@@ -247,7 +279,11 @@ export async function mergePatientsAction(
   // its own or the one just filled in from the source). It never mentions the
   // retired DRM-ID or any PIN — the current PIN lives on the patient's most
   // recent receipt.
-  const keptEmail = keep.email ?? fill.email ?? null;
+  // Fresh read (0167): the kept record must still be active right before the
+  // send, and its on-file email (already carrying whatever `fill` copied over
+  // above) is the address of record — never the earlier `keep`/`fill` values.
+  const recipient = await checkPatientRecipient(admin, keep_id);
+  const keptEmail = recipient.kind === "active" ? (recipient.patient.email ?? fill.email ?? null) : null;
   const mergeEmail = keptEmail
     ? await sendEmail({
         to: keptEmail,
@@ -286,9 +322,11 @@ export async function mergePatientsAction(
         audit_log: auditRows?.length ?? 0,
         critical_alerts: criticalAlerts?.length ?? 0,
         patient_consents: consents?.length ?? 0,
+        appointment_attachments: attachments?.length ?? 0,
       },
       filled_from_source: Object.keys(fill),
       notification: {
+        recipient: recipient.kind,
         email: !mergeEmail
           ? { ok: false, skipped: true, reason: "no on-file email" }
           : mergeEmail.ok
@@ -315,6 +353,7 @@ export async function mergePatientsAction(
       audit_log: auditRows?.length ?? 0,
       critical_alerts: criticalAlerts?.length ?? 0,
       patient_consents: consents?.length ?? 0,
+      appointment_attachments: attachments?.length ?? 0,
     },
   };
 }
@@ -327,6 +366,8 @@ export interface RecentMerge {
   source_id: string;
   keep_drm_id: string | null;
   source_drm_id: string | null;
+  // Set when the kept record has since been deleted (Task 26 shows the badge).
+  keep_deleted_at: string | null;
   merged_at: string;
   undoable: boolean;
 }
@@ -344,17 +385,28 @@ export async function loadRecentMerges(): Promise<RecentMerge[]> {
     .limit(50);
   if (!data) return [];
   const ids = Array.from(new Set(data.flatMap((m) => [m.keep_id, m.source_id])));
-  const { data: pts } = await admin.from("patients").select("id, drm_id").in("id", ids);
-  const drm = new Map((pts ?? []).map((p) => [p.id, p.drm_id]));
-  return data.map((m) => ({
-    id: m.id,
-    keep_id: m.keep_id,
-    source_id: m.source_id,
-    keep_drm_id: drm.get(m.keep_id) ?? null,
-    source_drm_id: drm.get(m.source_id) ?? null,
-    merged_at: m.merged_at,
-    undoable: true,
-  }));
+  // History (never filtered): a merge stays listed even if the kept record has
+  // since been deleted. deleted_at/merged_into_id ride along so the list can
+  // show an InactivePatientBadge next to it.
+  const { data: pts } = await admin
+    .from("patients")
+    .select("id, drm_id, deleted_at, merged_into_id")
+    .in("id", ids);
+  const byId = new Map((pts ?? []).map((p) => [p.id, p]));
+  return data.map((m) => {
+    const keep = byId.get(m.keep_id);
+    const source = byId.get(m.source_id);
+    return {
+      id: m.id,
+      keep_id: m.keep_id,
+      source_id: m.source_id,
+      keep_drm_id: keep?.drm_id ?? null,
+      source_drm_id: source?.drm_id ?? null,
+      keep_deleted_at: keep?.deleted_at ?? null,
+      merged_at: m.merged_at,
+      undoable: true,
+    };
+  });
 }
 
 export type UndoResult = { ok: true } | { ok: false; error: string };
@@ -386,7 +438,7 @@ export async function undoMergeAction(
   // leave them attached to a now-tombstoned record. Refuse rather than corrupt.
   const { data: keepRow } = await admin
     .from("patients")
-    .select("merged_into_id")
+    .select("merged_into_id, deleted_at")
     .eq("id", m.keep_id)
     .maybeSingle();
   if (keepRow?.merged_into_id) {
@@ -394,6 +446,21 @@ export async function undoMergeAction(
       ok: false,
       error: "Can't undo: the kept patient has since been merged into another record. Resolve that merge first.",
     };
+  }
+  if (keepRow?.deleted_at) {
+    return { ok: false, error: "Can't undo: the kept patient has since been deleted. Restore it first." };
+  }
+
+  // Same check on the source side — impossible today (0167's
+  // patients_not_deleted_and_merged check keeps a merged row from also being
+  // deleted), but cheap insurance against restoring rows onto a deleted target.
+  const { data: sourceRow } = await admin
+    .from("patients")
+    .select("deleted_at, merged_into_id")
+    .eq("id", m.source_id)
+    .maybeSingle();
+  if (sourceRow?.deleted_at) {
+    return { ok: false, error: "Can't undo: the source patient has since been deleted. Restore it first." };
   }
 
   const moved = (m.moved ?? {}) as Record<string, string[]>;
@@ -419,6 +486,10 @@ export async function undoMergeAction(
   const consentIds = moved["patient_consents"] ?? [];
   if (consentIds.length > 0) {
     await admin.from("patient_consents").update({ patient_id: m.source_id }).in("id", consentIds);
+  }
+  const attachmentIds = moved["appointment_attachments"] ?? [];
+  if (attachmentIds.length > 0) {
+    await admin.from("appointment_attachments").update({ patient_id: m.source_id }).in("id", attachmentIds);
   }
 
   // Null out exactly the fields the merge filled (merge only fills NULL keep
