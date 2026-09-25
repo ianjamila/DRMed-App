@@ -32,7 +32,7 @@ type AnyClient = SupabaseClient<Database>;
 /** Visit columns every query here selects. Test lines are fetched separately. */
 const VISIT_SELECT = `
   id, visit_number, visit_date, created_at, visit_group_id,
-  payment_status, total_php, paid_php, deleted_at, delete_reason,
+  payment_status, total_php, paid_php, deleted_at, delete_reason, is_sample,
   patients!inner ( id, drm_id, first_name, middle_name, last_name ),
   payments ( method, voided_at )
 `;
@@ -48,6 +48,7 @@ export interface ArchiveVisit {
   paid_php: number;
   deleted_at: string | null;
   delete_reason: string | null;
+  is_sample: boolean;
   patients: {
     id: string;
     drm_id: string;
@@ -88,6 +89,8 @@ export interface ArchiveRow {
   methods: string;
   deleted: boolean;
   deleteReason: string | null;
+  /** Any half of the row is a sample / training visit (0181). */
+  sample: boolean;
 }
 
 export interface ArchiveFilters {
@@ -96,6 +99,8 @@ export interface ArchiveFilters {
   end: string;
   classes: ReadonlySet<VisitClass>;
   view: VisitView;
+  /** Only sample / training visits (0181) — Visit Records' "Sample visits" filter. */
+  sampleOnly?: boolean;
 }
 
 function methodsFor(payments: ArchiveVisit["payments"]): string {
@@ -268,6 +273,9 @@ export async function fetchArchiveWindow(
   query = applyView(query, view);
   if (start) query = query.gte("visit_date", start);
   if (end) query = query.lte("visit_date", end);
+  // Anchors only: a split visit's other half is still topped up below, so the
+  // row renders whole even if only one half was marked.
+  if (filters.sampleOnly) query = query.eq("is_sample", true);
 
   if (predicate.mode === "in") {
     query = query
@@ -376,6 +384,7 @@ export async function fetchArchiveWindow(
         methods: methodsFor(f.members.flatMap((m) => m.payments ?? [])),
         deleted: deletedMember !== undefined,
         deleteReason: deletedMember?.delete_reason ?? null,
+        sample: f.members.some((m) => m.is_sample),
       };
     });
 

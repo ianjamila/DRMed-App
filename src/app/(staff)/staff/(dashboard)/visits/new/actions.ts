@@ -65,6 +65,10 @@ const Schema = z.object({
   receptionist_remarks: optionalText(40),
   notes: z.string().trim().max(2000).optional(),
   attending_physician_id: optionalUuid,
+  // "Sample / training visit" tick (0181). A checkbox posts "on" or nothing.
+  is_sample: z
+    .union([z.literal("on"), z.null(), z.undefined()])
+    .transform((v) => v === "on"),
 });
 
 export type CreateVisitResult =
@@ -97,6 +101,7 @@ export async function createVisitAction(
     receptionist_remarks: formData.get("receptionist_remarks"),
     notes: formData.get("notes") ?? "",
     attending_physician_id: formData.get("attending_physician_id"),
+    is_sample: formData.get("is_sample"),
   });
 
   if (!parsed.success) {
@@ -346,6 +351,7 @@ export async function createVisitAction(
           receptionistRemarks: parsed.data.receptionist_remarks,
           notes: parsed.data.notes ?? null,
           visitGroupId: groupId,
+          isSample: parsed.data.is_sample,
         }),
       );
       created.push(
@@ -359,6 +365,7 @@ export async function createVisitAction(
           receptionistRemarks: parsed.data.receptionist_remarks,
           notes: parsed.data.notes ?? null,
           visitGroupId: groupId,
+          isSample: parsed.data.is_sample,
         }),
       );
     } else {
@@ -376,6 +383,7 @@ export async function createVisitAction(
           receptionistRemarks: parsed.data.receptionist_remarks,
           notes: parsed.data.notes ?? null,
           visitGroupId: null,
+          isSample: parsed.data.is_sample,
         }),
       );
     }
@@ -446,6 +454,7 @@ export async function createVisitAction(
         visit_group_id: groupId,
         hmo_provider_id: c.hmo.hmo_provider_id,
         discounted_lines: visitLines.filter((l) => l.discount_amount_php > 0).length,
+        is_sample: parsed.data.is_sample,
       },
       ip_address: ip,
       user_agent: ua,
@@ -598,6 +607,7 @@ interface OneVisitInput {
   receptionistRemarks: string | null;
   notes: string | null;
   visitGroupId: string | null;
+  isSample: boolean;
 }
 
 interface OneVisitResult {
@@ -679,6 +689,7 @@ async function createOneVisit(
       hmo_authorization_no: input.hmo.hmo_authorization_no,
       attending_physician_id: input.attendingPhysicianId,
       visit_group_id: input.visitGroupId,
+      is_sample: input.isSample,
     })
     .select("id, visit_number")
     .single();

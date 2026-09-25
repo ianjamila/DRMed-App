@@ -6,6 +6,7 @@ import { reportError } from "@/lib/observability/report-error";
 import { sendEmail } from "@/lib/notifications/email";
 import type { StatementData } from "@/lib/visits/statement-data";
 import { renderStatementEmail } from "@/lib/visits/statement-email";
+import { SAMPLE_NO_CONTACT_MESSAGE } from "@/lib/visits/sample";
 
 export type SendStatementResult = { ok: true; data: { to: string } } | { ok: false; error: string };
 
@@ -41,6 +42,17 @@ export async function sendStatementEmail(
   actor: StatementEmailActor,
 ): Promise<SendStatementResult> {
   const visitId = data.visit.id;
+  // A sample visit (0181) never contacts the patient — checked before the
+  // claim, so nothing is reserved, sent or rate-limited.
+  if (data.visit.is_sample) {
+    return {
+      ok: false,
+      error:
+        actor.type === "staff"
+          ? SAMPLE_NO_CONTACT_MESSAGE
+          : "This statement can't be emailed. Ask reception for a printed copy.",
+    };
+  }
   const to = data.patient.email?.trim();
   if (!to) {
     return {

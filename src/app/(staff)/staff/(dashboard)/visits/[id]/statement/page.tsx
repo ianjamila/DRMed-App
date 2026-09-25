@@ -98,6 +98,7 @@ export default async function StatementPage({ params }: Props) {
             visitId={visit.id}
             patientEmail={patient.email}
             patientId={patient.id}
+            isSample={visit.is_sample}
           />
           <StatementPrintButton visitId={visit.id} />
         </div>

@@ -40,13 +40,14 @@ export async function sendReleasedPaymentRemovedAlert(input: ReleasedPaymentRemo
     const [{ data: visit }, { data: actor }] = await Promise.all([
       admin
         .from("visits")
-        .select("visit_number, total_php, paid_php")
+        .select("visit_number, total_php, paid_php, is_sample")
         .eq("id", input.visitId)
         .is("deleted_at", null)
         .maybeSingle(),
       admin.from("staff_profiles").select("full_name").eq("id", input.actorId).maybeSingle(),
     ]);
-    if (!visit) return;
+    // A sample visit (0181) owes nobody anything real — no alert.
+    if (!visit || visit.is_sample) return;
     const owes = Math.max((Math.round(Number(visit.total_php) * 100) - Math.round(Number(visit.paid_php) * 100)) / 100, 0);
 
     const recipients = await resolveStaffAlertRecipients("released_payment_removed", admin);

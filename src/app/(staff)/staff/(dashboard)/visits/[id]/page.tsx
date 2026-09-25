@@ -25,6 +25,9 @@ import { BulkActionBar } from "./bulk-action-bar";
 import { UndoReleaseDialog } from "./undo-release-dialog";
 import { DeleteSampleVisitDialog } from "./delete-sample-visit-dialog";
 import { DeleteBlockedHint } from "@/components/staff/delete-blocked-hint";
+import { SampleBadge } from "@/components/staff/sample-badge";
+import { SampleToggle } from "./sample-toggle";
+import { canMarkSample } from "@/lib/visits/sample";
 import { WaiveBalanceDialog } from "./waive-balance-dialog";
 import { AttendingPhysicianDialog } from "./attending-physician-dialog";
 import { VoidPaymentDialog } from "../../payments/[id]/void/void-payment-dialog";
@@ -83,7 +86,7 @@ const loadDetail = cache(async (id: string) => {
         id, visit_number, visit_date, payment_status,
         total_php, paid_php, notes, created_at,
         deleted_at, deleted_by, delete_reason,
-        visit_group_id,
+        visit_group_id, is_sample,
         hmo_provider_id, hmo_approval_date, hmo_authorization_no,
         attending_physician_id,
         patients!inner ( id, drm_id, first_name, last_name, preferred_release_medium ),
@@ -652,6 +655,14 @@ export default async function VisitDetailPage({ params, searchParams }: Props) {
             Visit #{visit.visit_number} ·{" "}
             {manilaDate(visit.visit_date)}
           </p>
+          {visit.is_sample || (canMarkSample(session.role) && !visitDeleted) ? (
+            <div className="mt-1 flex flex-wrap items-center gap-2">
+              {visit.is_sample ? <SampleBadge /> : null}
+              {canMarkSample(session.role) && !visitDeleted ? (
+                <SampleToggle visitId={visit.id} isSample={visit.is_sample} />
+              ) : null}
+            </div>
+          ) : null}
           {sibling ? (
             <p className="mt-2 rounded-lg border border-dashed border-[color:var(--color-brand-cyan)] bg-[color:var(--color-brand-bg)] px-3 py-2 text-xs text-[color:var(--color-brand-navy)]">
               Part of the same patient visit as{" "}
