@@ -425,17 +425,19 @@ export default async function CashFlowPage({ searchParams }: SearchProps) {
             Cash flow uses the <strong>direct method</strong>: for each posted
             or reversed journal line touching a cash account (codes 1010, 1020,
             1021, 1030 by convention), debits are inflows and credits are
-            outflows — both halves of a reversed pair count, so they net to
-            zero rather than subtracting the amount twice.
+            outflows — both halves of a reversed pair count toward the
+            balances, so they net to zero rather than subtracting the amount
+            twice.
             Lines are grouped by their source journal entry&apos;s{" "}
             <code>source_kind</code> (e.g. <code>payment</code>,{" "}
             <code>bill_payment</code>, <code>payroll_run</code>) so each
             category is one row of the waterfall.
           </p>
           <p>
-            An undo (a <code>reversal</code> entry) is filed under the category
-            of the entry it undoes. If that entry is also in this period, the
-            two cancel inside the category and neither is counted; if it was
+            In the category rows, an undo (a <code>reversal</code> entry) is
+            filed under the category of the entry it undoes. If that entry is
+            also in this period, the two cancel inside the category — neither
+            adds to its inflow, outflow or line count; if it was
             posted earlier, the undo shows as a movement in that category (an
             undone August payment is a September outflow under payments).
           </p>

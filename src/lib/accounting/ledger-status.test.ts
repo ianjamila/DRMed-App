@@ -22,15 +22,24 @@
  *
  * WHAT IT ENFORCES
  * ----------------
- *   1. Every read chain on `journal_entries` / `journal_lines` (or any call
- *      filtering `journal_entries.status`) that pins status to 'posted' alone
- *      — `.eq(…, "posted")`, `.filter(…, "eq", "posted")`, `.in(…, ["posted"])`
- *      — sits in a function named in `LOOKUPS`. Anything else is a total and
- *      must use `.in(…, LEDGER_TOTAL_STATUSES)`.
+ *   1. Every read of `journal_entries` / `journal_lines` that pins the entry
+ *      status to 'posted' alone sits in a function named in `LOOKUPS`.
+ *      Anything else is a total and must use `.in(…, LEDGER_TOTAL_STATUSES)`.
+ *      "Posted alone" is `.eq(…, "posted")`, `.in(…, ["posted"])`,
+ *      `.filter(…, "eq"|"in", …)`, `.match({ status: "posted" })`,
+ *      `.or("….status.eq.posted")`, and the negative spellings
+ *      (`.neq(…, "reversed")`, `.not(…, "eq", "reversed")`) that drop the
+ *      reversed original just the same. The column is `status` on a
+ *      `.from("journal_entries")` chain — or a variable holding one, for a
+ *      filter added in a later statement — and `journal_entries.status`
+ *      (aliased or nested embeds included) anywhere else. Hoisted string
+ *      constants are resolved.
  *   2. Nobody spells the pair inline (`.in(…, ["posted", "reversed"])`): the
  *      constant is the one place the rule is written down, and the thing a
  *      reader greps for.
- *   3. No raw SQL string in `src/` says `status = 'posted'` outside `LOOKUPS`.
+ *   3. No raw SQL string that names a journal table filters
+ *      `status = 'posted'` / `status in ('posted')` outside `LOOKUPS`
+ *      (`set status = 'posted'` is a write and is not a read).
  *   4. `LOOKUPS` has no stale entries — each still makes a posted-only read.
  *
  * Writes (`insert`/`update`/`delete`/`upsert`) are skipped: the restore-to-
@@ -38,11 +47,12 @@
  * hmo-claims actions.ts) writes the status, it doesn't read by it.
  *
  * NOT covered: SQL functions and views in `supabase/migrations` (the
- * `bridge_*` / `ap_*` lookups, the `v_ops_daily_*` totals fixed in 0173).
+ * `bridge_*` / `ap_*` lookups, the `v_ops_daily_*` totals fixed in 0173), and
+ * a status value that only arrives at runtime (a variable parameter).
  *
  * FIXING A FAILURE
  * ----------------
- *   - It sums, counts or presents money over a period → it is a TOTAL:
+ *   - It sums or presents money over a period → it is a TOTAL:
  *       import { LEDGER_TOTAL_STATUSES } from "@/lib/accounting/ledger-status";
  *       .in("journal_entries.status", LEDGER_TOTAL_STATUSES)
  *   - It finds "the live entry" to match, link, reverse or audit → add
@@ -110,6 +120,12 @@ interface Finding {
   kind: Kind;
 }
 
+const isFunctionLike = (n: ts.Node) =>
+  ts.isFunctionDeclaration(n) ||
+  ts.isFunctionExpression(n) ||
+  ts.isArrowFunction(n) ||
+  ts.isMethodDeclaration(n);
+
 /**
  * The nearest NAMED function around `node`. Anonymous arrows are skipped, so a
  * read inside `fetchCompleteRows((from, to) => …)` is attributed to the
@@ -133,6 +149,12 @@ function scopeName(node: ts.Node): string {
     }
   }
   return "(module)";
+}
+
+/** Nearest enclosing function-like node (or the file). */
+function enclosingScope(node: ts.Node, src: ts.SourceFile): ts.Node {
+  for (let cur = node.parent; cur; cur = cur.parent) if (isFunctionLike(cur)) return cur;
+  return src;
 }
 
 /** `<x>.from("journal_entries" | "journal_lines")`. */
@@ -159,55 +181,46 @@ function collectChain(start: ts.CallExpression): ts.CallExpression[] {
   return calls;
 }
 
+/** The identifier a chain hangs off: `q` in `q.eq(…).gte(…)`. */
+function chainRoot(node: ts.Node): ts.Identifier | null {
+  let cur: ts.Node = node;
+  for (;;) {
+    if (ts.isCallExpression(cur) || ts.isPropertyAccessExpression(cur)) cur = cur.expression;
+    else if (ts.isParenthesizedExpression(cur) || ts.isAwaitExpression(cur)) cur = cur.expression;
+    else break;
+  }
+  return ts.isIdentifier(cur) ? cur : null;
+}
+
 const methodOf = (call: ts.CallExpression) =>
   ts.isPropertyAccessExpression(call.expression) ? call.expression.name.text : "";
 
-const strArg = (call: ts.CallExpression, i: number): string | null => {
-  const a = call.arguments[i];
-  return a && ts.isStringLiteralLike(a) ? a.text : null;
-};
-
-/** String elements of an array-literal argument, or null if it isn't one. */
-const arrayArg = (call: ts.CallExpression, i: number): string[] | null => {
-  let a: ts.Expression | undefined = call.arguments[i];
-  while (a && (ts.isAsExpression(a) || ts.isParenthesizedExpression(a))) a = a.expression;
-  if (!a || !ts.isArrayLiteralExpression(a)) return null;
-  return a.elements.filter(ts.isStringLiteralLike).map((e) => e.text);
-};
-
-/**
- * Classify one filter call against a status column. `bareStatus` says whether
- * a plain `"status"` column means the JOURNAL status (true inside a
- * `.from("journal_entries")` chain; false elsewhere, where it's some other
- * table's status).
- */
-function classifyFilter(call: ts.CallExpression, bareStatus: boolean): Kind | null {
-  const col = strArg(call, 0);
-  const isStatusCol = col === "journal_entries.status" || (bareStatus && col === "status");
-  if (!isStatusCol) return null;
-
-  switch (methodOf(call)) {
-    case "eq":
-      return strArg(call, 1) === "posted" ? "posted-only" : null;
-    case "filter":
-      return strArg(call, 1) === "eq" && strArg(call, 2) === "posted" ? "posted-only" : null;
-    case "in": {
-      const values = arrayArg(call, 1);
-      if (!values) return null; // an identifier — LEDGER_TOTAL_STATUSES or a variable
-      if (values.length === 1 && values[0] === "posted") return "posted-only";
-      if (values.includes("posted") && values.includes("reversed")) return "inline-pair";
-      return null;
+/** `const X = "…"` anywhere in the file, so `.eq("status", POSTED)` still reads as "posted". */
+function stringConstants(src: ts.SourceFile): Map<string, string> {
+  const out = new Map<string, string>();
+  const visit = (node: ts.Node) => {
+    if (
+      ts.isVariableDeclaration(node) &&
+      ts.isIdentifier(node.name) &&
+      node.initializer &&
+      ts.isStringLiteralLike(node.initializer)
+    ) {
+      out.set(node.name.text, node.initializer.text);
     }
-    default:
-      return null;
-  }
+    node.forEachChild(visit);
+  };
+  visit(src);
+  return out;
 }
 
-/** `status = 'posted'` (or `status='posted'`, `je.status = 'posted'`) in raw SQL. */
-const RAW_POSTED_SQL = /\bstatus\s*=\s*'posted'/i;
+/**
+ * `status = 'posted'` / `status in ('posted')` in raw SQL, optionally
+ * qualified (`je.status`). The `set` form is a write and is skipped below.
+ */
+const RAW_POSTED_SQL = /\b(?:\w+\.)?status\s*(?:=\s*'posted'|in\s*\(\s*'posted'\s*\))/gi;
 
 function scanSource(text: string, full: string): Finding[] {
-  if (!/journal_(entries|lines)|status\s*=\s*'posted'/i.test(text)) return [];
+  if (!/journal_(entries|lines)/.test(text)) return [];
 
   const src = ts.createSourceFile(
     full,
@@ -217,8 +230,105 @@ function scanSource(text: string, full: string): Finding[] {
     full.endsWith(".tsx") ? ts.ScriptKind.TSX : ts.ScriptKind.TS,
   );
   const file = rel(full);
+  const consts = stringConstants(src);
   const findings: Finding[] = [];
   const seen = new Set<ts.Node>();
+
+  // An embed aliased in a select (`je:journal_entries!inner ( status )`) is
+  // filtered as `je.status`.
+  const aliasCols = new Set(
+    [...text.matchAll(/\b(\w+)\s*:\s*journal_entries\b/g)].map((m) => `${m[1]}.status`),
+  );
+
+  /** Is `col` the JOURNAL entry status? A bare "status" only where the caller says so. */
+  const isStatusCol = (col: string | null, bareStatus: boolean) =>
+    col !== null &&
+    (col === "journal_entries.status" ||
+      col.endsWith(".journal_entries.status") ||
+      aliasCols.has(col) ||
+      (bareStatus && col === "status"));
+
+  const str = (a: ts.Expression | undefined): string | null => {
+    if (!a) return null;
+    if (ts.isStringLiteralLike(a)) return a.text;
+    if (ts.isIdentifier(a)) return consts.get(a.text) ?? null;
+    return null;
+  };
+  const strArg = (call: ts.CallExpression, i: number) => str(call.arguments[i]);
+
+  /** String elements of an array-literal argument, or null if it isn't one. */
+  const arrayArg = (call: ts.CallExpression, i: number): string[] | null => {
+    let a: ts.Expression | undefined = call.arguments[i];
+    while (a && (ts.isAsExpression(a) || ts.isParenthesizedExpression(a))) a = a.expression;
+    if (!a || !ts.isArrayLiteralExpression(a)) return null;
+    return a.elements.map((e) => str(e)).filter((v): v is string => v !== null);
+  };
+
+  /**
+   * Classify one filter call. `bareStatus` says whether a plain `"status"`
+   * column means the JOURNAL status (true on a `.from("journal_entries")`
+   * chain or a variable holding one; false elsewhere, where it is some other
+   * table's status).
+   *
+   * "Posted-only" includes the negative spellings — `.neq(…, "reversed")`
+   * drops the reversed original and keeps its mirror exactly like
+   * `.eq(…, "posted")` does.
+   */
+  const classifyFilter = (call: ts.CallExpression, bareStatus: boolean): Kind | null => {
+    const method = methodOf(call);
+
+    if (method === "match") {
+      const obj = call.arguments[0];
+      if (!obj || !ts.isObjectLiteralExpression(obj)) return null;
+      for (const p of obj.properties) {
+        if (!ts.isPropertyAssignment(p)) continue;
+        const name = ts.isIdentifier(p.name) || ts.isStringLiteralLike(p.name) ? p.name.text : null;
+        if (isStatusCol(name, bareStatus) && str(p.initializer) === "posted") return "posted-only";
+      }
+      return null;
+    }
+
+    if (method === "or") {
+      const expr = strArg(call, 0);
+      if (!expr) return null;
+      for (const m of expr.matchAll(/(?:^|[,(])\s*([\w.]+)\.(eq|neq)\.(\w+)/g)) {
+        const [, col, op, value] = m;
+        if (!isStatusCol(col!, bareStatus)) continue;
+        if ((op === "eq" && value === "posted") || (op === "neq" && value === "reversed")) {
+          return "posted-only";
+        }
+      }
+      return null;
+    }
+
+    if (!isStatusCol(strArg(call, 0), bareStatus)) return null;
+
+    switch (method) {
+      case "eq":
+        return strArg(call, 1) === "posted" ? "posted-only" : null;
+      case "neq":
+        return strArg(call, 1) === "reversed" ? "posted-only" : null;
+      case "not":
+        return strArg(call, 1) === "eq" && strArg(call, 2) === "reversed" ? "posted-only" : null;
+      case "filter": {
+        const op = strArg(call, 1);
+        const value = strArg(call, 2)?.replace(/[()\s"]/g, "");
+        if (op === "eq" && value === "posted") return "posted-only";
+        if (op === "neq" && value === "reversed") return "posted-only";
+        if (op === "in" && value === "posted") return "posted-only";
+        return null;
+      }
+      case "in": {
+        const values = arrayArg(call, 1);
+        if (!values) return null; // an identifier — LEDGER_TOTAL_STATUSES or a variable
+        if (values.length === 1 && values[0] === "posted") return "posted-only";
+        if (values.includes("posted") && values.includes("reversed")) return "inline-pair";
+        return null;
+      }
+      default:
+        return null;
+    }
+  };
 
   const push = (node: ts.Node, kind: Kind) =>
     findings.push({
@@ -236,9 +346,25 @@ function scanSource(text: string, full: string): Finding[] {
       kind,
     });
 
+  /**
+   * Variables holding a `.from("journal_entries")` builder, per function
+   * scope — so a filter added in a later statement (`q = q.eq("status",
+   * "posted")`) still knows its bare `status` is the journal's.
+   */
+  const entryVars = new Map<ts.Node, Set<string>>();
+  const holdsEntries = (id: ts.Identifier) => {
+    for (let cur: ts.Node | undefined = id; cur; cur = cur.parent) {
+      if ((isFunctionLike(cur) || ts.isSourceFile(cur)) && entryVars.get(cur)?.has(id.text)) {
+        return true;
+      }
+    }
+    return false;
+  };
+
   // (a) Read chains on a journal table. A pass of its own, because the walk
   // below meets a chain's OUTERMOST call (`.eq(…)`) before the `.from(…)` it
-  // hangs off — (b) must already know which calls (a) has taken.
+  // hangs off — (b) must already know which calls (a) has taken, and which
+  // variables hold a journal_entries builder.
   const collectChains = (node: ts.Node) => {
     if (isJournalFrom(node)) {
       const calls = collectChain(node);
@@ -250,24 +376,44 @@ function scanSource(text: string, full: string): Finding[] {
         const kind = classifyFilter(call, bareStatus);
         if (kind) push(call, kind);
       }
+      const outer = calls[calls.length - 1]!;
+      const decl = outer.parent;
+      if (
+        bareStatus &&
+        !isWrite &&
+        ts.isVariableDeclaration(decl) &&
+        decl.initializer === outer &&
+        ts.isIdentifier(decl.name)
+      ) {
+        const scope = enclosingScope(decl, src);
+        const names = entryVars.get(scope) ?? new Set<string>();
+        names.add(decl.name.text);
+        entryVars.set(scope, names);
+      }
     }
     node.forEachChild(collectChains);
   };
   collectChains(src);
 
   const visit = (node: ts.Node) => {
-    // (b) A `journal_entries.status` filter anywhere else — a chain built
-    // across statements (`q = q.eq(…)`), or an embed from another table.
+    // (b) A journal status filter anywhere else — a chain built across
+    // statements (`q = q.eq(…)`), or an embed from another table.
     if (ts.isCallExpression(node) && !seen.has(node)) {
-      const kind = classifyFilter(node, false);
+      const root = chainRoot(node);
+      const kind = classifyFilter(node, !!root && holdsEntries(root));
       if (kind) push(node, kind);
     }
-    // (c) Raw SQL in a string or template literal.
-    if (
-      (ts.isStringLiteralLike(node) || ts.isTemplateExpression(node)) &&
-      RAW_POSTED_SQL.test(node.getText(src))
-    ) {
-      push(node, "posted-only");
+    // (c) Raw SQL in a string or template literal that reads journal data.
+    // An `update … set status = 'posted'` is a write, and a string that never
+    // names a journal table is some other table's status.
+    if (ts.isStringLiteralLike(node) || ts.isTemplateExpression(node)) {
+      const sql = node.getText(src);
+      if (/journal_(entries|lines)/.test(sql)) {
+        const reads = [...sql.matchAll(RAW_POSTED_SQL)].filter(
+          (m) => !/\bset\s+$/i.test(sql.slice(0, m.index)),
+        );
+        if (reads.length > 0) push(node, "posted-only");
+      }
     }
     node.forEachChild(visit);
   };
@@ -401,5 +547,78 @@ describe("the scanner", () => {
           admin.from("journal_lines").select("id").eq("journal_entries.status", "posted").range(from, to));
       }`);
     expect(f?.key).toBe("probe.ts › runAutoMatch");
+  });
+
+  it("flags a bare status filter on a journal_entries builder held in a variable", () => {
+    const found = probe(`
+      function report(c) {
+        let q = c.from("journal_entries").select("id");
+        q = q.eq("status", "posted");
+        return q;
+      }`);
+    expect(found.map((f) => `${f.key}:${f.kind}`)).toEqual(["probe.ts › report:posted-only"]);
+  });
+
+  it("does not borrow a journal_entries variable from another function", () => {
+    expect(
+      probe(`
+        function a(c) { const q = c.from("journal_entries").select("id"); return q; }
+        function b(c) { let q = c.from("bills").select("id"); q = q.eq("status", "posted"); return q; }`),
+    ).toEqual([]);
+  });
+
+  it("does not treat a journal_entries builder's user-chosen status as posted-only", () => {
+    expect(
+      probe(`
+        function list(c, status) {
+          let query = c.from("journal_entries").select("id");
+          if (status !== "all") query = query.eq("status", status);
+          return query;
+        }`),
+    ).toEqual([]);
+  });
+
+  it("flags the negative spellings that drop the reversed original", () => {
+    const found = probe(`
+      function a(c) { return c.from("journal_entries").select("id").neq("status", "reversed"); }
+      function b(c) { return c.from("journal_lines").select("id").not("journal_entries.status", "eq", "reversed"); }
+      function d(c) { return c.from("journal_lines").select("id").filter("journal_entries.status", "neq", "reversed"); }`);
+    expect(found.map((f) => f.key)).toEqual(["probe.ts › a", "probe.ts › b", "probe.ts › d"]);
+  });
+
+  it("flags .match(), .or() and .filter(…, 'in', '(posted)')", () => {
+    const found = probe(`
+      function a(c) { return c.from("journal_entries").select("id").match({ status: "posted", source_kind: "payment" }); }
+      function b(c) { return c.from("journal_lines").select("id").or("journal_entries.status.eq.posted,account_id.eq.x"); }
+      function d(c) { return c.from("journal_lines").select("id").filter("journal_entries.status", "in", "(posted)"); }`);
+    expect(found.map((f) => f.key)).toEqual(["probe.ts › a", "probe.ts › b", "probe.ts › d"]);
+  });
+
+  it("resolves a hoisted string constant", () => {
+    const found = probe(`
+      const POSTED = "posted";
+      function a(c) { return c.from("journal_lines").select("id").eq("journal_entries.status", POSTED); }`);
+    expect(found).toHaveLength(1);
+  });
+
+  it("follows an aliased or nested journal_entries embed", () => {
+    const found = probe(`
+      function a(c) { return c.from("journal_lines").select("id, je:journal_entries!inner ( status )").eq("je.status", "posted"); }
+      function b(c) { return c.from("bill_payments").select("id, bills ( journal_entries ( status ) )").eq("bills.journal_entries.status", "posted"); }`);
+    expect(found.map((f) => f.key)).toEqual(["probe.ts › a", "probe.ts › b"]);
+  });
+
+  it("flags raw SQL spelled status in ('posted')", () => {
+    const found = probe("const SQL = `select count(*) from journal_entries where status in ('posted')`;");
+    expect(found).toHaveLength(1);
+  });
+
+  it("does not flag raw SQL on another table, or a write that SETS status = 'posted'", () => {
+    expect(
+      probe(`
+        const A = "select * from bills where status = 'posted'";
+        const B = "update journal_entries set status = 'posted' where id = $1";
+        const C = "update journal_entries je set je.status = 'posted'";`),
+    ).toEqual([]);
   });
 });
