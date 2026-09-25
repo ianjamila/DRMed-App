@@ -45,6 +45,7 @@ const SURFACES: Record<string, Surface> = {
   "src/app/(marketing)/find-my-id/actions.ts": { meaning: "active", why: "DRM-ID recovery answers for active records only." },
   "src/app/(marketing)/schedule/actions.ts": { meaning: "active", why: "Public lookup and the submitted existing-patient id." },
   "src/lib/patients/find-duplicates.ts": { meaning: "active", why: "Duplicate candidates are active records only." },
+  "src/lib/portal/consent-guard.ts": { meaning: "active", why: "Portal consent check re-reads the session patient as an active record only; no merge chain (0167)." },
   "src/lib/auth/require-patient.ts": { meaning: "active", why: "getActivePatientSession — portal access for active records only, no merge chain." },
   "scripts/clinical-backfill/engine.ts": { meaning: "active", why: "Backfill patient index and token-reuse map match active records only." },
   "scripts/clinical-backfill/followups/worksheet.ts": { meaning: "active", why: "Worksheet candidates are active records only." },
