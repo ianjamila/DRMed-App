@@ -536,7 +536,7 @@ export async function LabDashboard({ session }: { session: StaffSession }) {
               <StatCard
                 label="Unclaimed in my sections"
                 value={stats.myUnclaimed}
-                hint="Requested or in progress, unassigned"
+                hint="All dates — requested or in progress, unassigned"
                 href="/staff/queue?filter=unclaimed"
                 accent={stats.myUnclaimed > 0 ? "warn" : "default"}
                 error={stats.myUnclaimedError}
@@ -546,7 +546,7 @@ export async function LabDashboard({ session }: { session: StaffSession }) {
               <StatCard
                 label="Claimed by me"
                 value={stats.myClaimed}
-                hint="Assigned to me, in progress"
+                hint="All dates — assigned to me, in progress"
                 href="/staff/queue?filter=mine"
                 error={stats.myClaimedError}
               />
@@ -575,7 +575,7 @@ export async function LabDashboard({ session }: { session: StaffSession }) {
               <StatCard
                 label="Open send-out tests"
                 value={stats.sendOutAwaiting}
-                hint="Requested or in progress, sent to an external lab"
+                hint="All dates — requested or in progress, sent to an external lab"
                 href="/staff/queue"
                 error={stats.sendOutAwaitingError}
               />
