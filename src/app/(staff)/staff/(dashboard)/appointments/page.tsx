@@ -794,6 +794,7 @@ export default async function AppointmentsPage({ searchParams }: SearchProps) {
             }
           />
           <Section
+            anchor="no-set-time"
             title={`Bookings with no set time (${walkInGroups.length})`}
             description={
               <>
@@ -852,6 +853,7 @@ export default async function AppointmentsPage({ searchParams }: SearchProps) {
 }
 
 function Section({
+  anchor,
   title,
   description = null,
   toolbar = null,
@@ -862,6 +864,9 @@ function Section({
   attachmentsByGroup,
   truncatedNotice = null,
 }: {
+  // Optional id so another page can deep-link to this section (the reception
+  // dashboard's "Likely no-shows" card opens #no-set-time).
+  anchor?: string;
   title: string;
   // Optional explainer under the heading, and a bar (the likely-no-show
   // bulk action) between it and the table.
@@ -876,7 +881,7 @@ function Section({
   truncatedNotice?: string | null;
 }) {
   return (
-    <section className="mt-6">
+    <section id={anchor} className="mt-6 scroll-mt-20">
       <h2 className="mb-3 font-heading text-lg font-extrabold text-[color:var(--color-brand-navy)]">
         {title}
       </h2>

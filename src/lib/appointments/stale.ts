@@ -111,3 +111,66 @@ export function splitBookingsByActivePatient(
   }
   return { restorable, heldBack };
 }
+
+/**
+ * A booking with no set time that nobody has acted on (still `confirmed`) for
+ * this many Manila days is worth a reminder email — earlier than the
+ * likely-no-show mark, so reception can still call the patient.
+ */
+export const REMIND_UNTIMED_AFTER_DAYS = 3;
+
+export interface BookingRow {
+  id: string;
+  booking_group_id: string | null;
+}
+
+/**
+ * One entry per booking — a multi-service booking is several rows sharing a
+ * `booking_group_id` — in first-seen order, each group's rows in input order.
+ * Pass rows oldest-first (the Appointments page's order) so the lead row,
+ * `group[0]`, is the one the page judges the booking by.
+ */
+export function groupBookingRows<T extends BookingRow>(rows: readonly T[]): T[][] {
+  const groups = new Map<string, T[]>();
+  for (const row of rows) {
+    const key = row.booking_group_id ?? row.id;
+    const group = groups.get(key);
+    if (group) group.push(row);
+    else groups.set(key, [row]);
+  }
+  return [...groups.values()];
+}
+
+/**
+ * How many bookings the Appointments page would tag "Likely no-show": rows
+ * with no set time (confirmed or arrived), oldest-first, grouped by booking
+ * and judged by the lead row — the dashboard count and the page's bar agree.
+ */
+export function countLikelyNoShowBookings(
+  rows: readonly (BookingRow & StaleCandidate)[],
+  todayIso: string,
+): number {
+  return groupBookingRows(rows).filter((g) => isStaleUntimedBooking(g[0], todayIso)).length;
+}
+
+/**
+ * Bookings nobody has acted on for at least `minDays` Manila days — the
+ * reminder email's list. Takes the same oldest-first open rows as the page
+ * (confirmed + arrived, no set time), groups them by booking, and keeps a
+ * booking whose lead row is still `confirmed` (an arrived patient has been
+ * acted on). Oldest first.
+ */
+export function unactedBookings<T extends BookingRow & StaleCandidate>(
+  rows: readonly T[],
+  todayIso: string,
+  minDays: number = REMIND_UNTIMED_AFTER_DAYS,
+): { rows: T[]; ageDays: number; likelyNoShow: boolean }[] {
+  return groupBookingRows(rows)
+    .filter((g) => g[0].status === "confirmed" && g[0].scheduled_at === null)
+    .map((g) => ({
+      rows: g,
+      ageDays: bookingAgeDays(g[0].created_at, todayIso),
+      likelyNoShow: isStaleUntimedBooking(g[0], todayIso),
+    }))
+    .filter((b) => b.ageDays >= minDays);
+}

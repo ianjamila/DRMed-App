@@ -1,11 +1,15 @@
 import { describe, expect, it } from "vitest";
 import {
+  REMIND_UNTIMED_AFTER_DAYS,
   STALE_UNTIMED_AFTER_DAYS,
   bookingAgeDays,
   bookingAgeLabel,
+  countLikelyNoShowBookings,
+  groupBookingRows,
   isStaleUntimedBooking,
   staleCutoffIso,
   splitBookingsByActivePatient,
+  unactedBookings,
 } from "./stale";
 
 const TODAY = "2026-09-25";
@@ -100,5 +104,69 @@ describe("splitBookingsByActivePatient", () => {
     const { restorable, heldBack } = splitBookingsByActivePatient([["a1", "gone"]], patientOf, active);
     expect(restorable).toEqual([]);
     expect(heldBack).toEqual([["a1", "gone"]]);
+  });
+});
+
+describe("groupBookingRows", () => {
+  it("folds a multi-service booking into one group, first-seen order", () => {
+    const rows = [
+      { id: "a1", booking_group_id: "g1" },
+      { id: "b1", booking_group_id: null },
+      { id: "a2", booking_group_id: "g1" },
+    ];
+    expect(groupBookingRows(rows).map((g) => g.map((r) => r.id))).toEqual([["a1", "a2"], ["b1"]]);
+  });
+});
+
+describe("countLikelyNoShowBookings", () => {
+  const OLD = "2026-09-10T02:00:00Z";
+  const NEW = "2026-09-24T02:00:00Z";
+  const row = (id: string, group: string | null, status: string, created_at: string) => ({
+    id,
+    booking_group_id: group,
+    status,
+    scheduled_at: null,
+    created_at,
+  });
+
+  it("counts bookings, not rows, and judges each by its lead row", () => {
+    const rows = [
+      row("a1", "g1", "confirmed", OLD),
+      row("a2", "g1", "confirmed", OLD),
+      row("b1", null, "arrived", OLD),
+      row("c1", null, "confirmed", NEW),
+      row("d1", "g2", "confirmed", OLD),
+    ];
+    expect(countLikelyNoShowBookings(rows, TODAY)).toBe(2);
+  });
+
+  it("is zero for an empty list", () => {
+    expect(countLikelyNoShowBookings([], TODAY)).toBe(0);
+  });
+});
+
+describe("unactedBookings", () => {
+  const row = (id: string, group: string | null, status: string, created_at: string) => ({
+    id,
+    booking_group_id: group,
+    status,
+    scheduled_at: null,
+    created_at,
+  });
+
+  it("keeps confirmed bookings at least REMIND_UNTIMED_AFTER_DAYS old, oldest first", () => {
+    const rows = [
+      row("old", null, "confirmed", "2026-09-10T02:00:00Z"), // 15 days
+      row("arr", null, "arrived", "2026-09-11T02:00:00Z"), // acted on
+      row("g-a", "g", "confirmed", "2026-09-22T02:00:00Z"), // 3 days
+      row("g-b", "g", "confirmed", "2026-09-22T02:00:00Z"),
+      row("new", null, "confirmed", "2026-09-23T02:00:00Z"), // 2 days
+    ];
+    const out = unactedBookings(rows, TODAY);
+    expect(REMIND_UNTIMED_AFTER_DAYS).toBe(3);
+    expect(out.map((b) => [b.rows.map((r) => r.id), b.ageDays, b.likelyNoShow])).toEqual([
+      [["old"], 15, true],
+      [["g-a", "g-b"], 3, false],
+    ]);
   });
 });
