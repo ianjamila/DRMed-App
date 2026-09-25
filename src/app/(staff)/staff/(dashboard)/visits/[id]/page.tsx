@@ -1030,18 +1030,21 @@ export default async function VisitDetailPage({ params, searchParams }: Props) {
                     </div>
                     <div className="mt-3 overflow-x-auto rounded-lg border border-[color:var(--color-brand-bg-mid)]">
                       <table className="w-full text-sm">
-                        {/* Visually hidden header: keeps the plan-mandated
-                            6-column layout while giving screen readers
-                            column context (esp. the "—" price cells). */}
-                        <thead className="sr-only">
+                        {/* Same visible header as the single-tests table
+                            below. Components are ₱0 rows — the package is
+                            priced once, on its header — so the three price
+                            columns fold into one "Included in package" cell. */}
+                        <thead className="bg-[color:var(--color-brand-bg)] text-left text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
                           <tr>
-                            <th scope="col">Select</th>
-                            <th scope="col">Service</th>
-                            <th scope="col">Base</th>
-                            <th scope="col">Discount</th>
-                            <th scope="col">Final</th>
-                            <th scope="col">Status</th>
-                            <th scope="col">Action</th>
+                            <th scope="col" className="px-4 py-3">
+                              <span className="sr-only">Select</span>
+                            </th>
+                            <th scope="col" className="px-4 py-3">Service</th>
+                            <th scope="col" className="px-4 py-3 text-right">Base</th>
+                            <th scope="col" className="px-4 py-3 text-right">Discount</th>
+                            <th scope="col" className="px-4 py-3 text-right">Final</th>
+                            <th scope="col" className="px-4 py-3">Status</th>
+                            <th scope="col" className="px-4 py-3 text-right">Action</th>
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-[color:var(--color-brand-bg-mid)]">
@@ -1111,14 +1114,11 @@ export default async function VisitDetailPage({ params, searchParams }: Props) {
                                       </p>
                                     ) : null}
                                   </td>
-                                  <td className="px-4 py-3 text-right font-mono text-xs text-[color:var(--color-brand-text-soft)]">
-                                    —
-                                  </td>
-                                  <td className="px-4 py-3 text-right font-mono text-xs text-[color:var(--color-brand-text-soft)]">
-                                    —
-                                  </td>
-                                  <td className="px-4 py-3 text-right font-mono text-xs text-[color:var(--color-brand-text-soft)]">
-                                    —
+                                  <td
+                                    colSpan={3}
+                                    className="px-4 py-3 text-right text-xs text-[color:var(--color-brand-text-soft)]"
+                                  >
+                                    Included in package
                                   </td>
                                   <td className="px-4 py-3">
                                     <span
