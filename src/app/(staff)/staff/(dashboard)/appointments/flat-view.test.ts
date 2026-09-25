@@ -4,6 +4,8 @@ import {
   FLAT_DEFAULT_SORT,
   groupHaystack,
   tagBucket,
+  upcomingRangeToIso,
+  withinScheduledRange,
   type FlatSortableGroup,
 } from "./flat-view";
 
@@ -101,5 +103,43 @@ describe("compareFlat", () => {
     const b = group({ id: "b", created_at: "2026-09-01T00:00:00Z" });
     expect(compareFlat(a, b, FLAT_DEFAULT_SORT)).toBeLessThan(0);
     expect(compareFlat(b, a, FLAT_DEFAULT_SORT)).toBeGreaterThan(0);
+  });
+});
+
+// Finding 2 (0167 patient-delete blocker): the appointments page's default
+// "upcoming" loader caps at 31 days out, so its blocker link
+// (`/staff/appointments?q=<DRM-ID>`) could not surface a confirmed
+// appointment scheduled further out than that. A `q` search must lift the
+// cap; the default (non-search) view must keep it.
+describe("upcomingRangeToIso", () => {
+  const cappedToIso = "2026-10-26T00:00:00.000Z"; // "today" + 31 days, in the shape loadScheduledRange builds
+
+  it("keeps the 31-day cap when there is no search query", () => {
+    expect(upcomingRangeToIso(false, cappedToIso)).toBe(cappedToIso);
+  });
+
+  it("lifts the cap (no upper bound) when a search query is present", () => {
+    expect(upcomingRangeToIso(true, cappedToIso)).toBeNull();
+  });
+});
+
+describe("withinScheduledRange", () => {
+  const fromIso = "2026-09-26T00:00:00.000Z";
+  const cappedToIso = "2026-10-27T00:00:00.000Z"; // fromIso + 31 days
+  const farOutScheduledAt = "2026-11-10T00:00:00.000Z"; // 45 days past fromIso
+
+  it("the default (capped) view excludes an appointment more than 31 days ahead", () => {
+    expect(withinScheduledRange(farOutScheduledAt, fromIso, cappedToIso)).toBe(false);
+  });
+
+  it("a search (uncapped via upcomingRangeToIso) includes the same far-out appointment", () => {
+    const searchToIso = upcomingRangeToIso(true, cappedToIso);
+    expect(withinScheduledRange(farOutScheduledAt, fromIso, searchToIso)).toBe(true);
+  });
+
+  it("both views still exclude anything scheduled before fromIso", () => {
+    const before = "2026-09-25T00:00:00.000Z";
+    expect(withinScheduledRange(before, fromIso, cappedToIso)).toBe(false);
+    expect(withinScheduledRange(before, fromIso, null)).toBe(false);
   });
 });

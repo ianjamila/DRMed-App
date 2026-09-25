@@ -47,6 +47,11 @@ vi.mock("next/server", () => ({
 vi.mock("@/lib/auth/require-staff", () => ({
   requireActiveStaff: async () => ({ user_id: "staff-1", role: "admin" }),
 }));
+// 0167: the patient-active gate is its own guard with its own tests; here
+// the record is always live.
+vi.mock("@/lib/patients/require-active", () => ({
+  assertVisitPatientActive: async () => ({ ok: true }),
+}));
 vi.mock("@/lib/audit/log", () => ({
   audit: async (entry: Record<string, unknown>) => {
     fx.audits.push(entry);

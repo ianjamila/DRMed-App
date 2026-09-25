@@ -27,6 +27,7 @@ import { SortableTh, PlainTh } from "@/components/staff/sortable-th";
 import { ListPagination, PAGE_SIZES } from "@/components/staff/list-pagination";
 import { manilaDate } from "@/lib/dates/manila";
 import { sectionTabClass } from "@/components/staff/section-tabs-style";
+import type { Database } from "@/types/database";
 
 export const metadata = {
   title: "Patients",
@@ -84,28 +85,7 @@ const DEFAULT_SORT: SortSpec<SortColumn> = { key: "created_at", dir: "desc" };
 // first on one of the two directions.
 const NULLS_LAST_COLUMNS = new Set<SortColumn>(["referral_source_label", "last_visit_date"]);
 
-/**
- * Row shape for `public.v_patients_directory` (migration 0143). The view
- * hasn't been applied locally yet, so it isn't in the generated
- * `src/types/database.ts` — the `.from()` call is cast past the generated
- * table/view union and the real shape is restored with `.returns<>()`
- * below. Remove the cast once `npm run db:types` knows about the view.
- */
-interface PatientDirectoryRow {
-  id: string;
-  drm_id: string;
-  first_name: string;
-  middle_name: string | null;
-  last_name: string;
-  phone: string | null;
-  email: string | null;
-  pre_registered: boolean;
-  created_at: string;
-  referral_source: string | null;
-  referral_source_label: string | null;
-  last_visit_date: string | null;
-  consent_current: boolean;
-}
+type PatientDirectoryRow = Database["public"]["Views"]["v_patients_directory"]["Row"];
 
 async function search(
   query: string | undefined,
@@ -118,8 +98,7 @@ async function search(
   const [from, to] = rangeFor(page, size);
 
   let q = supabase
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- v_patients_directory (migration 0143) isn't in the generated Database type yet; row shape is restored below via .returns<PatientDirectoryRow[]>()
-    .from("v_patients_directory" as any)
+    .from("v_patients_directory")
     .select(
       "id, drm_id, first_name, middle_name, last_name, phone, email, pre_registered, created_at, referral_source, referral_source_label, last_visit_date, consent_current",
       { count: "exact" },

@@ -32,6 +32,10 @@ import {
   type LoadedPayment,
 } from "@/lib/visits/payment-history-load";
 import { PaymentArrivalNote, PaymentChangeEntry } from "@/components/staff/payment-change-note";
+import { isActivePatient } from "@/lib/patients/active";
+import { loadPatientLifecycle } from "@/lib/patients/lifecycle-display";
+import { PatientLifecycleBanner } from "@/components/staff/patient-lifecycle-banner";
+import { PatientDeleteButton } from "@/components/staff/patient-delete-button";
 
 // Share the existing header lookup with metadata within this request.
 const loadDetail = cache(async (id: string) => {
@@ -39,7 +43,7 @@ const loadDetail = cache(async (id: string) => {
   return supabase
     .from("patients")
     .select(
-      "id, drm_id, first_name, last_name, middle_name, birthdate, birthdate_confirmed, sex, phone, email, address, pre_registered, created_at, referral_source, referred_by_doctor, preferred_release_medium, senior_pwd_id_kind, senior_pwd_id_number, consent_signed_at, is_repeat_patient",
+      "id, drm_id, first_name, last_name, middle_name, birthdate, birthdate_confirmed, sex, phone, email, address, pre_registered, created_at, referral_source, referred_by_doctor, preferred_release_medium, senior_pwd_id_kind, senior_pwd_id_number, consent_signed_at, is_repeat_patient, deleted_at, merged_into_id",
     )
     .eq("id", id)
     .maybeSingle();
@@ -83,6 +87,9 @@ export default async function PatientDetailPage({ params }: Props) {
 
   if (!patient) notFound();
 
+  const patientActive = isActivePatient(patient);
+  const lifecycle = patientActive ? null : await loadPatientLifecycle(supabase, id);
+
   const [consent, consentHistory] = await Promise.all([
     getPatientConsentState(id),
     getConsentHistory(id),
@@ -91,7 +98,7 @@ export default async function PatientDetailPage({ params }: Props) {
 
   const { data: visits } = await supabase
     .from("visits")
-    .select("id, visit_number, visit_date, payment_status, total_php, paid_php")
+    .select("id, visit_number, visit_date, payment_status, total_php, paid_php, is_sample")
     .eq("patient_id", id)
     // Queue-deleted visits (0125) live in the admin deleted-entries report,
     // not the patient's visit history.
@@ -150,26 +157,31 @@ export default async function PatientDetailPage({ params }: Props) {
               >
                 {PRE_REGISTERED_LABEL_FULL}
               </p>
-              <VerifyIdentityButton patientId={patient.id} />
+              {patientActive ? <VerifyIdentityButton patientId={patient.id} /> : null}
             </div>
           ) : null}
         </div>
-        <div className="flex flex-wrap gap-2">
-          <Link
-            href={`/staff/patients/${patient.id}/edit`}
-            className="rounded-md border border-[color:var(--color-brand-navy)] px-4 py-2 text-sm font-bold text-[color:var(--color-brand-navy)] hover:bg-[color:var(--color-brand-bg)]"
-          >
-            Edit
-          </Link>
-          <ReissuePinButton patientId={patient.id} />
-          <Link
-            href={`/staff/visits/new?patient_id=${patient.id}`}
-            className="rounded-md bg-[color:var(--color-brand-navy)] px-4 py-2 text-sm font-bold text-white hover:bg-[color:var(--color-brand-cyan)]"
-          >
-            + Start visit
-          </Link>
-        </div>
+        {patientActive ? (
+          <div className="flex flex-wrap gap-2">
+            <Link
+              href={`/staff/patients/${patient.id}/edit`}
+              className="rounded-md border border-[color:var(--color-brand-navy)] px-4 py-2 text-sm font-bold text-[color:var(--color-brand-navy)] hover:bg-[color:var(--color-brand-bg)]"
+            >
+              Edit
+            </Link>
+            <ReissuePinButton patientId={patient.id} />
+            <Link
+              href={`/staff/visits/new?patient_id=${patient.id}`}
+              className="rounded-md bg-[color:var(--color-brand-navy)] px-4 py-2 text-sm font-bold text-white hover:bg-[color:var(--color-brand-cyan)]"
+            >
+              + Start visit
+            </Link>
+            {isAdmin ? <PatientDeleteButton patientId={patient.id} drmId={patient.drm_id} /> : null}
+          </div>
+        ) : null}
       </header>
+
+      {lifecycle ? <PatientLifecycleBanner lifecycle={lifecycle} isAdmin={isAdmin} className="mt-4" /> : null}
 
       <section className="mt-6 grid gap-3 rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white p-5 sm:grid-cols-3">
         <Field label="Birthdate" value={patient.birthdate ?? "—"} />
@@ -191,12 +203,14 @@ export default async function PatientDetailPage({ params }: Props) {
               ? "DOB not yet confirmed at the counter."
               : "DOB missing — ask the patient on their next visit."}
           </span>
-          <Link
-            href={`/staff/patients/${patient.id}/edit`}
-            className="underline decoration-dotted underline-offset-2"
-          >
-            Edit
-          </Link>
+          {patientActive ? (
+            <Link
+              href={`/staff/patients/${patient.id}/edit`}
+              className="underline decoration-dotted underline-offset-2"
+            >
+              Edit
+            </Link>
+          ) : null}
         </div>
       )}
 
@@ -246,6 +260,7 @@ export default async function PatientDetailPage({ params }: Props) {
           noticeVersion={consent.noticeVersion}
           bookingOnlyConsent={bookingOnlyConsent}
           isAdmin={isAdmin}
+          readOnly={!patientActive}
         />
         <ConsentHistory patientId={id} events={consentHistory} />
       </div>
@@ -324,13 +339,17 @@ export default async function PatientDetailPage({ params }: Props) {
                           >
                             Open
                           </Link>
-                          <EmailStatementButton
-                            visitId={v.id}
-                            patientId={patient.id}
-                            patientEmail={patient.email}
-                            size="compact"
-                            accessibleName={`Email the statement for visit ${v.visit_number}`}
-                          />
+                          {/* 0167: no patient email from an inactive record. */}
+                          {patientActive ? (
+                            <EmailStatementButton
+                              visitId={v.id}
+                              patientId={patient.id}
+                              patientEmail={patient.email}
+                              isSample={v.is_sample}
+                              size="compact"
+                              accessibleName={`Email the statement for visit ${v.visit_number}`}
+                            />
+                          ) : null}
                         </div>
                       </td>
                     ) : null}

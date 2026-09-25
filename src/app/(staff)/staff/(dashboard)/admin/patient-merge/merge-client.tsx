@@ -170,7 +170,8 @@ function ConfirmMerge({
           {state.moved.visits} visit(s), {state.moved.appointments}{" "}
           appointment(s), {state.moved.audit_log} audit row(s),{" "}
           {state.moved.critical_alerts} critical alert(s),{" "}
-          {state.moved.patient_consents} consent record(s).
+          {state.moved.patient_consents} consent record(s),{" "}
+          {state.moved.appointment_attachments} lab-request form(s).
         </p>
         <p className="mt-2 text-xs text-emerald-900">
           The merged-in row is tombstoned with a back-pointer; the audit

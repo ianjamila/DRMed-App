@@ -18,14 +18,14 @@ Key reference artifacts:
 - `IMPLEMENTATION_PLAN.md` — original phase plan (historical; cross-check before relying on it)
 - `README.md` — operational setup
 - `.env.example` — env-var inventory
-- `docs/drmed-user-guide.html` — the staff + patient user guide (v2.26, 25 Sep 2026): every
+- `docs/drmed-user-guide.html` — the staff + patient user guide (v2.28, 25 Sep 2026): every
   screen, label and blocked-message the app shows, checked against the code. Update it in the
   PR that changes a flow it describes.
 - `docs/superpowers/specs/` and `docs/superpowers/audits/` — design specs and audits for
   every post-1.0 programme (partner revisions, release lifecycle, group templates, EOD
   denomination count…). Read the spec before re-deriving a design decision.
 
-Migration ledger: **prod head = 0180** (`posted_lookup_comments`, #231 — comments only) as of 2026-09-25;
+Migration ledger: **prod head = 0181** (`visit_sample_flag`, #230 — pushed ahead of merge, additive) as of 2026-09-25, after **0180** (`posted_lookup_comments`, #231 — comments only);
 **0178** (`released_payment_removed_alert`, #228), **0176** (`result_patient_download_and_remarks`, #226) and **0177** (`statement_email_claim`, #212) are
 applied too. The prod ledger is not contiguous (no 0165, 0167–0170, 0179):
 **0175** (`patient_billed_catalog_read`) and **0177** (#212), **0174** (`correct_payment_stale_guard`,
@@ -35,6 +35,9 @@ after #211 deployed), **0164**, **0163** and **0159**–**0162** are all applied
 Numbers 0165 (retired), 0167 and 0170 are held by open branches — `npm run claim -- list`. Earlier
 history: **0160** (`queue_claim_remarks`, #214) and **0151** (`rls_initplan_and_policy_consolidation`,
 #192: 159 public policies, zero unwrapped helper calls) are applied and verified.
+
+**0167** (`patient_soft_delete`, PR 2 of the patient-delete rollout) is in flight on
+`feat/patient-delete`; it must be pushed AFTER 0162 and right before its PR merges.
 
 **Rule — claim a number before you use it: `npm run claim -- migration` / `npm run claim -- pcode <n>`.**
 Several sessions work here at once, each in its own worktree, and picking "the next number" by
@@ -227,6 +230,9 @@ All Server Actions return `{ ok: true, data } | { ok: false, error }`. User-faci
 | Website Messages inbox vocabulary (statuses, kinds, `CORPORATE_SUBJECT`), the message → booking seam, and how a patient reached us (`appointments.source`) | `src/lib/contact-messages/{labels,booking-link}.ts`, `src/lib/appointments/source.ts` — pinned to 0154 by `website-messages-schema.test.ts` |
 | Who receives each STAFF alert email (website message, template health, duplicate-patient digest): the registry + defaults, and the resolver every sender calls — managed in Admin Tools › Email Alerts (0155) | `src/lib/notifications/{staff-alerts,staff-alert-recipients}.ts` |
 | Where a patient heard about the clinic (`patients.referral_source`): the 12 lookup ids, staff labels, the public forms' wording and options — pinned to 0055's seed by `referral-sources.test.ts` | `src/lib/patients/referral-sources.ts` |
+| The active-patient rule (`activePatients`, `isActivePatient`) and the write guards (`assertPatientActive`, `assertVisitPatientActive`, …) — pinned by `src/lib/patients/query-surfaces.test.ts` and `active-views.test.ts`; every write to `visits`/`test_requests`/`payments`/`appointments`/`patient_consents`/`visit_pins`/`hmo_claim_*`/`results`/`result_test_requests`/`appointment_attachments`/`patients` going through a guard is a standing gate, `write-guards.test.ts` | `src/lib/patients/{active,require-active}.ts` |
+| Patient delete/restore: reasons, blocker parsing, server actions, banner data | `src/lib/patients/{deletion,lifecycle-display}.ts`, `src/lib/actions/patients/lifecycle.ts` |
+| Final recipient check before every patient email/SMS — the last look before any provider call, so deferred work never sends to a deleted/merged record; other senders (staff alerts, newsletters, contact-form replies) are covered instead by `patient-senders.test.ts` | `src/lib/notifications/active-patient-recipient.ts` (+ `patient-senders.test.ts`) |
 | Staff list-page URL contract (sort/dir/page/size parsing, sort-column allow-list) | `src/lib/ui/table-params.ts`; components `src/components/staff/{sortable-th,list-pagination}.tsx` |
 | Rate-limit checker (per-bucket) | `src/lib/rate-limit/check.ts` |
 | Pure visit-domain rules (classification, deletability, lab payment gate, receipt policy, doctor-fee split, visit # search) | `src/lib/visits/{classification,deletion,lab-gate,receipt-policy,consultation-fee,visit-number-filter}.ts` |
@@ -269,7 +275,8 @@ All Server Actions return `{ ok: true, data } | { ok: false, error }`. User-faci
 - **Role sections:** `sectionsForRole(role) === []` is a deny. The lab queue once treated it as "no filter" and showed reception every section.
 - **`test_requests` is the visit's BILL LINE, not a lab table.** Doctor consultations and procedures are rows in it, told apart only by the joined `services.kind` (0090). Any surface that MEANS "lab" — results archive, portal, TAT, stuck tests, lab dashboards — must exclude them with `.not("services.kind", "in", DOCTOR_KINDS_PG_LIST)` (`src/lib/visits/classification.ts`); any surface that means "the whole bill" — receipts, money, accounting, deletion ledgers — must not. This bug has shipped three times (#160, #162); `src/lib/visits/query-surfaces.test.ts` now fails on any file that reads the table without declaring which kind it is.
 - **PostgREST ignores a filter on a LEFT-joined embed.** `.not("services.kind", …)` against a plain `services ( … )` embed compiles, runs, and returns the *unfiltered* rows — it looks exactly like a working fix. The embed must be `services!inner ( … )`.
-- **Exports** run under the RLS-scoped server client with an admin gate, a row ceiling, and an audit row — never the service-role client.
+- **Patient reads declare whether they mean ACTIVE records.** Directory/picker/matching/authentication reads wrap the builder in `activePatients(...)`; history reads never filter; the inventory test fails on an unclassified `.from("patients")`.
+- **Exports** run under the RLS-scoped server client with an admin gate, a row ceiling, and an audit row — never the service-role client. **Documented exception:** the Deleted Patients CSV reads kept counts (visits/payments/appointments/consents) through the service_role-only `patient_kept_counts` RPC (integer counts only, called after `requireAdminStaff()`) — all patient rows in that export still come from the RLS client.
 - **Print surfaces** each append a named `@page` + `@media print` block at the tail of `src/app/globals.css`; two print PRs in flight always conflict there and the resolution is keep both.
 - **`<input pattern>`** is compiled with the RegExp `v` flag — a bare trailing `-` in a class makes the whole pattern silently ignored; write `[a-z0-9\-]+`.
 - **A repo-wide guard must cover read paths too**, not only `--commit` branches (a dry-run that reads prod PII is still a disclosure).

@@ -22,6 +22,7 @@ import { moneySettled } from "@/lib/visits/money-settled";
 import { loadCompletedWorkCounts } from "@/lib/visits/released-results";
 import { shouldAlertPaymentEdited } from "@/lib/visits/released-payment-alert-content";
 import { sendReleasedPaymentRemovedAlert } from "@/lib/visits/released-payment-alert";
+import { assertVisitPatientActive } from "@/lib/patients/require-active";
 
 export type EditPaymentResult = { ok: true } | { ok: false; error: string };
 
@@ -77,6 +78,10 @@ export async function editPaymentAction(input: {
   if (!before) return { ok: false, error: "Payment not found." };
   const editability = paymentEditability(before);
   if (!editability.editable) return { ok: false, error: editability.reason };
+
+  // 0167: no financial reversal on an inactive record — restore it first.
+  const active = await assertVisitPatientActive(admin, before.visit_id);
+  if (!active.ok) return { ok: false, error: active.error };
 
   const moneyChanged = isMoneyChange(
     { amount_php: Number(before.amount_php), method: before.method },

@@ -12,6 +12,9 @@ import {
 } from "./branded-email";
 import { patientAlreadyAskedForReview } from "./review-cta";
 import { isDoctorKind } from "@/lib/visits/order-lines";
+import { checkPatientRecipient } from "./active-patient-recipient";
+import { auditSkippedInactiveRecipient } from "./inactive-recipient-audit";
+import { SAMPLE_SKIP_REASON } from "@/lib/visits/sample";
 
 interface Input {
   testRequestId: string;
@@ -41,6 +44,7 @@ export async function notifyResultReleased({
         services!inner ( name, kind ),
         visits!inner (
           id,
+          is_sample,
           patients!inner ( id, drm_id, first_name, phone, email )
         )
       `,
@@ -72,12 +76,18 @@ export async function notifyResultReleased({
   if (isDoctorKind(svc.kind)) return;
 
   // M7: physical hand-off (printout collected in person) — record the notified
-  // audit row as skipped on both channels and send nothing.
-  if (releaseMedium === "physical" || releaseMedium === "pickup") {
+  // audit row as skipped on both channels and send nothing. A sample visit
+  // (0181) is skipped the same way: the patient is never contacted about it.
+  const skipReason = visit.is_sample
+    ? SAMPLE_SKIP_REASON
+    : releaseMedium === "physical" || releaseMedium === "pickup"
+      ? "physical hand-off — no message sent"
+      : null;
+  if (skipReason) {
     const skipped = {
       ok: false as const,
       skipped: true as const,
-      reason: "physical hand-off — no message sent",
+      reason: skipReason,
     };
     await audit({
       actor_id: null,
@@ -155,17 +165,30 @@ export async function notifyResultReleased({
     receivedNote: "You received this because a result was released for your DRMed visit.",
   });
 
+  const recipient = await checkPatientRecipient(admin, patient.id);
+  if (recipient.kind !== "active") {
+    await auditSkippedInactiveRecipient({
+      sender: "notify-released",
+      patientId: patient.id,
+      reason: recipient.kind === "inactive" ? recipient.reason : "walk_in",
+      resourceType: "test_request",
+      resourceId: testRequestId,
+    });
+    return;
+  }
+  const to = recipient.patient;
+
   const [smsResult, emailResult] = await Promise.all([
-    patient.phone
-      ? sendSms({ to: patient.phone, message: smsBody })
+    to.phone
+      ? sendSms({ to: to.phone, message: smsBody })
       : Promise.resolve({
           ok: false as const,
           kind: "skipped" as const,
           reason: "patient has no phone on file",
         }),
-    patient.email
+    to.email
       ? sendEmail({
-          to: patient.email,
+          to: to.email,
           subject: emailSubject,
           text: emailText,
           html: emailHtml,
@@ -208,10 +231,10 @@ export async function notifyResultReleased({
           ? { ok: false, skipped: true, reason: smsResult.reason }
           : { ok: false, error: smsResult.error },
       email: emailResult.ok
-        ? { ok: true, id: emailResult.id, to: patient.email }
+        ? { ok: true, id: emailResult.id, to: to.email }
         : emailResult.kind === "skipped"
           ? { ok: false, skipped: true, reason: emailResult.reason }
-          : { ok: false, error: emailResult.error, to: patient.email },
+          : { ok: false, error: emailResult.error, to: to.email },
       review_cta: { shown: includeReviewCta && emailResult.ok },
     },
   });

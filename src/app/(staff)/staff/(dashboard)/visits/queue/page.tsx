@@ -29,6 +29,7 @@ import { shouldPrintReceipt } from "@/lib/visits/receipt-policy";
 import { waivedAmount } from "@/lib/visits/statement";
 import { completedWorkCount } from "@/lib/visits/payment-edit";
 import { QueueDeleteDialog } from "@/components/staff/queue-delete-dialog";
+import { SampleBadge } from "@/components/staff/sample-badge";
 
 const QUEUE_SUBSCRIPTIONS = [
   { table: "visits", event: "UPDATE" },
@@ -130,6 +131,7 @@ type QueueVisitRow = {
   paid_php: number;
   created_at: string;
   hmo_provider_id: string | null;
+  is_sample: boolean;
   patients: {
     id: string;
     drm_id: string;
@@ -207,7 +209,7 @@ export default async function VisitsQueuePage({ searchParams }: SearchProps) {
     .select(
       `
         id, visit_number, visit_date, payment_status, total_php, paid_php, created_at,
-        hmo_provider_id,
+        hmo_provider_id, is_sample,
         patients!inner ( id, drm_id, first_name, middle_name, last_name ),
         hmo_providers ( name ),
         test_requests ( id, status, deleted_at, is_package_header, hmo_claim_items ( batch_voided ), services ( section, kind, name ) )
@@ -621,6 +623,11 @@ function QueueRow({
         >
           #{String(visit.visit_number).padStart(4, "0")}
         </Link>
+        {visit.is_sample ? (
+          <div className="mt-1">
+            <SampleBadge size="compact" />
+          </div>
+        ) : null}
       </td>
       <td className="px-4 py-3">
         <PatientCell visit={visit} />
@@ -684,6 +691,11 @@ function QueueCard({
           className="font-mono text-xs text-[color:var(--color-brand-cyan)] hover:underline"
         >
           #{String(visit.visit_number).padStart(4, "0")}
+          {visit.is_sample ? (
+            <span className="ml-2">
+              <SampleBadge size="compact" />
+            </span>
+          ) : null}
         </Link>
         <span>
           <PaymentBadge visit={visit} />

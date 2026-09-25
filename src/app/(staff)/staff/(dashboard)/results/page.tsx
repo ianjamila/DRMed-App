@@ -47,6 +47,8 @@ import {
 import { codeDuplicatesName } from "@/lib/results/consolidated-reports";
 import { ListPagination, PAGE_SIZES } from "@/components/staff/list-pagination";
 import { fetchCompleteRowsByIds } from "@/lib/reports/paging";
+import { InactivePatientBadge } from "@/components/staff/inactive-patient-badge";
+import { isActivePatient } from "@/lib/patients/active";
 
 export const metadata = { title: "Results" };
 export const dynamic = "force-dynamic";
@@ -126,7 +128,13 @@ interface ResultRow {
     visit_number: string;
     payment_status: string;
     hmo_provider_id: string | null;
-    patients: { first_name: string; last_name: string; drm_id: string } | null;
+    patients: {
+      first_name: string;
+      last_name: string;
+      drm_id: string;
+      deleted_at: string | null;
+      merged_into_id: string | null;
+    } | null;
   } | null;
   services: {
     code: string;
@@ -170,7 +178,7 @@ export default async function AllResultsPage({ searchParams }: SearchProps) {
       `
         id, status, released_at, completed_at, requested_at,
         visits!inner ( id, visit_number, payment_status, hmo_provider_id,
-          patients!inner ( first_name, last_name, drm_id ) ),
+          patients!inner ( first_name, last_name, drm_id, deleted_at, merged_into_id ) ),
         services!inner ( code, name, kind, section, report_group_id, report_groups ( name ) )
       `,
       { count: "exact" },
@@ -618,6 +626,10 @@ export default async function AllResultsPage({ searchParams }: SearchProps) {
                         {pat ? (
                           <div className="font-mono text-xs text-[color:var(--color-brand-text-soft)]">
                             {pat.drm_id}
+                            <InactivePatientBadge
+                              deletedAt={pat.deleted_at}
+                              mergedIntoId={pat.merged_into_id}
+                            />
                           </div>
                         ) : null}
                       </td>
@@ -700,7 +712,12 @@ export default async function AllResultsPage({ searchParams }: SearchProps) {
                       <td className="px-4 py-3 text-xs">
                         <div className="flex flex-col gap-1">
                           {g.items.map((item) => (
-                            <ArchiveItemActions key={item.key} item={item} visitId={g.visitId} />
+                            <ArchiveItemActions
+                              key={item.key}
+                              item={item}
+                              visitId={g.visitId}
+                              patientActive={pat === null || isActivePatient(pat)}
+                            />
                           ))}
                         </div>
                       </td>
@@ -846,9 +863,21 @@ function ArchiveItemLabel({
   );
 }
 
-function ArchiveItemActions({ item, visitId }: { item: ArchiveItem; visitId: string }) {
+function ArchiveItemActions({
+  item,
+  visitId,
+  patientActive,
+}: {
+  item: ArchiveItem;
+  visitId: string;
+  /** 0167: a deleted/merged patient's result stays viewable but not editable. */
+  patientActive: boolean;
+}) {
   const editable =
-    item.kind === "test" && item.resultId !== null && EDITABLE_STATUSES.has(item.tests[0].status);
+    patientActive &&
+    item.kind === "test" &&
+    item.resultId !== null &&
+    EDITABLE_STATUSES.has(item.tests[0].status);
   return (
     <div className="flex flex-wrap items-baseline gap-x-2">
       {item.pdfTestRequestId ? (

@@ -5,6 +5,7 @@ import { createClient } from "@/lib/supabase/server";
 import { fetchAllRows, REPORT_EXPORT_MAX_ROWS } from "@/lib/reports/paging";
 import { isISODate, manilaRangeUtc, todayManilaISODate } from "@/lib/dates/manila";
 import { buildPeriodPresets } from "@/lib/reports/period-presets";
+import { activePatients } from "@/lib/patients/active";
 import { StatCard } from "../../_dashboards/_components/stat-card";
 import { PeriodChips } from "./_components/period-chips";
 import { ProportionTable } from "./_components/proportion-table";
@@ -71,14 +72,12 @@ export default async function BookingSourcesReportPage({ searchParams }: SearchP
       },
       REPORT_EXPORT_MAX_ROWS,
     ),
-    // New patients created in the period. A merged duplicate (dedup tool) is
-    // the same person as the row it was merged into, so it is left out.
+    // New patients created in the period. A merged duplicate (dedup tool) or a
+    // deleted record is not counted — the same active-record rule as the rest
+    // of the app.
     fetchAllRows<NewPatientSourceRow>(
       (rFrom, rTo) => {
-        let q = supabase
-          .from("patients")
-          .select("id, referral_source, created_at")
-          .is("merged_into_id", null);
+        let q = activePatients(supabase.from("patients").select("id, referral_source, created_at"));
         if (fromIso) q = q.gte("created_at", fromIso);
         if (toIso) q = q.lt("created_at", toIso);
         return q

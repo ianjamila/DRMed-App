@@ -60,7 +60,8 @@ eod_close_records       counted_cash_php + counted_denominations jsonb (0132: bi
 | `src/lib/visits/consultation-fee.ts` — `defaultClinicFee`, `splitDoctorFee`, `doctorLineBase` | Doctor-line pricing. Blank consult fee = ₱0 (rejected); blank procedure fee = catalog price. `clinic_cut_php` override applies to CONSULT lines only; procedures default to a flat ₱0 clinic fee (doctor PF = full fee). |
 | `src/lib/visits/money-settled.ts` — `moneySettled`, `MONEY_SETTLED_VISITS_OR` | The single definition: "money is settled" = `payment_status in ('paid','waived') OR hmo_provider_id is not null`. Mirrors migration 0133's SQL; the test pins the SQL text so the two cannot drift. Used by `labQueueGate` and by the visit page's `canRelease` (which gates the Release / Release-all / bulk / Mark-done buttons). |
 | `src/lib/visits/lab-gate.ts` — `labQueueGate`, `LAB_QUEUE_GATE_VISITS_OR` | Thin wrapper over `moneySettled` plus the "waiting for payment" hint. Applied to the lab worklist (All/Mine) via `.or(LAB_QUEUE_GATE_VISITS_OR, { foreignTable: "visits" })` on the `visits!inner` embed, and to `claimTestAction` / `claimConsolidated`. Pending-release / Released-today stay ungated. |
-| `src/lib/visits/deletion.ts` — `visitDeletability`, `testDeletability`, `QUEUE_DELETE_ROLES` | Deletable ⇔ `payment_status='unpaid'` (waived is NOT deletable — it can hold released results). Never keys on queue visibility, so it composes with the lab gate. |
+| `src/lib/visits/deletion.ts` — `visitDeletability`, `testDeletability`, `QUEUE_DELETE_ROLES`, `visitDeleteAffordance` | Deletable ⇔ `payment_status='unpaid'` (waived is NOT deletable — it can hold released results). Never keys on queue visibility, so it composes with the lab gate. `visitDeleteAffordance` picks what the visit page shows: Delete, a greyed Delete with the reason, or (admin, blocked ONLY by released results) **Delete sample visit** → `deleteSampleVisitAction` in `visits/[id]/actions.ts`, which runs the shared `undoReleasedRows` (same 0110 reversal + `release_undone` audit, tagged `sample_visit_delete`) then `deleteVisitAction`. Not atomic; payments / waived / open HMO claim still block. |
+| `src/lib/visits/sample.ts` — `canMarkSample`, `SAMPLE_*` (0181 `visits.is_sample`) | Sample/training visit flag: badge + Visit Records `?sample=1` filter; reception+admin toggle via `setVisitSampleAction` (app-enforced — RLS lets all staff update visits; audited `visit.sample_marked/unmarked`). Patient is never contacted: `notifyResultReleased`/`notifyResultsReleasedBulk` audit a skip, `sendStatementEmail` refuses, `sendReleasedPaymentRemovedAlert` skips. Counts in reports until deleted — by design. |
 | `src/lib/visits/receipt-policy.ts` — `isConsultOnlyOrder`, `shouldPrintReceipt` | Consult-only visit (every non-deleted line classifies as `consult`) prints NO receipt; procedures still print; unknown kinds and empty lists print (fail-safe). |
 | `src/lib/visits/classification.ts` | Lab Tests is the COMPLEMENT of the two doctor kinds, never an allow-list. `foldVisitGroups` merges split encounters. |
 | `src/lib/accounting/cash-denominations.ts` | The 11 denomination slugs; totals in **centavos** (₱0.25 × n drifts in float). Mirrored by the SQL values table + P0048 whitelist — `cash-denominations.parity.test.ts` parses migration 0132 to keep all three in step. |
@@ -111,6 +112,60 @@ Admin-managed `discount_types` catalog. Kinds `percent` / `fixed` / `custom` (cu
 - **Cash journal descriptions (0152):** `bridge_cash_adjustment_insert` uses a CASE label for every posting kind (for example `Petty cash · Grab`), with a readable fallback for future kinds. Its accounting body is otherwise identical to 0149, including the bill-payment early return. No historical rewrite was needed: production had zero cash-adjustment JEs. `supabase/tests/0152_cash_journal_descriptions_smoke.sql` proves descriptions, optional payee, money direction, balancing, idempotency and ACL; keep 0149's integration smoke too.
 - `cash_drawer_state` is **service_role-only** (0118; re-created in 0132 with the ACL restated). Don't re-grant `authenticated`.
 - **Trends panel wording is deliberately loose** ("consistent with …"): payments record amounts, not the notes handed over, so no per-denomination expectation exists. Attribution is arithmetic only; centavo residue = keyed amount, not a miscount. Don't tighten it.
+
+## Patient delete/restore (0167) blocks writes on inactive patients
+
+A deleted or merged patient's history stays readable, but nothing new can be written
+against it until an admin restores the record — this is enforced app-side first (the
+DB-side child-table guards are a PR 3 follow-up, so until then these ARE the only
+barrier). `src/lib/patients/require-active.ts` exports one `assert*Active(db, id(s))`
+helper per write surface — `assertPatientActive`, `assertVisitPatientActive` /
+`assertVisitsPatientsActive`, `assertTestRequestsPatientsActive`,
+`assertPaymentPatientActive`, `assertAppointmentsPatientsActive`,
+`assertClaimItemsPatientsActive`, `assertBatchPatientsActive`,
+`assertResolutionPatientActive` — each resolving to the patient(s) behind the row(s) and
+checking `deleted_at`/`merged_into_id` via the admin client (so the check sees the
+lifecycle columns regardless of the caller's RLS). **Every write to `visits`,
+`test_requests`, `payments`, `appointments`, `patient_consents`, `visit_pins`,
+`hmo_claim_items`, `hmo_claim_batches`, `hmo_payment_allocations`,
+`hmo_claim_resolutions`, `results`, `result_test_requests`, `appointment_attachments` or
+`patients` must go through one of these** — payments, voids, waives, HMO claims and
+releases all refuse on an inactive record's rows. `src/lib/patients/write-guards.test.ts`
+is the standing gate: an AST pass that walks every `"use server"` file and
+`src/app/api/**/route.ts`, resolves every write on those tables back through same-file
+helpers to a guard call, and fails on anything it can't — a genuine gap or an
+undocumented exception, not a maybe. Removing the guard call from a write action makes
+this test fail (proven 2026-09-25); do not weaken `EXEMPT` to make it pass instead of
+adding the guard.
+
+## Deletability blockers — the amended money/HMO rules (0167)
+
+`patient_delete_blockers(patient_id)` is the read the delete dialog calls before
+enabling confirmation; its `balance` / `hmo_*` predicates were amended after a
+2026-09-25 prod-count review and the **migration is the authority**, not the original
+design spec:
+- **`balance` only blocks when `total_php > paid_php`.** A visit showing
+  `payment_status='unpaid'` with `total_php = 0` (4,147 historical H- imports on prod)
+  does NOT block — the recalc trigger only ever ran on a real payment insert/void, so
+  these would otherwise be permanently undeletable for money nobody owes.
+- **Unrecorded HMO coverage is treated as fully covered, not a blocker.** A `NULL
+  hmo_approved_amount_php` on an unclaimed line is NOT flagged for reconciliation — the
+  patient's share is 0 by construction. (Owner may revisit; flagged in the migration
+  comments, not changed.)
+- **`hmo_unbilled` blocks on approved-but-not-yet-claimed coverage** — a line with
+  `hmo_approved_amount_php > 0` and no claim item yet.
+- **Undated confirmed/arrived appointments DO block** (`appointment` kind) — online
+  lab-request walk-in bookings insert `confirmed` with `scheduled_at = NULL`, and the
+  appointments page already treats a NULL-dated confirmed/arrived row as open forever
+  (30 prod patients as of the 2026-09-25 review), so the blocker follows the same rule
+  rather than treating "no date" as harmless.
+- **A claim amount already transferred to the patient's bill (`hmo_patient_share`)
+  stays a blocker even after its line or visit is soft-deleted** — the `share` CTE joins
+  `visits` directly, not the `live_visits` (undeleted-only) CTE the other blockers use,
+  because the money is real and owed regardless of the row's lifecycle state.
+Any TS mirror of these kinds/labels (`src/lib/patients/deletion.ts`'s `BLOCKER_KINDS` /
+`BLOCKER_GROUP_LABEL`) must match the migration's `blockers as (...)` CTE, not the
+original plan text — `deletion.test.ts` pins them.
 
 ## HMO
 

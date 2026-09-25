@@ -27,6 +27,12 @@ import {
   RecordHmoSettlementSchema,
   AllocateExistingPaymentSchema,
 } from "@/lib/validations/accounting";
+import {
+  assertTestRequestsPatientsActive,
+  assertClaimItemsPatientsActive,
+  assertResolutionPatientActive,
+  assertPaymentPatientActive,
+} from "@/lib/patients/require-active";
 
 export type ActionResult<T = void> = { ok: true; data?: T } | { ok: false; error: string };
 
@@ -53,6 +59,10 @@ export async function createClaimBatchAction(
     return { ok: false, error: parsed.error.issues[0]?.message ?? "Invalid input." };
   }
   const admin = createAdminClient();
+
+  // 0167: no new claim batch on an inactive patient's tests.
+  const active = await assertTestRequestsPatientsActive(admin, parsed.data.test_request_ids);
+  if (!active.ok) return { ok: false, error: active.error };
 
   // Load test_requests + verify each is released-with-HMO + matches provider + unbatched.
   // services.kind required so we can enforce single-kind batches (lab vs doctor).
@@ -141,6 +151,11 @@ export async function addItemsToBatchAction(input: unknown): Promise<ActionResul
   }
 
   const admin = createAdminClient();
+
+  // 0167: no adding an inactive patient's tests to a claim batch.
+  const active = await assertTestRequestsPatientsActive(admin, parsed.data.test_request_ids);
+  if (!active.ok) return { ok: false, error: active.error };
+
   const { data: batch } = await admin
     .from("hmo_claim_batches")
     .select("id, status, provider_id, voided_at")
@@ -231,6 +246,10 @@ export async function removeItemFromBatchAction(input: unknown): Promise<ActionR
     return { ok: false, error: parsed.error.issues[0]?.message ?? "Invalid input." };
   }
   const admin = createAdminClient();
+
+  // 0167: no removing/re-shaping a claim item for an inactive patient.
+  const active = await assertClaimItemsPatientsActive(admin, [parsed.data.item_id]);
+  if (!active.ok) return { ok: false, error: active.error };
 
   const { data: item } = await admin
     .from("hmo_claim_items")
@@ -419,6 +438,10 @@ export async function updateItemHmoResponseAction(input: unknown): Promise<Actio
   }
   const admin = createAdminClient();
 
+  // 0167: no claim-change on an inactive patient's item.
+  const active = await assertClaimItemsPatientsActive(admin, [parsed.data.item_id]);
+  if (!active.ok) return { ok: false, error: active.error };
+
   const { data: before } = await admin
     .from("hmo_claim_items")
     .select("id, batch_id, hmo_response, hmo_response_date, hmo_response_notes")
@@ -520,6 +543,10 @@ export async function createResolutionAction(
   }
   const admin = createAdminClient();
 
+  // 0167: no claim-change on an inactive patient's item.
+  const active = await assertClaimItemsPatientsActive(admin, [parsed.data.item_id]);
+  if (!active.ok) return { ok: false, error: active.error };
+
   const { data: row, error } = await admin
     .from("hmo_claim_resolutions")
     .insert({
@@ -569,6 +596,10 @@ export async function voidResolutionAction(input: unknown): Promise<ActionResult
     return { ok: false, error: parsed.error.issues[0]?.message ?? "Invalid input." };
   }
   const admin = createAdminClient();
+
+  // 0167: no claim-change on an inactive patient's resolution.
+  const active = await assertResolutionPatientActive(admin, parsed.data.resolution_id);
+  if (!active.ok) return { ok: false, error: active.error };
 
   const { data: row, error } = await admin
     .from("hmo_claim_resolutions")
@@ -625,6 +656,13 @@ export async function recordHmoSettlementAction(
     return { ok: false, error: parsed.error.issues[0]?.message ?? "Invalid input." };
   }
   const admin = createAdminClient();
+
+  // 0167: no settlement against an inactive patient's claim items.
+  const active = await assertClaimItemsPatientsActive(
+    admin,
+    parsed.data.items.map((it) => it.item_id),
+  );
+  if (!active.ok) return { ok: false, error: active.error };
 
   // Load items + their visit_ids.
   const itemIds = parsed.data.items.map((it) => it.item_id);
@@ -735,6 +773,10 @@ export async function allocateExistingPaymentAction(input: unknown): Promise<Act
     return { ok: false, error: parsed.error.issues[0]?.message ?? "Invalid input." };
   }
   const admin = createAdminClient();
+
+  // 0167: no allocating a payment against an inactive patient's record.
+  const active = await assertPaymentPatientActive(admin, parsed.data.payment_id);
+  if (!active.ok) return { ok: false, error: active.error };
 
   const { data: payment } = await admin
     .from("payments")
