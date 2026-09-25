@@ -238,6 +238,10 @@ create table public.sheet_sync_changes (
   -- what an undo did with this patient (sheet_sync_revert_run is paged and
   -- resumes from the rows still NULL here)
   undo_outcome       text check (undo_outcome in ('restored','blocked','deleted','kept','gone')),
+  -- the undo run whose call decided undo_outcome (a paged undo may span
+  -- several undo runs when a worker dies; reverted_by_run_id on the run
+  -- names only the one that finished it)
+  undo_run_id        uuid references public.sheet_sync_runs(id) on delete set null,
   constraint sheet_sync_changes_update_has_column check ((change_kind = 'create') = (column_name is null))
 );
 create index sheet_sync_changes_run on public.sheet_sync_changes (run_id, patient_id);
@@ -475,9 +479,14 @@ begin
     raise exception 'Unknown sheet sync trigger.' using errcode = '22023';
   end if;
   perform pg_advisory_xact_lock(hashtext('sheet_sync_lease'));
+  -- Lock the running row FIRST (it waits out a write the worker has in
+  -- flight — the fence holds that row — and then re-reads its heartbeat).
+  -- Sweeping before this lock could delete a live worker's staging while
+  -- that worker, holding the row, is itself deleting it: a deadlock.
+  select * into v_run from public.sheet_sync_runs r where r.status = 'running' for update;
   -- Staged rows (names, phones) belong only to a LIVE run: finish clears a
-  -- run's own, but a run that crashed never finishes. Sweep them first —
-  -- also on the paused path below, which returns before any takeover.
+  -- run's own, but a run that crashed never finishes. Sweep them — also on
+  -- the paused path below, which returns before any takeover.
   delete from public.sheet_mirror_staging s
    where not exists (select 1 from public.sheet_sync_runs r
                       where r.id = s.run_id and r.status = 'running'
@@ -489,8 +498,7 @@ begin
     returning id into v_id;
     return jsonb_build_object('status', 'skipped_paused', 'run_id', v_id);
   end if;
-  select * into v_run from public.sheet_sync_runs r where r.status = 'running' for update;
-  if found then
+  if v_run.id is not null then
     if public._sheet_sync_lease_live(v_run.heartbeat_at) then
       raise exception 'Another sheet sync is running.' using errcode = 'P0062';
     end if;
@@ -793,7 +801,11 @@ begin
     -- forever. Then the item re-opens (as a new open row). The exception is a
     -- "keep undone" dismissal (sheet_review_resolve): its undo holds are the
     -- admin's answer, so it stays dismissed — under any identity kind a later
-    -- run computes for the key — until some key carries a DIFFERENT hold.
+    -- run computes for the key — until some key carries a DIFFERENT hold, or
+    -- the CANDIDATES change (resolution.candidate_ids, saved at dismissal):
+    -- an undo hold is never re-held by the planner, so a new matching patient
+    -- (staff registered the real person) is the only signal the admin could
+    -- now link the row. The re-opened item offers Keep undone again.
     if exists (select 1 from public.sheet_sync_review_items i
                 where i.item_key = v_item->>'item_key' and i.status = 'dismissed'
                   and (i.kind = v_item->>'kind'
@@ -807,7 +819,13 @@ begin
                              case when jsonb_typeof(v_item->'payload'->'link_keys') = 'array'
                                   then v_item->'payload'->'link_keys' else '[]'::jsonb end))
                        and (not coalesce((i.resolution->>'keep_undone')::boolean, false)
-                            or l.hold_reason is distinct from 'undone by an admin'))) then
+                            or l.hold_reason is distinct from 'undone by an admin'))
+                  and (not coalesce((i.resolution->>'keep_undone')::boolean, false)
+                       or i.resolution->'candidate_ids' = (select coalesce(jsonb_agg(x order by x), '[]'::jsonb)
+                              from (select distinct c->>'patient_id' as x
+                                      from jsonb_array_elements(case when jsonb_typeof((v_item->'payload')->'candidates') = 'array'
+                                                                     then (v_item->'payload')->'candidates' else '[]'::jsonb end) c
+                                     where c->>'patient_id' is not null) s))) then
       continue;
     end if;
     update public.sheet_sync_review_items i
@@ -974,7 +992,7 @@ declare
   v_restore jsonb;
   v_rows int;
   n_restored int := 0; n_blocked int := 0; n_deleted int := 0; n_kept int := 0; n_held int := 0;
-  n_alias_removed int := 0; n_alias_restored int := 0; n_links_left int := 0;
+  n_alias_removed int := 0; n_alias_restored int := 0; n_links_left int := 0; n_gone int := 0;
 begin
   if p_limit is not null and p_limit < 1 then
     raise exception 'The undo page size must be at least 1.' using errcode = '22023';
@@ -1008,7 +1026,7 @@ begin
     v_left := v_left - 1;
     select * into v_cur from public.patients p where p.id = v_pid for update;
     if not found or v_cur.row_version <> v_ver then
-      update public.sheet_sync_changes set undo_outcome = 'blocked'
+      update public.sheet_sync_changes set undo_outcome = 'blocked', undo_run_id = v_run
        where run_id = p_target_run and patient_id = v_pid and change_kind = 'update' and undo_outcome is null;
       n_blocked := n_blocked + 1;
       continue;
@@ -1033,7 +1051,7 @@ begin
     returning * into v_new;
     perform set_config('app.referral_origin', '', true);
     perform public._sheet_sync_record_changes(v_run, to_jsonb(v_cur), to_jsonb(v_new));
-    update public.sheet_sync_changes set reverted_at = now(), undo_outcome = 'restored'
+    update public.sheet_sync_changes set reverted_at = now(), undo_outcome = 'restored', undo_run_id = v_run
      where run_id = p_target_run and patient_id = v_pid and change_kind = 'update';
     n_restored := n_restored + 1;
     if v_sync_run then
@@ -1055,12 +1073,13 @@ begin
       select p.row_version into v_ver from public.patients p where p.id = v_pid for update;
       if not found then
         -- removed by staff since: nothing left to undo
-        update public.sheet_sync_changes set undo_outcome = 'gone'
+        update public.sheet_sync_changes set undo_outcome = 'gone', undo_run_id = v_run
          where run_id = p_target_run and patient_id = v_pid and change_kind = 'create';
+        n_gone := n_gone + 1;
         continue;
       end if;
       if v_ver <> 0 then
-        update public.sheet_sync_changes set undo_outcome = 'kept'
+        update public.sheet_sync_changes set undo_outcome = 'kept', undo_run_id = v_run
          where run_id = p_target_run and patient_id = v_pid and change_kind = 'create';
         n_kept := n_kept + 1;
         continue;
@@ -1076,12 +1095,12 @@ begin
         update public.sheet_customer_rows set patient_id = null, link_state = 'unlinked' where patient_id = v_pid;
         update public.sheet_encounter_lines set patient_id = null where patient_id = v_pid;
         delete from public.patients where id = v_pid;
-        update public.sheet_sync_changes set reverted_at = now(), undo_outcome = 'deleted'
+        update public.sheet_sync_changes set reverted_at = now(), undo_outcome = 'deleted', undo_run_id = v_run
          where run_id = p_target_run and patient_id = v_pid and change_kind = 'create';
         n_deleted := n_deleted + 1;
         n_held := n_held + v_rows;
       exception when foreign_key_violation then
-        update public.sheet_sync_changes set undo_outcome = 'kept'
+        update public.sheet_sync_changes set undo_outcome = 'kept', undo_run_id = v_run
          where run_id = p_target_run and patient_id = v_pid and change_kind = 'create';
         n_kept := n_kept + 1;
       end;
@@ -1137,7 +1156,7 @@ begin
     update public.sheet_sync_runs set reverted_by_run_id = v_run where id = p_target_run;
   end if;
   return jsonb_build_object('done', v_done, 'restored', n_restored, 'blocked', n_blocked, 'deleted', n_deleted,
-                            'kept', n_kept, 'held', n_held, 'links_left', n_links_left,
+                            'kept', n_kept, 'gone', n_gone, 'held', n_held, 'links_left', n_links_left,
                             'alias_removed', n_alias_removed, 'alias_restored', n_alias_restored);
 end $$;
 
@@ -1167,8 +1186,10 @@ $$;
 -- Dismiss on an item with HELD keys:
 --   * every held key is an undo hold (hold_reason 'undone by an admin') ->
 --     allowed, meaning "keep it undone": the holds stay, the item stays
---     dismissed (resolution.keep_undone = true), and the sync never re-opens
---     it (sheet_sync_upsert_review) — whatever kind a later run gives it;
+--     dismissed (resolution.keep_undone = true, with the candidate ids it
+--     showed), and the sync does not re-open it (sheet_sync_upsert_review)
+--     under any identity kind — until its candidates change (a new matching
+--     patient), when it re-opens and offers Keep undone again;
 --   * any other (evidence-based) hold -> refused (22023): that hold is only
 --     ever replaced by an admin link or create, and hiding it would park the
 --     key unseen.
@@ -1182,7 +1203,7 @@ declare
   v_keep_undone boolean;
 begin
   if not pg_try_advisory_xact_lock(hashtext('sheet_sync_lease')) then
-    raise exception 'Another sheet sync is starting.' using errcode = 'P0062';
+    raise exception 'The sheet sync is busy right now — try again in a moment.' using errcode = 'P0062';
   end if;
   begin
     select * into v_live from public.sheet_sync_runs r where r.status = 'running' for update nowait;
@@ -1207,7 +1228,12 @@ begin
                               where l.decision = 'review' and l.link_key in (select jsonb_array_elements_text(v_keys)));
     update public.sheet_sync_review_items
        set status = 'dismissed', resolved_by = p_actor, resolved_at = now(),
-           resolution = jsonb_build_object('action', 'dismiss', 'keep_undone', v_keep_undone)
+           resolution = jsonb_build_object('action', 'dismiss', 'keep_undone', v_keep_undone,
+                                           'candidate_ids', (select coalesce(jsonb_agg(x order by x), '[]'::jsonb)
+                              from (select distinct c->>'patient_id' as x
+                                      from jsonb_array_elements(case when jsonb_typeof(v_item.payload->'candidates') = 'array'
+                                                                     then v_item.payload->'candidates' else '[]'::jsonb end) c
+                                     where c->>'patient_id' is not null) s))
      where id = p_item_id;
     return;
   end if;

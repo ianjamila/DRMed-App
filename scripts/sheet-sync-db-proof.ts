@@ -93,7 +93,11 @@
 //   # FAIL Dismiss: refused on an evidence hold … (… dismiss an undo-held item
 //   # (keep undone): unexpected error — [22023] …).
 //   mutate sheet_review_resolve "and l.hold_reason is distinct from 'undone by an admin') then" ") then"
-//   npm run sheet-sync:db-proof          # expect exactly those seven FAILs
+//   # M12 — acquire sweeps staged rows without sparing a LIVE run. Expect:
+//   # FAIL A paused acquire sweeps a dead run's staged rows … (… a live
+//   # run's staged rows must survive the sweep, got 0).
+//   mutate sheet_sync_acquire "where not exists (select 1 from public.sheet_sync_runs r" "where true or not exists (select 1 from public.sheet_sync_runs r"
+//   npm run sheet-sync:db-proof          # expect exactly those eight FAILs
 //   /opt/homebrew/bin/supabase db reset  # undo round A
 //
 //   ## Round B ##
@@ -113,9 +117,10 @@
 //   ## Round C ##
 //   # M8 — an undo holds the links of patients it did not undo (kept or
 //   # blocked). Expect: FAIL Undo holds the auto links of a restored patient;
-//   # a kept patient keeps its links (… expected kept=1 deleted=0 held=0 …).
+//   # a kept patient keeps its links (… expected kept=1 deleted=0 held=0 …)
+//   # and FAIL Paged undo … (… the blocked patient's link left …).
 //   mutate sheet_sync_revert_run "and c.undo_outcome in ('kept','blocked')" "and false"
-//   npm run sheet-sync:db-proof          # expect exactly that FAIL
+//   npm run sheet-sync:db-proof          # expect exactly those two FAILs
 //   /opt/homebrew/bin/supabase db reset  # undo round C
 //
 //   ## Round D ##
@@ -123,7 +128,12 @@
 //   # FAIL Undo of a map-answer run … (… u1c answer (older run undone first):
 //   # expected no alias left, got flyers).
 //   mutate sheet_sync_revert_run "while v_restore is not null and exists (" "while false and exists ("
-//   npm run sheet-sync:db-proof          # expect exactly that FAIL
+//   # M13 — a Keep-undone item ignores new candidates. Expect: FAIL Dismiss:
+//   # refused on an evidence hold … (… new candidates must re-open a
+//   # keep-undone item …).
+//   mutate sheet_sync_upsert_review "or i.resolution->'candidate_ids' = " "or true or i.resolution->'candidate_ids' = "
+//   (M13 runs here, not in round A: M11 would stop that check before this step.)
+//   npm run sheet-sync:db-proof          # expect exactly those two FAILs
 //   /opt/homebrew/bin/supabase db reset  # undo round D, then re-run: all PASS
 import "./lib/load-env";
 import { requireLocalOrExplicitProd } from "./lib/env-guard";
@@ -2175,8 +2185,9 @@ async function main() {
       );
 
       // An item held only by an UNDO may be dismissed: "keep it undone". The
-      // hold stays, and later runs never re-open it — even under another
-      // identity kind — until the key carries a different (evidence) hold.
+      // hold stays, and later runs do not re-open it — even under another
+      // identity kind — until its CANDIDATES change (a new matching patient:
+      // the planner never re-holds an undo-held key, so nothing else moves).
       await setRole("postgres", null);
       await q(
         `insert into public.sheet_patient_links (link_key, decision, method, hold_reason)
@@ -2184,7 +2195,8 @@ async function main() {
       );
       const u = await q<{ id: string }>(
         `insert into public.sheet_sync_review_items (tab, item_key, kind, payload)
-         values ('customers', 'e:undone', 'ambiguous_patient', '{"link_keys":["e:undone"]}'::jsonb) returning id`,
+         values ('customers', 'e:undone', 'ambiguous_patient', $1::jsonb) returning id`,
+        [JSON.stringify({ link_keys: ["e:undone"], candidates: [{ patient_id: fx.patientPId }] })],
       );
       await setRole("service_role", null);
       await expectOk("dismiss an undo-held item (keep undone)", () =>
@@ -2200,25 +2212,42 @@ async function main() {
         res.rows[0].status === "dismissed" && res.rows[0].keep === true && res.rows[0].decision === "review",
         `keep undone: expected dismissed, keep_undone, hold kept, got ${JSON.stringify(res.rows[0])}`,
       );
-      const report = (kind: string) => JSON.stringify([{ kind, item_key: "e:undone", payload: { link_keys: ["e:undone"] } }]);
-      const l2 = await acquire("manual", false);
-      const up2 = await q<{ j: Json }>(`select public.sheet_sync_upsert_review($1::uuid, 'customers', $2::jsonb, false) as j`, [
-        l2.token, report("identity_conflict"),
-      ]);
-      await finish(l2.token);
+      // The planner-shaped item for this key: resolveHeld keeps the kind it
+      // computes and lists its candidates (customer-plan.test.ts proves the
+      // candidate set grows when a matching patient is registered).
+      const report = (kind: string, candidates: string[]) => JSON.stringify([{ kind, item_key: "e:undone",
+        payload: { link_keys: ["e:undone"], candidates: candidates.map((id) => ({ patient_id: id })), reason: "held for an admin decision",
+          held_because: "undone by an admin" } }]);
+      const upsert = async (kind: string, candidates: string[]) => {
+        const l = await acquire("manual", false);
+        const j = (await q<{ j: Json }>(`select public.sheet_sync_upsert_review($1::uuid, 'customers', $2::jsonb, false) as j`, [
+          l.token, report(kind, candidates)])).rows[0].j;
+        await finish(l.token);
+        return j;
+      };
+      const same = await upsert("identity_conflict", [fx.patientPId]);
       assert(
-        up2.rows[0].j.opened === 0 && up2.rows[0].j.updated === 0,
-        `keep undone: a later run (another identity kind) must not re-open it, got ${JSON.stringify(up2.rows[0].j)}`,
+        same.opened === 0 && same.updated === 0,
+        `keep undone: a later run with the same candidates (another identity kind) must not re-open it, got ${JSON.stringify(same)}`,
       );
+      // Staff register the real patient: a new candidate appears.
       await setRole("postgres", null);
-      await q(`update public.sheet_patient_links set hold_reason = 'phone differs' where link_key = 'e:undone'`);
+      const nb = await q<{ id: string }>(
+        `insert into public.patients (first_name, last_name, birthdate) values ('Newly', 'Registered', '1985-05-05') returning id`,
+      );
       await setRole("service_role", null);
-      const l3 = await acquire("manual", false);
-      const up3 = await q<{ j: Json }>(`select public.sheet_sync_upsert_review($1::uuid, 'customers', $2::jsonb, false) as j`, [
-        l3.token, report("identity_conflict"),
-      ]);
-      await finish(l3.token);
-      assert(up3.rows[0].j.opened === 1, `an evidence hold re-opens a keep-undone item, got ${JSON.stringify(up3.rows[0].j)}`);
+      const moved = await upsert("possible_existing_patient", [fx.patientPId, nb.rows[0].id]);
+      assert(moved.opened === 1, `new candidates must re-open a keep-undone item, got ${JSON.stringify(moved)}`);
+      const reopened = await q<{ id: string }>(
+        `select id from public.sheet_sync_review_items where item_key = 'e:undone' and status = 'open'`,
+      );
+      assert(reopened.rows.length === 1, `expected one open e:undone item, got ${reopened.rows.length}`);
+      await expectOk("keep undone again on the re-opened item", () =>
+        q(`select public.sheet_review_resolve($1::uuid, $2::uuid, 'dismiss', null)`, [reopened.rows[0].id, fx.adminId]),
+      );
+      const again = await upsert("possible_existing_patient", [nb.rows[0].id, fx.patientPId]);
+      assert(again.opened === 0 && again.updated === 0,
+        `kept undone again with the same (reordered) candidates: expected no re-open, got ${JSON.stringify(again)}`);
     });
 
     // 28. Resolve never waits on the lease lock (review round 5, 6 + 7) -------
@@ -2254,8 +2283,23 @@ async function main() {
     });
 
     // 29. A paused acquire still sweeps a dead run's staging (review round 5, 8)
-    await check("A paused acquire sweeps a dead run's staged rows without taking over", async () => {
+    await check("A paused acquire sweeps a dead run's staged rows without taking over (a live run's survive)", async () => {
       await setRole("service_role", null);
+      // A LIVE run's staged rows survive a paused acquire's sweep.
+      const live = await acquire("manual", false);
+      await q(`select public.sheet_mirror_stage($1::uuid, 'lab', '[{"sheet_row":1},{"sheet_row":2}]'::jsonb)`, [live.token]);
+      await setRole("postgres", null);
+      await q(`update public.sheet_sync_settings set paused = true where id`);
+      await setRole("service_role", null);
+      const p0 = await acquire("cron", false);
+      assert(p0.status === "skipped_paused", `paused cron beside a live run: expected skipped_paused, got ${p0.status}`);
+      const kept = await q<{ n: string }>(`select count(*)::text as n from public.sheet_mirror_staging where run_id = $1`, [live.runId]);
+      assert(kept.rows[0].n === "2", `a live run's staged rows must survive the sweep, got ${kept.rows[0].n}`);
+      await finish(live.token);
+      await setRole("postgres", null);
+      await q(`update public.sheet_sync_settings set paused = false where id`);
+      await setRole("service_role", null);
+
       const a = await acquire("manual", false);
       await q(`select public.sheet_mirror_stage($1::uuid, 'lab', '[{"sheet_row":1}]'::jsonb)`, [a.token]);
       await q(`update public.sheet_sync_runs set heartbeat_at = now() - interval '11 minutes' where id = $1`, [a.runId]);
@@ -2303,15 +2347,50 @@ async function main() {
       const p1 = await page();
       assert(p1.done === false && p1.restored === 2 && p1.deleted === 0, `page 1: expected 2 restored, not done, got ${JSON.stringify(p1)}`);
       assert((await stamped()) === null, "page 1: the run must not be marked undone yet");
-      const p2 = await page();
-      assert(p2.done === false && p2.restored === 1 && p2.deleted === 1, `page 2: expected 1 restored + 1 deleted, not done, got ${JSON.stringify(p2)}`);
-      const p3 = await page();
-      assert(p3.done === true && p3.restored === 0 && p3.deleted === 1, `page 3: expected the last delete and done, got ${JSON.stringify(p3)}`);
-      assert((await stamped()) === rv.runId, "page 3: the run must now be marked undone by this undo run");
+
+      // Between pages: staff edit the one patient page 1 did not reach, and
+      // the undo worker dies (no heartbeat for 11 minutes); a new undo run
+      // takes the lease over and resumes.
+      const left = await q<{ pid: string }>(
+        `select distinct patient_id::text as pid from public.sheet_sync_changes
+          where run_id = $1 and change_kind = 'update' and undo_outcome is null`, [r.runId]);
+      assert(left.rows.length === 1, `after page 1: expected one fill left, got ${left.rows.length}`);
+      await setRole("postgres", null);
+      await q(`update public.patients set address = 'Edited between pages' where id = $1`, [left.rows[0].pid]);
+      await setRole("service_role", null);
+      await q(`update public.sheet_sync_runs set heartbeat_at = now() - interval '11 minutes' where id = $1`, [rv.runId]);
+      const rv2 = await acquire("revert", false);
+      await expectPgError("the dead undo worker cannot write a page", "P0063", () => page());
+      const page2 = async () =>
+        (await q<{ j: Json }>(`select public.sheet_sync_revert_run($1::uuid, $2::uuid, 2) as j`, [rv2.token, r.runId])).rows[0].j;
+      const p2 = await page2();
+      assert(p2.done === false && p2.restored === 0 && p2.blocked === 1 && p2.deleted === 1,
+        `page 2 (new undo run): expected the edited patient blocked + 1 deleted, not done, got ${JSON.stringify(p2)}`);
+      // Staff remove the last created patient before the undo reaches it:
+      // the page still makes progress, reported as gone.
+      const lastNew = await q<{ pid: string }>(
+        `select patient_id::text as pid from public.sheet_sync_changes
+          where run_id = $1 and change_kind = 'create' and undo_outcome is null`, [r.runId]);
+      assert(lastNew.rows.length === 1, `after page 2: expected one create left, got ${lastNew.rows.length}`);
+      await setRole("postgres", null);
+      await q(`delete from public.patients where id = $1`, [lastNew.rows[0].pid]);
+      await setRole("service_role", null);
+      const p3 = await page2();
+      assert(p3.done === true && p3.restored === 0 && p3.deleted === 0 && p3.gone === 1 && p3.links_left === 1,
+        `page 3: expected the removed patient counted gone, done, and the blocked patient's link left, got ${JSON.stringify(p3)}`);
+      assert((await stamped()) === rv2.runId, "page 3: the run must now be marked undone by the undo run that finished it");
       const held = [p1, p2, p3].reduce((n, p) => n + p.held, 0);
-      assert(held === 5, `paged undo: expected 5 holds in total (3 restored patients + 2 deleted), got ${held}`);
-      await expectPgError("a page after done", "22023", () => page());
-      await finish(rv.token);
+      assert(held === 3, `paged undo: expected 3 holds (2 restored patients + 1 deleted; the blocked patient keeps its link), got ${held}`);
+      // Nothing applied twice; every change row names the undo run that decided it.
+      const trace = await q<{ outcome: string; by: string; n: string }>(
+        `select undo_outcome as outcome, undo_run_id::text as by, count(*)::text as n from public.sheet_sync_changes
+          where run_id = $1 group by 1, 2 order by 1, 2`, [r.runId]);
+      const want = [["blocked", rv2.runId, "1"], ["deleted", rv2.runId, "1"], ["gone", rv2.runId, "1"], ["restored", rv.runId, "2"]]
+        .sort((x, y) => (x[0] + x[1] < y[0] + y[1] ? -1 : 1));
+      assert(JSON.stringify(trace.rows.map((t) => [t.outcome, t.by, t.n])) === JSON.stringify(want),
+        `traceability: expected ${JSON.stringify(want)}, got ${JSON.stringify(trace.rows)}`);
+      await expectPgError("a page after done", "22023", () => page2());
+      await finish(rv2.token);
     });
 
     // 31. Undo of a first-catch-up-sized run under the PostgREST limits -------

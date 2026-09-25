@@ -5823,6 +5823,7 @@ export type Database = {
           row_version_after: number
           run_id: string
           undo_outcome: string | null
+          undo_run_id: string | null
         }
         Insert: {
           change_kind: string
@@ -5836,6 +5837,7 @@ export type Database = {
           row_version_after: number
           run_id: string
           undo_outcome?: string | null
+          undo_run_id?: string | null
         }
         Update: {
           change_kind?: string
@@ -5849,11 +5851,19 @@ export type Database = {
           row_version_after?: number
           run_id?: string
           undo_outcome?: string | null
+          undo_run_id?: string | null
         }
         Relationships: [
           {
             foreignKeyName: "sheet_sync_changes_run_id_fkey"
             columns: ["run_id"]
+            isOneToOne: false
+            referencedRelation: "sheet_sync_runs"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "sheet_sync_changes_undo_run_id_fkey"
+            columns: ["undo_run_id"]
             isOneToOne: false
             referencedRelation: "sheet_sync_runs"
             referencedColumns: ["id"]

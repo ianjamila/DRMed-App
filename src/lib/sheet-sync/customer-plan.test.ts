@@ -613,4 +613,21 @@ describe("planCustomers — round 2 (order-independent run-2 check, per-key trus
     expect(reviewFor(out2, key)[0].payload).toMatchObject({ reason: "held for an admin decision", held_because: "undone by an admin" });
     expect(out2.mirror[0]).toMatchObject({ patient_id: null });
   });
+  it("an undo-held key's review candidates change when a new matching patient appears (0170 re-opens a Keep-undone item on that)", () => {
+    // The planner never re-holds an undo-held key, so the hold_reason stays
+    // "undone by an admin" forever; the CANDIDATE set is what moves.
+    const key = "dela cruz|juan santos#1990-01-01";
+    const p = patient({});
+    const rows = rowsOf({ name: "Dela Cruz, Juan Santos", dob: 32874, phone: "09171112222" });
+    const held = { link_key: key, patient_id: null, decision: "review" as const, method: "auto_exact" as const, hold_reason: "undone by an admin" };
+    const cands = (out: ReturnType<typeof planCustomers>) =>
+      (reviewFor(out, key)[0].payload.candidates as Array<{ patient_id: string }>).map((c) => c.patient_id).sort();
+    const before = planIn(rows, world([p], [held]));
+    expect(before.ops).toEqual([]);
+    expect(cands(before)).toEqual([p.id]);
+    const staffRegistered = patient({});
+    const after = planIn(rows, world([p, staffRegistered], [held]));
+    expect(after.ops).toEqual([]);
+    expect(cands(after)).toEqual([p.id, staffRegistered.id].sort());
+  });
 });
