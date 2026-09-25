@@ -24,6 +24,10 @@ export interface WaiverAllocation {
 }
 
 const toC = (php: number): number => Math.round(php * 100);
+// Plain code-unit compare: for lowercase-hex uuids this is byte order, the same
+// order Postgres gives `order by test_request_id` in the SQL (localeCompare is
+// locale-dependent and only coincidentally agrees).
+const byId = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
 
 export function discountAccountFor(kind: string | null | undefined): "4910" | "4920" {
   const cls = classifyKind(kind ?? "");
@@ -47,7 +51,7 @@ export function allocateWaiver(remainderPhp: number, lines: readonly WaiverLine[
     return { id: l.id, account: discountAccountFor(l.kind), share: Math.floor((rem * p) / sum), frac: (rem * p) % sum };
   });
   let left = rem - shares.reduce((s, x) => s + x.share, 0);
-  const order = [...shares].sort((a, b) => b.frac - a.frac || a.id.localeCompare(b.id));
+  const order = [...shares].sort((a, b) => b.frac - a.frac || byId(a.id, b.id));
   for (const x of order) {
     if (left === 0) break;
     x.share += 1;
@@ -55,7 +59,7 @@ export function allocateWaiver(remainderPhp: number, lines: readonly WaiverLine[
   }
   return shares
     .filter((x) => x.share > 0)
-    .sort((a, b) => a.id.localeCompare(b.id))
+    .sort((a, b) => byId(a.id, b.id))
     .map((x) => ({ id: x.id, amountPhp: x.share / 100, account: x.account }));
 }
 
