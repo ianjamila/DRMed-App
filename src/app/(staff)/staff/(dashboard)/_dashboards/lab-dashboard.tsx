@@ -188,6 +188,9 @@ async function loadLabStats(
           .from("critical_alerts")
           .select("id", { count: "exact", head: true })
           .is("acknowledged_at", null)
+          // A correction that removed the value withdraws its alert (0179)
+          // instead of deleting it — it's no longer a critical to act on.
+          .is("withdrawn_at", null)
       : SKIP_COUNT;
 
   // Same money-settled gate as myUnclaimedPromise above — a send-out that
@@ -291,6 +294,9 @@ async function loadLabStats(
             "id, direction, created_at, test_request_id, parameter_name, acknowledged_at, acknowledged_by, test_requests!inner ( assigned_to )",
           )
           .eq("test_requests.assigned_to", userId)
+          // A correction that removed the value withdraws its alert (0179)
+          // instead of deleting it — it's not a critical anymore.
+          .is("withdrawn_at", null)
           .order("created_at", { ascending: false })
           .limit(5)
           .returns<CriticalRow[]>()
@@ -307,6 +313,9 @@ async function loadLabStats(
           .from("critical_alerts")
           .select("id, direction, created_at, test_request_id, parameter_name, patient_drm_id")
           .is("acknowledged_at", null)
+          // A correction that removed the value withdraws its alert (0179)
+          // instead of deleting it — it's not a critical anymore.
+          .is("withdrawn_at", null)
           .order("created_at", { ascending: true })
           .limit(5)
           .returns<CriticalRow[]>()
