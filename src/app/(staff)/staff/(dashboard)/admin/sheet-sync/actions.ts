@@ -59,7 +59,7 @@ function fail(e: unknown): ErrResult {
   }
   if (e instanceof Error && !err?.code && FINISH_NOT_RECORDED.test(e.message)) {
     console.error("sheet sync action failed (finish not recorded)", e);
-    return { ok: false, error: "The sync ran but couldn't be recorded as finished — check Run history in a few minutes." };
+    return { ok: false, error: "The change ran but couldn't be recorded as finished — check Run history in a few minutes." };
   }
   console.error("sheet sync action failed", e);
   return { ok: false, error: "Something went wrong. Please try again." };

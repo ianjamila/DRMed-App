@@ -63,14 +63,14 @@ function hasCommittedChanges(run: RunRow): boolean {
 // The Undo action is refused in SQL (22023) for a run that is itself an
 // undo, a still-running run, or an already-undone run — hide the button for
 // those instead of letting an admin hit a wall.
+// Re-sort and answer-mapping runs are undoable too (plan D3), once they
+// succeeded; a sync run may also have written before it failed.
 function canUndo(run: RunRow): boolean {
-  return (
-    !run.dry_run &&
-    SYNC_TRIGGERS.has(run.trigger) &&
-    (run.status === "succeeded" || run.status === "partial" || run.status === "failed") &&
-    !run.reverted_by_run_id &&
-    hasCommittedChanges(run)
-  );
+  if (run.dry_run || run.reverted_by_run_id) return false;
+  if (SYNC_TRIGGERS.has(run.trigger)) {
+    return (run.status === "succeeded" || run.status === "partial" || run.status === "failed") && hasCommittedChanges(run);
+  }
+  return (run.trigger === "resort" || run.trigger === "alias") && run.status === "succeeded";
 }
 
 function whatChanged(run: RunRow): string {
