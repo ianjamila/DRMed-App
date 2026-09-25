@@ -27,6 +27,7 @@ import {
 import { visitDeletability, hasOpenHmoClaim } from "@/lib/visits/deletion";
 import { shouldPrintReceipt } from "@/lib/visits/receipt-policy";
 import { waivedAmount } from "@/lib/visits/statement";
+import { countReleasedLines } from "@/lib/visits/payment-edit";
 import { QueueDeleteDialog } from "@/components/staff/queue-delete-dialog";
 
 const QUEUE_SUBSCRIPTIONS = [
@@ -573,6 +574,33 @@ function WaivedNote({ visit, inline = false }: { visit: QueueVisitRow; inline?: 
   );
 }
 
+// A Waiting row whose results already went out while it was paid — a
+// payment deleted or moved, or a test added after the release. Released
+// results stay released (owner rule); the badge only says so, so the counter
+// collects the balance instead of telling the patient to wait for results
+// they already have. An HMO visit never waits here, and releases unpaid by
+// design anyway (0133). Counted like Patient AR's badge: results only.
+function ReleasedBadge({ visit }: { visit: QueueVisitRow }) {
+  if (visit.hmo_provider_id != null) return null;
+  const { results } = countReleasedLines(
+    (visit.test_requests ?? [])
+      .filter((t) => t.deleted_at === null)
+      .map((t) => {
+        const svc = Array.isArray(t.services) ? t.services[0] : t.services;
+        return { status: t.status, is_package_header: t.is_package_header, kind: svc?.kind };
+      }),
+  );
+  if (results === 0) return null;
+  return (
+    <span
+      className="ml-1.5 inline-block rounded-md border border-amber-300 bg-amber-50 px-2 py-0.5 text-xs font-semibold text-amber-800"
+      title="Results went out while this visit was paid; it owes money again. Released results stay released."
+    >
+      Results released · {results}
+    </span>
+  );
+}
+
 function QueueRow({
   entry,
   stage,
@@ -600,7 +628,10 @@ function QueueRow({
         {stage === "processing" ? (
           <ProcessingTestsSummary tests={entry.tests} />
         ) : (
-          <PaymentBadge visit={visit} />
+          <>
+            <PaymentBadge visit={visit} />
+            {stage === "waiting" ? <ReleasedBadge visit={visit} /> : null}
+          </>
         )}
       </td>
       <td className="px-4 py-3 text-right font-mono">
@@ -653,7 +684,10 @@ function QueueCard({
         >
           #{String(visit.visit_number).padStart(4, "0")}
         </Link>
-        <PaymentBadge visit={visit} />
+        <span>
+          <PaymentBadge visit={visit} />
+          {stage === "waiting" ? <ReleasedBadge visit={visit} /> : null}
+        </span>
       </div>
       <div className="mt-1">
         <PatientCell visit={visit} />

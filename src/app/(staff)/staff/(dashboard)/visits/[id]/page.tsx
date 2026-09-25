@@ -28,7 +28,12 @@ import { AttendingPhysicianDialog } from "./attending-physician-dialog";
 import { VoidPaymentDialog } from "../../payments/[id]/void/void-payment-dialog";
 import { EditPaymentDialog } from "../../payments/[id]/edit/edit-payment-dialog";
 import { MovePaymentDialog } from "../../payments/[id]/move/move-payment-dialog";
-import { paymentEditability } from "@/lib/visits/payment-edit";
+import {
+  countReleasedLines,
+  paymentEditability,
+  releasedWhileUnpaidMessage,
+  type VisitMoney,
+} from "@/lib/visits/payment-edit";
 import { linkPayments, paymentMethodLabel as methodLabel } from "@/lib/visits/payment-history";
 import {
   PAYMENT_HISTORY_SELECT,
@@ -478,6 +483,27 @@ export default async function VisitDetailPage({ params, searchParams }: Props) {
     .filter((t) => t.deleted_at !== null)
     .filter((t) => canSeeRow(t));
   const rawRows = (tests ?? []).filter((t) => t.deleted_at === null);
+  // What this visit has already released, counted the way the Delete / Move
+  // dialogs and the note under the tests table say it: results apart from
+  // doctor lines, never a package header (payment-edit.ts). Every live line,
+  // not just the ones this role may see — it is a fact about the visit.
+  const releasedCounts = countReleasedLines(
+    rawRows.map((r) => {
+      const svc = Array.isArray(r.services) ? r.services[0] : r.services;
+      return { status: r.status, is_package_header: r.is_package_header, kind: svc?.kind };
+    }),
+  );
+  const visitMoney: VisitMoney = {
+    totalPhp: Number(visit.total_php),
+    paidPhp: Number(visit.paid_php),
+    paymentStatus: visit.payment_status,
+    hmoProviderId: visit.hmo_provider_id,
+  };
+  // Money on this page is reception/admin-only (the billing block is behind
+  // canSeePayments), so the lab roles keep the generic note below.
+  const releasedWhileUnpaid = canSeePayments
+    ? releasedWhileUnpaidMessage(visitMoney, releasedCounts, formatPhp)
+    : null;
   // First pass: mark which parent_ids have at least one visible component.
   const visibleParents = new Set<string>();
   // …and which have at least one component this role may ACT on. A package
@@ -1400,7 +1426,19 @@ export default async function VisitDetailPage({ params, searchParams }: Props) {
             </tbody>
           </table>
         </Panel>
-        {!canRelease ? (
+        {/* Released results stay released (owner rule): a visit that owes
+            money again after its results went out — a payment deleted or
+            moved, or a line added later — says so instead of the generic
+            "blocked" note, which would read as if nothing had gone out. */}
+        {releasedWhileUnpaid ? (
+          <p
+            className="mt-3 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm font-semibold text-amber-900"
+            data-testid="released-while-unpaid"
+          >
+            {releasedWhileUnpaid} Released results stay released — collect the
+            balance at the counter. New releases wait until it is paid or waived.
+          </p>
+        ) : !canRelease ? (
           <p className="mt-3 text-xs text-[color:var(--color-brand-text-soft)]">
             ℹ️ Releases are blocked until the visit is paid or waived. HMO
             visits release straight away — the claim is booked as a
@@ -1543,9 +1581,8 @@ export default async function VisitDetailPage({ params, searchParams }: Props) {
                             patientName={`${patient.last_name}, ${patient.first_name}`}
                             patientDrmId={patient.drm_id}
                             otherVisits={otherVisits}
-                            currentVisitTotal={Number(visit.total_php)}
-                            currentVisitPaid={Number(visit.paid_php)}
-                            currentVisitReleasedCount={releasedRowIds.length}
+                            currentVisit={visitMoney}
+                            currentVisitReleased={releasedCounts}
                           />
                         ) : null}
                         {paymentEditability(p).editable ? (
@@ -1568,9 +1605,14 @@ export default async function VisitDetailPage({ params, searchParams }: Props) {
                         ) : null}
                         <VoidPaymentDialog
                           paymentId={p.id}
+                          amount={Number(p.amount_php)}
                           amountLabel={formatPhp(p.amount_php)}
                           methodLabel={methodLabel(p.method)}
                           isGiftCode={p.method === "gift_code"}
+                          visitNumber={visit.visit_number}
+                          visit={visitMoney}
+                          released={releasedCounts}
+                          canMoveOrEdit={paymentEditability(p).editable}
                         />
                       </div>
                     ) : null}

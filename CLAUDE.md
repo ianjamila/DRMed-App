@@ -18,16 +18,16 @@ Key reference artifacts:
 - `IMPLEMENTATION_PLAN.md` — original phase plan (historical; cross-check before relying on it)
 - `README.md` — operational setup
 - `.env.example` — env-var inventory
-- `docs/drmed-user-guide.html` — the staff + patient user guide (v2.24, 25 Sep 2026): every
+- `docs/drmed-user-guide.html` — the staff + patient user guide (v2.25, 25 Sep 2026): every
   screen, label and blocked-message the app shows, checked against the code. Update it in the
   PR that changes a flow it describes.
 - `docs/superpowers/specs/` and `docs/superpowers/audits/` — design specs and audits for
   every post-1.0 programme (partner revisions, release lifecycle, group templates, EOD
   denomination count…). Read the spec before re-deriving a design decision.
 
-Migration ledger: **prod head = 0177** (`statement_email_claim`, #212) as of 2026-09-25, plus
-**0176** (`result_patient_download_and_remarks`, #226) once pushed — it lands OUT OF ORDER after 0177,
-so it needs `db push --include-all`. The prod ledger is not contiguous (no 0165, 0167–0170, 0176 yet):
+Migration ledger: **prod head = 0178** (`released_payment_removed_alert`, #228) as of 2026-09-25;
+**0176** (`result_patient_download_and_remarks`, #226) and **0177** (`statement_email_claim`, #212) are
+applied too. The prod ledger is not contiguous (no 0165, 0167–0170):
 **0175** (`patient_billed_catalog_read`) and **0177** (#212), **0174** (`correct_payment_stale_guard`,
 #224), **0173** (`ledger_reversal_pairs`, #222), **0172** (`result_edit_commit`, #223 — applied
 after 0173 with `--include-all`), **0171**, **0166** (`drop_send_out_accrual_tables`, #211, pushed
@@ -273,7 +273,7 @@ All Server Actions return `{ ok: true, data } | { ok: false, error }`. User-faci
 - **Print surfaces** each append a named `@page` + `@media print` block at the tail of `src/app/globals.css`; two print PRs in flight always conflict there and the resolution is keep both.
 - **`<input pattern>`** is compiled with the RegExp `v` flag — a bare trailing `-` in a class makes the whole pattern silently ignored; write `[a-z0-9\-]+`.
 - **A repo-wide guard must cover read paths too**, not only `--commit` branches (a dry-run that reads prod PII is still a disclosure).
-- **Ledger totals count posted + reversed; posted-only is for finding the live entry, never for sums.** Reversing an entry marks the original `'reversed'` and posts a mirrored `'posted'` entry — a `status = 'posted'` filter on a report keeps the mirror and drops the original, subtracting the amount twice instead of netting to zero (0173). Every report/aggregation filters `status in ('posted', 'reversed')` (`LEDGER_TOTAL_STATUSES`, `src/lib/accounting/ledger-status.ts`); an operational lookup that finds "the live entry to reverse/link" stays posted-only. `src/lib/accounting/ledger-status.test.ts` sweeps all of `src/`: a posted-only read of `journal_entries`/`journal_lines` fails unless its function is in `LOOKUPS` with a reason. The cash-flow waterfall files a reversal under the category of the entry it reverses (`cash-flow-buckets.ts`).
+- **Ledger totals count posted + reversed; posted-only is for finding the live entry, never for sums.** Reversing an entry marks the original `'reversed'` and posts a mirrored `'posted'` entry — a `status = 'posted'` filter on a report keeps the mirror and drops the original, subtracting the amount twice instead of netting to zero (0173). Every report/aggregation filters `status in ('posted', 'reversed')` (`LEDGER_TOTAL_STATUSES`, `src/lib/accounting/ledger-status.ts`); an operational lookup that finds "the live entry to reverse/link" stays posted-only. `src/lib/accounting/ledger-status.test.ts` sweeps all of `src/`: a posted-only read of `journal_entries`/`journal_lines` fails unless its function is in `LOOKUPS` with a reason. The cash-flow waterfall files a reversal under the category of the entry it reverses (`cash-flow-buckets.ts`). The SQL half is `src/lib/accounting/ledger-status-sql.test.ts`: it replays `supabase/migrations/` to the live definition of every view/function and fails on a posted-only journal read outside `SQL_LOOKUPS`, or a journal `sum(` without `status in ('posted', 'reversed')`.
 
 ## Conventions
 
