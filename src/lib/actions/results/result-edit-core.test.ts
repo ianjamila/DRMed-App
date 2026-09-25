@@ -152,6 +152,16 @@ describe("commitResultEdit — a lost response", () => {
     expect(out.ok && out.data.alertsAdded).toEqual([ALERT]);
   });
 
+  it("amendmentId is null when neither the RPC response nor the probe yields one", async () => {
+    fx.rpc = async () => ({
+      data: { replayed: true, amendment_seq: 1, prior_storage_path: "visit/r1.pdf" },
+      error: null,
+    });
+    // beforeEach leaves fx.probe as { data: null, error: null } — no probe row either.
+    const out = await commitResultEdit(args());
+    expect(out.ok && out.data.amendmentId).toBeNull();
+  });
+
   it("a normal commit is not a replay and reports only the alerts the database added", async () => {
     fx.rpc = async () => ({
       data: { replayed: false, amendment_seq: 1, prior_storage_path: "visit/r1.pdf", alerts_added: [], amendment_id: "am-1" },

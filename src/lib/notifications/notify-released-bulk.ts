@@ -7,6 +7,7 @@ import { reviewLinkAbsolute } from "@/lib/seo/review";
 import { sendEmail } from "./email";
 import { STATEMENT_NOTE } from "./statement-note";
 import { sendSms } from "./sms";
+import { PORTAL_URL } from "./portal-url";
 import {
   renderEmailShell, emailParagraph, emailDetailBox, emailButton, emailFinePrint, escapeHtml, emailReviewCta,
 } from "./branded-email";
@@ -87,7 +88,7 @@ export async function notifyResultsReleasedBulk({
     return;
   }
 
-  const portalUrl = `${SITE.url.replace(/\/$/, "")}/portal`;
+  const portalUrl = PORTAL_URL;
   const greeting = patient.first_name || "there";
 
   // Review CTA: only on a patient's FIRST delivered result email, and only if

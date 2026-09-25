@@ -18,7 +18,12 @@ export interface CorrectedResultMessages {
   emailHtml: string;
 }
 
-/** Patient notice for a corrected result. No reason and no values — owner decision 2026-09-25. */
+/**
+ * Patient notice for a corrected result. No reason and no values — owner
+ * decision 2026-09-25. The builder's input has no reason/values field by
+ * construction, so this can never leak one; the test below is a regression
+ * guard on top, not the only line of defense.
+ */
 export function buildCorrectedResultMessages(
   i: CorrectedResultMessageInput,
 ): CorrectedResultMessages {

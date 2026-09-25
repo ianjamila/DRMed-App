@@ -12,11 +12,23 @@ import { PORTAL_URL } from "./portal-url";
 export type NotifyOutcome = "sent" | "failed" | "already";
 
 interface Args {
-  /** The result_amendments row this notice is filed under; claims the send slot. */
-  amendmentId: string;
+  /**
+   * The result_amendments row this notice is filed under; claims the send
+   * slot. Null when the caller committed the edit but could not learn the
+   * amendment id (neither the RPC response nor the probe yielded one) — the
+   * notice is skipped rather than filed under the wrong row.
+   */
+  amendmentId: string | null;
   testName: string;
   actorId: string;
 }
+
+type ClaimRow = {
+  amendment_seq: number;
+  anchor_test_request_id: string;
+  patient_id: string;
+  result_id: string;
+};
 
 // The opt-in "updated copy ready" patient notice (0179): staff can check a box
 // on a single-test or consolidated edit to tell the patient their portal copy
@@ -24,27 +36,45 @@ interface Args {
 // per correction: result_claim_patient_notify returns a row only the first
 // time it is called for this amendment, so a retried or racing call is a
 // no-op. Never throws — a notify failure must not fail the edit that
-// triggered it.
+// triggered it. Every step after the claim succeeds (RPC or supabase-js
+// throwing on a network failure, or the audit call) is caught individually
+// so a failure there still lets a later best-effort step run — in
+// particular, the outcome is recorded even if sending or auditing blew up,
+// so the row reads "Send failed" rather than leaving "status unknown".
 export async function notifyResultCorrected({
   amendmentId,
   testName,
   actorId,
 }: Args): Promise<NotifyOutcome> {
+  if (amendmentId === null) {
+    await reportError({
+      scope: "notify/result-corrected:no-amendment-id",
+      error: new Error(
+        "edit committed but amendment id unknown — patient notice skipped",
+      ),
+      metadata: { test_name: testName },
+    });
+    return "failed";
+  }
+
   const admin = createAdminClient();
 
-  const { data: claimed, error: claimErr } = await admin.rpc(
-    "result_claim_patient_notify",
-    { p_amendment_id: amendmentId },
-  );
-  if (claimErr) {
+  let claim: ClaimRow | undefined;
+  try {
+    const { data: claimed, error: claimErr } = await admin.rpc(
+      "result_claim_patient_notify",
+      { p_amendment_id: amendmentId },
+    );
+    if (claimErr) throw new Error(claimErr.message);
+    claim = claimed?.[0];
+  } catch (e) {
     await reportError({
       scope: "notify/result-corrected:claim",
-      error: new Error(claimErr.message),
+      error: e,
       metadata: { amendment_id: amendmentId },
     });
     return "failed";
   }
-  const claim = claimed?.[0];
   if (!claim) return "already";
 
   let channels: string[] = [];
@@ -131,28 +161,48 @@ export async function notifyResultCorrected({
     error = "internal error while sending";
   }
 
-  await admin.rpc("result_record_patient_notify", {
-    p_amendment_id: amendmentId,
-    p_channels: channels,
-    p_error: error as unknown as string,
-  });
+  // The claim already succeeded, so this amendment will never be retried by
+  // result_claim_patient_notify — best-effort record the outcome even after
+  // a throw above, so the row shows "Send failed" instead of no record at
+  // all (which staff would read as "status unknown").
+  try {
+    await admin.rpc("result_record_patient_notify", {
+      p_amendment_id: amendmentId,
+      p_channels: channels,
+      p_error: error as unknown as string,
+    });
+  } catch (e) {
+    await reportError({
+      scope: "notify/result-corrected:record",
+      error: e,
+      metadata: { amendment_id: amendmentId },
+    });
+  }
 
-  await audit({
-    actor_id: actorId,
-    actor_type: "staff",
-    patient_id: claim.patient_id,
-    action: "result.notified",
-    resource_type: "test_request",
-    resource_id: claim.anchor_test_request_id,
-    metadata: {
-      kind: "corrected",
-      result_id: claim.result_id,
-      amendment_id: amendmentId,
-      amendment_seq: claim.amendment_seq,
-      sms: smsMeta,
-      email: emailMeta,
-    } as unknown as Json,
-  });
+  try {
+    await audit({
+      actor_id: actorId,
+      actor_type: "staff",
+      patient_id: claim.patient_id,
+      action: "result.notified",
+      resource_type: "test_request",
+      resource_id: claim.anchor_test_request_id,
+      metadata: {
+        kind: "corrected",
+        result_id: claim.result_id,
+        amendment_id: amendmentId,
+        amendment_seq: claim.amendment_seq,
+        sms: smsMeta,
+        email: emailMeta,
+      } as unknown as Json,
+    });
+  } catch (e) {
+    await reportError({
+      scope: "notify/result-corrected:audit",
+      error: e,
+      metadata: { amendment_id: amendmentId },
+    });
+  }
 
   return channels.length > 0 ? "sent" : "failed";
 }

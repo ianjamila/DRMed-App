@@ -140,7 +140,8 @@ export interface CommitResultEditArgs {
 
 export interface CommitResultEditData {
   replayed: boolean;
-  amendmentId: string;
+  /** null when neither the RPC response nor the probe yielded an id. */
+  amendmentId: string | null;
   amendmentSeq: number;
   priorStoragePath: string;
   newStoragePath: string;
@@ -245,7 +246,7 @@ export async function commitResultEdit(
     ok: true,
     data: {
       replayed,
-      amendmentId: d.amendment_id ?? probedAmendmentId ?? "",
+      amendmentId: d.amendment_id ?? probedAmendmentId ?? null,
       amendmentSeq: d.amendment_seq ?? args.expectedAmendmentCount + 1,
       priorStoragePath: d.prior_storage_path ?? args.currentStoragePath,
       newStoragePath,
