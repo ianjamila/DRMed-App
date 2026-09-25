@@ -4,17 +4,24 @@ import { headers } from "next/headers";
 import { createClient } from "@/lib/supabase/server";
 import { audit } from "@/lib/audit/log";
 import { needsMfaChallenge } from "@/lib/auth/mfa-gate";
+import { activeViewAs, type ActiveViewAs } from "@/lib/auth/view-as";
 
 export interface StaffSession {
   user_id: string;
   email: string;
   full_name: string;
+  /** The role every page should behave as — the admin's View-as override
+   *  while one is active, otherwise the real role. */
   role:
     | "reception"
     | "medtech"
     | "pathologist"
     | "admin"
     | "xray_technician";
+  /** The real profile role. Only the View-as controls read this. */
+  actual_role: StaffSession["role"];
+  /** The active View-as override (admin only), or null. */
+  view_as: ActiveViewAs | null;
 }
 
 // Verifies (1) Supabase auth user exists, (2) an active staff_profile row
@@ -34,7 +41,7 @@ export async function requireSignedInStaff(): Promise<StaffSession> {
 
   const { data: profile } = await supabase
     .from("staff_profiles")
-    .select("full_name, role, is_active, deleted_at")
+    .select("full_name, role, is_active, deleted_at, view_as_role, view_as_until")
     .eq("id", user.id)
     .maybeSingle();
 
@@ -59,11 +66,17 @@ export async function requireSignedInStaff(): Promise<StaffSession> {
     redirect("/staff/login");
   }
 
+  // Admin "View as role": the columns are inert unless role = 'admin' and the
+  // expiry is in the future — activeViewAs() is the TS mirror of the SQL CASE
+  // in 0182 that RLS uses, so both layers agree on every request.
+  const view_as = activeViewAs(profile);
   return {
     user_id: user.id,
     email: user.email ?? "",
     full_name: profile.full_name,
-    role: profile.role as StaffSession["role"],
+    role: (view_as?.role ?? profile.role) as StaffSession["role"],
+    actual_role: profile.role as StaffSession["role"],
+    view_as,
   };
 }
 

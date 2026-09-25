@@ -20,6 +20,10 @@ vi.mock("@/components/ui/mobile-drawer", () => ({
 vi.mock("@/app/(staff)/staff/login/actions", () => ({
   signOutStaff: "/noop",
 }));
+vi.mock("@/app/(staff)/staff/(dashboard)/view-as/actions", () => ({
+  startViewAsAction: "/noop-start",
+  exitViewAsAction: "/noop-exit",
+}));
 
 const { StaffMobileNavTrigger } = await import("./staff-mobile-nav-trigger");
 
@@ -30,7 +34,14 @@ function render(
 ) {
   pathname.current = path;
   return renderToStaticMarkup(
-    <StaffMobileNavTrigger role={role} email="a@b.ph" fullName="Test Staff" badges={badges} />,
+    <StaffMobileNavTrigger
+      role={role}
+      actualRole={role}
+      viewAs={null}
+      email="a@b.ph"
+      fullName="Test Staff"
+      badges={badges}
+    />,
   );
 }
 
@@ -175,5 +186,31 @@ describe("mobile drawer — labels and aria-current", () => {
     expect(ariaCurrentHrefs(render("reception", "/staff/patients/new"))).toEqual([
       "/staff/patients",
     ]);
+  });
+});
+
+describe("view-as in the drawer", () => {
+  it("admin gets the picker; reception does not", () => {
+    const adminHtml = renderToStaticMarkup(
+      <StaffMobileNavTrigger role="admin" actualRole="admin" viewAs={null} email="a@x.test" fullName="Ada" />,
+    );
+    expect(adminHtml).toContain('id="view-as-drawer"');
+    const recHtml = renderToStaticMarkup(
+      <StaffMobileNavTrigger role="reception" actualRole="reception" viewAs={null} email="r@x.test" fullName="Rae" />,
+    );
+    expect(recHtml).not.toContain('name="role"');
+  });
+  it("while viewing as medtech the footer says so and the nav is medtech's", () => {
+    const html = renderToStaticMarkup(
+      <StaffMobileNavTrigger
+        role="medtech"
+        actualRole="admin"
+        viewAs={{ role: "medtech", until: "2026-09-25T08:00:00.000Z" }}
+        email="a@x.test"
+        fullName="Ada"
+      />,
+    );
+    expect(html).toContain("Medical Tech (viewing as) · Admin");
+    expect(html).not.toContain('href="/staff/users"');
   });
 });
