@@ -73,7 +73,7 @@ Patients aren't postgres-authenticated, so there is no Postgres role for them. S
 
 `set_patient_context()` still exists in the schema but **no app code calls it any more** — don't reintroduce the admin-client-plus-GUC pattern.
 
-**The admin client is allowed in the portal only where RLS cannot help:** Storage signed-URL minting/downloads (`src/lib/storage/signed-url.ts`), `audit_log` reads/writes, pre-auth login, and the `appointment_attachments` delete. `src/lib/portal/portal-scoping.test.ts` fails the build-time test suite if any other portal file imports `admin.ts` — add to its `ADMIN_ALLOWLIST` with a justifying comment only when RLS genuinely can't express the access.
+**The admin client is allowed in the portal only where RLS cannot help:** Storage signed-URL minting/downloads (`src/lib/storage/signed-url.ts`), `audit_log` reads/writes, pre-auth login, the `appointment_attachments` delete, and recording the patient's download time (`result_note_patient_download`, 0176, service_role only — the download actions pass their admin client to `notePatientDownload`; the portal READS `results.patient_last_downloaded_at` / `amended_at` through the patient client for the "Result updated" chip). `src/lib/portal/portal-scoping.test.ts` fails the build-time test suite if any other portal file imports `admin.ts` — add to its `ADMIN_ALLOWLIST` with a justifying comment only when RLS genuinely can't express the access.
 
 Portal policies worth knowing (0114): `test_requests: patient own visits` (own-visit rows, including in-progress — so "still in progress" cards render), `results` / `result_test_requests: patient released only` (result *content* stays release-gated), `appointments: patient self`, `report_groups: public read active`.
 

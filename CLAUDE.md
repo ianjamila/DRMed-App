@@ -18,23 +18,24 @@ Key reference artifacts:
 - `IMPLEMENTATION_PLAN.md` — original phase plan (historical; cross-check before relying on it)
 - `README.md` — operational setup
 - `.env.example` — env-var inventory
-- `docs/drmed-user-guide.html` — the staff + patient user guide (v2.20, 25 Sep 2026): every
+- `docs/drmed-user-guide.html` — the staff + patient user guide (v2.21, 25 Sep 2026): every
   screen, label and blocked-message the app shows, checked against the code. Update it in the
   PR that changes a flow it describes.
 - `docs/superpowers/specs/` and `docs/superpowers/audits/` — design specs and audits for
   every post-1.0 programme (partner revisions, release lifecycle, group templates, EOD
   denomination count…). Read the spec before re-deriving a design decision.
 
-Migration ledger: **prod head = 0160** (`queue_claim_remarks` — the lab queue Remarks reader, #214,
-pushed by Claude before merge and verified by object 2026-09-24). **0159** (`retire_send_out_accrual`,
-#211) and **0158** (`resolve_patient_referral_source`, #206) are applied. **0157**
-(`online_booking_staff_alert`) and **0156** (`contact_message_form_location`, #200) are applied. **0155**
-(`staff_alert_recipients`, #203) was pushed AFTER 0156 with `db push --include-all` (0156 landed
-first from a parallel branch) and verified by object 2026-09-24; **0154** (#198) and **0153**
-(#196) are applied and verified. **0151** (`rls_initplan_and_policy_consolidation`,
-#192) is also applied and verified: 159 public policies, zero unwrapped helper calls, and no
-unexpected policyless tables. Prod also has **0163** (`drm_id_width`) out of order, so 0161/0162
-land later with `db push --include-all`.
+Migration ledger: **prod head = 0173** (`ledger_reversal_pairs`, #222) as of 2026-09-25, plus
+**0176** (`result_patient_download_and_remarks`, this PR) once pushed. The prod ledger is NOT
+contiguous and has out-of-order entries: **0172** (`result_edit_commit`, #223) was applied
+2026-09-25 AFTER 0173 with `db push --include-all` and verified by object; **0171**, **0163**,
+**0161**/**0162** and **0164** also landed out of order. **0159** (`retire_send_out_accrual`) and
+**0164** (`send_out_lab_tagging`) are ON PROD but their files exist only on
+`fix/retire-send-out-accrual`, not on main — so `db push` from a main-based worktree sees them as
+remote-only and refuses until you copy those two files in UNTRACKED for the push (never commit
+them here). Other numbers up to 0177 are held by open branches — `npm run claim -- list`. Earlier history: **0160**
+(`queue_claim_remarks`, #214) and **0151** (`rls_initplan_and_policy_consolidation`, #192:
+159 public policies, zero unwrapped helper calls) are applied and verified.
 
 **Rule — claim a number before you use it: `npm run claim -- migration` / `npm run claim -- pcode <n>`.**
 Several sessions work here at once, each in its own worktree, and picking "the next number" by
