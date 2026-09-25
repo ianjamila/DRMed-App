@@ -75,8 +75,8 @@ That action re-proves its own arguments (appointment exists, visit exists and is
   audit row carries `bulk_batch_size`. A batch where every group already moved returns
   `{ ok: true, changedIds: [] }` rather than an error; a partial write failure still audits and
   counts the rows it did commit before reporting `ok: false`. Legacy single-row buttons call
-  `transitionGroup`/`deleteGroups` with `from: null`, which skips the per-group status filter and
-  falls back to the full `ALLOWED_FROM` list instead. `ApptResult` success is
+  `transitionGroup`/`deleteGroups` with `from: null`, which skips the per-group status filter:
+  a transition falls back to the full `ALLOWED_FROM` list, a single-row delete matches any status. `ApptResult` success is
   `{ ok: true; changedIds }`.
 
 Status labels for the six statuses come from `APPOINTMENT_STATUS_LABEL` / `appointmentStatusLabel()` in `src/lib/appointments/labels.ts`; the pre-registered badge strings from `src/lib/patients/labels.ts`. Use them rather than re-formatting a raw status anywhere new, staff-facing or patient-facing.
