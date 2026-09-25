@@ -23,7 +23,7 @@ import { SortableTh, PlainTh } from "@/components/staff/sortable-th";
 import { ListPagination, PAGE_SIZES } from "@/components/staff/list-pagination";
 import { ROUTE_NAME } from "@/lib/staff/route-names";
 import { loadCompletedWorkCounts } from "@/lib/visits/released-results";
-import { NO_RELEASED, releasedTotal } from "@/lib/visits/payment-edit";
+import { buildArRows } from "@/lib/reports/patient-ar-rows";
 
 export const metadata = { title: ROUTE_NAME["/staff/admin/accounting/patient-ar"] };
 export const dynamic = "force-dynamic";
@@ -282,23 +282,15 @@ export default async function PatientArPage({ searchParams }: SearchProps) {
     enriched.filter((r) => r.outstanding > 0 && r.v.hmo_provider_id === null).map((r) => r.v.id),
   );
 
-  // Only rows that actually owe something belong in the table. The bucket
-  // cards above have always skipped non-positive balances (`outstanding > 0`
-  // when totalling), but the row list did not — so a visit marked unpaid with
-  // nothing left to collect sat in the table, and in the pager's "of N". On
-  // prod that was 4,147 of 4,153 rows: six visits genuinely owed money and
-  // the rest were zero-balance noise. Filter once, here, so the table, the
-  // pager and the cards all describe the same set.
-  const owingAll: ArRow[] = enriched
-    .filter((r) => r.outstanding > 0)
-    .map((r) => ({
-      ...r,
-      completed: r.v.hmo_provider_id === null ? releasedTotal(completedByVisit.get(r.v.id) ?? NO_RELEASED) : 0,
-    }));
-  const completedCount = owingAll.filter((r) => r.completed > 0).length;
-  // The completed-work filter narrows the cards too, so cards, table and
-  // pager keep describing one set.
-  const owing = releasedOnly ? owingAll.filter((r) => r.completed > 0) : owingAll;
+  // Only rows that actually owe something belong in the table (on prod the
+  // zero-balance rows were 4,147 of 4,153); each carries its completed-work
+  // count, and the filter narrows the cards too — buildArRows (tested) is the
+  // one place that decides all three.
+  const { owing, completedCount }: { owing: ArRow[]; completedCount: number } = buildArRows({
+    candidates: enriched,
+    completedByVisit,
+    completedOnly: releasedOnly,
+  });
   for (const r of owing) {
     totals[r.bucket].count += 1;
     totals[r.bucket].amount += r.outstanding;
