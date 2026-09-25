@@ -76,6 +76,10 @@ export function AppointmentsBulkBar({ groupsByKey, isAdmin }: Props) {
           : await bulkTransitionAction(batch, BULK_TARGET[button.action]);
       if (!result.ok) {
         alert(result.error);
+        // A partial failure can still have committed some rows (see
+        // transitionGroups/deleteGroups) — refresh so those show up. Keep
+        // the selection so the operator can see/retry what's left.
+        router.refresh();
         return;
       }
       const outcome = summariseOutcome(keys, groupsByKey, result.changedIds);

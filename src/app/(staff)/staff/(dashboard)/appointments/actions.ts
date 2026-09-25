@@ -140,39 +140,65 @@ async function transitionGroups(
     ),
   );
   const failed = writes.find((w) => w.error);
-  if (failed?.error) return { ok: false, error: failed.error.message };
   const data = writes.flatMap((w) => w.data ?? []);
-  if (data.length === 0) return { ok: false, error: notInState };
 
-  const h = await headers();
-  const ip = h.get("x-forwarded-for")?.split(",")[0]?.trim() ?? null;
-  const ua = h.get("user-agent");
+  // Audit and revalidate whatever the writes actually committed BEFORE
+  // deciding whether to report an error — with a multi-status bulk, write A
+  // can commit while write B errors, and A's rows must not go unaudited or
+  // leave the page stale just because B failed.
+  if (data.length > 0) {
+    const h = await headers();
+    const ip = h.get("x-forwarded-for")?.split(",")[0]?.trim() ?? null;
+    const ua = h.get("user-agent");
 
-  // One audit row per appointment so the trail per-row stays grep-able;
-  // group_appointment_ids is the BOOKING's own siblings (server-derived),
-  // bulk_batch_size is how many ids this call carried — a sweep is batch > group.
-  await Promise.all(
-    data.map((row) =>
-      audit({
-        actor_id: session.user_id,
-        actor_type: "staff",
-        patient_id: row.patient_id,
-        action: `appointment.${to}`,
-        resource_type: "appointment",
-        resource_id: row.id,
-        metadata: {
-          actor_role: session.role,
-          group_appointment_ids: siblings.get(row.id) ?? [row.id],
-          bulk_batch_size: ids.length,
-          ...extraMetadata,
-        },
-        ip_address: ip,
-        user_agent: ua,
-      }),
-    ),
-  );
+    // One audit row per appointment so the trail per-row stays grep-able;
+    // group_appointment_ids is the BOOKING's own siblings (server-derived),
+    // bulk_batch_size is how many ids this call carried — a sweep is batch > group.
+    await Promise.all(
+      data.map((row) =>
+        audit({
+          actor_id: session.user_id,
+          actor_type: "staff",
+          patient_id: row.patient_id,
+          action: `appointment.${to}`,
+          resource_type: "appointment",
+          resource_id: row.id,
+          metadata: {
+            actor_role: session.role,
+            group_appointment_ids: siblings.get(row.id) ?? [row.id],
+            bulk_batch_size: ids.length,
+            ...extraMetadata,
+          },
+          ip_address: ip,
+          user_agent: ua,
+        }),
+      ),
+    );
+    revalidatePath("/staff/appointments");
+  }
 
-  revalidatePath("/staff/appointments");
+  if (failed?.error) {
+    const n = data.length;
+    return {
+      ok: false,
+      error:
+        n > 0
+          ? `${failed.error.message} — ${n} appointment${n === 1 ? " was" : "s were"} already updated; refresh to see the current list.`
+          : failed.error.message,
+    };
+  }
+
+  if (data.length === 0) {
+    // Nothing matched and nothing errored. `from: null` (the legacy
+    // single-row callers) keeps today's "not in that state" error; a bulk
+    // call (every entry carries a non-null `from`) means every booking
+    // changed since selection, which the bar reports as "already changed"
+    // through its normal ok outcome — still refresh so the list catches up.
+    if (idsByFrom.has(null)) return { ok: false, error: notInState };
+    revalidatePath("/staff/appointments");
+    return { ok: true, changedIds: [] };
+  }
+
   return { ok: true, changedIds: data.map((row) => row.id) };
 }
 
@@ -547,37 +573,61 @@ async function deleteGroups(batch: ReadonlyArray<BatchEntry>): Promise<ApptResul
     }),
   );
   const failed = writes.find((w) => w.error);
-  if (failed?.error) return { ok: false, error: failed.error.message };
   const deleted = writes.flatMap((w) => w.data ?? []);
-  if (deleted.length === 0) {
-    return { ok: false, error: "No matching appointments." };
+
+  // Audit and revalidate whatever actually got deleted BEFORE deciding
+  // whether to report an error — with a multi-status bulk, one DELETE can
+  // commit while another errors, and the committed rows must not go
+  // unaudited or leave the page stale just because the other one failed.
+  if (deleted.length > 0) {
+    const h = await headers();
+    const ip = h.get("x-forwarded-for")?.split(",")[0]?.trim() ?? null;
+    const ua = h.get("user-agent");
+    await Promise.all(
+      deleted.map((row) =>
+        audit({
+          actor_id: session.user_id,
+          actor_type: "staff",
+          patient_id: row.patient_id,
+          action: "appointment.deleted",
+          resource_type: "appointment",
+          resource_id: row.id,
+          metadata: {
+            previous_status: row.status,
+            scheduled_at: row.scheduled_at,
+            group_appointment_ids: siblings.get(row.id) ?? [row.id],
+            bulk_batch_size: ids.length,
+          },
+          ip_address: ip,
+          user_agent: ua,
+        }),
+      ),
+    );
+    revalidatePath("/staff/appointments");
   }
 
-  const h = await headers();
-  const ip = h.get("x-forwarded-for")?.split(",")[0]?.trim() ?? null;
-  const ua = h.get("user-agent");
-  await Promise.all(
-    deleted.map((row) =>
-      audit({
-        actor_id: session.user_id,
-        actor_type: "staff",
-        patient_id: row.patient_id,
-        action: "appointment.deleted",
-        resource_type: "appointment",
-        resource_id: row.id,
-        metadata: {
-          previous_status: row.status,
-          scheduled_at: row.scheduled_at,
-          group_appointment_ids: siblings.get(row.id) ?? [row.id],
-          bulk_batch_size: ids.length,
-        },
-        ip_address: ip,
-        user_agent: ua,
-      }),
-    ),
-  );
+  if (failed?.error) {
+    const n = deleted.length;
+    return {
+      ok: false,
+      error:
+        n > 0
+          ? `${failed.error.message} — ${n} appointment${n === 1 ? " was" : "s were"} already deleted; refresh to see the current list.`
+          : failed.error.message,
+    };
+  }
 
-  revalidatePath("/staff/appointments");
+  if (deleted.length === 0) {
+    // Nothing matched and nothing errored. `from: null` (the legacy
+    // single-row callers) keeps today's "no matching appointments" error; a
+    // bulk call (every entry carries a non-null `from`) means every booking
+    // changed since selection, which the bar reports as "already changed"
+    // through its normal ok outcome — still refresh so the list catches up.
+    if (idsByFrom.has(null)) return { ok: false, error: "No matching appointments." };
+    revalidatePath("/staff/appointments");
+    return { ok: true, changedIds: [] };
+  }
+
   return { ok: true, changedIds: deleted.map((row) => row.id) };
 }
 
