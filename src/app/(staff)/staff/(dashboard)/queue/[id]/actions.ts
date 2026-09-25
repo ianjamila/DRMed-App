@@ -1035,6 +1035,7 @@ export async function amendResultAction(
     notify = offer.offered
       ? await notifyResultCorrected({
           amendmentId: committed.data.amendmentId,
+          resultId: result.id,
           testName,
           actorId: session.user_id,
           patientId: visit.patient_id,
@@ -1409,6 +1410,7 @@ export async function amendStructuredResultAction(
     notify = offer.offered
       ? await notifyResultCorrected({
           amendmentId: committed.data.amendmentId,
+          resultId: result.id,
           testName: svc.name,
           actorId: session.user_id,
           patientId: visit.patient_id,

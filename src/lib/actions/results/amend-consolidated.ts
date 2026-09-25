@@ -340,6 +340,7 @@ export async function amendConsolidatedReport(
         .maybeSingle();
       notify = await notifyResultCorrected({
         amendmentId: committed.data.amendmentId,
+        resultId: result.id,
         testName: group?.name ?? "your report",
         actorId: session.user_id,
         patientId,

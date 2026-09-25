@@ -86,4 +86,8 @@ export const NOTIFY_OUTCOME_TEXT: Record<string, string> = {
   already: " The patient was already notified about this correction.",
   inactive: " No patient notice was sent (the patient's record is no longer active).",
   not_offered: " No patient notice was sent (no copy or no contact on file).",
+  // R1: undo-release walked the test back to ready_for_release/result_uploaded
+  // between "download" and "correct" — the portal only serves released
+  // results, so a notice would point the patient at a copy they can't open.
+  not_released: " No patient notice was sent — the result isn't released, so the patient can't open it yet. They stay on Result follow-ups.",
 };

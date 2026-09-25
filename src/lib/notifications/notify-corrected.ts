@@ -11,7 +11,7 @@ import { PORTAL_URL } from "./portal-url";
 import { checkPatientRecipient } from "./active-patient-recipient";
 import { auditSkippedInactiveRecipient } from "./inactive-recipient-audit";
 
-export type NotifyOutcome = "sent" | "failed" | "already" | "inactive";
+export type NotifyOutcome = "sent" | "failed" | "already" | "inactive" | "not_released";
 
 interface Args {
   /**
@@ -21,11 +21,44 @@ interface Args {
    * notice is skipped rather than filed under the wrong row.
    */
   amendmentId: string | null;
+  /** The result this amendment belongs to — used to re-check every linked
+   * test's release status right before the claim (R1). */
+  resultId: string;
   testName: string;
   actorId: string;
   /** The visit's patient (0167) — checked BEFORE the claim so a deleted or
    * merged record never consumes the once-only send slot. */
   patientId: string;
+}
+
+// R1: the portal only serves RELEASED results — result_edit_commit allows
+// edits on result_uploaded / ready_for_release / released (undo-release can
+// walk a released test back to ready_for_release, then a correction with
+// "notify patient" ticked would promise a portal copy the patient can't yet
+// open). True/false decide whether to send; null means the check itself
+// failed, which the caller treats as "failed" rather than guessing either
+// way. Every LIVE test linked to the result must be released — a withdrawn
+// or deleted sibling doesn't count.
+async function everyLiveTestReleased(
+  admin: ReturnType<typeof createAdminClient>,
+  resultId: string,
+): Promise<boolean | null> {
+  type LiveTestRow = { test_requests: { status: string } | { status: string }[] };
+  const { data, error } = await admin
+    .from("result_test_requests")
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    .select("test_requests!inner(status, deleted_at, visits!inner(deleted_at))" as any)
+    .eq("result_id", resultId)
+    .is("test_requests.deleted_at", null)
+    .is("test_requests.visits.deleted_at", null)
+    .returns<LiveTestRow[]>();
+  if (error) return null;
+  const rows = data ?? [];
+  if (rows.length === 0) return false;
+  return rows.every((row) => {
+    const tr = Array.isArray(row.test_requests) ? row.test_requests[0] : row.test_requests;
+    return tr?.status === "released";
+  });
 }
 
 type ClaimRow = {
@@ -53,6 +86,7 @@ type ClaimRow = {
 // inactive or lookup-failed recipient gets NOTHING on any channel.
 export async function notifyResultCorrected({
   amendmentId,
+  resultId,
   testName,
   actorId,
   patientId,
@@ -80,6 +114,19 @@ export async function notifyResultCorrected({
       resourceId: amendmentId,
     });
     return "inactive";
+  }
+
+  const released = await everyLiveTestReleased(admin, resultId);
+  if (released === null) {
+    await reportError({
+      scope: "notify/result-corrected:release-check",
+      error: new Error("could not verify release status before notify"),
+      metadata: { amendment_id: amendmentId, result_id: resultId },
+    });
+    return "failed";
+  }
+  if (!released) {
+    return "not_released";
   }
 
   let claim: ClaimRow | undefined;

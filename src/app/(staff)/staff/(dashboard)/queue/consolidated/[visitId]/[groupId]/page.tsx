@@ -355,7 +355,18 @@ export default async function ConsolidatedQueuePage({
     // through the signed-in client; amendConsolidatedReport re-checks with
     // the admin client before it ever sends.
     const copyStates = await fetchCopyStates(supabase, [editing.resultId]);
-    const notifyOffer = shouldOfferNotify(copyStates?.get(editing.resultId));
+    let notifyOffer = shouldOfferNotify(copyStates?.get(editing.resultId));
+    // R1: the portal only serves released results. The Server Action
+    // re-checks with the admin client before it ever sends, but every
+    // member's status is already in `byId` from the load above, so the
+    // checkbox can hide/disable up front rather than offer and fail.
+    const allMembersReleased = editing.members.every((m) => byId.get(m.id)?.status === "released");
+    if (notifyOffer.offered && !allMembersReleased) {
+      notifyOffer = {
+        offered: false,
+        reason: "The result isn't released — the patient can't open an update yet.",
+      };
+    }
     editForm = {
       resultId: editing.resultId,
       node: loadState === "load_failed" ? (

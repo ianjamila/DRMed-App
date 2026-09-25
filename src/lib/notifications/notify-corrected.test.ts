@@ -30,7 +30,10 @@ const fx = vi.hoisted(() => ({
   audits: [] as Record<string, unknown>[],
   auditImpl: null as null | (() => Promise<void>),
   errors: [] as { scope: string }[],
+  releaseCheck: null as null | (() => Promise<{ data: unknown; error: { message: string } | null }>),
 }));
+
+const releasedRow = { test_requests: { status: "released" } };
 
 vi.mock("@/lib/supabase/admin", () => ({
   createAdminClient: () => ({
@@ -46,14 +49,30 @@ vi.mock("@/lib/supabase/admin", () => ({
       throw new Error(`unexpected rpc ${fn}`);
     },
     from: (table: string) => {
-      if (table !== "patients") throw new Error(`unexpected table ${table}`);
-      return {
-        select: () => ({
-          eq: () => ({
-            maybeSingle: async () => ({ data: fx.patient, error: null }),
+      if (table === "patients") {
+        return {
+          select: () => ({
+            eq: () => ({
+              maybeSingle: async () => ({ data: fx.patient, error: null }),
+            }),
           }),
-        }),
-      };
+        };
+      }
+      if (table === "result_test_requests") {
+        return {
+          select: () => ({
+            eq: () => ({
+              is: () => ({
+                is: () => ({
+                  returns: async () =>
+                    fx.releaseCheck ? fx.releaseCheck() : { data: [releasedRow], error: null },
+                }),
+              }),
+            }),
+          }),
+        };
+      }
+      throw new Error(`unexpected table ${table}`);
     },
   }),
 }));
@@ -99,9 +118,10 @@ beforeEach(() => {
   fx.audits = [];
   fx.auditImpl = null;
   fx.errors = [];
+  fx.releaseCheck = null;
 });
 
-const args = { amendmentId: "am-1", testName: "Chemistry", actorId: "u1", patientId: "pt1" };
+const args = { amendmentId: "am-1", resultId: "r1", testName: "Chemistry", actorId: "u1", patientId: "pt1" };
 
 describe("notifyResultCorrected", () => {
   it("claim returns no row: already, nothing sent", async () => {
@@ -275,5 +295,29 @@ describe("notifyResultCorrected", () => {
     expect(out).toBe("sent");
     expect(fx.errors.some((e) => e.scope === "notify/result-corrected:record")).toBe(true);
     expect(fx.audits).toHaveLength(1);
+  });
+
+  // R1: the portal only serves released results. undo-release can walk a
+  // downloaded test back to ready_for_release/result_uploaded — a notice
+  // sent from there would promise a copy the patient can't open, and (per
+  // spec) a successful send would wrongly drop the row off Result follow-ups.
+  it("R1: a live test not yet released — not_released, nothing sent, claim never consumed", async () => {
+    fx.releaseCheck = () => Promise.resolve({ data: [{ test_requests: { status: "ready_for_release" } }], error: null });
+    const out = await notifyResultCorrected(args);
+    expect(out).toBe("not_released");
+    expect(fx.claimCalls).toBe(0);
+    expect(sendEmail).not.toHaveBeenCalled();
+    expect(sendSms).not.toHaveBeenCalled();
+    expect(fx.recordCalls).toHaveLength(0);
+  });
+
+  it("R1: the release-status read fails — failed, no claim, reportError", async () => {
+    fx.releaseCheck = () => Promise.resolve({ data: null, error: { message: "boom" } });
+    const out = await notifyResultCorrected(args);
+    expect(out).toBe("failed");
+    expect(fx.claimCalls).toBe(0);
+    expect(sendEmail).not.toHaveBeenCalled();
+    expect(sendSms).not.toHaveBeenCalled();
+    expect(fx.errors.some((e) => e.scope === "notify/result-corrected:release-check")).toBe(true);
   });
 });

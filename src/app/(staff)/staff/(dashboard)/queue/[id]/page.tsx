@@ -270,6 +270,16 @@ export default async function QueueTestDetailPage({ params }: Props) {
   if (amendable && result) {
     const states = await fetchCopyStates(supabase, [result.id]);
     notifyOffer = shouldOfferNotify(states?.get(result.id));
+    // R1: the portal only serves released results. The Server Action
+    // re-checks with the admin client before it ever sends, but the
+    // checkbox itself already knows this test's status (test.status,
+    // above), so it can hide/disable up front rather than offer and fail.
+    if (notifyOffer.offered && test.status !== "released") {
+      notifyOffer = {
+        offered: false,
+        reason: "The result isn't released — the patient can't open an update yet.",
+      };
+    }
   }
 
   // Load amendment history for the panel below the result.
