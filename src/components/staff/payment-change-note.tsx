@@ -45,7 +45,8 @@ export function PaymentArrivalNote({
 
 /**
  * One line of a payment's after-life, for a VOIDED payment: deleted, edited
- * (replaced by …) or moved (to visit #…), with who, when and why.
+ * (replaced by …) or moved (to visit #…), with who, when and why — plus how
+ * it arrived, when it was itself a correction.
  */
 export function PaymentChangeEntry({
   p,
@@ -82,6 +83,9 @@ export function PaymentChangeEntry({
           {by ? ` by ${by}` : ""}
         </span>
       </div>
+      {/* A payment that was itself moved in / an edit's replacement keeps saying
+          so after it is changed again, or the chain breaks on this visit. */}
+      <PaymentArrivalNote p={p} links={links} />
       {fate === "edited" && rep ? (
         <div className="mt-1 text-[color:var(--color-brand-text-mid)]">
           Replaced by {formatPhp(rep.amount_php)} {paymentMethodLabel(rep.method)}
