@@ -102,7 +102,7 @@ describe("commitResultEdit — a lost response", () => {
     fx.rpc = async () => {
       throw new Error("fetch failed");
     };
-    fx.probe = { data: { id: "am-1" }, error: null };
+    fx.probe = { data: { id: "am-2" }, error: null };
 
     const out = await commitResultEdit(args());
 
@@ -112,6 +112,7 @@ describe("commitResultEdit — a lost response", () => {
     expect(out.data.alertsAdded).toEqual([ALERT]);
     expect(out.data.amendmentSeq).toBe(1);
     expect(out.data.priorStoragePath).toBe("visit/r1.pdf");
+    expect(out.data.amendmentId).toBe("am-2");
     expect(fx.removed).toEqual([]);
   });
 
@@ -153,12 +154,13 @@ describe("commitResultEdit — a lost response", () => {
 
   it("a normal commit is not a replay and reports only the alerts the database added", async () => {
     fx.rpc = async () => ({
-      data: { replayed: false, amendment_seq: 1, prior_storage_path: "visit/r1.pdf", alerts_added: [] },
+      data: { replayed: false, amendment_seq: 1, prior_storage_path: "visit/r1.pdf", alerts_added: [], amendment_id: "am-1" },
       error: null,
     });
     const out = await commitResultEdit(args());
     expect(out.ok && out.data.replayed).toBe(false);
     expect(out.ok && out.data.alertsAdded).toEqual([]);
+    expect(out.ok && out.data.amendmentId).toBe("am-1");
   });
 
   it("keeps the uploaded PDF and asks for a reload when neither the RPC nor the probe can answer", async () => {
