@@ -1,7 +1,7 @@
 # Staff "View as role" for admins — design
 
 **Date:** 2026-09-25
-**Status:** approved design, awaiting implementation plan
+**Status:** approved design, Codex Astra (high) plan review applied, awaiting implementation plan
 **Branch:** `feat/staff-view-as-role`
 
 ## Problem
@@ -21,7 +21,9 @@ as a second account. DRMed enforces roles in two places that must agree:
    49 migrations use them; 154 policies are `has_role(array['admin'])`.
    No policy or function reads `staff_profiles.role` directly, except
    `0167_patient_soft_delete.sql`, which checks a passed actor's real role on
-   purpose.
+   purpose (service-role-only RPCs whose app actions call `requireAdminStaff()`).
+   No migration after 0001 redefines `staff_role()` or `has_role()` (verified
+   by Codex review 2026-09-25).
 
 An app-only switch (cookie) would make the screens match but leave the
 database treating the user as admin, so lists and reports could include rows a
@@ -63,7 +65,7 @@ non-admin row, so a stale override is inert.
 
 The same migration redefines `staff_role()` and `has_role(text[])` (bodies
 only; signatures, `stable`, `security definer`, `set search_path = public`
-and grants unchanged) to read the effective role:
+unchanged) to read the effective role:
 
 ```sql
 case
@@ -72,9 +74,17 @@ case
 end
 ```
 
+`create or replace` preserves the functions' ACLs, but the migration must
+still **assert** them the way `0118_security_definer_revoke_anon.sql` does:
+`has_function_privilege('anon', …, 'EXECUTE')` and the same for
+`authenticated` on all three helpers, raising if any is lost — a helper that
+anon cannot execute makes every policy that calls it raise instead of filter.
+
 `is_staff()` is unchanged (existence, not role). `now()` inside a `stable`
-function is fine. The `(select public.has_role(...))` initplan wrapping style
-that `rls-initplan.test.ts` checks is a call-site property and is untouched.
+function is fine. The comparison is strict (`>`): an override whose expiry
+equals the current instant is inactive. The `(select public.has_role(...))`
+initplan wrapping style that `rls-initplan.test.ts` checks is a call-site
+property and is untouched.
 
 `0172_result_edit_commit.sql` reads `public.staff_role()` for its role check
 and therefore follows the simulation automatically. `0167`'s real-role check
@@ -87,7 +97,9 @@ Regenerate `src/types/database.ts` for the two columns.
 `requireSignedInStaff()` selects the two new columns and computes the
 effective role with one pure helper, `effectiveRole(profile, now)` in a new
 `src/lib/auth/view-as.ts`, so the TS rule and the SQL rule are pinned to each
-other by a test. `StaffSession` gains:
+other by a test. The self-read policy (`0151`, `id = auth.uid()`) does not
+depend on role, so the loader still gets the row under any effective role.
+`StaffSession` gains:
 
 ```ts
 actual_role: StaffSession["role"];              // the real profile role
@@ -111,31 +123,58 @@ New server actions in `src/app/(staff)/staff/(dashboard)/view-as/actions.ts`:
   `createAdminClient()` — the service-role client is required because while
   simulating, `has_role(array['admin'])` is false and the "admin manage"
   policy would block the admin from editing their own row to switch or exit.
-  Set `view_as_until = now + 4h`. Audit, then `redirect("/staff")` (the
-  current page may be admin-only and would bounce anyway).
+  Set `view_as_until = now + 4h`. Audit, then
+  `revalidatePath("/staff", "layout")` (the shell — sidebar, footer, banner —
+  is rendered by the shared dashboard layout, which Next caches across client
+  navigations; `messages/actions.ts` invalidates it the same way for the
+  badge), then `redirect("/staff")` (the current page may be admin-only and
+  would bounce anyway).
 - `exitViewAsAction()` — same guard on `actual_role`; null both columns;
-  audit; `redirect("/staff")`.
+  audit; same revalidate; `redirect("/staff")`.
 
-Expiry needs no code path: the next request computes the real role and the
-banner disappears. Stale columns are overwritten on the next start or exit.
+**Keeping the shell in step with authorization.** The database applies the
+override on every request; the shell must never show a role the database has
+stopped applying. Three cases:
+
+- *Start / switch / exit in this tab:* covered by the layout revalidation
+  above.
+- *Expiry in this tab:* the banner is a client component that schedules one
+  `router.refresh()` at `view_as.until` (from the server-provided timestamp,
+  not a client clock offset). The refreshed layout sees no active override
+  and drops the banner.
+- *Change from another tab or device:* the banner (and, for admins with no
+  active override, a tiny headless client hook in the shell) calls
+  `router.refresh()` on `visibilitychange` → visible. So a tab that was in
+  the background catches up when the admin returns to it. A tab that stays in
+  the foreground while another device switches keeps the stale shell until
+  its next navigation; every server action and page render still uses the
+  database's effective role, so the stale shell can only mislead, never
+  authorize. The banner text states the role the database is using at
+  render time, and the countdown is rendered server-side.
 
 ## 4. UI
 
-- **Sidebar footer** (`staff-shell.tsx`): for `actual_role === "admin"`, a
-  compact native `<select>` labelled "View as" listing Reception, Medical
-  Tech, X-ray Technician, Pathologist, submitting `startViewAsAction` on
-  change (same pattern as other footer forms). Non-admins see nothing new.
+- **Sidebar footer** (`staff-shell.tsx`, desktop): for
+  `actual_role === "admin"`, a compact native `<select>` labelled "View as"
+  listing Reception, Medical Tech, X-ray Technician, Pathologist, submitting
+  `startViewAsAction` on change (same form pattern as the Sign out button
+  beside it). Non-admins see nothing new.
+- **Mobile drawer footer** (`staff-mobile-nav-trigger.tsx`, below `md`): the
+  identical select in the drawer footer next to Sign out. The trigger
+  currently receives `role`, `email`, `fullName`, `badges`; it gains
+  `actualRole` and `viewAs` so an admin can start from a phone.
 - **Banner** (`src/components/staff/view-as-banner.tsx`): rendered by the
-  shell above the page content, desktop and mobile, `print:hidden`, amber
-  (`role="status"`). Text: "Viewing as Reception. Anything you save is
-  recorded under your name. Ends in 3h 40m." Contains an **Exit** button
+  shell above the page content on every width, `print:hidden`, amber,
+  `role="status"`. Text: "Viewing as Reception. Anything you save is recorded
+  under your name. Ends in 3h 40m." Contains an **Exit** button
   (`exitViewAsAction`) and the same role select for hopping between roles
-  without exiting. The countdown is computed server-side from `view_as.until`
-  at render (no client timer).
-- **Footer role line** while simulating: "Reception (viewing as) · Admin".
-- `ROLE_LABEL` moves from `staff-shell.tsx` to `src/lib/staff/role-labels.ts`
-  and is imported by the shell, the banner and the select; existing
-  duplicates elsewhere are left alone (not in scope).
+  without exiting first.
+- **Footer role line** while simulating (desktop and mobile): "Reception
+  (viewing as) · Admin".
+- `ROLE_LABEL` is duplicated today in `staff-shell.tsx` and
+  `staff-mobile-nav-trigger.tsx`; both move to one export in
+  `src/lib/staff/role-labels.ts`, imported by the shell, the trigger, the
+  banner and the select. Other duplicates elsewhere are left alone.
 
 ## 5. Audit
 
@@ -157,33 +196,71 @@ Expiry writes no event; `started` already carries `until`.
 - A demoted or deactivated admin: override inert (rule requires
   `role = 'admin'`); deactivated accounts are refused by the session gate.
 - Multiple tabs/devices: the override is on the row, so every session of
-  that admin shows the banner. Intended.
+  that admin is governed by it immediately and shows the banner on its next
+  render (see §3 for how tabs catch up).
 - Prod data is real; the banner says so on every page.
 - No non-admin can ever set the override: the action guards on
   `actual_role`, and the helpers ignore an override on a non-admin row.
 
 ## 7. Testing
 
+**Unit (vitest):**
 - `view-as.test.ts`: `effectiveRole()` — admin+future → override; admin+past
-  → admin; non-admin+future → real role; nulls → real role.
+  → admin; admin+exactly-now → admin (strict `>`); non-admin+future → real
+  role; nulls → real role; an ISO `+08:00` `until` and its UTC equivalent
+  resolve identically.
 - Migration test (text-pinned like `result-edit-migration.test.ts`): the new
   migration redefines exactly `staff_role` and `has_role`, keeps
-  `security definer` + `set search_path`, and contains the effective-role
-  `case`; grants unchanged (`seed-grant-parity.test.ts` must stay green).
+  `security definer` + `set search_path`, contains the effective-role `case`
+  and the `has_function_privilege` assertions.
 - Action tests: non-admin `actual_role` refused; invalid role refused;
-  admin start writes columns + audit `started`; exit nulls + `ended`.
-- `view-as-banner.test.tsx`: renders role label, countdown, Exit; absent
-  when `view_as` is null.
-- `staff-shell.test.tsx` (extend or add): select present only for admins.
-- Manual pass on the local dev server: view as each of the four roles;
-  sidebar equals that role's nav; an admin-only page redirects to `/staff`;
-  a lab-queue claim honours the role; Exit restores admin.
+  admin start writes columns + audit `started` + revalidates layout; exit
+  nulls + `ended`; switch writes `ended(switched)` then `started`.
+- `view-as-banner.test.tsx`: renders role label, countdown, Exit, select;
+  absent when `view_as` is null.
+- Shell and mobile-trigger tests: select present only when
+  `actualRole === "admin"`; footer line shows "(viewing as)" when active.
 
-## 8. Rollout
+**Database (local stack, replayed fresh):** `supabase db reset` then a
+`supabase/tests/NNNN_view_as_smoke.sql` in the existing BEGIN/ROLLBACK
+style with an explicit control. Under `set role authenticated` and a
+`request.jwt.claims` sub for a fixture admin:
+- helper ACLs: anon and authenticated can execute all three helpers;
+- override active → `has_role(array['admin'])` false, `staff_role()` =
+  'reception', self-read of own `staff_profiles` row succeeds, a direct
+  update of own row (the exit path without service role) is denied — this
+  is why the action uses the service-role client;
+- for each of the four roles: one representative permitted read and one
+  denied read/write match a genuine fixture user of that role (RLS
+  equivalence, not just "something was filtered"); include the lab-queue
+  claim path for `xray_technician` vs `medtech`;
+- non-admin fixture with override columns set → real role still applies;
+- expired and exactly-now `view_as_until` → admin; demoted admin → inert;
+- control: with the override rows cleared, the same probes return the admin
+  results (a probe that cannot distinguish the two proves nothing).
 
-Migration first (additive, old code ignores the columns), code deploy
-second. The reverse order would break every staff page, because the session
-loader selects columns that would not exist yet. Follow
-`feedback-drmed-apply-migrations-yourself`: dry-run, push from this branch
-right before merge, verify by object (`\d staff_profiles` shows both columns;
-`select has_role(array['admin'])` semantics checked via a fixture on local).
+**Browser (local dev server, admin signed in):** start, switch, and exit at
+desktop width and at mobile width, no manual reload: sidebar/drawer matches
+the role, an admin-only page redirects to `/staff`, Exit restores admin. Two
+tabs open: switch in tab A, focus tab B → banner updates. Expiry: set a short
+`until` via SQL, wait, banner disappears without reload.
+
+## 8. Rollout and rollback
+
+**Rollout.** Migration first, code deploy second. The schema is additive and
+the old session loader ignores the columns, and nothing can *set* an override
+until the new code is live, so the mixed window is safe by construction. The
+reverse order would break every staff page (the loader selects columns that
+do not exist yet). Follow `feedback-drmed-apply-migrations-yourself`:
+dry-run, push from this branch right before merge, verify by object (both
+columns and both constraints on `staff_profiles`; `\df+ has_role` shows the
+new body and anon EXECUTE).
+
+**Rollback of the app while the migration stays.** Old code reports the real
+role while the migrated helpers keep applying any *active* override, and old
+code has no Exit control. Procedure, in order: (1) clear every override with
+`update staff_profiles set view_as_role = null, view_as_until = null where
+view_as_role is not null`; (2) verify `select count(*) … where view_as_role
+is not null` is 0; (3) redeploy the old app. No override can be started
+again until the new code returns. The migration itself never needs
+reverting; with the columns null the helpers behave exactly as before.
