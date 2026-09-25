@@ -12,6 +12,7 @@ import {
 } from "@/lib/operations/cash-report";
 import { CASH_DENOMINATIONS } from "@/lib/accounting/cash-denominations";
 import { buildDenominationTrend } from "@/lib/accounting/denomination-trends";
+import { loadUnclosedEodDaysByDay } from "@/lib/accounting/eod-reminders";
 import { reportCsvResponse } from "@/lib/reports/csv-response";
 import { fetchAllRows, REPORT_EXPORT_MAX_ROWS } from "@/lib/reports/paging";
 
@@ -98,8 +99,21 @@ export async function GET(req: NextRequest) {
   body.push(["TOTAL", matrix.total.label, ...days.map((d) => matrix.total.values[d] ?? 0), grandTotal]);
 
   // ---- Cash reconciliation section ----------------------------------------
-  const reconRows = buildCashReconRows(eodResult.rows, days);
+  const notClosed = await loadUnclosedEodDaysByDay(admin, from, to);
+  const reconRows = buildCashReconRows(eodResult.rows, days, notClosed);
   const byDay = new Map(reconRows.map((r) => [r.day, r]));
+  // Which days are closed, and which were flagged as never closed (only once
+  // the End of Day reminders have a start date). Blank = neither.
+  body.push([
+    "Cash reconciliation",
+    "Status",
+    ...days.map((d) => {
+      const r = byDay.get(d);
+      if (r?.notClosedShiftIds.length) return r.reconciled ? "Partly closed" : "Not closed";
+      return r?.reconciled ? "Closed" : "";
+    }),
+    "",
+  ]);
   const reconLine = (label: string, pick: (day: string) => number) => {
     const values = days.map(pick);
     body.push(["Cash reconciliation", label, ...values, values.reduce((s, v) => s + v, 0)]);

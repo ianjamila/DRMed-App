@@ -20,7 +20,7 @@ jobs:
         env:
           SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
         run: |
-          # Source: vercel.json (seven schedules across six routes).
+          # Source: vercel.json (eight schedules across seven routes).
           # Daily 30h / weekly 8d allow Vercel jitter and GitHub scheduling delay.
           # Add each scheduled leg as one row in this threshold table.
           # active_from is a one-time bootstrap guard; these initial dates will
@@ -35,7 +35,8 @@ jobs:
               ('recurring-bills', ARRAY['recurring_bills.completed'], interval '30 hours', date '2026-09-18'),
               ('template-health', ARRAY['result_template.health_alert'], interval '30 hours', date '2026-09-15'),
               ('template-health?mode=weekly', ARRAY['result_template.health_summary'], interval '8 days', date '2026-09-22'),
-              ('dedup-digest', ARRAY['system.dedup_digest.completed'], interval '8 days', date '2026-09-22')
+              ('dedup-digest', ARRAY['system.dedup_digest.completed'], interval '8 days', date '2026-09-22'),
+              ('stale-bookings', ARRAY['system.stale_bookings.completed'], interval '30 hours', date '2026-09-27')
           ), heartbeats AS (
             SELECT w.route, w.max_age, w.active_from, latest.created_at AS last_seen,
                    now() - latest.created_at AS age

@@ -54,6 +54,13 @@ export function CashSummaryCards({
     cards.push({ label: "Net EOD variance", value: PESO(netVariance) });
   }
 
+  // Only once Admin has set an End of Day reminders start date — until then
+  // no day is ever flagged, and a "0" here would read as "all closed".
+  const notClosedDays = reconRows.filter((r) => r.notClosedShiftIds.length > 0).length;
+  if (notClosedDays > 0) {
+    cards.push({ label: "Days not closed", value: String(notClosedDays) });
+  }
+
   return (
     <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
       {cards.map((c) => (

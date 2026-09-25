@@ -1,4 +1,5 @@
 import Link from "next/link";
+import type { ReactNode } from "react";
 import { redirect } from "next/navigation";
 import { headers } from "next/headers";
 import { createClient } from "@/lib/supabase/server";
@@ -21,6 +22,13 @@ import {
 } from "@/components/staff/section-tabs-style";
 import { LabRequestLinks, type LabRequestAttachment } from "./lab-request-links";
 import { AppointmentsSearchInput } from "./appointments-search-input";
+import { LikelyNoShowBar } from "./likely-no-show-bar";
+import {
+  STALE_UNTIMED_AFTER_DAYS,
+  bookingAgeDays,
+  bookingAgeLabel,
+  isStaleUntimedBooking,
+} from "@/lib/appointments/stale";
 import {
   BUCKET_LABEL,
   BUCKET_STYLE,
@@ -520,6 +528,15 @@ export default async function AppointmentsPage({ searchParams }: SearchProps) {
   const todayGroups = applyFilter(allTodayGroups, type);
   const upcomingGroups = applyFilter(allUpcomingGroups, type);
 
+  // Bookings with no set time that have sat without being marked arrived for
+  // STALE_UNTIMED_AFTER_DAYS or more — the "likely no-show" bar's target.
+  // Taken from the section as the active tab shows it, oldest first (the
+  // loader's order), so the bar never acts on a booking the list is hiding.
+  const likelyNoShowGroups = walkInGroups.filter((g) =>
+    isStaleUntimedBooking(g.lead, manilaToday),
+  );
+  const noSetTimeArrived = walkInGroups.filter((g) => g.lead.status === "arrived").length;
+
   // Flat/sorted view: one table mixing all four sections, tagged with which
   // section each row came from. Built from the SAME already-fully-loaded
   // (fetchAllRows, up to REPORT_EXPORT_MAX_ROWS) row sets the grouped view
@@ -681,16 +698,16 @@ export default async function AppointmentsPage({ searchParams }: SearchProps) {
           {query ? (
             <>
               Search checks the patient&apos;s name, DRM-ID and phone, or the
-              walk-in name and phone. It covers pending callbacks, walk-ins
-              waiting, today, and every upcoming scheduled appointment — not
+              walk-in name and phone. It covers pending callbacks, bookings
+              with no set time, today, and every upcoming scheduled appointment — not
               just the next 30 days — so it won&apos;t find older, cancelled,
               or already-completed appointments.
             </>
           ) : (
             <>
               Search checks the patient&apos;s name, DRM-ID and phone, or the
-              walk-in name and phone. It covers pending callbacks, walk-ins
-              waiting, today, and the next 30 days — the same appointments
+              walk-in name and phone. It covers pending callbacks, bookings
+              with no set time, today, and the next 30 days — the same appointments
               this page always shows — so it won&apos;t find older,
               cancelled, or already-completed appointments.
             </>
@@ -731,6 +748,7 @@ export default async function AppointmentsPage({ searchParams }: SearchProps) {
             sort={sort}
             sortHref={sortHref}
             isAdmin={session.role === "admin"}
+            todayIso={manilaToday}
             attachmentsByGroup={attachmentsByGroup}
           />
           <ListPagination
@@ -767,6 +785,7 @@ export default async function AppointmentsPage({ searchParams }: SearchProps) {
             groups={pendingGroups}
             empty="No pending callbacks. Nice."
             isAdmin={session.role === "admin"}
+            todayIso={manilaToday}
             attachmentsByGroup={attachmentsByGroup}
             truncatedNotice={
               pendingResult.truncated
@@ -775,14 +794,29 @@ export default async function AppointmentsPage({ searchParams }: SearchProps) {
             }
           />
           <Section
-            title={`Walk-ins waiting (${walkInGroups.length})`}
+            anchor="no-set-time"
+            title={`Bookings with no set time (${walkInGroups.length})`}
+            description={
+              <>
+                Diagnostic packages and lab requests booked without a time slot,
+                mostly from the website. They stay here until someone marks them
+                arrived, no-show or cancelled.
+                {walkInGroups.length > 0
+                  ? ` ${noSetTimeArrived} arrived · ${walkInGroups.length - noSetTimeArrived} not yet arrived.`
+                  : null}
+              </>
+            }
+            toolbar={
+              <LikelyNoShowBar bookings={likelyNoShowGroups.map((g) => g.rows.map((r) => r.id))} />
+            }
             groups={walkInGroups}
-            empty="No walk-ins waiting — diagnostic packages and untimed lab requests land here until reception acts on them."
+            empty="No open bookings without a set time — diagnostic packages and untimed lab requests land here until reception acts on them."
             isAdmin={session.role === "admin"}
+            todayIso={manilaToday}
             attachmentsByGroup={attachmentsByGroup}
             truncatedNotice={
               walkInsResult.truncated
-                ? `Showing the first ${REPORT_EXPORT_MAX_ROWS.toLocaleString("en-PH")} walk-in appointment rows (oldest first) — there are more than that still open.`
+                ? `Showing the first ${REPORT_EXPORT_MAX_ROWS.toLocaleString("en-PH")} no-set-time appointment rows (oldest first) — there are more than that still open.`
                 : null
             }
           />
@@ -791,6 +825,7 @@ export default async function AppointmentsPage({ searchParams }: SearchProps) {
             groups={todayGroups}
             empty="No appointments today."
             isAdmin={session.role === "admin"}
+            todayIso={manilaToday}
             attachmentsByGroup={attachmentsByGroup}
             truncatedNotice={
               todayResult.truncated
@@ -803,6 +838,7 @@ export default async function AppointmentsPage({ searchParams }: SearchProps) {
             groups={upcomingGroups}
             empty="No upcoming appointments."
             isAdmin={session.role === "admin"}
+            todayIso={manilaToday}
             attachmentsByGroup={attachmentsByGroup}
             truncatedNotice={
               upcomingResult.truncated
@@ -817,26 +853,42 @@ export default async function AppointmentsPage({ searchParams }: SearchProps) {
 }
 
 function Section({
+  anchor,
   title,
+  description = null,
+  toolbar = null,
   groups,
   empty,
   isAdmin,
+  todayIso,
   attachmentsByGroup,
   truncatedNotice = null,
 }: {
+  // Optional id so another page can deep-link to this section (the reception
+  // dashboard's "Likely no-shows" card opens #no-set-time).
+  anchor?: string;
   title: string;
+  // Optional explainer under the heading, and a bar (the likely-no-show
+  // bulk action) between it and the table.
+  description?: ReactNode;
+  toolbar?: ReactNode;
   groups: ApptGroup[];
   empty: string;
   isAdmin: boolean;
+  todayIso: string;
   attachmentsByGroup: Map<string, LabRequestAttachment[]>;
   // N13: set only when the loader's row ceiling actually bit — never silent.
   truncatedNotice?: string | null;
 }) {
   return (
-    <section className="mt-6">
+    <section id={anchor} className="mt-6 scroll-mt-20">
       <h2 className="mb-3 font-heading text-lg font-extrabold text-[color:var(--color-brand-navy)]">
         {title}
       </h2>
+      {description ? (
+        <p className="-mt-2 mb-3 text-xs text-[color:var(--color-brand-text-soft)]">{description}</p>
+      ) : null}
+      {toolbar}
       {truncatedNotice ? (
         <p
           role="status"
@@ -873,6 +925,7 @@ function Section({
                   key={g.key}
                   group={g}
                   isAdmin={isAdmin}
+                  todayIso={todayIso}
                   attachments={
                     g.lead.booking_group_id
                       ? attachmentsByGroup.get(g.lead.booking_group_id) ?? []
@@ -901,12 +954,14 @@ function FlatTable({
   sort,
   sortHref,
   isAdmin,
+  todayIso,
   attachmentsByGroup,
 }: {
   groups: BucketedGroup[];
   sort: SortSpec<FlatSortColumn>;
   sortHref: (key: FlatSortColumn) => string;
   isAdmin: boolean;
+  todayIso: string;
   attachmentsByGroup: Map<string, LabRequestAttachment[]>;
 }) {
   return (
@@ -952,6 +1007,7 @@ function FlatTable({
                 key={g.key}
                 group={g}
                 isAdmin={isAdmin}
+                todayIso={todayIso}
                 bucket={g.bucket}
                 attachments={
                   g.lead.booking_group_id
@@ -970,11 +1026,15 @@ function FlatTable({
 function GroupRow({
   group,
   isAdmin,
+  todayIso,
   attachments,
   bucket,
 }: {
   group: ApptGroup;
   isAdmin: boolean;
+  // Manila "today", for the "Booked N days ago" line on bookings with no
+  // set time (src/lib/appointments/stale.ts).
+  todayIso: string;
   attachments: LabRequestAttachment[];
   // Only set from FlatTable — renders an extra "From" cell so a row mixed
   // in with the other three sections still says which one it came from.
@@ -982,10 +1042,27 @@ function GroupRow({
 }) {
   const r = group.lead;
   const ids = group.rows.map((row) => row.id);
+  // A booking with no set time has no date of its own to judge it by, so
+  // say how long it has been open — and flag a likely no-show.
+  const ageDays = r.scheduled_at === null ? bookingAgeDays(r.created_at, todayIso) : null;
+  const likelyNoShow = isStaleUntimedBooking(r, todayIso);
   return (
     <tr className="align-top hover:bg-[color:var(--color-brand-bg)]">
       <td className="px-4 py-3 whitespace-nowrap text-xs text-[color:var(--color-brand-text-soft)]">
         {manilaDateTime(r.created_at)}
+        {ageDays !== null ? (
+          <p className={likelyNoShow ? "mt-1 font-semibold text-amber-800" : "mt-1"}>
+            {bookingAgeLabel(ageDays)}
+          </p>
+        ) : null}
+        {likelyNoShow ? (
+          <p
+            className="mt-1 inline-block rounded-md bg-amber-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-amber-900"
+            title={`Still not marked arrived after ${STALE_UNTIMED_AFTER_DAYS} days or more`}
+          >
+            Likely no-show
+          </p>
+        ) : null}
       </td>
       <td className="px-4 py-3 whitespace-nowrap text-[color:var(--color-brand-text-mid)]">
         {r.scheduled_at ? (
@@ -995,7 +1072,7 @@ function GroupRow({
             Pending callback
           </span>
         ) : (
-          <span className="text-xs italic text-sky-700">Walk-in</span>
+          <span className="text-xs italic text-sky-700">No set time</span>
         )}
       </td>
       <td className="px-4 py-3">
