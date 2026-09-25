@@ -122,6 +122,22 @@ describe("portal consent guard", () => {
     for (const a of Object.keys(EXEMPT_ACTIONS)) expect(names).toContain(a);
   });
 
+  // Outside (authenticated), so the scan above cannot see it: /portal/book
+  // posts to the public booking action, which trusts the portal session only
+  // when source=portal. That branch must check consent before it resolves the
+  // patient; the anonymous /schedule path records its own consent.
+  it("the shared booking action checks consent on its portal branch", () => {
+    const src = readFileSync(
+      join(process.cwd(), "src", "app", "(marketing)", "schedule", "actions.ts"),
+      "utf8",
+    );
+    const portalBranch = after(src, /^ {2}if \(isPortalSource\) \{/m);
+    const end = portalBranch.indexOf("\n  }\n");
+    const block = end === -1 ? "" : portalBranch.slice(0, end);
+    expect(block).toContain(GUARD);
+    expect(block.indexOf(GUARD)).toBeLessThan(block.indexOf("resolvedPatientIdFromSession ="));
+  });
+
   it("exempt actions really skip the check (an exemption is not a silent pass)", () => {
     for (const f of actionFiles) {
       for (const a of actionBodies(f.src)) {
