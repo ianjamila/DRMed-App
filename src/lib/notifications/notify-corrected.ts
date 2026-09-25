@@ -8,8 +8,10 @@ import { sendEmail } from "./email";
 import { sendSms } from "./sms";
 import { buildCorrectedResultMessages } from "./corrected-result-message";
 import { PORTAL_URL } from "./portal-url";
+import { checkPatientRecipient } from "./active-patient-recipient";
+import { auditSkippedInactiveRecipient } from "./inactive-recipient-audit";
 
-export type NotifyOutcome = "sent" | "failed" | "already";
+export type NotifyOutcome = "sent" | "failed" | "already" | "inactive";
 
 interface Args {
   /**
@@ -21,6 +23,9 @@ interface Args {
   amendmentId: string | null;
   testName: string;
   actorId: string;
+  /** The visit's patient (0167) — checked BEFORE the claim so a deleted or
+   * merged record never consumes the once-only send slot. */
+  patientId: string;
 }
 
 type ClaimRow = {
@@ -41,10 +46,16 @@ type ClaimRow = {
 // so a failure there still lets a later best-effort step run — in
 // particular, the outcome is recorded even if sending or auditing blew up,
 // so the row reads "Send failed" rather than leaving "status unknown".
+//
+// 0167: the active-patient rule is checked BEFORE the claim, so a deleted or
+// merged record's send slot is never consumed — a retried call (after the
+// record is restored, or by mistake) still gets a fair first attempt. An
+// inactive or lookup-failed recipient gets NOTHING on any channel.
 export async function notifyResultCorrected({
   amendmentId,
   testName,
   actorId,
+  patientId,
 }: Args): Promise<NotifyOutcome> {
   if (amendmentId === null) {
     await reportError({
@@ -58,6 +69,18 @@ export async function notifyResultCorrected({
   }
 
   const admin = createAdminClient();
+
+  const recipient = await checkPatientRecipient(admin, patientId);
+  if (recipient.kind !== "active") {
+    await auditSkippedInactiveRecipient({
+      sender: "notify-corrected",
+      patientId,
+      reason: recipient.kind === "inactive" ? recipient.reason : "walk_in",
+      resourceType: "result_amendment",
+      resourceId: amendmentId,
+    });
+    return "inactive";
+  }
 
   let claim: ClaimRow | undefined;
   try {

@@ -342,6 +342,7 @@ export async function amendConsolidatedReport(
         amendmentId: committed.data.amendmentId,
         testName: group?.name ?? "your report",
         actorId: session.user_id,
+        patientId,
       });
     } else {
       notify = "not_offered";

@@ -16,7 +16,15 @@ vi.mock("server-only", () => ({}));
 
 const fx = vi.hoisted(() => ({
   claim: null as null | (() => Promise<{ data: unknown; error: { message: string } | null }>),
-  patient: null as null | { id: string; first_name: string | null; phone: string | null; email: string | null },
+  claimCalls: 0,
+  patient: null as null | {
+    id: string;
+    first_name: string | null;
+    phone: string | null;
+    email: string | null;
+    deleted_at: string | null;
+    merged_into_id: string | null;
+  },
   record: null as null | (() => Promise<{ data: unknown; error: { message: string } | null }>),
   recordCalls: [] as { p_amendment_id: string; p_channels: string[]; p_error: string | null }[],
   audits: [] as Record<string, unknown>[],
@@ -27,7 +35,10 @@ const fx = vi.hoisted(() => ({
 vi.mock("@/lib/supabase/admin", () => ({
   createAdminClient: () => ({
     rpc: async (fn: string, args: Record<string, unknown>) => {
-      if (fn === "result_claim_patient_notify") return fx.claim!();
+      if (fn === "result_claim_patient_notify") {
+        fx.claimCalls += 1;
+        return fx.claim!();
+      }
       if (fn === "result_record_patient_notify") {
         fx.recordCalls.push(args as { p_amendment_id: string; p_channels: string[]; p_error: string | null });
         return fx.record ? fx.record() : { data: null, error: null };
@@ -74,7 +85,15 @@ const okClaim = () =>
 beforeEach(() => {
   vi.clearAllMocks();
   fx.claim = okClaim;
-  fx.patient = { id: "pt1", first_name: "Ana", phone: "09171234567", email: "ana@example.com" };
+  fx.claimCalls = 0;
+  fx.patient = {
+    id: "pt1",
+    first_name: "Ana",
+    phone: "09171234567",
+    email: "ana@example.com",
+    deleted_at: null,
+    merged_into_id: null,
+  };
   fx.record = null;
   fx.recordCalls = [];
   fx.audits = [];
@@ -82,7 +101,7 @@ beforeEach(() => {
   fx.errors = [];
 });
 
-const args = { amendmentId: "am-1", testName: "Chemistry", actorId: "u1" };
+const args = { amendmentId: "am-1", testName: "Chemistry", actorId: "u1", patientId: "pt1" };
 
 describe("notifyResultCorrected", () => {
   it("claim returns no row: already, nothing sent", async () => {
@@ -105,10 +124,60 @@ describe("notifyResultCorrected", () => {
     expect(fx.errors.some((e) => e.scope === "notify/result-corrected:claim")).toBe(true);
   });
 
+  it("0167: deleted patient — inactive outcome, nothing sent, claim never consumed", async () => {
+    fx.patient = {
+      id: "pt1",
+      first_name: "Ana",
+      phone: "09171234567",
+      email: "ana@example.com",
+      deleted_at: "2026-01-01T00:00:00Z",
+      merged_into_id: null,
+    };
+    const out = await notifyResultCorrected(args);
+    expect(out).toBe("inactive");
+    expect(fx.claimCalls).toBe(0);
+    expect(sendEmail).not.toHaveBeenCalled();
+    expect(sendSms).not.toHaveBeenCalled();
+    expect(fx.recordCalls).toHaveLength(0);
+    expect(fx.audits.some((a) => a.action === "notification.skipped_inactive_patient")).toBe(true);
+  });
+
+  it("0167: merged patient — inactive outcome, nothing sent, claim never consumed", async () => {
+    fx.patient = {
+      id: "pt1",
+      first_name: "Ana",
+      phone: "09171234567",
+      email: "ana@example.com",
+      deleted_at: null,
+      merged_into_id: "pt2",
+    };
+    const out = await notifyResultCorrected(args);
+    expect(out).toBe("inactive");
+    expect(fx.claimCalls).toBe(0);
+    expect(sendEmail).not.toHaveBeenCalled();
+    expect(sendSms).not.toHaveBeenCalled();
+  });
+
+  it("0167: missing patient row — inactive outcome, nothing sent, claim never consumed", async () => {
+    fx.patient = null;
+    const out = await notifyResultCorrected(args);
+    expect(out).toBe("inactive");
+    expect(fx.claimCalls).toBe(0);
+    expect(sendEmail).not.toHaveBeenCalled();
+    expect(sendSms).not.toHaveBeenCalled();
+  });
+
   it("send ok: sent, record called with the channel that succeeded", async () => {
     vi.mocked(sendEmail).mockResolvedValue({ ok: true, id: "em-1" });
     vi.mocked(sendSms).mockResolvedValue({ ok: false, kind: "skipped", reason: "patient has no phone on file" });
-    fx.patient = { id: "pt1", first_name: "Ana", phone: null, email: "ana@example.com" };
+    fx.patient = {
+      id: "pt1",
+      first_name: "Ana",
+      phone: null,
+      email: "ana@example.com",
+      deleted_at: null,
+      merged_into_id: null,
+    };
 
     const out = await notifyResultCorrected(args);
 
@@ -119,7 +188,14 @@ describe("notifyResultCorrected", () => {
   });
 
   it("both channels skipped: failed, record called with an error string", async () => {
-    fx.patient = { id: "pt1", first_name: "Ana", phone: null, email: null };
+    fx.patient = {
+      id: "pt1",
+      first_name: "Ana",
+      phone: null,
+      email: null,
+      deleted_at: null,
+      merged_into_id: null,
+    };
     const out = await notifyResultCorrected(args);
     expect(out).toBe("failed");
     expect(fx.recordCalls).toHaveLength(1);
@@ -131,7 +207,14 @@ describe("notifyResultCorrected", () => {
   it("audit throws after a send: still returns sent and does not throw", async () => {
     vi.mocked(sendEmail).mockResolvedValue({ ok: true, id: "em-1" });
     vi.mocked(sendSms).mockResolvedValue({ ok: false, kind: "skipped", reason: "patient has no phone on file" });
-    fx.patient = { id: "pt1", first_name: "Ana", phone: null, email: "ana@example.com" };
+    fx.patient = {
+      id: "pt1",
+      first_name: "Ana",
+      phone: null,
+      email: "ana@example.com",
+      deleted_at: null,
+      merged_into_id: null,
+    };
     fx.auditImpl = () => {
       throw new Error("audit db down");
     };
@@ -155,7 +238,14 @@ describe("notifyResultCorrected", () => {
   it("a claimed slot whose send throws still records failed (best effort)", async () => {
     vi.mocked(sendEmail).mockRejectedValue(new Error("resend down"));
     vi.mocked(sendSms).mockResolvedValue({ ok: false, kind: "skipped", reason: "patient has no phone on file" });
-    fx.patient = { id: "pt1", first_name: "Ana", phone: null, email: "ana@example.com" };
+    fx.patient = {
+      id: "pt1",
+      first_name: "Ana",
+      phone: null,
+      email: "ana@example.com",
+      deleted_at: null,
+      merged_into_id: null,
+    };
 
     const out = await notifyResultCorrected(args);
 
@@ -168,7 +258,14 @@ describe("notifyResultCorrected", () => {
   it("the record RPC throwing is swallowed and still returns the send outcome", async () => {
     vi.mocked(sendEmail).mockResolvedValue({ ok: true, id: "em-1" });
     vi.mocked(sendSms).mockResolvedValue({ ok: false, kind: "skipped", reason: "patient has no phone on file" });
-    fx.patient = { id: "pt1", first_name: "Ana", phone: null, email: "ana@example.com" };
+    fx.patient = {
+      id: "pt1",
+      first_name: "Ana",
+      phone: null,
+      email: "ana@example.com",
+      deleted_at: null,
+      merged_into_id: null,
+    };
     fx.record = () => {
       throw new Error("record rpc down");
     };

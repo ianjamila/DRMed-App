@@ -1037,6 +1037,7 @@ export async function amendResultAction(
           amendmentId: committed.data.amendmentId,
           testName,
           actorId: session.user_id,
+          patientId: visit.patient_id,
         })
       : "not_offered";
   }
@@ -1410,6 +1411,7 @@ export async function amendStructuredResultAction(
           amendmentId: committed.data.amendmentId,
           testName: svc.name,
           actorId: session.user_id,
+          patientId: visit.patient_id,
         })
       : "not_offered";
   }

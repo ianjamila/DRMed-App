@@ -22,6 +22,8 @@
 --      is idempotent (one audit row), and the previous one raises P0068.
 --   8. Notify claim/record — result_claim_patient_notify pays out once;
 --      result_record_patient_notify's success and failure paths.
+--   9. Active-patient rule (0167) — an inactive (soft-deleted) patient's row
+--      drops off result_outdated_copies entirely.
 -- Everything is inside one transaction that ROLLS BACK. The two-session
 -- claim/mark-contacted races (assertion 9) run OUTSIDE this file, on their
 -- own committed fixture — see the Task 4 report for that recipe.
@@ -388,6 +390,49 @@ begin
     raise exception '8e: result_copy_state should report notify_failed=true, got %', v_state;
   end if;
   raise notice '8e notify-failed-via-result_copy_state OK';
+end $$;
+reset role;
+
+-- ----- 9. an inactive patient drops off result_outdated_copies (0167) ------------
+set local role authenticated;
+select set_config('request.jwt.claims',
+  '{"sub":"20000000-0000-4000-8000-00000000a201","role":"authenticated"}', true);
+do $$
+declare v_n int;
+begin
+  select count(*) into v_n from public.result_outdated_copies()
+   where result_id = '20000000-0000-4000-8000-00000000f201';
+  if v_n <> 1 then
+    raise exception '9a: expected the row visible while the patient is active, got %', v_n;
+  end if;
+  raise notice '9a visible-while-active OK';
+end $$;
+reset role;
+
+-- Soft-delete the smoke patient the way delete_patient() does the UPDATE
+-- itself (0167): current_user must be patient_lifecycle_writer, and only the
+-- four lifecycle columns may change. Skips patient_delete_blockers (a
+-- separate concern from result_outdated_copies) — a direct UPDATE under the
+-- writer role is the cleanest local reproduction.
+set local role patient_lifecycle_writer;
+update public.patients
+   set deleted_at = now(), deleted_by = '20000000-0000-4000-8000-00000000a202',
+       delete_reason = 'test_record'
+ where id = '20000000-0000-4000-8000-00000000b201';
+reset role;
+
+set local role authenticated;
+select set_config('request.jwt.claims',
+  '{"sub":"20000000-0000-4000-8000-00000000a201","role":"authenticated"}', true);
+do $$
+declare v_n int;
+begin
+  select count(*) into v_n from public.result_outdated_copies()
+   where result_id = '20000000-0000-4000-8000-00000000f201';
+  if v_n <> 0 then
+    raise exception '9b: an inactive (deleted) patient must drop off result_outdated_copies (0167), got %', v_n;
+  end if;
+  raise notice '9b inactive-patient-excluded OK';
 end $$;
 reset role;
 

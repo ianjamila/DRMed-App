@@ -79,10 +79,11 @@ export function cappedCountLabel(count: number, capped: boolean): string | numbe
 
 export const PATIENT_CONTACTED_ACTION = "result.patient_contacted";
 
-/** What an edit form's notify outcome ("sent" | "failed" | "already" | "not_offered") reads as. */
+/** What an edit form's notify outcome ("sent" | "failed" | "already" | "inactive" | "not_offered") reads as. */
 export const NOTIFY_OUTCOME_TEXT: Record<string, string> = {
   sent: " The patient was sent an update notice.",
   failed: " The patient notice could not be sent — they're on Result follow-ups.",
   already: " The patient was already notified about this correction.",
+  inactive: " No patient notice was sent (the patient's record is no longer active).",
   not_offered: " No patient notice was sent (no copy or no contact on file).",
 };

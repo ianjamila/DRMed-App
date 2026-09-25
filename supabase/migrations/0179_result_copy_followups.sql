@@ -541,7 +541,11 @@ begin
            (s.notify_error is not null)
       from public.result_copy_states_internal(null) s
       join public.visits v on v.id = s.visit_id and v.deleted_at is null
-      left join public.patients pt       on pt.id = s.patient_id
+      -- 0167: this list is a patient-contact list, and 0167 removes inactive
+      -- (deleted/merged) records from patient contact — an inner join so an
+      -- inactive patient's rows drop off entirely.
+      join public.patients pt on pt.id = s.patient_id
+                              and pt.deleted_at is null and pt.merged_into_id is null
       left join public.staff_profiles sp on sp.id = s.contacted_by
      where (s.portal_outdated or s.printed_outdated)
        and (p_include_followed_up or not s.followed_up)
