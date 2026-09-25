@@ -5,6 +5,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { pluckOne } from "@/lib/reports/format";
 import { getPatientConsentState } from "@/lib/consent/gate";
 import { patientSearchOrClauses } from "@/lib/patients/search";
+import { activePatients } from "@/lib/patients/active";
 import { VisitForm } from "./visit-form";
 import { PatientsSearchInput } from "../../patients/search-input";
 import { VisitsTabs } from "../_components/visits-tabs";
@@ -45,9 +46,7 @@ export default async function NewVisitPage({ searchParams }: Props) {
     { data: physicians },
     { data: discountTypes },
   ] = await Promise.all([
-    supabase
-      .from("patients")
-      .select("id, drm_id, first_name, last_name")
+    activePatients(supabase.from("patients").select("id, drm_id, first_name, last_name"))
       .eq("id", patient_id)
       .maybeSingle(),
     supabase
@@ -173,9 +172,7 @@ export default async function NewVisitPage({ searchParams }: Props) {
 async function PatientPicker({ query }: { query: string }) {
   const supabase = await createClient();
 
-  let q = supabase
-    .from("patients")
-    .select("id, drm_id, first_name, last_name, phone")
+  let q = activePatients(supabase.from("patients").select("id, drm_id, first_name, last_name, phone"))
     .order("created_at", { ascending: false })
     .limit(PICKER_LIMIT);
 

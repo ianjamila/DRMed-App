@@ -41,6 +41,7 @@ export function ConsentPanel({
   noticeVersion,
   bookingOnlyConsent,
   isAdmin,
+  readOnly = false,
 }: {
   patientId: string;
   patientName: string;
@@ -52,6 +53,10 @@ export function ConsentPanel({
   // record, but not consent on file — the patient still needs to sign.
   bookingOnlyConsent: boolean;
   isAdmin: boolean;
+  // 0167: true for a deleted/merged patient — reads (print, view signed
+  // form) stay available; nothing new can be captured or withdrawn. The
+  // server actions refuse regardless; this only hides the controls.
+  readOnly?: boolean;
 }) {
   const [pending, start] = useTransition();
   const [mode, setMode] = useState<"idle" | "pad" | "paper">("idle");
@@ -159,7 +164,7 @@ export function ConsentPanel({
             Print form
           </Button>
         </Link>
-        {mode === "idle" && (
+        {!readOnly && mode === "idle" && (
           <Button
             type="button"
             size="sm"
@@ -169,7 +174,7 @@ export function ConsentPanel({
             Capture signature
           </Button>
         )}
-        {mode === "idle" && (
+        {!readOnly && mode === "idle" && (
           <Button
             type="button"
             variant="outline"
@@ -192,7 +197,7 @@ export function ConsentPanel({
             </Button>
           </Link>
         )}
-        {current && isAdmin && (
+        {!readOnly && current && isAdmin && (
           <Button
             type="button"
             variant="outline"

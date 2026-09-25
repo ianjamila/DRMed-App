@@ -13,6 +13,7 @@ import { audit } from "@/lib/audit/log";
 import { PatientSignInSchema } from "@/lib/validations/auth";
 import { checkRateLimit, RATE_LIMITS } from "@/lib/rate-limit/check";
 import { selectActivePins, type VisitPinCandidate } from "@/lib/auth/pin-selection";
+import { activePatients } from "@/lib/patients/active";
 
 const MAX_FAILED_ATTEMPTS = 5;
 const LOCKOUT_MINUTES = 15;
@@ -72,10 +73,11 @@ export async function signInPatient(
   const admin = createAdminClient();
   const nowIso = new Date().toISOString();
 
-  // 1) Patient lookup.
-  const { data: patient } = await admin
-    .from("patients")
-    .select("id, drm_id")
+  // 1) Patient lookup. Active only (0167) — a deleted or merged DRM-ID reads
+  // as not-found, the same generic failure a wrong PIN gets.
+  const { data: patient } = await activePatients(
+    admin.from("patients").select("id, drm_id"),
+  )
     .eq("drm_id", drm_id)
     .maybeSingle();
 
@@ -193,6 +195,28 @@ export async function signInPatient(
       ok: false,
       error: anyStillUnlocked ? GENERIC_ERROR : LOCKED_ERROR,
     };
+  }
+
+  // 0167: re-check BEFORE any success bookkeeping — a record deleted or
+  // merged during PIN verification must not get a session, and must not
+  // get the matched PIN's counters reset or last_used_at stamped either,
+  // since that never happened (no session was actually issued).
+  const { data: stillActive } = await activePatients(
+    admin.from("patients").select("id"),
+  )
+    .eq("id", patient.id)
+    .maybeSingle();
+  if (!stillActive) {
+    await audit({
+      actor_id: null,
+      actor_type: "patient",
+      patient_id: patient.id,
+      action: "patient.signin.failed",
+      metadata: { drm_id, reason: "patient_inactive_at_issue" },
+      ip_address: ipAddress,
+      user_agent: userAgent,
+    });
+    return { ok: false, error: GENERIC_ERROR };
   }
 
   // 5) Success: reset ONLY the matched row's counters — never every active

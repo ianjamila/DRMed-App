@@ -1,6 +1,7 @@
 import "server-only";
 import { cache } from "react";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { activePatients } from "@/lib/patients/active";
 
 /**
  * The portal's consent rule, applied where the layout cannot reach.
@@ -27,25 +28,17 @@ export const PORTAL_CONSENT_REQUIRED_ERROR =
 
 /**
  * Whether the signed-in patient has consent on file. Takes the session's
- * patient id and follows a merge to the surviving record, like
- * requirePatientProfile, so a session minted before a merge reads the kept
- * record's consent. `cache` shares one read between the layout-free page and
- * anything else in the same request.
+ * patient id — already proven active by getActivePatientSession /
+ * requirePatientProfile — and re-reads it as an ACTIVE record only (0167:
+ * no merge chain). A record deleted or merged between the session check and
+ * this read answers false, so nothing is disclosed from it, and a merged
+ * record never borrows the kept record's consent. `cache` shares one read
+ * between the layout-free page and anything else in the same request.
  */
 export const portalConsentCurrent = cache(async (patientId: string): Promise<boolean> => {
   const admin = createAdminClient();
-  const { data: row } = await admin
-    .from("patients")
-    .select("consent_current, merged_into_id")
-    .eq("id", patientId)
-    .maybeSingle();
-  if (!row) return false;
-  if (!row.merged_into_id) return row.consent_current === true;
-
-  const { data: kept } = await admin
-    .from("patients")
-    .select("consent_current")
-    .eq("id", row.merged_into_id)
-    .maybeSingle();
-  return kept?.consent_current === true;
+  const { data: row } = await activePatients(
+    admin.from("patients").select("consent_current").eq("id", patientId),
+  ).maybeSingle();
+  return row?.consent_current === true;
 });

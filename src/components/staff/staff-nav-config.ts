@@ -594,6 +594,13 @@ export const STAFF_NAV: StaffNavSection[] = [
             description: "When the same person was accidentally registered twice (different spellings, different contact numbers), combine the two records into one. Visit history from both gets merged onto the surviving record.",
             roles: ["admin"],
           },
+          {
+            href: "/staff/admin/deleted-patients",
+            label: ROUTE_NAME["/staff/admin/deleted-patients"],
+            description:
+              "Patient records an admin deleted (duplicates, test records, patient requests). Their history stays on file; restore a record here to put it back in the patient list.",
+            roles: ["admin"],
+          },
         ],
       },
     ],

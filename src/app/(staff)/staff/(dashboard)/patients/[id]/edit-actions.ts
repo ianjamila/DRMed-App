@@ -4,10 +4,12 @@ import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase/admin";
 import { audit } from "@/lib/audit/log";
 import { requireActiveStaff } from "@/lib/auth/require-staff";
 import { PatientUpdateSchema } from "@/lib/validations/patient";
 import { recordConsentGrantAction } from "@/lib/actions/consent/grant";
+import { assertPatientActive } from "@/lib/patients/require-active";
 
 export type PatientUpdateResult =
   | { ok: true; patient_id: string }
@@ -50,6 +52,9 @@ export async function updatePatientAction(
       error: parsed.error.issues[0]?.message ?? "Please check the form.",
     };
   }
+
+  const active = await assertPatientActive(createAdminClient(), patientId);
+  if (!active.ok) return { ok: false, error: active.error };
 
   const { consent_given_today, ...rest } = parsed.data;
   const consentGivenToday = consent_given_today === "yes";

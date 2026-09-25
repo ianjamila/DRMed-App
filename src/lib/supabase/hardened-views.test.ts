@@ -63,6 +63,10 @@ const HARDENED: Record<string, string> = {
   // security_invoker since it was created (0143); registered when 0162
   // recreated it to add consent status, the moment the option is easiest to drop.
   v_patients_directory: "0143",
+  // 0167 (patient-delete PR 2): active-only directory + the admin-only
+  // inclusive view, and the dedup view recreated with the active predicate.
+  v_patients_directory_admin: "0167",
+  v_patient_dedup_candidate_pairs: "0167",
 };
 
 const migrations = readdirSync(MIGRATIONS_DIR)
@@ -103,7 +107,9 @@ describe("hardened views keep security_invoker", () => {
       "v_ops_daily_doctor",
       "v_ops_daily_hmo_provider_ar",
       "v_ops_daily_totals",
+      "v_patient_dedup_candidate_pairs",
       "v_patients_directory",
+      "v_patients_directory_admin",
       "v_patients_without_consent",
       "v_staff_advances_outstanding",
     ]);

@@ -4,7 +4,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { audit } from "@/lib/audit/log";
 import { ipAndAgent } from "@/lib/server/action-helpers";
 import { reportError } from "@/lib/observability/report-error";
-import { getPatientSession } from "@/lib/auth/patient-session-cookies";
+import { getActivePatientSession } from "@/lib/auth/require-patient";
 import { PORTAL_CONSENT_REQUIRED_ERROR, portalConsentCurrent } from "@/lib/portal/consent-guard";
 import {
   BookingSchema,
@@ -18,6 +18,7 @@ import { sendNewBookingAlert } from "@/lib/appointments/booking-alert";
 import { after } from "next/server";
 import { checkRateLimit, RATE_LIMITS } from "@/lib/rate-limit/check";
 import { resolvePatient } from "@/lib/patients/resolve";
+import { activePatients } from "@/lib/patients/active";
 import { createAppointmentGroup, createLabRequestOnlyBooking, type PatientResolution } from "@/lib/appointments/create";
 import { recordSelfRegistrationGrant, shouldRecordBookingConsent } from "@/lib/consent/self-registration";
 import type { ServiceRow } from "@/lib/appointments/timing";
@@ -158,9 +159,7 @@ export async function lookupPatientAction(
 
   const drmId = parsed.data.drm_id.toUpperCase();
   const admin = createAdminClient();
-  const { data: row } = await admin
-    .from("patients")
-    .select("id, drm_id, first_name, last_name")
+  const { data: row } = await activePatients(admin.from("patients").select("id, drm_id, first_name, last_name"))
     .eq("drm_id", drmId)
     .ilike("last_name", parsed.data.last_name)
     .maybeSingle();
@@ -233,7 +232,7 @@ export async function submitBookingAction(_prev: BookingResult | null, formData:
   // Resolved before rate-limiting so the limit can be keyed per-patient.
   let resolvedPatientIdFromSession: string | null = null;
   if (isPortalSource) {
-    const session = await getPatientSession();
+    const session = await getActivePatientSession();
     if (!session) return { ok: false, error: "Your session expired. Please sign in again." };
     // Same rule as every portal entry point (consent-guard.ts): /portal/book
     // shows the consent notice instead of the form, but a tab opened before
@@ -357,7 +356,9 @@ export async function submitBookingAction(_prev: BookingResult | null, formData:
       if (!res.ok) return { ok: false, error: res.error };
       return { ok: true, patient: { patientId: res.id, drmId: res.drm_id, email: data.email, resolution: res.reused ? "reused" : "created" } };
     }
-    const { data: row } = await admin.from("patients").select("id, drm_id, email").eq("id", data.patient_id).maybeSingle();
+    const { data: row } = await activePatients(admin.from("patients").select("id, drm_id, email"))
+      .eq("id", data.patient_id)
+      .maybeSingle();
     if (!row) return { ok: false, error: "We couldn't find that patient. Please look up again." };
     return { ok: true, patient: { patientId: row.id, drmId: row.drm_id, email: row.email, resolution: "existing" } };
   };

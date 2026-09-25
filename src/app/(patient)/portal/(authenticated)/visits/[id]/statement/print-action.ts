@@ -21,8 +21,9 @@ import { auditPatientStatement } from "@/lib/portal/statement-audit";
  * the disclosure — the page itself is what the consent guard stops.
  */
 export async function logPatientStatementPrintAction(visitId: string): Promise<void> {
-  // requirePatientProfile, like the page: it follows a merged record to the
-  // surviving patient, whose id now owns the visit.
+  // requirePatientProfile, like the page: it re-reads getActivePatientSession
+  // on every call, so a deleted or merged record is refused here regardless
+  // of the cookie's remaining lifetime — no merge-chain following (0167).
   const session = await requirePatientProfile();
   const db = await createPatientClient(session.patient_id);
   const { data: visit } = await db

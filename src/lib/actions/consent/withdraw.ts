@@ -7,6 +7,7 @@ import { audit } from "@/lib/audit/log";
 import { ipAndAgent, firstIssue } from "@/lib/server/action-helpers";
 import { requireAdminStaff } from "@/lib/auth/require-admin";
 import { translatePgError } from "@/lib/accounting/pg-errors";
+import { assertPatientActive } from "@/lib/patients/require-active";
 import type { ConsentActionResult } from "./grant";
 
 const Schema = z.object({
@@ -26,6 +27,9 @@ export async function withdrawConsentAction(
   const d = parsed.data;
 
   const admin = createAdminClient();
+  const active = await assertPatientActive(admin, d.patientId);
+  if (!active.ok) return { ok: false, error: active.error };
+
   const { ip, ua } = await ipAndAgent();
 
   const { error } = await admin.from("patient_consents").insert({

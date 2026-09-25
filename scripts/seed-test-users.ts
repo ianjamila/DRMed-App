@@ -11,6 +11,7 @@ import { createClient } from "@supabase/supabase-js";
 import { generatePin, hashPin } from "../src/lib/auth/pin";
 import type { Database } from "../src/types/database";
 import { requireLocalOrExplicitProd } from "./lib/env-guard";
+import { isActivePatient, PATIENT_LIFECYCLE_COLUMNS } from "../src/lib/patients/active";
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL;
 const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -79,9 +80,14 @@ async function ensureTestPatient(opts: {
 }) {
   const { data: existing } = await admin
     .from("patients")
-    .select("id")
+    .select(`id, ${PATIENT_LIFECYCLE_COLUMNS}`)
     .eq("drm_id", opts.drmId)
     .maybeSingle();
+  if (existing && !isActivePatient(existing)) {
+    throw new Error(
+      `${opts.drmId} is held by a deleted or merged record — refusing to reuse or overwrite it. Restore it or pick another fixture DRM-ID.`,
+    );
+  }
 
   if (existing) return existing.id;
 

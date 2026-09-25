@@ -6,6 +6,8 @@ import { SITE } from "@/lib/marketing/site";
 import { sendEmail } from "./email";
 import { buildReminderEmail } from "./reminder-email";
 import { formatManilaDateTime } from "./format-manila-datetime";
+import { checkPatientRecipient } from "./active-patient-recipient";
+import { auditSkippedInactiveRecipient } from "./inactive-recipient-audit";
 
 interface Input {
   appointmentId: string;
@@ -30,8 +32,7 @@ export async function notifyAppointmentReminder({
     .select(
       `
         id, scheduled_at, status, booking_group_id, walk_in_name,
-        services ( name ),
-        patients ( first_name, email )
+        services ( name )
       `,
     )
     .eq("id", appointmentId)
@@ -40,12 +41,20 @@ export async function notifyAppointmentReminder({
   if (!appt) return { emailed: false, reason: "appointment not found" };
 
   const svc = Array.isArray(appt.services) ? appt.services[0] : appt.services;
-  const patient = Array.isArray(appt.patients)
-    ? appt.patients[0]
-    : appt.patients;
 
-  const greeting = patient?.first_name ?? appt.walk_in_name ?? "there";
-  const email = patient?.email ?? null;
+  const recipient = await checkPatientRecipient(admin, patientId);
+  if (recipient.kind === "inactive") {
+    await auditSkippedInactiveRecipient({
+      sender: "notify-appointment-reminder",
+      patientId: recipient.patientId,
+      reason: recipient.reason,
+      resourceType: "appointment",
+      resourceId: appointmentId,
+    });
+    return { emailed: false, reason: "patient inactive" };
+  }
+  const greeting = recipient.kind === "active" ? recipient.patient.first_name : (appt.walk_in_name ?? "there");
+  const email = recipient.kind === "active" ? recipient.patient.email : null;
   const serviceName = svc?.name ?? "your appointment";
   const when = appt.scheduled_at
     ? formatManilaDateTime(appt.scheduled_at)

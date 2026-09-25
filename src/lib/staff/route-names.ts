@@ -63,6 +63,7 @@ export const ROUTE_NAME: Record<string, string> = {
   "/staff/admin/settings/alerts": "Email Alerts",
   "/staff/admin/import-patients": "Import Patients",
   "/staff/admin/patient-merge": "Merge Duplicate Patients",
+  "/staff/admin/deleted-patients": "Deleted Patients",
   "/staff/profile": "My Profile",
   "/staff/payslips": "My Payslips",
   "/staff/gift-codes/sell": "Sell Gift Code",
