@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { formatPhp } from "@/lib/marketing/format";
 import {
+  amountRemovedByEdit,
   completedWorkCount,
   completedWorkSummary,
   completedWorkWentPhrase,
@@ -215,5 +216,29 @@ describe("completed work = released results + doctor lines marked done", () => {
       "its results went out and its doctor lines were done",
     );
     expect(completedWorkWentPhrase(NO_RELEASED)).toBe("");
+  });
+});
+
+describe("amountRemovedByEdit (the Edit dialog's note)", () => {
+  it("is what comes off the visit when the amount goes down", () => {
+    expect(amountRemovedByEdit(1000, 800)).toBe(200);
+  });
+  it("is null when the amount stays (method-only) or goes up", () => {
+    expect(amountRemovedByEdit(1000, 1000)).toBeNull();
+    expect(amountRemovedByEdit(500, 800)).toBeNull();
+  });
+  it("works in centavos", () => {
+    expect(amountRemovedByEdit(0.3, 0.1 + 0.2)).toBeNull();
+    expect(amountRemovedByEdit(10.25, 10.2)).toBe(0.05);
+  });
+  it("feeds paymentLeavesState with the same wording Delete shows", () => {
+    const s = paymentLeavesState(visit({ totalPhp: 1000, paidPhp: 1000 }), amountRemovedByEdit(1000, 800)!, {
+      results: 2,
+      consults: 0,
+      procedures: 0,
+    })!;
+    expect(paymentLeavesMessage(s, "0043", formatPhp).text).toBe(
+      "Visit #0043 will then owe ₱200, and 2 results on it are already released. Released results stay released.",
+    );
   });
 });

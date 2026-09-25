@@ -94,6 +94,17 @@ function toCentavos(php: number): number {
   return Math.round(php * 100);
 }
 
+/**
+ * How much money an amount edit takes OFF the visit, in pesos — null when the
+ * amount stays or goes up (nothing leaves; a method-only change is not a
+ * removal). Centavo arithmetic. Feeds the Edit dialog's "what the visit is
+ * left in" note (paymentLeavesState) and matches shouldAlertPaymentEdited.
+ */
+export function amountRemovedByEdit(oldAmount: number, newAmount: number): number | null {
+  const c = toCentavos(oldAmount) - toCentavos(newAmount);
+  return c > 0 ? c / 100 : null;
+}
+
 /** payments.amount_php is numeric(10,2); correct_payment (0174) refuses more. */
 export const MAX_PAYMENT_PHP = 99_999_999.99;
 

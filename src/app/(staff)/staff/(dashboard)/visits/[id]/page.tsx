@@ -1601,6 +1601,9 @@ export default async function VisitDetailPage({ params, searchParams }: Props) {
                             }
                             visitTotal={Number(visit.total_php)}
                             visitPaid={Number(visit.paid_php)}
+                            visit={visitMoney}
+                            visitNumber={visit.visit_number}
+                            released={releasedCounts}
                           />
                         ) : null}
                         <VoidPaymentDialog
