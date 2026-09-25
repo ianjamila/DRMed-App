@@ -6,7 +6,7 @@
  */
 import type { Json } from "../../types/database";
 import { applyOps } from "./__fixtures__/customer-world";
-import { LeaseLostError, SyncBusyError, type AcquireResult, type AuditRow, type SheetSyncStore } from "./store";
+import { LeaseLostError, SyncBusyError, type AcquireResult, type AuditRow, type RevertPageResult, type SheetSyncStore } from "./store";
 import type { CustomerOp, FactsRecord, LinkRecord, PatientRecord, PrevCustomerRow, ReviewItemInput, TabKey } from "./types";
 
 let runCounter = 0;
@@ -24,7 +24,14 @@ export interface FakeStoreOptions {
   lastGood?: Partial<Record<TabKey, number>>;
   acceptedSuspect?: Iterable<string>;
   mirrorWindowStart?: string;
+  /** Scripted per-call `revertRun` results, consumed in call order (paged-undo tests). Past the
+   * end of the array, the last entry repeats. Defaults to a single `done` page with zero counts. */
+  revertPages?: RevertPageResult[];
 }
+
+const ZERO_REVERT_PAGE: RevertPageResult = {
+  done: true, restored: 0, blocked: 0, deleted: 0, kept: 0, held: 0, links_left: 0, alias_removed: 0, alias_restored: 0,
+};
 
 export class FakeStore implements SheetSyncStore {
   calls: Array<[string, ...unknown[]]> = [];
@@ -44,6 +51,8 @@ export class FakeStore implements SheetSyncStore {
   private lastGood: Partial<Record<TabKey, number>>;
   private acceptedSuspect: Set<string>;
   private mirrorWindowStart: string;
+  private revertPages: RevertPageResult[];
+  private revertCallIndex = 0;
 
   constructor(opts: FakeStoreOptions = {}) {
     this.paused = opts.paused ?? false;
@@ -57,6 +66,7 @@ export class FakeStore implements SheetSyncStore {
     this.lastGood = opts.lastGood ?? {};
     this.acceptedSuspect = new Set(opts.acceptedSuspect ?? []);
     this.mirrorWindowStart = opts.mirrorWindowStart ?? "2024-01-01";
+    this.revertPages = opts.revertPages ?? [ZERO_REVERT_PAGE];
   }
 
   private fence(): void {
@@ -156,10 +166,12 @@ export class FakeStore implements SheetSyncStore {
     return 1;
   }
 
-  async revertRun(_lease: string, targetRunId: string) {
-    this.calls.push(["revertRun", targetRunId]);
+  async revertRun(_lease: string, targetRunId: string, limit?: number): Promise<RevertPageResult> {
+    this.calls.push(["revertRun", targetRunId, limit]);
     this.fence();
-    return {};
+    const page = this.revertPages[Math.min(this.revertCallIndex, this.revertPages.length - 1)];
+    this.revertCallIndex++;
+    return page;
   }
 
   async reviewResolve(itemId: string, _actorId: string, action: "link" | "create" | "dismiss", patientId: string | null) {

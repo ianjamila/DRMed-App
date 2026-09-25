@@ -27,6 +27,26 @@ export interface AuditRow {
   metadata: Json;
 }
 
+/**
+ * One page of `sheet_sync_revert_run` (migration round 5, 0170): counts are
+ * PER CALL, not cumulative — a caller paging through must sum them itself.
+ * `done` is true only on the call that found nothing left to undo; only that
+ * call also holds the run's own links, restores/removes its alias, and marks
+ * the run reverted, so `links_left` / `alias_removed` / `alias_restored` are
+ * always 0 on every earlier page.
+ */
+export interface RevertPageResult {
+  done: boolean;
+  restored: number;
+  blocked: number;
+  deleted: number;
+  kept: number;
+  held: number;
+  links_left: number;
+  alias_removed: number;
+  alias_restored: number;
+}
+
 export interface SheetSyncStore {
   acquire(trigger: "cron" | "manual" | "cli" | "resort" | "alias" | "revert", actorId: string | null, dryRun: boolean): Promise<AcquireResult>;
   heartbeat(lease: string): Promise<void>;
@@ -45,7 +65,8 @@ export interface SheetSyncStore {
   upsertReview(lease: string, tab: TabKey, items: ReviewItemInput[], clearAbsent: boolean): Promise<Record<string, number>>;
   resortApply(lease: string, patientIds: string[], expectedOld: string | null, next: string | null): Promise<number>;
   aliasApply(lease: string, answerNorm: string, sourceId: string, actorId: string): Promise<number>;
-  revertRun(lease: string, targetRunId: string): Promise<Record<string, number>>;
+  /** `limit` bounds patients handled THIS call (0170's p_limit); omit it to undo everything in one call. */
+  revertRun(lease: string, targetRunId: string, limit?: number): Promise<RevertPageResult>;
   reviewResolve(itemId: string, actorId: string, action: "link" | "create" | "dismiss", patientId: string | null): Promise<void>;
   resortCandidates(): Promise<Array<{ id: string; answer: string; referral_source: string | null; referral_source_origin: "staff" | "patient" | "sheet" | null }>>;
   audit(row: AuditRow): Promise<void>;
@@ -158,7 +179,8 @@ export function createSupabaseStore(client: Client): SheetSyncStore {
       rpc("sheet_resort_apply", { p_lease_token: lease, p_patient_ids: ids, p_expected_old: expectedOld, p_new: next }),
     aliasApply: (lease, answerNorm, sourceId, actorId) =>
       rpc("sheet_alias_apply", { p_lease_token: lease, p_raw_normalized: answerNorm, p_source_id: sourceId, p_actor: actorId }),
-    revertRun: (lease, target) => rpc("sheet_sync_revert_run", { p_lease_token: lease, p_target_run: target }),
+    revertRun: (lease, target, limit) =>
+      rpc("sheet_sync_revert_run", { p_lease_token: lease, p_target_run: target, p_limit: limit ?? null }),
     async reviewResolve(itemId, actorId, action, patientId) {
       await rpc("sheet_review_resolve", { p_item_id: itemId, p_actor: actorId, p_action: action, p_patient_id: patientId });
     },

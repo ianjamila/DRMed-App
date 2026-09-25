@@ -1,8 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
 import { CONS_H0, CONS_H1, CUST_HEADER, LAB_H0, LAB_H1 } from "./__fixtures__/tab-headers";
 import { FakeStore } from "./fake-store";
-import { runSheetSync, withAdminLease } from "./run";
-import { SyncBusyError } from "./store";
+import { revertRunPaged, runSheetSync, withAdminLease } from "./run";
+import { LeaseLostError, SyncBusyError, type RevertPageResult } from "./store";
 import type { Cell, CustomerOp, LinkRecord, PatientRecord, RawTabs, TabKey } from "./types";
 import type { Json } from "../../types/database";
 
@@ -294,5 +294,51 @@ describe("withAdminLease — same fix for admin actions (review fix #5)", () => 
     await expect(withAdminLease(store, "resort", "staff-1", async () => "ok"))
       .rejects.toThrow(/admin action "resort" succeeded but could not be recorded as finished/);
     expect(store.calls.filter((c) => c[0] === "finish")).toHaveLength(1);
+  });
+});
+
+/** A revertRun page, defaulting to "more to do, nothing happened yet" — override per test. */
+const page = (over: Partial<RevertPageResult> = {}): RevertPageResult =>
+  ({ done: false, restored: 0, blocked: 0, deleted: 0, kept: 0, held: 0, links_left: 0, alias_removed: 0, alias_restored: 0, ...over });
+
+describe("revertRunPaged — paged, resumable undo (migration round 5)", () => {
+  it("sums counts across pages under one lease and stops the moment a page reports done", async () => {
+    const store = new FakeStore({ revertPages: [
+      page({ restored: 5, deleted: 3, held: 5 }),
+      page({ restored: 2, blocked: 1, held: 2 }),
+      page({ done: true, links_left: 1, alias_removed: 1 }),
+      page({ restored: 999 }), // must never be reached — the loop stops at done
+    ] });
+    const { result } = await revertRunPaged(store, "staff-1", "target-run");
+    expect(result).toEqual({ restored: 7, blocked: 1, deleted: 3, kept: 0, held: 7, links_left: 1, alias_removed: 1, alias_restored: 0 });
+    expect(store.calls.filter((c) => c[0] === "revertRun")).toHaveLength(3);
+  });
+
+  it("heartbeats between pages, but not after the final (done) page", async () => {
+    const store = new FakeStore({ revertPages: [page({ restored: 1 }), page({ restored: 1 }), page({ done: true })] });
+    await revertRunPaged(store, "staff-1", "target-run");
+    const relevant = store.calls.filter((c) => c[0] === "revertRun" || c[0] === "heartbeat");
+    expect(relevant.map((c) => c[0])).toEqual(["revertRun", "heartbeat", "revertRun", "heartbeat", "revertRun"]);
+  });
+
+  it("passes the page size through as revertRun's limit", async () => {
+    const store = new FakeStore({ revertPages: [page({ done: true })] });
+    await revertRunPaged(store, "staff-1", "target-run", { pageSize: 500 });
+    expect(store.calls.find((c) => c[0] === "revertRun")).toEqual(["revertRun", "target-run", 500]);
+  });
+
+  it("throws instead of looping forever when a page makes no progress and isn't done", async () => {
+    const store = new FakeStore({ revertPages: [page({ restored: 1 }), page()] }); // 2nd page: not done, every count 0
+    await expect(revertRunPaged(store, "staff-1", "target-run")).rejects.toThrow(/made no progress/);
+    // A genuine work failure (not a lease loss) is still recorded as finished — unlike the lease-lost case below.
+    expect(store.finishes).toEqual([{ status: "failed", error: expect.stringContaining("made no progress") }]);
+  });
+
+  it("a lease lost between pages propagates without ever calling finish", async () => {
+    // 1st fenced call = page 1's revertRun (makes progress); 2nd = the heartbeat
+    // before page 2, which is where leaseLostAfter fires — "mid-way", not on the first call.
+    const store = new FakeStore({ leaseLostAfter: 2, revertPages: [page({ restored: 1 }), page({ done: true })] });
+    await expect(revertRunPaged(store, "staff-1", "target-run")).rejects.toBeInstanceOf(LeaseLostError);
+    expect(store.calls.some((c) => c[0] === "finish")).toBe(false);
   });
 });

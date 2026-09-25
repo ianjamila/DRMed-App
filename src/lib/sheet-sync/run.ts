@@ -4,7 +4,7 @@ import { planCustomers } from "./customer-plan";
 import { assignIdentities, type IdentifiedLine } from "./encounter-identity";
 import { buildPatientIndex, type PatientIndex } from "./patient-index";
 import { checkSnapshot } from "./snapshot";
-import { LeaseLostError, SyncBusyError, type SheetSyncStore } from "./store";
+import { LeaseLostError, SyncBusyError, type RevertPageResult, type SheetSyncStore } from "./store";
 import { parseCustomersTab } from "./tabs/customers";
 import { parseConsultTab, parseLabTab } from "./tabs/encounters";
 import type { CustomerMirrorRow, CustomerOp, LinkRecord, RawTabs, TabKey, TabParse } from "./types";
@@ -266,6 +266,49 @@ export async function withAdminLease<T>(
     throw new Error(`sheet sync: admin action "${trigger}" succeeded but could not be recorded as finished — ${errText(e)}`);
   }
   return { runId: acq.runId, result };
+}
+
+export type RevertSummary = Omit<RevertPageResult, "done">;
+
+const REVERT_SUMMARY_KEYS: ReadonlyArray<keyof RevertSummary> =
+  ["restored", "blocked", "deleted", "kept", "held", "links_left", "alias_removed", "alias_restored"];
+
+/** Generous backstop against a stuck loop — a real undo finishes in a handful of pages. */
+const REVERT_MAX_PAGES = 1000;
+
+/**
+ * Undo a sync run's patient writes, one bounded page at a time under ONE admin
+ * lease — 0170's `sheet_sync_revert_run` is resumable across calls that share
+ * a lease (migration round 5: p_limit caps patients handled per call so an
+ * undo of thousands of patients fits PostgREST's 8s statement_timeout). Only
+ * the page that finds nothing left (`done: true`) holds the run's own links,
+ * restores/removes its alias and marks the run reverted; every page's counts
+ * are per-call, so they are summed here into one total (Task 14's server
+ * action uses `.result`).
+ */
+export async function revertRunPaged(
+  store: SheetSyncStore,
+  actorId: string,
+  targetRunId: string,
+  opts: { pageSize?: number } = {},
+): Promise<{ runId: string; result: RevertSummary }> {
+  const pageSize = opts.pageSize ?? 2000;
+  return withAdminLease(store, "revert", actorId, async (lease) => {
+    const summary: RevertSummary = { restored: 0, blocked: 0, deleted: 0, kept: 0, held: 0, links_left: 0, alias_removed: 0, alias_restored: 0 };
+    for (let page = 0; page < REVERT_MAX_PAGES; page++) {
+      const res = await store.revertRun(lease, targetRunId, pageSize);
+      for (const k of REVERT_SUMMARY_KEYS) summary[k] += res[k];
+      if (res.done) return summary;
+      // Every page short of the last one must restore/block/keep/hold at least
+      // one patient — otherwise nothing is moving the run toward `done` and the
+      // loop would spin forever. Surface that as a clear error instead.
+      if (REVERT_SUMMARY_KEYS.every((k) => res[k] === 0)) {
+        throw new Error(`sheet sync: revert of run ${targetRunId} made no progress and did not finish — stopping instead of looping forever`);
+      }
+      await store.heartbeat(lease);
+    }
+    throw new Error(`sheet sync: revert of run ${targetRunId} did not finish within ${REVERT_MAX_PAGES} pages`);
+  });
 }
 
 export { LeaseLostError, SyncBusyError };
