@@ -130,11 +130,11 @@ describe("parseCustomersTab", () => {
     expect(p.issues).toHaveLength(1);
     expect(p.issues[0].kind).toBe("invalid_row");
   });
-  it("uses the Last Name fallback column when Full Name has a blank surname before the comma", () => {
+  it("keeps a blank surname before the comma as a review item even when the Last Name column is filled (D6)", () => {
     const row = cust({ 4: ", Juan Santos", 0: "Dela Cruz" });
     const p = parseCustomersTab([CUST_HEADER, row], { today: TODAY, aliases: new Map() });
-    expect(p.rows).toHaveLength(1);
-    expect(p.rows[0]).toMatchObject({ first: "Juan", middle: "Santos", last: "Dela Cruz" });
+    expect(p.rows).toHaveLength(0);
+    expect(p.issues.map((i) => i.kind)).toEqual(["invalid_row"]);
   });
 });
 

@@ -35,9 +35,12 @@ export function parseName(
       return { first_name: null, last_name: null, middle_name: null, unparseable: true };
     }
 
-    // A blank surname before the comma (e.g. ", First Middle") falls back to
-    // the dedicated Last Name column rather than leaving last_name null.
-    const last = rawLastTrim ? titleCase(rawLastTrim) : titleCase((lastFallback ?? "").trim());
+    // A blank surname before the comma (", First Middle") deliberately does NOT
+    // fall back to the Last Name column. The May importer stored such rows with
+    // last_name "", so a fallback here would re-key them and the sheet sync
+    // would create a second patient (plan D6: a re-read row must yield the
+    // exact name May created). These rows stay review items for a human.
+    const last = titleCase(rawLastTrim);
     if (!rest) {
       return { first_name: null, last_name: last || null, middle_name: null, unparseable: !last };
     }
