@@ -6,6 +6,7 @@ import { DOCTOR_KINDS_PG_LIST } from "@/lib/visits/classification";
 import { todayManilaISODate } from "@/lib/dates/manila";
 import { loadHiddenCardIds } from "@/lib/dashboards/card-prefs";
 import { LAB_QUEUE_GATE_VISITS_OR } from "@/lib/visits/lab-gate";
+import { updatedSinceIso } from "@/lib/results/updated-filter";
 import { reportError } from "@/lib/observability/report-error";
 import { RealtimeRefresher, type Subscription } from "@/components/staff/realtime-refresher";
 import { DashboardHeader } from "./_components/dashboard-header";
@@ -205,7 +206,10 @@ async function loadLabStats(
   // "Updated (last 7 days)": corrections to results this role can read — RLS
   // on the signed-in client scopes it the same way the archive/queue already
   // do, so no explicit section filter is needed here.
-  const since7d = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+  // R7: same rolling window updatedSinceIso() uses for the archive's
+  // ?updated=7d filter (src/lib/results/updated-filter.ts) — reusing it
+  // means the card's count and the filter it links to can't drift apart.
+  const since7d = updatedSinceIso();
   const updated7dPromise =
     show("lab.updated_7d") &&
     (role === "medtech" || role === "pathologist" || role === "xray_technician")
