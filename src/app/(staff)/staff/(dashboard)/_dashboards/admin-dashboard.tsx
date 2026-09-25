@@ -805,7 +805,7 @@ export async function AdminDashboard({ session }: { session: StaffSession }) {
               <StatCard
                 label="Queue"
                 value={stats.queueTotal}
-                hint="Lab & imaging lines awaiting a result"
+                hint="All dates — lab & imaging lines awaiting a result"
                 href="/staff/queue"
                 error={stats.queueTotalError}
               />
@@ -816,8 +816,8 @@ export async function AdminDashboard({ session }: { session: StaffSession }) {
                 value={stats.queueUnclaimed}
                 hint={
                   stats.queueUnclaimedXray > 0
-                    ? `Waiting for someone to pick up · ${stats.queueUnclaimedXray} x-ray for the X-ray technician`
-                    : "Paid lab & imaging lines nobody has picked up"
+                    ? `All dates — waiting for someone to pick up · ${stats.queueUnclaimedXray} x-ray for the X-ray technician`
+                    : "All dates — paid lab & imaging lines nobody has picked up"
                 }
                 href="/staff/queue?filter=unclaimed"
                 error={stats.queueUnclaimedError}

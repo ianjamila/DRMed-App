@@ -786,7 +786,7 @@
         <tr><td>Admin</td><td>Queue</td><td>Everything, plus who claimed each test</td></tr>
       </tbody>
     </table></div>
-    <p>Your dashboard (<q>Lab bench</q>) has four cards under <b>My queue</b>: <b>Unclaimed in my sections</b>, <b>Claimed by me</b>, <b>Send-out awaiting result</b> and <b>Released today (mine)</b>, plus an <b>Oldest unclaimed</b> strip. Each is a link into the queue; <b>Unclaimed in my sections</b> and the strip's <b>View all</b> open its <span class="tab">Unclaimed</span> tab.</p>
+    <p>Your dashboard (<q>Lab bench</q>) has four cards under <b>My queue</b>: <b>Unclaimed in my sections</b>, <b>Claimed by me</b>, <b>Open send-out tests</b> and <b>Released today (mine)</b>, plus an <b>Oldest unclaimed</b> strip. Each is a link into the queue; <b>Unclaimed in my sections</b> and the strip's <b>View all</b> open its <span class="tab">Unclaimed</span> tab. <b>Unclaimed in my sections</b>, <b>Claimed by me</b> and <b>Open send-out tests</b> count work from any date, not just today (their hint starts <q>All dates</q>); only <b>Released today (mine)</b> is today.</p>
   </section>
 
   <!-- 4.2 -->
@@ -860,7 +860,7 @@
     <h3>4.5 Upload a PDF result (send-outs and tests without a template)</h3>
     <p>Some tests come back as a report from a partner lab, and a few have no structured template yet. For these the test page shows an upload form instead: <q>Send-out test: attach the partner-lab PDF.</q> or <q>No structured template configured for this service yet — falling back to PDF upload.</q></p>
     <ol class="steps">
-      <li><p class="step-title">Claim the test as usual. Send-outs wait on your queue and on the dashboard card <b>Send-out awaiting result</b> until the report arrives.</p></li>
+      <li><p class="step-title">Claim the test as usual. Send-outs wait on your queue and on the dashboard card <b>Open send-out tests</b> until the report arrives.</p></li>
       <li><p class="step-title">Choose the <b>PDF result</b> file. PDF only, up to 10 MB.</p></li>
       <li><p class="step-title">Add <b>Internal notes (optional)</b> if there is something reception should know. Notes are staff-only; the patient never sees them.</p></li>
       <li><p class="step-title">Click <kbd class="ui">Upload result</kbd>.</p><p>The test moves to <span class="status">ready for release</span>.</p></li>
@@ -1003,7 +1003,7 @@
   <!-- 5.3 -->
   <section class="sub" id="adm-daily">
     <h3>5.3 Daily and weekly checks</h3>
-    <p>Your dashboard is titled <q>Clinic command centre</q>. The Money row shows <b>Net Income (Books)</b> (posted accrual revenue less contra revenue and expenses) beside <b>Gross Profit (Ops)</b> (released lab and consult revenue after discounts, before expenses). Both cover this month and open their corresponding report with those dates. Its <b>Operations</b> row (revenue today, visits, queue, <b>Unclaimed</b>, released today, possible duplicates) and <b>What needs attention</b> strip are the morning glance. <b>Unclaimed</b> counts paid lab and imaging tests nobody has picked up and opens the queue's <span class="tab">Unclaimed</span> tab; when x-rays are among them its hint says how many (<q>1 x-ray for the X-ray technician</q>), since only the X-ray technician can claim those. Then:</p>
+    <p>Your dashboard is titled <q>Clinic command centre</q>. The Money row shows <b>Net Income (Books)</b> (posted accrual revenue less contra revenue and expenses) beside <b>Gross Profit (Ops)</b> (released lab and consult revenue after discounts, before expenses). Both cover this month and open their corresponding report with those dates. Its <b>Operations</b> row (revenue today, visits, queue, <b>Unclaimed</b>, released today, possible duplicates) and <b>What needs attention</b> strip are the morning glance. <b>Unclaimed</b> counts paid lab and imaging tests nobody has picked up, from any date, and opens the queue's <span class="tab">Unclaimed</span> tab; when x-rays are among them its hint says how many (<q>1 x-ray for the X-ray technician</q>), since only the X-ray technician can claim those. Then:</p>
     <div class="tbl-wrap"><table>
       <thead><tr><th>Check</th><th>Where (Admin ›)</th><th>What you are looking for</th></tr></thead>
       <tbody>
