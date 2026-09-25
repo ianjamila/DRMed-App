@@ -29,6 +29,7 @@ import {
   FLAT_SORTABLE_COLUMNS,
   groupHaystack,
   tagBucket,
+  upcomingRangeToIso,
   type BucketKey,
   type FlatSortColumn,
 } from "./flat-view";
@@ -229,7 +230,7 @@ type SourceFilter = "not_recorded" | string | null;
 // `.range()` can't drop or repeat a row across pages.
 async function loadScheduledRange(
   fromIso: string,
-  toIso: string,
+  toIso: string | null,
   sourceFilter: SourceFilter,
 ): Promise<LoadedAppts> {
   const supabase = await createClient();
@@ -238,8 +239,11 @@ async function loadScheduledRange(
       let query = supabase
         .from("appointments")
         .select(APPT_SELECT)
-        .gte("scheduled_at", fromIso)
-        .lt("scheduled_at", toIso);
+        .gte("scheduled_at", fromIso);
+      // `toIso === null` means "no upper bound" — a search (`q`) must be
+      // able to find a confirmed appointment further out than the default
+      // 31-day window (see `upcomingRangeToIso`'s doc comment).
+      if (toIso !== null) query = query.lt("scheduled_at", toIso);
       if (sourceFilter === "not_recorded") query = query.is("source", null);
       else if (sourceFilter) query = query.eq("source", sourceFilter);
       return query
@@ -412,11 +416,18 @@ export default async function AppointmentsPage({ searchParams }: SearchProps) {
   const endOfRangeUtc = new Date(
     new Date(`${manilaToday}T00:00:00+08:00`).getTime() + 31 * 24 * 60 * 60 * 1000,
   ).toISOString();
+  // A `q` search must find every open appointment for that patient, not
+  // just the ones inside the default 31-day "what's coming up" window (the
+  // 0167 patient-delete blocker links to `?q=<DRM-ID>` and a confirmed
+  // appointment can be scheduled arbitrarily far out). The default grouped
+  // view, and a flat view opened only via sort/source with no `q`, keep the
+  // existing 31-day cap.
+  const upcomingToIso = upcomingRangeToIso(query.length > 0, endOfRangeUtc);
 
   const [todayResult, walkInsResult, upcomingResult, pendingResult] = await Promise.all([
     loadScheduledRange(startOfTodayUtc, startOfTomorrowUtc, validSource),
     loadOpenWalkIns(validSource),
-    loadScheduledRange(startOfTomorrowUtc, endOfRangeUtc, validSource),
+    loadScheduledRange(startOfTomorrowUtc, upcomingToIso, validSource),
     loadPendingCallback(validSource),
   ]);
   const todayScheduled = todayResult.rows;
@@ -667,11 +678,23 @@ export default async function AppointmentsPage({ searchParams }: SearchProps) {
       </div>
       {isFlatView ? (
         <p className="mb-4 text-xs text-[color:var(--color-brand-text-soft)]">
-          Search checks the patient&apos;s name, DRM-ID and phone, or the
-          walk-in name and phone. It covers pending callbacks, walk-ins
-          waiting, today, and the next 30 days — the same appointments this
-          page always shows — so it won&apos;t find older, cancelled, or
-          already-completed appointments.
+          {query ? (
+            <>
+              Search checks the patient&apos;s name, DRM-ID and phone, or the
+              walk-in name and phone. It covers pending callbacks, walk-ins
+              waiting, today, and every upcoming scheduled appointment — not
+              just the next 30 days — so it won&apos;t find older, cancelled,
+              or already-completed appointments.
+            </>
+          ) : (
+            <>
+              Search checks the patient&apos;s name, DRM-ID and phone, or the
+              walk-in name and phone. It covers pending callbacks, walk-ins
+              waiting, today, and the next 30 days — the same appointments
+              this page always shows — so it won&apos;t find older,
+              cancelled, or already-completed appointments.
+            </>
+          )}
         </p>
       ) : null}
 
