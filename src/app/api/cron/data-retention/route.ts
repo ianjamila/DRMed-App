@@ -14,7 +14,7 @@ import { audit } from "@/lib/audit/log";
 //   - sheet_sync_review_items with status = 'resolved' (auto-cleared because
 //     the sheet stopped reporting the row, or an admin linked/created a
 //     patient) more than 90 days old are purged. DISMISSED items are never
-//     purged: sheet_sync_upsert_review (0170) treats an open dismissed row
+//     purged: sheet_sync_upsert_review (0170) treats a dismissed row
 //     as the suppression record that stops the identical item re-opening on
 //     every future run, and isSuspectAccepted reads a dismissed
 //     suspect_snapshot row the same way to stop re-flagging an
