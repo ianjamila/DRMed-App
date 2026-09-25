@@ -195,6 +195,19 @@ async function loadLabStats(
   // filter + package-header exclusion added to match the queue's own
   // predicate set; the label says "tests" now (not "external labs still
   // processing"), because `requested` rows haven't even left the building.
+  // "Updated (last 7 days)": corrections to results this role can read — RLS
+  // on the signed-in client scopes it the same way the archive/queue already
+  // do, so no explicit section filter is needed here.
+  const since7d = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+  const updated7dPromise =
+    show("lab.updated_7d") &&
+    (role === "medtech" || role === "pathologist" || role === "xray_technician")
+      ? supabase
+          .from("result_amendments")
+          .select("id", { count: "exact", head: true })
+          .gte("amended_at", since7d)
+      : SKIP_COUNT;
+
   const sendOutAwaitingPromise =
     show("lab.send_out_awaiting") && role === "medtech"
       ? supabase
@@ -338,6 +351,7 @@ async function loadLabStats(
     medtechCriticals,
     pathologistCriticals,
     pendingSignoff,
+    updated7d,
   ] = await Promise.all([
     myUnclaimedPromise,
     myClaimedPromise,
@@ -349,6 +363,7 @@ async function loadLabStats(
     medtechCriticalsPromise,
     pathologistCriticalsPromise,
     pendingSignoffPromise,
+    updated7dPromise,
   ]);
 
   const recentCriticals = (
@@ -397,6 +412,7 @@ async function loadLabStats(
     { scope: "oldest_unclaimed", error: oldestUnclaimed.error },
     { scope: "recent_criticals", error: recentCriticalsError },
     { scope: "pending_signoff", error: pendingSignoff.error },
+    { scope: "updated_7d", error: updated7d.error },
   ];
   await Promise.all(
     namedResults
@@ -430,6 +446,8 @@ async function loadLabStats(
     ackerNames,
     pendingSignoff: (pendingSignoff.data ?? []) as SignoffRow[],
     pendingSignoffError: Boolean(pendingSignoff.error),
+    updated7d: updated7d.count ?? 0,
+    updated7dError: Boolean(updated7d.error),
   };
 }
 
@@ -498,13 +516,17 @@ export async function LabDashboard({ session }: { session: StaffSession }) {
   const showCriticalAlertsCard = showSignoff && show("lab.critical_alerts");
   const showSendOutCard = role === "medtech" && show("lab.send_out_awaiting");
   const showReleasedTodayCard = show("lab.released_today");
+  const showUpdated7dCard =
+    (role === "medtech" || role === "pathologist" || role === "xray_technician") &&
+    show("lab.updated_7d");
   const hasMyQueueCards =
     showMyUnclaimedCard ||
     showMyClaimedCard ||
     showReadyForSignoffCard ||
     showCriticalAlertsCard ||
     showSendOutCard ||
-    showReleasedTodayCard;
+    showReleasedTodayCard ||
+    showUpdated7dCard;
 
   const showOldestUnclaimedStrip = showMyQueue && show("lab.strip_oldest_unclaimed");
   const showPendingSignoffStrip = showSignoff && show("lab.strip_pending_signoff");
@@ -588,6 +610,15 @@ export async function LabDashboard({ session }: { session: StaffSession }) {
                 href="/staff/queue?filter=released_today&mine=1"
                 accent="good"
                 error={stats.releasedTodayError}
+              />
+            )}
+            {showUpdated7dCard && (
+              <StatCard
+                label="Updated (last 7 days)"
+                value={stats.updated7d}
+                hint="Corrections to results you can see"
+                href="/staff/results?updated=7d"
+                error={stats.updated7dError}
               />
             )}
           </div>
