@@ -769,6 +769,7 @@ export default async function QueuePage({ searchParams }: SearchProps) {
             name="start"
             defaultValue={start}
             max={todayISO}
+            aria-describedby="queue-date-hint"
             className="mt-1 rounded-md border border-[color:var(--color-brand-bg-mid)] px-2 py-1.5 text-sm"
           />
         </div>
@@ -785,6 +786,7 @@ export default async function QueuePage({ searchParams }: SearchProps) {
             name="end"
             defaultValue={end}
             max={todayISO}
+            aria-describedby="queue-date-hint"
             className="mt-1 rounded-md border border-[color:var(--color-brand-bg-mid)] px-2 py-1.5 text-sm"
           />
         </div>
@@ -821,6 +823,17 @@ export default async function QueuePage({ searchParams }: SearchProps) {
             className="mt-1 rounded-md border border-[color:var(--color-brand-bg-mid)] px-2 py-1.5 text-sm"
           />
         </div>
+        {/* Empty date boxes read as "fill me in", so say what blank means. Only
+            "Released today" has an implicit window; every other tab is the
+            whole backlog, however old, until a range is picked. */}
+        <p
+          id="queue-date-hint"
+          className="col-span-full -mt-1 text-xs text-[color:var(--color-brand-text-soft)]"
+        >
+          {releasedTab
+            ? "Leave the dates blank to show today's releases, or pick dates to look back."
+            : "Leave the dates blank to show tests from every date, not just today."}
+        </p>
         <div className="col-span-full flex flex-wrap gap-2">
           <button
             type="submit"
