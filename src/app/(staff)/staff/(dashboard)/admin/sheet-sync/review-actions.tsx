@@ -1,17 +1,28 @@
 "use client";
 
-// Client controls for the review queue (Task 15). Each control uses
-// useTransition, shows the action's error inline (role="alert"), and calls
-// router.refresh() on success so review-queue.tsx re-fetches and the handled
-// item drops off the open list.
+// Client controls for the review queue (Task 15) and the re-sort panel
+// (Task 16). Each control uses useTransition, shows the action's error
+// inline (role="alert"), and calls router.refresh() on success so the
+// server list (review-queue.tsx / resort-panel.tsx) re-fetches and the
+// handled item drops off the open list — the same idea as sync-controls.tsx's
+// UndoRunButton, but here the row itself disappears rather than swapping to
+// a durable "Undone" state, so any local success text is a brief flash.
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { manilaDate } from "@/lib/dates/manila";
 import { REFERRAL_SOURCE_IDS, REFERRAL_SOURCE_LABEL, type ReferralSourceId } from "@/lib/patients/referral-sources";
-import { mapAnswerToChannelAction, resolveReviewItemAction } from "./actions";
+import { approveResortGroupAction, mapAnswerToChannelAction, resolveReviewItemAction } from "./actions";
 
 const primaryBtn =
   "min-h-9 rounded-md bg-[color:var(--color-brand-navy)] px-3 py-1.5 text-sm font-semibold text-white disabled:opacity-50";
@@ -19,6 +30,8 @@ const secondaryBtn =
   "min-h-9 rounded-md border border-[color:var(--color-brand-navy)] px-3 py-1.5 text-sm font-semibold text-[color:var(--color-brand-navy)] disabled:opacity-50";
 const quietBtn =
   "min-h-9 rounded-md border border-[color:var(--color-brand-bg-mid)] bg-white px-3 py-1.5 text-sm disabled:opacity-50";
+const dangerBtn =
+  "min-h-9 rounded-md border border-red-300 px-3 py-1.5 text-sm font-semibold text-red-700 disabled:opacity-50";
 
 function ErrorLine({ error }: { error: string | null }) {
   if (!error) return null;
@@ -287,5 +300,87 @@ export function SimpleDismissControls({
       {hint && <p className="mt-1 text-xs text-[color:var(--color-brand-text-soft)]">{hint}</p>}
       <ErrorLine error={err} />
     </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// 4. Task 16 — approve a re-sort group
+// ---------------------------------------------------------------------------
+
+export function ApproveResortGroupButton({
+  answerNorm,
+  from,
+  to,
+  patientCount,
+  fromLabel,
+  toLabel,
+}: {
+  answerNorm: string;
+  from: string | null;
+  to: string | null;
+  patientCount: number;
+  fromLabel: string;
+  toLabel: string;
+}) {
+  const router = useRouter();
+  const [open, setOpen] = useState(false);
+  const [pending, startTransition] = useTransition();
+  const [err, setErr] = useState<string | null>(null);
+  const [done, setDone] = useState<string | null>(null);
+
+  function confirm() {
+    setErr(null);
+    startTransition(async () => {
+      try {
+        const res = await approveResortGroupAction({ answerNorm, from, to });
+        if (!res.ok) {
+          setErr(res.error);
+          return;
+        }
+        setDone(`${res.data.updated} patient${res.data.updated === 1 ? "" : "s"} updated.`);
+        setOpen(false);
+        router.refresh();
+      } catch (e) {
+        console.error("sheet sync resort approve failed", e);
+        setErr("Could not reach the server. Check your connection and try again.");
+      }
+    });
+  }
+
+  if (done) {
+    return (
+      <p className="text-xs text-[color:var(--color-brand-text-soft)]" role="status">
+        {done}
+      </p>
+    );
+  }
+
+  return (
+    <>
+      <button type="button" onClick={() => setOpen(true)} className={secondaryBtn}>
+        Approve
+      </button>
+      <Dialog open={open} onOpenChange={setOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Approve this group?</DialogTitle>
+            <DialogDescription>
+              {patientCount} patient{patientCount === 1 ? "" : "s"} will be changed from{" "}
+              <span className="font-semibold">{fromLabel}</span> to{" "}
+              <span className="font-semibold">{toLabel}</span>. This can be undone from Run history.
+            </DialogDescription>
+          </DialogHeader>
+          <ErrorLine error={err} />
+          <DialogFooter>
+            <button type="button" onClick={() => setOpen(false)} disabled={pending} className={quietBtn}>
+              Cancel
+            </button>
+            <button type="button" onClick={confirm} disabled={pending} className={dangerBtn}>
+              {pending ? "Updating…" : "Approve"}
+            </button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </>
   );
 }
