@@ -83,6 +83,12 @@ export const CRON_HEARTBEATS = [
     actions: ["sheet_sync.completed", "sheet_sync.skipped"],
     maxAge: 30 * 60 * 60 * 1000,
     activeFrom: "2026-09-27",
+    // sheet-sync is the only watched task a person (or the CLI) can also
+    // trigger: "Sync now" on the admin page and `npm run sheet:sync` both
+    // audit actor_type 'system' too (run.ts), so actor_type alone would let a
+    // manual/CLI run mask a stopped Vercel cron. Every audited action here
+    // carries `trigger` in its metadata (run.ts's audit() call) — require it.
+    requireTrigger: "cron",
   },
 ] as const;
 
