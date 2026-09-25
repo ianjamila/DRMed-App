@@ -7,18 +7,24 @@ import {
   DialogContent,
   DialogHeader,
   DialogTitle,
+  DialogDescription,
   DialogFooter,
 } from "@/components/ui/dialog";
 import { friendlyManilaDate } from "@/lib/dates/manila";
 import type { TabKey } from "@/lib/sheet-sync/types";
-import type { RunOutcome, RevertSummary } from "@/lib/sheet-sync/run";
+import type { RunOutcome } from "@/lib/sheet-sync/run";
 import { runSheetSyncNowAction, setSheetSyncPausedAction, revertRunAction, type RunOutcomeSummary } from "./actions";
-import { KIND_LABEL, TAB_LABEL } from "./format";
+import { KIND_LABEL, STATUS_LABEL, TAB_LABEL, revertSummaryLine, tabErrorLabel } from "./format";
+import { pauseConfirmArgs, resumeArgs, syncSwitchIntent } from "./sync-switch-logic";
 
 // ---------------------------------------------------------------------------
 // Pause / resume — same confirm-before-pausing idea as online-booking's
 // toggle (client.tsx), rebuilt on the shared <Switch>. Resuming is low
 // stakes and applies immediately; pausing asks for an optional reason first.
+// The on/off decision itself lives in sync-switch-logic.ts (see that file
+// for why — this module transitively imports "use server" actions.ts,
+// which pulls in a server-only guard vitest can't satisfy) and is tested
+// there in sync-controls.test.ts.
 // ---------------------------------------------------------------------------
 
 export function SyncSwitch({
@@ -35,21 +41,28 @@ export function SyncSwitch({
   function apply(nextPaused: boolean, reasonToSend: string | null) {
     setErr(null);
     startTransition(async () => {
-      const res = await setSheetSyncPausedAction({ paused: nextPaused, reason: reasonToSend });
-      if (!res.ok) {
-        setErr(res.error);
-        return;
+      try {
+        const res = await setSheetSyncPausedAction({ paused: nextPaused, reason: reasonToSend });
+        if (!res.ok) {
+          setErr(res.error);
+          return;
+        }
+        setPaused(nextPaused);
+        setConfirming(false);
+        setReason("");
+      } catch (e) {
+        // A rejected fetch (timeout, offline) would otherwise bubble to the
+        // nearest error boundary instead of showing inline here.
+        console.error("sheet sync pause toggle failed", e);
+        setErr("Could not reach the server. Check your connection and try again.");
       }
-      setPaused(nextPaused);
-      setConfirming(false);
-      setReason("");
     });
   }
 
   function onToggle(next: boolean) {
-    if (!next) {
-      // Turning it ON — no downside, apply right away.
-      apply(false, null);
+    if (syncSwitchIntent(next) === "resume") {
+      const { paused: p, reason: r } = resumeArgs();
+      apply(p, r);
       return;
     }
     setConfirming(true);
@@ -91,7 +104,10 @@ export function SyncSwitch({
             <button
               type="button"
               disabled={pending}
-              onClick={() => apply(true, reason.trim() || null)}
+              onClick={() => {
+                const { paused: p, reason: r } = pauseConfirmArgs(reason);
+                apply(p, r);
+              }}
               className="min-h-9 rounded-md bg-[color:var(--color-brand-navy)] px-3 py-1.5 text-sm font-semibold text-white disabled:opacity-60"
             >
               {pending ? "Pausing…" : "Yes, pause the sync"}
@@ -111,7 +127,11 @@ export function SyncSwitch({
         </div>
       )}
 
-      {err && <p className="mt-2 text-sm text-red-600">{err}</p>}
+      {err && (
+        <p className="mt-2 text-sm text-red-600" role="alert">
+          {err}
+        </p>
+      )}
     </div>
   );
 }
@@ -143,7 +163,9 @@ function PerTabPanel({ perTab }: { perTab: RunOutcome["perTab"] }) {
         <div key={tab} className="rounded-md border border-[color:var(--color-brand-bg-mid)] p-3 text-sm">
           <p className="font-semibold text-[color:var(--color-brand-navy)]">{TAB_LABEL[tab]}</p>
           {out.status === "failed" ? (
-            <p className="mt-1 text-red-600">{out.error ?? "This tab failed."}</p>
+            <p className="mt-1 text-red-600" role="alert">
+              {tabErrorLabel(tab, out.error) ?? "This tab failed."}
+            </p>
           ) : (
             <div className="mt-1 space-y-1 text-[color:var(--color-brand-text-mid)]">
               <p>
@@ -153,10 +175,10 @@ function PerTabPanel({ perTab }: { perTab: RunOutcome["perTab"] }) {
               {tab === "customers" && out.planned ? (
                 <p>
                   To link: {Number(out.planned.link_new ?? 0)} · To create: {Number(out.planned.create ?? 0)} ·
-                  {" "}To fill: {Number(out.planned.fill ?? 0)} · Facts: {Number(out.planned.facts ?? 0)}
+                  {" "}To fill: {Number(out.planned.fill ?? 0)} · Registration dates recorded: {Number(out.planned.facts ?? 0)}
                 </p>
               ) : null}
-              {out.mirror_rows !== undefined ? <p>Mirror rows: {out.mirror_rows}</p> : null}
+              {out.mirror_rows !== undefined ? <p>Copied rows: {out.mirror_rows}</p> : null}
               {reviewCountsLine(out.review) ? <p>Review: {reviewCountsLine(out.review)}</p> : null}
             </div>
           )}
@@ -184,13 +206,18 @@ export function SyncNow({
     setErr(null);
     setRunningDry(dryRun);
     startTransition(async () => {
-      const res = await runSheetSyncNowAction({ dryRun });
-      if (!res.ok) {
-        setErr(res.error);
-        return;
+      try {
+        const res = await runSheetSyncNowAction({ dryRun });
+        if (!res.ok) {
+          setErr(res.error);
+          return;
+        }
+        setResult(res.data);
+        if (res.data.error) setErr(res.data.error);
+      } catch (e) {
+        console.error("sheet sync run failed", e);
+        setErr("Could not reach the server. Check your connection and try again.");
       }
-      setResult(res.data);
-      if (res.data.error) setErr(res.data.error);
     });
   }
 
@@ -222,11 +249,19 @@ export function SyncNow({
           Turn the sync on first. A preview works while paused.
         </p>
       )}
-      {pending && <p className="mt-2 text-sm text-[color:var(--color-brand-text-soft)]">Reading the sheet… this can take a minute.</p>}
-      {err && <p className="mt-2 text-sm text-red-600">{err}</p>}
+      {pending && (
+        <p className="mt-2 text-sm text-[color:var(--color-brand-text-soft)]" role="status">
+          Reading the sheet… this can take a minute.
+        </p>
+      )}
+      {err && (
+        <p className="mt-2 text-sm text-red-600" role="alert">
+          {err}
+        </p>
+      )}
       {result && !pending && (
-        <p className="mt-2 text-sm text-[color:var(--color-brand-text-soft)]">
-          {result.status === "skipped_paused" ? "Skipped — the sync is paused." : `Finished (${result.status}).`}
+        <p className="mt-2 text-sm text-[color:var(--color-brand-text-soft)]" role="status">
+          {result.status === "skipped_paused" ? "Skipped — the sync is paused." : `Finished — ${STATUS_LABEL[result.status] ?? result.status}.`}
         </p>
       )}
       <PerTabPanel perTab={perTab ?? {}} />
@@ -236,16 +271,17 @@ export function SyncNow({
 
 // ---------------------------------------------------------------------------
 // Undo a run — confirm dialog, from Run history.
+//
+// The result line shown right here is EPHEMERAL: a successful undo calls
+// revalidatePath, which re-renders the target run's row as "Undone" and
+// unmounts this component (same key, but the "Undone" branch replaces it —
+// see run-history.tsx), discarding this local `done` state. The durable copy
+// of the same numbers lives in the new undo run's OWN row, via
+// `revertSummaryLine` in `whatChanged()` (run-history.tsx) — this flash is
+// just immediate feedback before that row appears.
 // ---------------------------------------------------------------------------
 
-function undoResultLine(r: RevertSummary): string {
-  let line = `Put back ${r.restored} · Kept ${r.blocked} (changed since) · Removed ${r.deleted} new patients · Kept ${r.kept} (in use)`;
-  if (r.gone > 0) line += ` · ${r.gone} already removed by staff`;
-  if (r.held > 0) line += ` · ${r.held} link(s) returned to review`;
-  return line;
-}
-
-export function UndoRunButton({ runId }: { runId: string }) {
+export function UndoRunButton({ runId, runLabel }: { runId: string; runLabel: string }) {
   const [open, setOpen] = useState(false);
   const [pending, startTransition] = useTransition();
   const [err, setErr] = useState<string | null>(null);
@@ -254,23 +290,35 @@ export function UndoRunButton({ runId }: { runId: string }) {
   function confirm() {
     setErr(null);
     startTransition(async () => {
-      const res = await revertRunAction({ runId });
-      if (!res.ok) {
-        setErr(res.error);
-        return;
+      try {
+        const res = await revertRunAction({ runId });
+        if (!res.ok) {
+          setErr(res.error);
+          return;
+        }
+        setDone(revertSummaryLine(res.data));
+        setOpen(false);
+      } catch (e) {
+        console.error("sheet sync undo failed", e);
+        setErr("Could not reach the server. Check your connection and try again.");
       }
-      setDone(undoResultLine(res.data));
-      setOpen(false);
     });
   }
 
-  if (done) return <p className="text-xs text-[color:var(--color-brand-text-soft)]">{done}</p>;
+  if (done) {
+    return (
+      <p className="text-xs text-[color:var(--color-brand-text-soft)]" role="status">
+        {done}
+      </p>
+    );
+  }
 
   return (
     <>
       <button
         type="button"
         onClick={() => setOpen(true)}
+        aria-label={`Undo ${runLabel}`}
         className="text-xs font-semibold text-red-700 hover:underline"
       >
         Undo
@@ -279,13 +327,17 @@ export function UndoRunButton({ runId }: { runId: string }) {
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
             <DialogTitle>Undo this run?</DialogTitle>
+            <DialogDescription>
+              Patients it created are removed if nothing uses them yet; details it filled in are put
+              back unless someone changed that patient since. Changes to the reporting copy are not
+              undone. The next sync rebuilds it.
+            </DialogDescription>
           </DialogHeader>
-          <p className="text-sm text-[color:var(--color-brand-text-mid)]">
-            Patients it created are removed if nothing uses them yet; details it filled in are put
-            back unless someone changed that patient since. Changes to the reporting copy are not
-            undone. The next sync rebuilds it.
-          </p>
-          {err && <p className="text-sm text-red-600">{err}</p>}
+          {err && (
+            <p className="text-sm text-red-600" role="alert">
+              {err}
+            </p>
+          )}
           <DialogFooter>
             <button
               type="button"

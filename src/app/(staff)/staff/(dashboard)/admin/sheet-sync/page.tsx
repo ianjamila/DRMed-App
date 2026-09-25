@@ -14,7 +14,7 @@ import type { RunOutcome } from "@/lib/sheet-sync/run";
 import type { Database } from "@/types/database";
 import { SyncSwitch, SyncNow } from "./sync-controls";
 import { RunHistory } from "./run-history";
-import { KIND_LABEL, TAB_LABEL } from "./format";
+import { KIND_LABEL, TAB_LABEL, tabErrorLabel } from "./format";
 
 export const metadata = { title: ROUTE_NAME["/staff/admin/sheet-sync"] };
 export const dynamic = "force-dynamic";
@@ -32,14 +32,18 @@ const VIEW_LABEL: Record<View, string> = {
   history: "Run history",
 };
 
-// TabOutcome.status ("succeeded" | "failed" | "skipped") is its own small
-// union, distinct from sheet_sync_runs.status that format.ts's STATUS_LABEL
-// is pinned to (format.test.ts) — a separate map avoids reusing one that
-// doesn't cover "skipped" (a tab held back by the snapshot guard).
+// TabOutcome.status is typed "succeeded" | "failed" | "skipped", distinct
+// from sheet_sync_runs.status that format.ts's STATUS_LABEL is pinned to
+// (format.test.ts) — a separate map avoids reusing one built for a different
+// vocabulary. Only "succeeded"/"failed" are ever actually assigned in run.ts
+// today (confirmed by reading every `status:` literal there) — a shrunk-sheet
+// skip is recorded as status "failed" with a suspect_snapshot error, not a
+// "skipped" status — so this map only needs the two live values; a future
+// "skipped" would still fall back to "—" via the `??` below rather than
+// rendering nothing.
 const TAB_STATUS_LABEL: Record<string, string> = {
   succeeded: "Done",
   failed: "Failed",
-  skipped: "Skipped (sheet shrank)",
 };
 
 async function countOpenByKind(supabase: Client): Promise<Record<ReviewKind, number>> {
@@ -244,7 +248,7 @@ function Overview({
                     </td>
                     <td className="px-3 py-2">
                       {out?.status === "failed" ? (
-                        <span className="text-red-600">{out.error ?? "Failed"}</span>
+                        <span className="text-red-600">{tabErrorLabel(tab, out.error) ?? "Failed"}</span>
                       ) : (
                         (out?.status && TAB_STATUS_LABEL[out.status]) ?? "—"
                       )}

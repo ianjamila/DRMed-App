@@ -27,6 +27,20 @@ type ErrResult = { ok: false; error: string };
 type ActionResult = { ok: true } | ErrResult;
 type ActionDataResult<T> = { ok: true; data: T } | ErrResult;
 
+// Mirrors run.ts's OUR_CODE rule: only our own hand-authored codes (P0062–
+// P0064, 22023) are safe to pass through translatePgError. Any other code —
+// a PostgREST error (PGRST*), a foreign SQLSTATE (22P02, 08006, …) — could
+// carry raw column/constraint text, so it goes to the generic message with
+// the full error logged server-side instead.
+const OUR_CODE = /^(P006[2-4]|22023)$/i;
+
+// runSheetSync (run.ts) throws a plain Error with no .code when the tabs
+// already finished but the run's own bookkeeping row failed to write — the
+// tab work already committed, so this isn't a normal failure and deserves
+// its own message. Detected by message text: run.ts has no dedicated error
+// class for it and this task doesn't touch run.ts.
+const FINISH_NOT_RECORDED = /could not be recorded as finished/i;
+
 // Shared shape for every action below: requireAdminStaff() -> zod -> store ->
 // audit() -> revalidatePath(PATH). Errors go through translatePgError, except
 // SyncBusyError / LeaseLostError (our own hand-authored strings — never raw
@@ -40,7 +54,13 @@ function fail(e: unknown): ErrResult {
     return { ok: false, error: e.message };
   }
   const err = e as { code?: string; message?: string };
-  if (err?.code) return { ok: false, error: translatePgError(err as never) };
+  if (err?.code && OUR_CODE.test(err.code)) {
+    return { ok: false, error: translatePgError(err as never) };
+  }
+  if (e instanceof Error && !err?.code && FINISH_NOT_RECORDED.test(e.message)) {
+    console.error("sheet sync action failed (finish not recorded)", e);
+    return { ok: false, error: "The sync ran but couldn't be recorded as finished — check Run history in a few minutes." };
+  }
   console.error("sheet sync action failed", e);
   return { ok: false, error: "Something went wrong. Please try again." };
 }

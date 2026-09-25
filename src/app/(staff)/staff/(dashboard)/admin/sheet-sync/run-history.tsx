@@ -13,7 +13,7 @@ import {
 import type { RevertSummary } from "@/lib/sheet-sync/run";
 import type { TabKey } from "@/lib/sheet-sync/types";
 import { UndoRunButton } from "./sync-controls";
-import { durationLabel, STATUS_LABEL, TAB_LABEL, TRIGGER_LABEL } from "./format";
+import { durationLabel, revertSummaryLine, STATUS_LABEL, tabErrorLabel, TAB_LABEL, TRIGGER_LABEL } from "./format";
 
 const BASE_PATH = "/staff/admin/sheet-sync";
 
@@ -38,15 +38,38 @@ interface RunRow {
   undo_run: { started_at: string } | null;
 }
 
+// Sync runs (cron/manual/cli) are the only ones whose failure can still have
+// committed patient writes: applyCustomerOps runs in 500-op chunks (run.ts's
+// OPS_CHUNK), so a run that later fails — even one whose OWN bookkeeping row
+// never got to "finished" and was reclaimed as failed — can have written
+// real changes before the failure. The SQL guard (0170) itself allows
+// undoing any non-running, non-revert, not-already-undone run regardless of
+// status; this only widens the UI to match it.
+const SYNC_TRIGGERS = new Set(["cron", "manual", "cli"]);
+
+// Cheap heuristic from data already on the row (no extra query): only a
+// customers op — create/link/fill/facts/hold — writes to sheet_sync_changes;
+// lab/consult are mirror-only and never touch a patient. If per_tab lacks
+// applied counts (an old row, or the customers tab itself failed before any
+// op ran) we can't be sure there's nothing to undo — default to TRUE so an
+// unmeasured change is never hidden from Undo. Chosen over an extra
+// `sheet_sync_changes` count query: this reuses the row already fetched.
+function hasCommittedChanges(run: RunRow): boolean {
+  const applied = run.per_tab?.customers?.applied;
+  if (!applied) return true;
+  return Object.values(applied).some((n) => n > 0);
+}
+
 // The Undo action is refused in SQL (22023) for a run that is itself an
 // undo, a still-running run, or an already-undone run — hide the button for
 // those instead of letting an admin hit a wall.
 function canUndo(run: RunRow): boolean {
   return (
     !run.dry_run &&
-    (run.status === "succeeded" || run.status === "partial") &&
-    run.trigger !== "revert" &&
-    !run.reverted_by_run_id
+    SYNC_TRIGGERS.has(run.trigger) &&
+    (run.status === "succeeded" || run.status === "partial" || run.status === "failed") &&
+    !run.reverted_by_run_id &&
+    hasCommittedChanges(run)
   );
 }
 
@@ -54,8 +77,7 @@ function whatChanged(run: RunRow): string {
   if (run.trigger === "resort" || run.trigger === "alias" || run.trigger === "revert") {
     const result = run.summary?.result;
     if (run.trigger === "revert" && result && typeof result === "object") {
-      const r = result as RevertSummary;
-      return `Put back ${r.restored} · Kept ${r.blocked} (changed since) · Removed ${r.deleted} new · Kept ${r.kept} (in use)`;
+      return revertSummaryLine(result as RevertSummary);
     }
     if (typeof result === "number") return `${result} patient${result === 1 ? "" : "s"} updated`;
     return "—";
@@ -74,7 +96,7 @@ function whatChanged(run: RunRow): string {
   }
   for (const tab of ["customers", "lab", "consult"] as TabKey[]) {
     const mr = per[tab]?.mirror_rows;
-    if (mr !== undefined) parts.push(`${TAB_LABEL[tab]}: ${mr} mirror row${mr === 1 ? "" : "s"}`);
+    if (mr !== undefined) parts.push(`${TAB_LABEL[tab]}: ${mr} copied row${mr === 1 ? "" : "s"}`);
   }
   return parts.length ? parts.join(" · ") : "—";
 }
@@ -84,7 +106,7 @@ function tabErrors(run: RunRow): string | null {
   const per = run.per_tab ?? {};
   const errs = Object.entries(per)
     .filter(([, out]) => out?.status === "failed" && out.error)
-    .map(([tab, out]) => `${TAB_LABEL[tab as TabKey] ?? tab}: ${out.error}`);
+    .map(([tab, out]) => `${TAB_LABEL[tab as TabKey] ?? tab}: ${tabErrorLabel(tab as TabKey, out.error)}`);
   return errs.length ? errs.join("; ") : null;
 }
 
@@ -111,7 +133,12 @@ export async function RunHistory({ searchParams }: { searchParams: Record<string
     .range(from, to);
 
   if (error) {
-    return <p className="text-sm text-red-600">Could not load run history: {error.message}</p>;
+    console.error("sheet sync run history load failed", error);
+    return (
+      <p className="text-sm text-red-600" role="alert">
+        Could not load run history. Try refreshing the page.
+      </p>
+    );
   }
 
   const runs = (data ?? []) as unknown as RunRow[];
@@ -163,7 +190,10 @@ export async function RunHistory({ searchParams }: { searchParams: Record<string
                         Undone{run.undo_run ? ` ${manilaDateTime(run.undo_run.started_at)}` : ""}
                       </span>
                     ) : canUndo(run) ? (
-                      <UndoRunButton runId={run.id} />
+                      <UndoRunButton
+                        runId={run.id}
+                        runLabel={`the ${TRIGGER_LABEL[run.trigger] ?? run.trigger} sync run from ${manilaDateTime(run.started_at)}`}
+                      />
                     ) : null}
                   </td>
                 </tr>
