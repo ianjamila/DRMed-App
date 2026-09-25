@@ -47,6 +47,11 @@ create index if not exists idx_audit_log_result_printed
   on public.audit_log ((metadata->>'result_id'))
   where action = 'result.printed_staff';
 
+-- The follow-up list only ever scans corrected results.
+create index if not exists idx_results_corrected
+  on public.results (id)
+  where amendment_count > 0;
+
 -- 4) result_edit_commit — 0176 + the three 0179 hunks (generated) ------------
 create or replace function public.result_edit_commit(
   p_attempt_id               uuid,
@@ -569,7 +574,13 @@ begin
   if not found then
     raise exception 'correction not found' using errcode = 'P0068';
   end if;
-  select amendment_count into v_count from public.results where id = v_am.result_id;
+  -- Wait behind an in-flight result_edit_commit, which holds FOR UPDATE on
+  -- the results row while it writes a new amendment: without this lock, a
+  -- read here can land between that commit's insert and its update of
+  -- results.amendment_count and see a stale (too-low) count. Lock order is
+  -- amendment row (above) then results row (here); result_edit_commit never
+  -- locks an existing amendment row, so the two functions cannot deadlock.
+  select amendment_count into v_count from public.results where id = v_am.result_id for share;
   if v_am.amendment_seq is distinct from v_count then
     raise exception 'this result was corrected again' using errcode = 'P0068';
   end if;
@@ -608,6 +619,10 @@ as $$
        and patient_notified_at is null
     returning result_id, amendment_seq
   )
+  -- This lateral call runs on the statement's own snapshot, so it does NOT
+  -- see the patient_notified_at just set above in the same statement — only
+  -- anchor_test_request_id and patient_id are read from it, and both are
+  -- stable regardless of notify state, so that is safe.
   select c.result_id, c.amendment_seq, s.anchor_test_request_id, s.patient_id
     from c
     cross join lateral public.result_copy_states_internal(array[c.result_id]) s;
