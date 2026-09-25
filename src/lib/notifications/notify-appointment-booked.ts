@@ -9,6 +9,8 @@ import { formatManilaDateTime } from "./format-manila-datetime";
 import {
   renderEmailShell, emailParagraph, emailDetailBox, emailButton, emailFinePrint, escapeHtml,
 } from "./branded-email";
+import { checkPatientRecipient } from "./active-patient-recipient";
+import { auditSkippedInactiveRecipient } from "./inactive-recipient-audit";
 
 interface Input {
   appointmentId: string;
@@ -29,8 +31,7 @@ export async function notifyAppointmentBooked({
     .select(
       `
         id, scheduled_at, status, walk_in_name, walk_in_phone, booking_group_id,
-        services ( name ),
-        patients ( first_name, phone, email )
+        services ( name )
       `,
     )
     .eq("id", appointmentId)
@@ -38,13 +39,25 @@ export async function notifyAppointmentBooked({
 
   if (!appt) return;
   const svc = Array.isArray(appt.services) ? appt.services[0] : appt.services;
-  const patient = Array.isArray(appt.patients)
-    ? appt.patients[0]
-    : appt.patients;
 
-  const greeting = patient?.first_name ?? appt.walk_in_name ?? "there";
-  const phone = patient?.phone ?? appt.walk_in_phone ?? null;
-  const email = patient?.email ?? null;
+  // A linked record uses ITS fresh contact only; walk-in fields are for
+  // genuine walk-ins. Previously an inactive linked record would have been
+  // emailed through the embed, and a NULL embed fell back to walk-in fields
+  // even for a linked id.
+  const recipient = await checkPatientRecipient(admin, patientId);
+  if (recipient.kind === "inactive") {
+    await auditSkippedInactiveRecipient({
+      sender: "notify-appointment-booked",
+      patientId: recipient.patientId,
+      reason: recipient.reason,
+      resourceType: "appointment",
+      resourceId: appointmentId,
+    });
+    return;
+  }
+  const greeting = recipient.kind === "active" ? recipient.patient.first_name : (appt.walk_in_name ?? "there");
+  const phone = recipient.kind === "active" ? recipient.patient.phone : (appt.walk_in_phone ?? null);
+  const email = recipient.kind === "active" ? recipient.patient.email : null;
   const serviceName = svc?.name ?? "your appointment";
   const cancelUrl = `${SITE.url.replace(/\/$/, "")}/appointments/cancel/${appt.id}`;
 

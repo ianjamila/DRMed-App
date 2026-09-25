@@ -18,7 +18,7 @@ import { formatPhp } from "@/lib/marketing/format";
 import { formatPeriodRange, formatManilaDate } from "@/lib/payroll/format";
 import { PAYMENT_LABEL, RUN_STATUS_BADGE, runStatusLabel } from "@/lib/payroll/labels";
 import { EarningDeductionDrawer } from "./_components/earning-deduction-drawer";
-import { ConfirmDialog } from "./_components/confirm-dialog";
+import { ConfirmDialog } from "@/components/staff/confirm-dialog";
 import {
   recomputePayrollRunAction,
   finaliseRunAction,

@@ -13,6 +13,8 @@ import { requireActiveStaff } from "@/lib/auth/require-staff";
 import { ipAndAgent } from "@/lib/server/action-helpers";
 import { translatePgError } from "@/lib/accounting/pg-errors";
 import { canMarkSample } from "@/lib/visits/sample";
+import { createAdminClient } from "@/lib/supabase/admin";
+import { assertVisitPatientActive } from "@/lib/patients/require-active";
 
 export type SetVisitSampleResult =
   | { ok: true }
@@ -29,6 +31,10 @@ export async function setVisitSampleAction(
       error: "Only reception or admin can mark a sample visit.",
     };
   }
+
+  // 0167: a deleted or merged patient's history is read-only until restored.
+  const active = await assertVisitPatientActive(createAdminClient(), visitId);
+  if (!active.ok) return { ok: false, error: active.error };
 
   const supabase = await createClient();
   // Live visits only: a deleted visit is already out of every report, and

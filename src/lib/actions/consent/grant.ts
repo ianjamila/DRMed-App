@@ -8,6 +8,7 @@ import { ipAndAgent, firstIssue } from "@/lib/server/action-helpers";
 import { requireActiveStaff } from "@/lib/auth/require-staff";
 import { translatePgError } from "@/lib/accounting/pg-errors";
 import { CURRENT_CONSENT_NOTICE_VERSION } from "@/lib/consent/notice";
+import { assertPatientActive } from "@/lib/patients/require-active";
 
 const Schema = z
   .object({
@@ -39,6 +40,9 @@ export async function recordConsentGrantAction(
   const d = parsed.data;
 
   const admin = createAdminClient();
+  const active = await assertPatientActive(admin, d.patientId);
+  if (!active.ok) return { ok: false, error: active.error };
+
   const { ip, ua } = await ipAndAgent();
 
   const { error } = await admin.from("patient_consents").insert({

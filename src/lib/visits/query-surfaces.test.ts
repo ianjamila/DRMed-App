@@ -265,6 +265,12 @@ const SURFACES: Record<string, Surface> = {
     why: "Soft-delete/restore of whatever line reception selected. A mis-keyed consultation is exactly the sort of line that gets deleted.",
   },
 
+  // --- Patient lifecycle (0167) --------------------------------------------
+  "lib/patients/require-active.ts": {
+    meaning: "all",
+    why: "Resolves bill lines to their patient; every kind of line counts.",
+  },
+
   // --- Notifications -------------------------------------------------------
   "lib/notifications/notify-released.ts": {
     meaning: "lab",
@@ -439,6 +445,10 @@ const LIFECYCLES: Record<string, LifecycleSurface> = {
   "components/staff/notification-bell.tsx": {
     lifecycle: "any",
     why: "A transient client-side toast for realtime INSERTs, capped at 10 and cleared on reload — never a worklist. The only inserter is visit creation, so the visit is new; and /staff/queue/[id] shows the deletion properly if one is ever clicked stale.",
+  },
+  "lib/patients/require-active.ts": {
+    lifecycle: "any",
+    why: "Resolves a visit/line to its patient to refuse writes on an inactive patient; a deleted visit's patient must still be found.",
   },
 
   // --- Live: moving a payment onto another visit (0161) ---------------------

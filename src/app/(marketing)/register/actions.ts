@@ -8,6 +8,8 @@ import { reportError } from "@/lib/observability/report-error";
 import { resolvePatient } from "@/lib/patients/resolve";
 import { findCandidatesForInput } from "@/lib/patients/find-duplicates";
 import { sendEmail } from "@/lib/notifications/email";
+import { checkPatientRecipient } from "@/lib/notifications/active-patient-recipient";
+import { auditSkippedInactiveRecipient } from "@/lib/notifications/inactive-recipient-audit";
 import { recordSelfRegistrationGrant } from "@/lib/consent/self-registration";
 import { RegistrationSchema } from "@/lib/validations/registration";
 import { SITE } from "@/lib/marketing/site";
@@ -84,7 +86,17 @@ export async function submitRegistrationAction(
   }, { minTier: "strong" });
   const match = candidates[0];
   if (match) {
-    const onFileEmail = match.patient.email;
+    const recipient = await checkPatientRecipient(admin, match.patient.id);
+    if (recipient.kind !== "active") {
+      await auditSkippedInactiveRecipient({
+        sender: "register",
+        patientId: match.patient.id,
+        reason: recipient.kind === "inactive" ? recipient.reason : "walk_in",
+        resourceType: "patient",
+        resourceId: match.patient.id,
+      });
+    }
+    const onFileEmail = recipient.kind === "active" ? recipient.patient.email : null;
     const sendResult = onFileEmail
       ? await sendEmail({
           to: onFileEmail,
@@ -148,19 +160,31 @@ export async function submitRegistrationAction(
   // this branch is a defensive fallback for when that query fails open ([]) —
   // not the primary matched path.
   if (res.reused) {
-    const sendResult = await sendEmail({
-      to: d.email,
-      subject: "Your DRMed DRM-ID",
-      text: `Hi ${d.first_name},\n\nWe found an existing DRMed record matching your details. Your DRM-ID is ${res.drm_id}.\n\nPresent it at the clinic. After your visit, the Secure PIN printed on your receipt unlocks your results online.\n\n— DRMed Clinic and Laboratory`,
-      html: renderEmailShell({
-        heading: "Your DRMed patient ID",
-        contentHtml:
-          emailParagraph(`Hi <b>${escapeHtml(d.first_name)}</b>,`) +
-          emailParagraph("We found an existing DRMed record matching your details. Here is your patient ID:") +
-          emailHighlight("Your DRM-ID", res.drm_id) +
-          emailParagraph("Present it at the clinic. After your visit, the Secure PIN printed on your receipt unlocks your results online."),
-      }),
-    });
+    const recipient = await checkPatientRecipient(admin, res.id);
+    if (recipient.kind !== "active") {
+      await auditSkippedInactiveRecipient({
+        sender: "register",
+        patientId: res.id,
+        reason: recipient.kind === "inactive" ? recipient.reason : "walk_in",
+        resourceType: "patient",
+        resourceId: res.id,
+      });
+    }
+    const sendResult = recipient.kind === "active"
+      ? await sendEmail({
+          to: d.email,
+          subject: "Your DRMed DRM-ID",
+          text: `Hi ${d.first_name},\n\nWe found an existing DRMed record matching your details. Your DRM-ID is ${res.drm_id}.\n\nPresent it at the clinic. After your visit, the Secure PIN printed on your receipt unlocks your results online.\n\n— DRMed Clinic and Laboratory`,
+          html: renderEmailShell({
+            heading: "Your DRMed patient ID",
+            contentHtml:
+              emailParagraph(`Hi <b>${escapeHtml(d.first_name)}</b>,`) +
+              emailParagraph("We found an existing DRMed record matching your details. Here is your patient ID:") +
+              emailHighlight("Your DRM-ID", res.drm_id) +
+              emailParagraph("Present it at the clinic. After your visit, the Secure PIN printed on your receipt unlocks your results online."),
+          }),
+        })
+      : null;
     await audit({
       actor_id: null,
       actor_type: "anonymous",
@@ -172,11 +196,13 @@ export async function submitRegistrationAction(
         drm_id: res.drm_id,
         via: "register",
         referral_source: d.referral_source,
-        email: sendResult.ok
-          ? { ok: true, id: sendResult.id, to: d.email }
-          : sendResult.kind === "skipped"
-            ? { ok: false, skipped: true, reason: sendResult.reason }
-            : { ok: false, error: sendResult.error, to: d.email },
+        email: !sendResult
+          ? { ok: false, skipped: true, reason: "patient inactive" }
+          : sendResult.ok
+            ? { ok: true, id: sendResult.id, to: d.email }
+            : sendResult.kind === "skipped"
+              ? { ok: false, skipped: true, reason: sendResult.reason }
+              : { ok: false, error: sendResult.error, to: d.email },
       },
       ip_address: ip,
       user_agent: ua,
@@ -220,24 +246,39 @@ export async function submitRegistrationAction(
     }
   }
 
-  const welcomeResult = await sendEmail({
-    to: d.email,
-    subject: "Welcome to DRMed — your DRM-ID",
-    text: `Hi ${d.first_name},\n\nThanks for pre-registering. Your DRM-ID is ${res.drm_id}.\n\nBring it on your visit — reception verifies your identity at the counter. After your visit, the Secure PIN printed on your receipt unlocks your results online.\n\n— DRMed Clinic and Laboratory`,
-    html: renderEmailShell({
-      heading: "Welcome to DRMed",
-      contentHtml:
-        emailParagraph(`Hi <b>${escapeHtml(d.first_name)}</b>,`) +
-        emailParagraph("Thanks for pre-registering. This is your DRMed patient ID — present it at the clinic on your visit:") +
-        emailHighlight("Your DRM-ID", res.drm_id) +
-        emailParagraph("Reception verifies your identity at the counter. After your visit, the Secure PIN printed on your receipt unlocks your results online.") +
-        emailButton(
-          "Book a test or consultation",
-          `${SITE.url.replace(/\/$/, "")}/schedule`,
-          "cyan",
-        ),
-    }),
-  });
+  // res.id was just created by resolvePatient above, so this is always
+  // active in practice — the check runs anyway so every patient send in this
+  // file goes through the same last-line-of-defence gate.
+  const welcomeRecipient = await checkPatientRecipient(admin, res.id);
+  if (welcomeRecipient.kind !== "active") {
+    await auditSkippedInactiveRecipient({
+      sender: "register",
+      patientId: res.id,
+      reason: welcomeRecipient.kind === "inactive" ? welcomeRecipient.reason : "walk_in",
+      resourceType: "patient",
+      resourceId: res.id,
+    });
+  }
+  const welcomeResult = welcomeRecipient.kind === "active"
+    ? await sendEmail({
+        to: d.email,
+        subject: "Welcome to DRMed — your DRM-ID",
+        text: `Hi ${d.first_name},\n\nThanks for pre-registering. Your DRM-ID is ${res.drm_id}.\n\nBring it on your visit — reception verifies your identity at the counter. After your visit, the Secure PIN printed on your receipt unlocks your results online.\n\n— DRMed Clinic and Laboratory`,
+        html: renderEmailShell({
+          heading: "Welcome to DRMed",
+          contentHtml:
+            emailParagraph(`Hi <b>${escapeHtml(d.first_name)}</b>,`) +
+            emailParagraph("Thanks for pre-registering. This is your DRMed patient ID — present it at the clinic on your visit:") +
+            emailHighlight("Your DRM-ID", res.drm_id) +
+            emailParagraph("Reception verifies your identity at the counter. After your visit, the Secure PIN printed on your receipt unlocks your results online.") +
+            emailButton(
+              "Book a test or consultation",
+              `${SITE.url.replace(/\/$/, "")}/schedule`,
+              "cyan",
+            ),
+        }),
+      })
+    : { ok: false as const, kind: "skipped" as const, reason: "patient inactive" };
 
   await audit({
     actor_id: null,

@@ -15,6 +15,7 @@ import { audit } from "@/lib/audit/log";
 import { requireActiveStaff } from "@/lib/auth/require-staff";
 import { translatePgError } from "@/lib/accounting/pg-errors";
 import { CLOSED_MONTH_MESSAGE, paymentEditability, paymentSnapshot } from "@/lib/visits/payment-edit";
+import { assertVisitPatientActive } from "@/lib/patients/require-active";
 
 // Same role pair as Edit and Delete (payments/[id]/{edit,void}/actions.ts).
 function canMovePayment(role: string): boolean {
@@ -55,6 +56,12 @@ export async function findVisitForMoveAction(visitNumber: string): Promise<FindV
     .maybeSingle();
   if (error) return { ok: false, error: translatePgError(error) };
   if (!data) return { ok: false, error: `No open visit #${n}. Check the number, or restore the visit first.` };
+
+  // 0167: an inactive patient's visit is never offered as a move target.
+  const admin = createAdminClient();
+  const active = await assertVisitPatientActive(admin, data.id);
+  if (!active.ok) return { ok: false, error: active.error };
+
   const pt = Array.isArray(data.patients) ? data.patients[0] : data.patients;
   return {
     ok: true,
@@ -120,6 +127,13 @@ export async function movePaymentAction(input: {
     // the audit row and revalidation.
     .is("deleted_at", null)
     .maybeSingle();
+
+  // 0167: no financial reversal on an inactive record — restore it first.
+  // Both ends: the visit the payment LEAVES and the visit it LANDS ON.
+  const activeSource = await assertVisitPatientActive(admin, before.visit_id);
+  if (!activeSource.ok) return { ok: false, error: activeSource.error };
+  const activeTarget = await assertVisitPatientActive(admin, d.target_visit_id);
+  if (!activeTarget.ok) return { ok: false, error: activeTarget.error };
 
   // Same amount, method, reference and notes — only the visit changes.
   const { data: newPaymentId, error: rpcErr } = await admin.rpc("correct_payment", {

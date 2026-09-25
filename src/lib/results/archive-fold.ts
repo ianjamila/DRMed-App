@@ -26,7 +26,14 @@ export interface ArchiveTestRow {
   visit: {
     id: string;
     visitNumber: string;
-    patient: { first_name: string; last_name: string; drm_id: string } | null;
+    patient: {
+      first_name: string;
+      last_name: string;
+      drm_id: string;
+      /** 0167 lifecycle — drives the Deleted/Merged badge on the archive row. */
+      deleted_at: string | null;
+      merged_into_id: string | null;
+    } | null;
   };
 }
 

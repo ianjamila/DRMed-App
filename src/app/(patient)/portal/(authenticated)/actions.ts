@@ -5,7 +5,7 @@ import { PDFDocument } from "pdf-lib";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createPatientClient } from "@/lib/supabase/patient";
 import { audit } from "@/lib/audit/log";
-import { getPatientSession } from "@/lib/auth/patient-session-cookies";
+import { getActivePatientSession } from "@/lib/auth/require-patient";
 import {
   PORTAL_CONSENT_REQUIRED_ERROR,
   portalConsentCurrent,
@@ -36,7 +36,7 @@ export type PackageDownloadResult =
 export async function getPatientConsolidatedResultDownloadUrl(
   resultId: string,
 ): Promise<DownloadResult> {
-  const session = await getPatientSession();
+  const session = await getActivePatientSession();
   if (!session) return { ok: false, error: "Session expired. Sign in again." };
   if (!(await portalConsentCurrent(session.patient_id))) {
     return { ok: false, error: PORTAL_CONSENT_REQUIRED_ERROR };
@@ -175,7 +175,7 @@ export async function getPatientConsolidatedResultDownloadUrl(
 export async function getPatientResultDownloadUrl(
   testRequestId: string,
 ): Promise<DownloadResult> {
-  const session = await getPatientSession();
+  const session = await getActivePatientSession();
   if (!session) return { ok: false, error: "Session expired. Sign in again." };
   if (!(await portalConsentCurrent(session.patient_id))) {
     return { ok: false, error: PORTAL_CONSENT_REQUIRED_ERROR };
@@ -305,7 +305,7 @@ export async function getPatientResultDownloadUrl(
 export async function getPackagePdfDownloadUrl(
   headerTestRequestId: string,
 ): Promise<PackageDownloadResult> {
-  const session = await getPatientSession();
+  const session = await getActivePatientSession();
   if (!session) return { ok: false, error: "Session expired. Sign in again." };
   if (!(await portalConsentCurrent(session.patient_id))) {
     return { ok: false, error: PORTAL_CONSENT_REQUIRED_ERROR };
@@ -617,7 +617,7 @@ export type FormDeleteResult = { ok: true } | { ok: false; error: string };
 export async function getPatientLabRequestFormUrl(
   attachmentId: string,
 ): Promise<FormUrlResult> {
-  const session = await getPatientSession();
+  const session = await getActivePatientSession();
   if (!session) return { ok: false, error: "Session expired. Sign in again." };
   if (!(await portalConsentCurrent(session.patient_id))) {
     return { ok: false, error: PORTAL_CONSENT_REQUIRED_ERROR };
@@ -664,7 +664,7 @@ export async function getPatientLabRequestFormUrl(
 export async function deletePatientLabRequestUpload(
   attachmentId: string,
 ): Promise<FormDeleteResult> {
-  const session = await getPatientSession();
+  const session = await getActivePatientSession();
   if (!session) return { ok: false, error: "Session expired. Sign in again." };
   // No consent check here, deliberately: removing their own upload is the
   // patient shrinking what the clinic holds, which is what withdrawing consent
@@ -685,14 +685,30 @@ export async function deletePatientLabRequestUpload(
     return { ok: false, error: "File not found." };
   }
 
-  // Best-effort object removal; proceed to delete the row regardless.
-  await admin.storage.from(LAB_REQUEST_BUCKET).remove([att.storage_path]);
-
+  // Row DELETE first, Storage removal after: 0167's trigger refuses this
+  // DELETE with P0058 when the file's patient has since been deleted or
+  // merged, and if Storage went first (as it used to), a refused row DELETE
+  // would leave a row pointing at a file that no longer exists. Never
+  // reveal WHY via translatePgError()'s P0058 message — no patient-facing
+  // surface may say a record was deleted or merged (spec). A P0058 here
+  // reads exactly like an ordinary expired session; anything else keeps the
+  // pre-existing generic message.
   const { error: delErr } = await admin
     .from("appointment_attachments")
     .delete()
     .eq("id", attachmentId);
-  if (delErr) return { ok: false, error: "Could not remove the file." };
+  if (delErr) {
+    return {
+      ok: false,
+      error:
+        delErr.code === "P0058"
+          ? "Session expired. Sign in again."
+          : "Could not remove the file.",
+    };
+  }
+
+  // Best-effort object removal, now that the row is confirmed gone.
+  await admin.storage.from(LAB_REQUEST_BUCKET).remove([att.storage_path]);
 
   const h = await headers();
   await audit({

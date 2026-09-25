@@ -3,9 +3,11 @@
 import { headers } from "next/headers";
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase/admin";
 import { audit } from "@/lib/audit/log";
 import { requireActiveStaff } from "@/lib/auth/require-staff";
 import { requireAdminStaff } from "@/lib/auth/require-admin";
+import { assertVisitPatientActive } from "@/lib/patients/require-active";
 import { ipAndAgent } from "@/lib/server/action-helpers";
 import {
   QueueDeleteReasonSchema,
@@ -113,6 +115,10 @@ async function refuseIfVisitDeleted(
         "This visit was deleted from the queue. Restore it before releasing results.",
     };
   }
+  // 0167: history of a deleted or merged patient stays readable, but no
+  // release, undo or mark-done until the record is restored.
+  const active = await assertVisitPatientActive(createAdminClient(), visitId);
+  if (!active.ok) return { ok: false as const, error: active.error };
   return null;
 }
 
@@ -933,6 +939,11 @@ export async function waiveVisitBalanceAction(
   if (visit.payment_status === "paid") {
     return { ok: false, error: "This visit is already fully paid — nothing to waive." };
   }
+
+  // 0167: waiving is a financial reversal — refuse it on an inactive record
+  // (does its own inline check rather than routing through refuseIfVisitDeleted).
+  const active = await assertVisitPatientActive(createAdminClient(), visitId);
+  if (!active.ok) return { ok: false, error: active.error };
 
   // Status filter keeps the write race-safe: a concurrent payment that flips
   // the visit to 'paid' makes this UPDATE match 0 rows instead of clobbering.

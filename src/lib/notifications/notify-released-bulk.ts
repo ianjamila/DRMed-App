@@ -12,6 +12,8 @@ import {
 } from "./branded-email";
 import { SAMPLE_SKIP_REASON } from "@/lib/visits/sample";
 import { patientAlreadyAskedForReview } from "./review-cta";
+import { checkPatientRecipient } from "./active-patient-recipient";
+import { auditSkippedInactiveRecipient } from "./inactive-recipient-audit";
 
 interface Input {
   visitId: string;
@@ -161,17 +163,30 @@ export async function notifyResultsReleasedBulk({
     receivedNote: "You received this because results were released for your DRMed visit.",
   });
 
+  const recipient = await checkPatientRecipient(admin, patient.id);
+  if (recipient.kind !== "active") {
+    await auditSkippedInactiveRecipient({
+      sender: "notify-released-bulk",
+      patientId: patient.id,
+      reason: recipient.kind === "inactive" ? recipient.reason : "walk_in",
+      resourceType: "visit",
+      resourceId: visitId,
+    });
+    return;
+  }
+  const to = recipient.patient;
+
   const [smsResult, emailResult] = await Promise.all([
-    patient.phone
-      ? sendSms({ to: patient.phone, message: smsBody })
+    to.phone
+      ? sendSms({ to: to.phone, message: smsBody })
       : Promise.resolve({
           ok: false as const,
           kind: "skipped" as const,
           reason: "patient has no phone on file",
         }),
-    patient.email
+    to.email
       ? sendEmail({
-          to: patient.email,
+          to: to.email,
           subject: emailSubject,
           text: emailText,
           html: emailHtml,
@@ -213,10 +228,10 @@ export async function notifyResultsReleasedBulk({
           ? { ok: false, skipped: true, reason: smsResult.reason }
           : { ok: false, error: smsResult.error },
       email: emailResult.ok
-        ? { ok: true, id: emailResult.id, to: patient.email }
+        ? { ok: true, id: emailResult.id, to: to.email }
         : emailResult.kind === "skipped"
           ? { ok: false, skipped: true, reason: emailResult.reason }
-          : { ok: false, error: emailResult.error, to: patient.email },
+          : { ok: false, error: emailResult.error, to: to.email },
       review_cta: { shown: includeReviewCta && emailResult.ok },
       bulk: true,
       count,

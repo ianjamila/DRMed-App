@@ -283,6 +283,13 @@ function ClosureRow({ row }: { row: ClosureRow }) {
             Moved · reception to call
           </span>
         )}
+        {bulkState && bulkState.ok && bulkState.skipped > 0 ? (
+          <p className="mt-1 text-xs text-amber-700">
+            Skipped {bulkState.skipped} appointment(s) for a deleted or merged
+            patient — restore the record from Admin Tools › Deleted Patients
+            to reschedule those.
+          </p>
+        ) : null}
         {bulkState && !bulkState.ok ? (
           <p className="mt-1 text-xs text-red-600" role="alert">
             {bulkState.error}

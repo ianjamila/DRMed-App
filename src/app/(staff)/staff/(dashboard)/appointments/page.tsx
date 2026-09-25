@@ -29,6 +29,7 @@ import {
   FLAT_SORTABLE_COLUMNS,
   groupHaystack,
   tagBucket,
+  upcomingRangeToIso,
   type BucketKey,
   type FlatSortColumn,
 } from "./flat-view";
@@ -53,6 +54,8 @@ import {
 } from "@/lib/ui/table-params";
 import { SortableTh, PlainTh } from "@/components/staff/sortable-th";
 import { ListPagination, PAGE_SIZES } from "@/components/staff/list-pagination";
+import { InactivePatientBadge } from "@/components/staff/inactive-patient-badge";
+import { isActivePatient } from "@/lib/patients/active";
 
 const APPOINTMENTS_SUBSCRIPTIONS = [
   { table: "appointments", event: "INSERT" },
@@ -86,6 +89,8 @@ interface ApptRow {
   patient_drm_id: string | null;
   patient_name: string | null;
   patient_phone: string | null;
+  patient_deleted_at: string | null;
+  patient_merged_into_id: string | null;
   service_name: string | null;
   service_code: string | null;
   service_kind: string | null;
@@ -107,7 +112,7 @@ interface ApptGroup {
 const APPT_SELECT = `
   id, scheduled_at, created_at, status, notes,
   walk_in_name, walk_in_phone, booking_group_id, home_service_requested, source,
-  patients ( id, drm_id, first_name, last_name, phone ),
+  patients ( id, drm_id, first_name, last_name, phone, deleted_at, merged_into_id ),
   services ( name, code, kind ),
   physicians ( full_name )
 `;
@@ -132,6 +137,8 @@ interface ApptSourceRow {
         first_name: string;
         last_name: string;
         phone: string | null;
+        deleted_at: string | null;
+        merged_into_id: string | null;
       }
     | Array<{
         id: string;
@@ -139,6 +146,8 @@ interface ApptSourceRow {
         first_name: string;
         last_name: string;
         phone: string | null;
+        deleted_at: string | null;
+        merged_into_id: string | null;
       }>
     | null;
   services?:
@@ -167,6 +176,8 @@ function rowFrom(a: ApptSourceRow): ApptRow {
     patient_drm_id: p?.drm_id ?? null,
     patient_name: p ? `${p.last_name}, ${p.first_name}` : null,
     patient_phone: p?.phone ?? null,
+    patient_deleted_at: p?.deleted_at ?? null,
+    patient_merged_into_id: p?.merged_into_id ?? null,
     service_name: s?.name ?? null,
     service_code: s?.code ?? null,
     service_kind: s?.kind ?? null,
@@ -219,7 +230,7 @@ type SourceFilter = "not_recorded" | string | null;
 // `.range()` can't drop or repeat a row across pages.
 async function loadScheduledRange(
   fromIso: string,
-  toIso: string,
+  toIso: string | null,
   sourceFilter: SourceFilter,
 ): Promise<LoadedAppts> {
   const supabase = await createClient();
@@ -228,8 +239,11 @@ async function loadScheduledRange(
       let query = supabase
         .from("appointments")
         .select(APPT_SELECT)
-        .gte("scheduled_at", fromIso)
-        .lt("scheduled_at", toIso);
+        .gte("scheduled_at", fromIso);
+      // `toIso === null` means "no upper bound" — a search (`q`) must be
+      // able to find a confirmed appointment further out than the default
+      // 31-day window (see `upcomingRangeToIso`'s doc comment).
+      if (toIso !== null) query = query.lt("scheduled_at", toIso);
       if (sourceFilter === "not_recorded") query = query.is("source", null);
       else if (sourceFilter) query = query.eq("source", sourceFilter);
       return query
@@ -402,11 +416,18 @@ export default async function AppointmentsPage({ searchParams }: SearchProps) {
   const endOfRangeUtc = new Date(
     new Date(`${manilaToday}T00:00:00+08:00`).getTime() + 31 * 24 * 60 * 60 * 1000,
   ).toISOString();
+  // A `q` search must find every open appointment for that patient, not
+  // just the ones inside the default 31-day "what's coming up" window (the
+  // 0167 patient-delete blocker links to `?q=<DRM-ID>` and a confirmed
+  // appointment can be scheduled arbitrarily far out). The default grouped
+  // view, and a flat view opened only via sort/source with no `q`, keep the
+  // existing 31-day cap.
+  const upcomingToIso = upcomingRangeToIso(query.length > 0, endOfRangeUtc);
 
   const [todayResult, walkInsResult, upcomingResult, pendingResult] = await Promise.all([
     loadScheduledRange(startOfTodayUtc, startOfTomorrowUtc, validSource),
     loadOpenWalkIns(validSource),
-    loadScheduledRange(startOfTomorrowUtc, endOfRangeUtc, validSource),
+    loadScheduledRange(startOfTomorrowUtc, upcomingToIso, validSource),
     loadPendingCallback(validSource),
   ]);
   const todayScheduled = todayResult.rows;
@@ -657,11 +678,23 @@ export default async function AppointmentsPage({ searchParams }: SearchProps) {
       </div>
       {isFlatView ? (
         <p className="mb-4 text-xs text-[color:var(--color-brand-text-soft)]">
-          Search checks the patient&apos;s name, DRM-ID and phone, or the
-          walk-in name and phone. It covers pending callbacks, walk-ins
-          waiting, today, and the next 30 days — the same appointments this
-          page always shows — so it won&apos;t find older, cancelled, or
-          already-completed appointments.
+          {query ? (
+            <>
+              Search checks the patient&apos;s name, DRM-ID and phone, or the
+              walk-in name and phone. It covers pending callbacks, walk-ins
+              waiting, today, and every upcoming scheduled appointment — not
+              just the next 30 days — so it won&apos;t find older, cancelled,
+              or already-completed appointments.
+            </>
+          ) : (
+            <>
+              Search checks the patient&apos;s name, DRM-ID and phone, or the
+              walk-in name and phone. It covers pending callbacks, walk-ins
+              waiting, today, and the next 30 days — the same appointments
+              this page always shows — so it won&apos;t find older,
+              cancelled, or already-completed appointments.
+            </>
+          )}
         </p>
       ) : null}
 
@@ -980,6 +1013,12 @@ function GroupRow({
         </p>
         <p className="font-mono text-xs text-[color:var(--color-brand-text-soft)]">
           {r.patient_drm_id ?? r.walk_in_phone ?? r.patient_phone ?? "—"}
+          {r.patient_id ? (
+            <InactivePatientBadge
+              deletedAt={r.patient_deleted_at}
+              mergedIntoId={r.patient_merged_into_id}
+            />
+          ) : null}
         </p>
         {r.home_service_requested ? (
           <p className="mt-1 inline-block rounded-md bg-violet-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-violet-900">
@@ -1075,6 +1114,11 @@ function GroupRow({
           status={r.status}
           isAdmin={isAdmin}
           groupSize={group.rows.length}
+          patientActive={isActivePatient({
+            drm_id: r.patient_drm_id ?? "",
+            deleted_at: r.patient_deleted_at,
+            merged_into_id: r.patient_merged_into_id,
+          })}
         />
       </td>
     </tr>

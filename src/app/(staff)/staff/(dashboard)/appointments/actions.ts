@@ -7,6 +7,8 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { audit } from "@/lib/audit/log";
 import { requireActiveStaff } from "@/lib/auth/require-staff";
 import { resolvePatient } from "@/lib/patients/resolve";
+import { activePatients } from "@/lib/patients/active";
+import { assertAppointmentsPatientsActive } from "@/lib/patients/require-active";
 import { AttachPatientSchema, type AttachPatientInput } from "@/lib/appointments/attach-patient";
 import { matchArrivedAppointmentsForServices } from "@/lib/appointments/match-arrived";
 
@@ -44,6 +46,14 @@ async function transitionGroup(
   }
   if (appointmentIds.length === 0) {
     return { ok: false, error: "No appointments to update." };
+  }
+
+  // Moving to arrived or back to confirmed puts work back on the record;
+  // cancelling or marking no-show does not, so those stay unguarded.
+  // Walk-in appointments (patient_id NULL) pass.
+  if (to === "arrived" || to === "confirmed") {
+    const active = await assertAppointmentsPatientsActive(createAdminClient(), [...appointmentIds]);
+    if (!active.ok) return { ok: false, error: active.error };
   }
 
   const supabase = await createClient();
@@ -337,9 +347,7 @@ export async function attachPatientToAppointmentAction(
   let drmId: string | null;
   let resolution: "existing" | "reused" | "created";
   if (parsed.data.mode === "existing") {
-    const { data: row } = await admin
-      .from("patients")
-      .select("id, drm_id")
+    const { data: row } = await activePatients(admin.from("patients").select("id, drm_id"))
       .eq("id", parsed.data.patient_id)
       .maybeSingle();
     if (!row) return { ok: false, error: "We couldn't find that patient. Search again." };

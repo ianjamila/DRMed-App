@@ -15,6 +15,7 @@ import { isDoctorKind, partitionByCategory } from "@/lib/visits/order-lines";
 import { isConsultOnlyOrder } from "@/lib/visits/receipt-policy";
 import { isSeniorPwdEligible } from "@/lib/pricing/senior";
 import { lineDiscount } from "@/lib/pricing/discounts";
+import { assertPatientActive } from "@/lib/patients/require-active";
 import {
   completeAppointmentFromVisitAction,
   completeArrivedAppointmentsForPatientAction,
@@ -112,6 +113,13 @@ export async function createVisitAction(
   }
 
   const supabase = await createClient();
+
+  // 0167 / PR 3 note: the DB guard only fires when maintain_repeat_patient_flag
+  // flips is_repeat_patient (a patient's SECOND visit), so a deleted patient's
+  // first new visit is otherwise accepted — this app guard is the enforcement
+  // until PR 3's transactional visit-creation RPC.
+  const active = await assertPatientActive(createAdminClient(), parsed.data.patient_id);
+  if (!active.ok) return { ok: false, error: active.error };
 
   const { data: services, error: svcErr } = await supabase
     .from("services")
