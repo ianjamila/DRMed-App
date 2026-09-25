@@ -247,7 +247,7 @@
 <div class="layout">
 <nav class="toc" aria-label="Contents">
   <p class="toc-brand">drmed<span>.</span>ph</p>
-  <p class="toc-tag">User guide · v2.26</p>
+  <p class="toc-tag">User guide · v2.27</p>
   <div class="filter" role="group" aria-label="Show chapters for">
     <button type="button" data-filter="all" aria-pressed="true">All roles</button>
     <button type="button" data-filter="reception">Reception</button>
@@ -302,6 +302,7 @@
         <li><a href="#adm-people">People &amp; access</a></li>
         <li><a href="#adm-patients">Patient tools</a></li>
         <li><a href="#adm-books">Books, payroll &amp; marketing</a></li>
+        <li><a href="#adm-view-as">Seeing the app as another role</a></li>
       </ol></li>
     <li data-role="patient"><a href="#pt"><span class="toc-role-dot" style="background:var(--r-patient)"></span>6 · Patients</a>
       <ol>
@@ -1094,6 +1095,17 @@
     <p><b>Newsletter</b> composes and sends a campaign to subscribers (two-step confirm: <kbd class="ui">Send campaign</kbd> → <kbd class="ui">Yes, send to N</kbd>). <b>Marketing</b> has three tabs: <span class="tab">Ad Performance</span> (your uploaded Meta + Google CSV exports stay in this browser; the <b>Real bookings</b> card described below reads from the database), <span class="tab">Ops Tracker</span> (stored in your browser only), and <span class="tab">Booking Sources</span> — a report, for a date range you pick, of where appointments, website messages and new patients came from. It shows <b>Bookings</b>, <b>Website messages</b> and <b>New patients</b> totals for the period (the New patients card also says how many answered how they heard about us), the <b>Message → booking rate</b> (website messages whose status is Booked, over all messages in the period), and seven tables in plain language: <b>Bookings by source</b> and <b>Bookings by ad campaign</b> (an online or patient-portal booking tags itself; a staff-made booking only carries a source once reception started answering <q>How did they reach us?</q> on New appointment, 3.1 — earlier ones show <q>Not recorded</q>; each table also has a <b>Cancelled / no-show</b> column counting that source's or campaign's bookings that were later cancelled or marked no-show, kept separate from Count and Share), <b>New patients by how they heard about us</b> (every patient record created in the period, whoever made it: reception's <b>Referral source</b> on New Patient, or the patient's own answer to <q>How did you hear about us?</q> on the website booking and registration forms; patients added from New appointment are not asked and show as <q>Not recorded</q>, as do older records; merged duplicates are not counted), and <b>Website messages by type</b>, <b>by page</b> (Home page, Contact page, or Not recorded for messages before 24 September 2026), <b>by status</b> and <b>by ad campaign</b>. <b>Search Engines (IndexNow)</b> re-submits the site to Bing and friends after content changes. <b>Website Messages</b> (shared with reception, Front Desk › Messages &amp; Bookings) is the inbox for messages sent through the site's Contact form — see 3.11.</p>
     <p>On <span class="tab">Ad Performance</span>, once you upload your ad CSV, a <b>Real bookings — from the clinic's records</b> card appears under the ad table. For each of your uploaded campaigns it shows how many real appointments (<b>Real bookings</b>), cancellations/no-shows (<b>Cancelled/no-show</b>) and <b>Website messages</b> the clinic's own database recorded under that campaign name — matched by name, ignoring case and punctuation/spacing differences between how Meta/Google and the clinic spell it — plus a <b>Cost / real booking</b> figure (spend ÷ real bookings). It covers whatever date range your uploaded ad data covers, or the last 28 days if the file has no usable dates (a note says so). Below the table, an uploaded campaign with spend but no matching clinic booking is listed under <q>Uploaded campaigns with spend but no matching bookings</q>, with a reminder to check the ad's link includes the matching <code>utm_campaign</code> tag; the reverse case — a clinic campaign with bookings but no uploaded ad data — is listed under <q>Website campaigns with bookings but no uploaded ad data</q>. Only these counts come from the database — no names, ids or contact details cross over — and the uploaded ad file itself never leaves this browser.</p>
   </section>
+
+  <section class="sub" id="adm-view-as">
+    <h3>5.8 Seeing the app as another role</h3>
+    <p>To check what Reception, a Medical Tech, an X-ray Technician or a Pathologist actually sees, you do not need a second login.</p>
+    <ol class="steps">
+      <li><p class="step-title">Pick a role under <b>View as</b> in the sidebar footer (on a phone: open the menu, it is under your name).</p><p>You land on the staff home page. The sidebar, dashboard, buttons and lists now match that role exactly — including which lab work you may claim.</p></li>
+      <li><p class="step-title">An amber bar stays at the top of every page: <q>Viewing as Reception. Anything you save is recorded under your name. Ends in 3h 40m.</q></p><p>Everything you do is real and is logged against <b>you</b> (the admin), not a fictitious user. Use the same <b>View as</b> picker in the bar to hop to another role.</p></li>
+      <li><p class="step-title">Tap <kbd class="ui">Exit</kbd> in the bar to return to Admin.</p><p>If you forget, the view ends by itself after four hours. Other staff never see this control.</p></li>
+    </ol>
+    <p>Admin-only pages redirect to the staff home page while you are viewing as another role — that is the role's real experience, not an error.</p>
+  </section>
 </section>
 
 <!-- ============================================================ -->
@@ -1245,7 +1257,7 @@
 </section>
 
 <footer class="end">
-  <p>drmed.ph User Guide · v2.26 · 25 September 2026 · Matches the production release at migration 0177, plus 0176 (applied out of order) and 0167 (patient delete and restore). Every label in this guide was checked against the application code on that date. Print with <b>Ctrl/Cmd + P</b>; each chapter starts on a new page.</p>
+  <p>drmed.ph User Guide · v2.27 · 25 September 2026 · Matches the production release at migration 0182, plus 0176 (applied out of order) and 0167 (patient delete and restore). Every label in this guide was checked against the application code on that date. Print with <b>Ctrl/Cmd + P</b>; each chapter starts on a new page.</p>
 </footer>
 </main>
 </div>
