@@ -13,6 +13,7 @@ import {
   QueueDeleteReasonSchema,
   WaiveBalanceSchema,
 } from "@/lib/validations/accounting";
+import { WAIVE_CLOSED_MONTH_MESSAGE } from "@/lib/visits/payment-edit";
 import { deleteVisitAction } from "@/lib/actions/visits/queue-deletion";
 import {
   hasOpenHmoClaim,
@@ -892,10 +893,10 @@ export async function deleteSampleVisitAction(
 }
 
 // H3: admin-only escape hatch for visits that will never be cash-paid
-// (HMO-covered, charity, no-charge). Setting payment_status = 'waived' is the
-// one legitimate manual write to that column — recalc_visit_payment preserves
-// 'waived' through every later payment/void, and the 0109 Leg B trigger then
-// auto-releases any package header whose components are already terminal.
+// (HMO-covered, charity, no-charge). Setting payment_status = 'waived'
+// happens inside waive_visit_balance() (0183), which also fixes the waiver,
+// allocates it per line, books the discount and clears 1100; the P0069/P0070
+// guards then freeze the visit's money and lines.
 export async function waiveVisitBalanceAction(
   visitId: string,
   reason: string,
@@ -905,63 +906,36 @@ export async function waiveVisitBalanceAction(
     return { ok: false, error: parsed.error.issues[0]?.message ?? "Reason is required." };
   }
   const session = await requireAdminStaff();
-  const supabase = await createClient();
 
-  const { data: visit } = await supabase
-    .from("visits")
-    .select("payment_status, total_php, paid_php, deleted_at, hmo_provider_id")
-    .eq("id", visitId)
-    .maybeSingle();
-  if (!visit) {
-    return { ok: false, error: "Visit not found." };
-  }
-  if (visit.deleted_at !== null) {
-    return {
-      ok: false,
-      error: "This visit was deleted from the queue. Restore it before waiving.",
-    };
-  }
-  if (visit.hmo_provider_id !== null) {
-    // A5: waiving does NOT write off the HMO receivable — the release
-    // bridge still books AR-HMO by hmo_provider_id on release regardless of
-    // payment_status. Offering "waive" here is a misleading-status trap:
-    // an HMO visit already releases without payment (moneySettled's HMO
-    // carve-out), so there is nothing waiving would unblock.
-    return {
-      ok: false,
-      error:
-        "This visit is billed to an HMO and already releases without payment — there's no balance to waive.",
-    };
-  }
-  if (visit.payment_status === "waived") {
-    return { ok: false, error: "This visit's balance is already waived." };
-  }
-  if (visit.payment_status === "paid") {
-    return { ok: false, error: "This visit is already fully paid — nothing to waive." };
-  }
+  const admin = createAdminClient();
 
-  // 0167: waiving is a financial reversal — refuse it on an inactive record
-  // (does its own inline check rather than routing through refuseIfVisitDeleted).
-  const active = await assertVisitPatientActive(createAdminClient(), visitId);
+  // 0167: waiving is a financial change — refuse it on an inactive record.
+  const active = await assertVisitPatientActive(admin, visitId);
   if (!active.ok) return { ok: false, error: active.error };
 
-  // Status filter keeps the write race-safe: a concurrent payment that flips
-  // the visit to 'paid' makes this UPDATE match 0 rows instead of clobbering.
-  // The deleted_at filter closes the same race against a concurrent queue
-  // delete (0125's P0046 trigger backstops it in the DB).
-  const { data: updated, error } = await supabase
-    .from("visits")
-    .update({ payment_status: "waived" })
-    .eq("id", visitId)
-    .in("payment_status", ["unpaid", "partial"])
-    .is("deleted_at", null)
-    .select("id");
-
-  if (error) return { ok: false, error: translatePgError(error) };
-  if (!updated || updated.length === 0) {
+  // 0183: the RPC owns every rule (admin actor, non-HMO, unpaid/partial,
+  // provenance, the per-line split, the discount JE) under the visit + line
+  // row locks, and raises P0071 with a staff-readable message per refusal.
+  const { data, error } = await admin.rpc("waive_visit_balance", {
+    p_visit_id: visitId,
+    p_actor_id: session.user_id,
+    p_reason: parsed.data.reason,
+  });
+  if (error) {
     revalidatePath(`/staff/visits/${visitId}`);
-    return { ok: false, error: "This visit can no longer be waived." };
+    return {
+      ok: false,
+      error: error.code === "P0002" ? WAIVE_CLOSED_MONTH_MESSAGE : translatePgError(error),
+    };
   }
+  const result = (data ?? {}) as {
+    waived_php?: number;
+    allocations?: number;
+    posted_now?: number;
+    legacy?: boolean;
+    previous_status?: string;
+    headers_pending?: number;
+  };
 
   const { ip, ua } = await ipAndAgent();
   await audit({
@@ -972,8 +946,15 @@ export async function waiveVisitBalanceAction(
     resource_id: visitId,
     metadata: {
       reason: parsed.data.reason,
-      previous_status: visit.payment_status,
-      balance_waived_php: Number(visit.total_php) - Number(visit.paid_php),
+      previous_status: result.previous_status ?? null,
+      balance_waived_php: result.waived_php ?? null,
+      // 0183: how the remainder reached the books.
+      allocations: result.allocations ?? 0,
+      posted_now: result.posted_now ?? 0,
+      legacy: result.legacy ?? false,
+      // A package header the waive could not auto-release (closed month):
+      // it stays ready_for_release and folds when released by hand.
+      headers_pending: result.headers_pending ?? 0,
     },
     ip_address: ip,
     user_agent: ua,

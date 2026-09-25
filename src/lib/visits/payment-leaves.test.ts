@@ -12,6 +12,7 @@ import {
   paymentStatusAfter,
   releasedWhileUnpaidMessage,
   settledAfter,
+  WAIVE_CLOSED_MONTH_MESSAGE,
   type ReleasableLine,
   type VisitMoney,
 } from "./payment-edit";
@@ -240,5 +241,11 @@ describe("amountRemovedByEdit (the Edit dialog's note)", () => {
     expect(paymentLeavesMessage(s, "0043", formatPhp).text).toBe(
       "Visit #0043 will then owe ₱200, and 2 results on it are already released. Released results stay released.",
     );
+  });
+});
+
+describe("WAIVE_CLOSED_MONTH_MESSAGE (0183)", () => {
+  it("tells staff the month is closed", () => {
+    expect(WAIVE_CLOSED_MONTH_MESSAGE).toMatch(/closed for this month/);
   });
 });

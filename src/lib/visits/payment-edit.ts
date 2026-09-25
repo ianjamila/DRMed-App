@@ -158,6 +158,14 @@ export function visitBalanceAfter(visitTotal: number, visitPaid: number, paidDel
 export const CLOSED_MONTH_MESSAGE =
   "This payment was received in a month the books are already closed for, so it cannot be edited or moved. Delete it and record it again (the correction then lands in this month), or ask an admin to reopen that month.";
 
+/**
+ * je_period_lock_check (0029) refuses the waiver's discount entry when a line
+ * already released would post into a closed month (0183). Nothing is written
+ * in that case — the whole waive rolls back.
+ */
+export const WAIVE_CLOSED_MONTH_MESSAGE =
+  "The books are closed for this month, so the waived amount cannot be booked yet. Ask an admin to reopen the month, then waive the balance.";
+
 // ---------------------------------------------------------------------------
 // When a payment leaves a visit (Delete, or the source side of a Move).
 //
