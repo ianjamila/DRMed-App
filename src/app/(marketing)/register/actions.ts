@@ -204,7 +204,7 @@ export async function submitRegistrationAction(
       reportFailure: (error, metadata) =>
         reportError({ scope: "register/consent-grant", error, metadata }),
     },
-    { patientId: res.id, ip, userAgent: ua },
+    { patientId: res.id, sourceForm: "register", ip, userAgent: ua },
   );
 
   // Optional marketing opt-in. Mirror the schedule form's subscribe: insert a

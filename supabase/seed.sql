@@ -100,6 +100,10 @@ revoke all on public.v_ops_daily_totals           from anon, authenticated;
 -- blanket local grants above, matching the migration and production.
 revoke all on public.v_patients_without_consent from public, anon, authenticated;
 grant select on public.v_patients_without_consent to authenticated;
+-- 0171: the Patients list view — authenticated SELECT only, like 0150, after the
+-- blanket local grants above, matching the migration and production.
+revoke all on public.v_patients_directory from public, anon, authenticated;
+grant select on public.v_patients_directory to authenticated;
 -- 0154: the Website Messages inbox. The public contact form inserts with the
 -- service-role client, so anon gets nothing (0004's anon INSERT policy is
 -- gone), and staff get SELECT + UPDATE only — RLS narrows that to

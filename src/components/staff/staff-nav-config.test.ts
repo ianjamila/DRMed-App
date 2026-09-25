@@ -376,6 +376,9 @@ describe("visible hrefs per role", () => {
       "/staff/visits/queue",
       "/staff/visits",
       "/staff/payments/cash-drawer",
+      // Lab & Imaging › Queue, which for reception is only "Released today"
+      // — where it prints the patient's copy (owner decision 2026-09-24).
+      "/staff/queue",
       "/staff/profile",
       "/staff/payslips",
     ]);
@@ -482,7 +485,7 @@ const NAME_EXCEPTIONS: NameException[] = [
   },
   ...[NAV_FILE].map((file) => ({
     file, href: "/staff/queue", label: "Queue",
-    why: "Queue is a shared role-neutral entry point: queueTitleForRole correctly renders Imaging queue for x-ray staff and Lab queue for medtechs.",
+    why: "Queue is a shared role-neutral entry point: queueTitleForRole correctly renders Imaging queue for x-ray staff, Lab queue for medtechs and Released results for reception (which sees only the Released today tab).",
   })),
 ];
 

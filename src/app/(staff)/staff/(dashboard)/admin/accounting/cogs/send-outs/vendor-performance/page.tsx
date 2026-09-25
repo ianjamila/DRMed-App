@@ -4,8 +4,9 @@ import { requireAdminStaff } from "@/lib/auth/require-admin";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { todayManilaISODate } from "@/lib/dates/manila";
 import { pluckOne } from "@/lib/reports/format";
+import { ROUTE_NAME } from "@/lib/staff/route-names";
 
-export const metadata = { title: "Send-out vendor performance" };
+export const metadata = { title: ROUTE_NAME["/staff/admin/accounting/cogs/send-outs/vendor-performance"] };
 export const dynamic = "force-dynamic";
 
 const PHP = new Intl.NumberFormat("en-PH", {
@@ -242,7 +243,7 @@ export default async function VendorPerformancePage({ searchParams }: SearchProp
         <div className="mt-3 flex flex-wrap items-end justify-between gap-3">
           <div>
             <h1 className="font-heading text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
-              Send-out vendor performance
+              {ROUTE_NAME["/staff/admin/accounting/cogs/send-outs/vendor-performance"]}
             </h1>
             <p className="mt-1 text-sm text-[color:var(--color-brand-text-soft)]">
               Per-vendor TAT, accrued cost, and true-up variance for{" "}

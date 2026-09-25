@@ -3,8 +3,9 @@ import { requireAdminStaff } from "@/lib/auth/require-admin";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { manilaDateTime } from "@/lib/dates/manila";
 import { OnlineBookingSettings } from "./client";
+import { ROUTE_NAME } from "@/lib/staff/route-names";
 
-export const metadata = { title: "Online Booking" };
+export const metadata = { title: ROUTE_NAME["/staff/admin/settings/online-booking"] };
 export const dynamic = "force-dynamic";
 
 export default async function OnlineBookingSettingsPage() {
@@ -27,7 +28,7 @@ export default async function OnlineBookingSettingsPage() {
           ← Dashboard
         </Link>
         <h1 className="mt-3 font-heading text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
-          Online booking
+          {ROUTE_NAME["/staff/admin/settings/online-booking"]}
         </h1>
         <p className="mt-1 max-w-2xl text-sm text-[color:var(--color-brand-text-soft)]">
           Pause the booking form on the website (drmed.ph/schedule) and in the patient portal. While

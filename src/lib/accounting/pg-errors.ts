@@ -21,6 +21,9 @@ export function translatePgError(err: PgError): string {
       if (m.includes("vendors_tin_unique")) {
         return "A vendor with this TIN already exists.";
       }
+      if (m.includes("services_code_key")) {
+        return "A service with this code already exists. Pick a different code.";
+      }
       if (m.includes("payments_gift_code_redemption_unique")) {
         // Finding 6 (go-live review): the redemption race guard — someone
         // else's redemption of the same code landed first.
@@ -169,6 +172,11 @@ export function translatePgError(err: PgError): string {
     // rewrite it.
     case "P0053":
       return "A website message cannot be edited. You can only change its status, type or notes.";
+    // Edit payment (0161): correct_payment refuses a stale, already-voided,
+    // gift-code, HMO or imported payment, or an input it cannot record. The
+    // DB message names which one and is written for reception.
+    case "P0054":
+      return err.message ?? "This payment cannot be edited. Delete it and record it again.";
     default:
       return err.message ?? "Database error. Please try again.";
   }

@@ -5,6 +5,7 @@ import {
   LAB_SECTIONS,
   canClaimSection,
   claimOwnerRole,
+  queueTitleForRole,
   sectionsForRole,
 } from "./role-sections";
 import { scopeToAllowedSections } from "@/lib/visits/bulk-selection";
@@ -147,5 +148,18 @@ describe("canClaimSection — x-ray belongs to the x-ray technician", () => {
     expect(canClaimSection("admin", null)).toBe(true);
     expect(canClaimSection("medtech", null)).toBe(false);
     expect(canClaimSection("reception", null)).toBe(false);
+  });
+});
+
+describe("queueTitleForRole", () => {
+  it("names the queue after what each role does there", () => {
+    expect(queueTitleForRole("xray_technician")).toBe("Imaging queue");
+    expect(queueTitleForRole("medtech")).toBe("Lab queue");
+    expect(queueTitleForRole("admin")).toBe("Queue");
+    expect(queueTitleForRole("pathologist")).toBe("Queue");
+  });
+
+  it("titles reception's view Released results — it only prints released work", () => {
+    expect(queueTitleForRole("reception")).toBe("Released results");
   });
 });

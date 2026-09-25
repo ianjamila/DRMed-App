@@ -3261,8 +3261,10 @@ export type Database = {
       }
       patient_consents: {
         Row: {
+          accepted_statement: string | null
           actor_kind: string
           artifact_path: string | null
+          consent_scope: string
           created_at: string
           created_by: string | null
           event_type: string
@@ -3276,11 +3278,14 @@ export type Database = {
           signatory: string | null
           signatory_name: string | null
           signatory_relationship: string | null
+          source_form: string | null
           user_agent: string | null
         }
         Insert: {
+          accepted_statement?: string | null
           actor_kind: string
           artifact_path?: string | null
+          consent_scope?: string
           created_at?: string
           created_by?: string | null
           event_type: string
@@ -3294,11 +3299,14 @@ export type Database = {
           signatory?: string | null
           signatory_name?: string | null
           signatory_relationship?: string | null
+          source_form?: string | null
           user_agent?: string | null
         }
         Update: {
+          accepted_statement?: string | null
           actor_kind?: string
           artifact_path?: string | null
+          consent_scope?: string
           created_at?: string
           created_by?: string | null
           event_type?: string
@@ -3312,6 +3320,7 @@ export type Database = {
           signatory?: string | null
           signatory_name?: string | null
           signatory_relationship?: string | null
+          source_form?: string | null
           user_agent?: string | null
         }
         Relationships: [
@@ -3600,6 +3609,7 @@ export type Database = {
       payments: {
         Row: {
           amount_php: number
+          corrects_payment_id: string | null
           created_at: string
           id: string
           legacy_import_run_id: string | null
@@ -3616,6 +3626,7 @@ export type Database = {
         }
         Insert: {
           amount_php: number
+          corrects_payment_id?: string | null
           created_at?: string
           id?: string
           legacy_import_run_id?: string | null
@@ -3632,6 +3643,7 @@ export type Database = {
         }
         Update: {
           amount_php?: number
+          corrects_payment_id?: string | null
           created_at?: string
           id?: string
           legacy_import_run_id?: string | null
@@ -3647,6 +3659,13 @@ export type Database = {
           voided_by?: string | null
         }
         Relationships: [
+          {
+            foreignKeyName: "payments_corrects_payment_id_fkey"
+            columns: ["corrects_payment_id"]
+            isOneToOne: false
+            referencedRelation: "payments"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "payments_legacy_import_run_id_fkey"
             columns: ["legacy_import_run_id"]
@@ -6540,6 +6559,19 @@ export type Database = {
         Returns: boolean
       }
       coa_uuid_for_code: { Args: { p_code: string }; Returns: string }
+      correct_payment: {
+        Args: {
+          p_actor_id: string
+          p_amount_php: number
+          p_method: string
+          p_notes: string
+          p_payment_id: string
+          p_reason: string
+          p_reference_number: string
+          p_visit_id?: string
+        }
+        Returns: string
+      }
       current_patient_id: { Args: never; Returns: string }
       employee_leave_balance: {
         Args: { p_as_of_date?: string; p_employee_id: string; p_kind: string }

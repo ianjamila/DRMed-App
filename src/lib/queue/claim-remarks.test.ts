@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { claimRemarks, eventsByTest, type ClaimEvent } from "./claim-remarks";
+import { claimRemarks, eventsByTest, handedBack, type ClaimEvent } from "./claim-remarks";
 
 const T1 = "00000000-0000-0000-0000-000000000001";
 const T2 = "00000000-0000-0000-0000-000000000002";
@@ -66,5 +66,21 @@ describe("eventsByTest", () => {
     const m = eventsByTest([ev({}), ev({ test_request_id: T2 }), ev({})]);
     expect(m.get(T1)).toHaveLength(2);
     expect(m.get(T2)).toHaveLength(1);
+  });
+});
+
+describe("handedBack", () => {
+  it("is null for a test that was only ever claimed or reassigned", () => {
+    expect(handedBack([ev({}), ev({ action: "test_request.reassigned" })])).toBeNull();
+  });
+
+  it("counts unclaims and returns the newest, worded, with its reason", () => {
+    const out = handedBack([
+      ev({ action: "test_request.unclaimed", created_at: "2026-09-24T08:40:00.000Z", previous_holder_name: "Melvin", reason: "wrong patient" }),
+      ev({}),
+      ev({ action: "test_request.unclaimed", created_at: "2026-09-24T09:10:00.000Z", actor_name: "Ian", previous_holder_name: "Melvin", reason: "end of shift" }),
+    ]);
+    expect(out?.count).toBe(2);
+    expect(out?.latest.text).toBe("Ian unclaimed Melvin’s claim — “end of shift”");
   });
 });

@@ -9,6 +9,7 @@
     "lint": "eslint",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
+    "claim": "node scripts/claim-number.mjs",
     "test:watch": "vitest",
     "db:types": "supabase gen types typescript --local > src/types/database.ts",
     "db:types:local": "supabase gen types typescript --local > src/types/database.ts",

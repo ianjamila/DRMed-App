@@ -3,6 +3,7 @@
 import { useActionState, useEffect, useRef } from "react";
 import {
   StableInput,
+  StableSelect,
   StableTextarea,
 } from "@/components/forms/stable-fields";
 import { metaTrack } from "@/lib/analytics/meta-pixel";
@@ -143,16 +144,16 @@ export function ContactForm({
           />
         </div>
         <div className="flex flex-col gap-1.5">
-          {/* C15: subject changed from StableInput text to a <select>. A
-              select's value isn't wiped on re-render the way an uncontrolled
-              text input would be, so StableSelect isn't needed here. */}
+          {/* C15: subject changed from StableInput text to a <select>. It is a
+              StableSelect because the form reset after a failed send puts a
+              plain select back on its default option. */}
           <label htmlFor="subject" className={fieldLabel}>
             Service{" "}
             <span className="font-normal text-[color:var(--color-ink-soft)]">
               (optional)
             </span>
           </label>
-          <select
+          <StableSelect
             id="subject"
             name="subject"
             defaultValue={defaultSubject ?? ""}
@@ -166,7 +167,7 @@ export function ContactForm({
                 {opt}
               </option>
             ))}
-          </select>
+          </StableSelect>
         </div>
       </div>
 

@@ -195,8 +195,11 @@ export const STAFF_NAV: StaffNavSection[] = [
         href: "/staff/queue",
         quicklink: {"lab":{"order":0}},
         label: "Queue",
-        description: "The medtech / radtech / sonographer work queue. Shows every test that's been ordered, grouped by status: waiting (sample not yet collected), in-progress (running), sign-off pending, or released. Click a row to enter results.",
-        roles: ["medtech", "pathologist", "admin", "xray_technician"],
+        description: "The medtech / radtech / sonographer work queue. Shows every test that's been ordered, grouped by status: waiting (sample not yet collected), in-progress (running), sign-off pending, or released. Click a row to enter results. Reception sees only today's released results here, with a Print result button for the patient's copy.",
+        // Reception is here for ONE tab: "Released today", to print the
+        // patient's copy (owner decision 2026-09-24). The page redirects it
+        // there and hides every bench tab and control.
+        roles: ["medtech", "pathologist", "admin", "xray_technician", "reception"],
       },
       {
         href: "/staff/results",
@@ -413,7 +416,13 @@ export const STAFF_NAV: StaffNavSection[] = [
           {
             href: "/staff/admin/reports/deleted-entries",
             label: ROUTE_NAME["/staff/admin/reports/deleted-entries"],
-            description: "Every visit or test deleted from the queues — who deleted it, why, what it was worth, and whether it was restored. Only unpaid entries can be deleted; paid ones need a payment void first.",
+            description: "Every visit or test deleted from the queues — who deleted it, why, what it was worth, and whether it was restored. Only unpaid entries can be deleted; paid ones need a payment deleted first.",
+            roles: ["admin"],
+          },
+          {
+            href: "/staff/admin/reports/payment-changes",
+            label: ROUTE_NAME["/staff/admin/reports/payment-changes"],
+            description: "Every payment that was deleted, edited (wrong method or amount) or moved to another visit — who changed it, when, why, and what it became. Use it to spot patterns, like one cashier fixing methods often.",
             roles: ["admin"],
           },
           {

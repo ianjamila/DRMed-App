@@ -9,8 +9,10 @@ import { formatPhoneLocal } from "@/lib/format/phone";
 import { ReissuePinButton } from "@/components/staff/reissue-pin-button";
 import { VerifyIdentityButton } from "./verify-identity-button";
 import { requireActiveStaff } from "@/lib/auth/require-staff";
-import { getPatientConsentState } from "@/lib/consent/gate";
+import { getConsentHistory, getPatientConsentState } from "@/lib/consent/gate";
+import { latestIsBookingOnly } from "@/lib/consent/history";
 import { ConsentPanel } from "./consent/consent-panel";
+import { ConsentHistory } from "./consent/consent-history";
 import { paymentStatusLabel } from "@/lib/ui/payment-status";
 import { formatPatientName } from "@/lib/patients/format-name";
 import { referralSourceLabel } from "@/lib/patients/referral-sources";
@@ -19,7 +21,15 @@ import {
   PRE_REGISTERED_BADGE_CLASS,
 } from "@/lib/patients/labels";
 import { Panel } from "@/components/ui/panel";
-import { manilaDate } from "@/lib/dates/manila";
+import { manilaDate, manilaDateTime } from "@/lib/dates/manila";
+import { linkPayments, paymentMethodLabel } from "@/lib/visits/payment-history";
+import {
+  PAYMENT_HISTORY_SELECT,
+  loadLinkedPayments,
+  visitOf,
+  type LoadedPayment,
+} from "@/lib/visits/payment-history-load";
+import { PaymentArrivalNote, PaymentChangeEntry } from "@/components/staff/payment-change-note";
 
 // Share the existing header lookup with metadata within this request.
 const loadDetail = cache(async (id: string) => {
@@ -71,7 +81,11 @@ export default async function PatientDetailPage({ params }: Props) {
 
   if (!patient) notFound();
 
-  const consent = await getPatientConsentState(id);
+  const [consent, consentHistory] = await Promise.all([
+    getPatientConsentState(id),
+    getConsentHistory(id),
+  ]);
+  const bookingOnlyConsent = latestIsBookingOnly(consentHistory);
 
   const { data: visits } = await supabase
     .from("visits")
@@ -81,6 +95,32 @@ export default async function PatientDetailPage({ params }: Props) {
     // not the patient's visit history.
     .is("deleted_at", null)
     .order("visit_date", { ascending: false });
+
+  // Every payment across this patient's live visits, including the deleted,
+  // edited and moved ones (0161). payments RLS is reception/admin only (0001),
+  // so other roles would get an empty list — don't render the section at all.
+  // Uncapped: the most any patient has on prod is 39 payments over 72 visits.
+  const canSeePayments = session.role === "reception" || session.role === "admin";
+  const visitIds = (visits ?? []).map((v) => v.id);
+  let payments: LoadedPayment[] = [];
+  let linked: LoadedPayment[] = [];
+  if (canSeePayments && visitIds.length > 0) {
+    const { data } = await supabase
+      .from("payments")
+      .select(PAYMENT_HISTORY_SELECT)
+      .in("visit_id", visitIds)
+      .order("received_at", { ascending: false })
+      .order("id", { ascending: true })
+      .returns<LoadedPayment[]>();
+    payments = data ?? [];
+    linked = await loadLinkedPayments(supabase, payments);
+  }
+  const paymentLinks = linkPayments([...payments, ...linked]);
+  const activePayments = payments.filter((p) => !p.voided_at);
+  const changedPayments = payments
+    .filter((p) => p.voided_at)
+    .sort((a, b) => (b.voided_at ?? "").localeCompare(a.voided_at ?? "") || a.id.localeCompare(b.id));
+  const collected = activePayments.reduce((sum, p) => sum + Math.round(Number(p.amount_php) * 100), 0) / 100;
 
   return (
     <div className="px-4 py-8 sm:px-6 lg:px-8">
@@ -195,11 +235,15 @@ export default async function PatientDetailPage({ params }: Props) {
       <div id="consent" className="mt-3 scroll-mt-24">
         <ConsentPanel
           patientId={id}
+          patientName={[patient.last_name, patient.first_name].filter(Boolean).join(", ")}
+          drmId={patient.drm_id}
           current={consent.current}
           signedAt={consent.signedAt}
           noticeVersion={consent.noticeVersion}
+          bookingOnlyConsent={bookingOnlyConsent}
           isAdmin={isAdmin}
         />
+        <ConsentHistory patientId={id} events={consentHistory} />
       </div>
 
       <section className="mt-8">
@@ -262,6 +306,90 @@ export default async function PatientDetailPage({ params }: Props) {
           </table>
         </Panel>
       </section>
+
+      {canSeePayments ? (
+        <section className="mt-8">
+          <div className="flex flex-wrap items-baseline justify-between gap-2">
+            <h2 className="font-heading text-xl font-extrabold text-[color:var(--color-brand-navy)]">
+              Payments
+            </h2>
+            <p className="text-sm text-[color:var(--color-brand-text-soft)]">
+              {formatPhp(collected)} across {activePayments.length}{" "}
+              {activePayments.length === 1 ? "payment" : "payments"}
+            </p>
+          </div>
+          <Panel className="mt-3 overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead className="bg-[color:var(--color-brand-bg)] text-left text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
+                <tr>
+                  <th className="px-4 py-3">Received</th>
+                  <th className="px-4 py-3">Visit #</th>
+                  <th className="px-4 py-3">Amount</th>
+                  <th className="px-4 py-3">Method</th>
+                  <th className="px-4 py-3">Reference</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-[color:var(--color-brand-bg-mid)]">
+                {activePayments.length === 0 ? (
+                  <tr>
+                    <td
+                      colSpan={5}
+                      className="px-4 py-8 text-center text-sm text-[color:var(--color-brand-text-soft)]"
+                    >
+                      No payments on record.
+                    </td>
+                  </tr>
+                ) : (
+                  activePayments.map((p) => {
+                    const v = visitOf(p);
+                    return (
+                      <tr key={p.id} className="hover:bg-[color:var(--color-brand-bg)]">
+                        <td className="px-4 py-3 text-[color:var(--color-brand-text-mid)]">
+                          {manilaDateTime(p.received_at)}
+                        </td>
+                        <td className="px-4 py-3 font-mono">
+                          {v ? (
+                            <Link
+                              href={`/staff/visits/${v.id}`}
+                              className="font-semibold text-[color:var(--color-brand-navy)] hover:text-[color:var(--color-brand-cyan)]"
+                            >
+                              {v.visitNumber}
+                            </Link>
+                          ) : (
+                            "—"
+                          )}
+                        </td>
+                        <td className="px-4 py-3 font-semibold">
+                          {formatPhp(p.amount_php)}
+                          <PaymentArrivalNote p={p} links={paymentLinks} />
+                        </td>
+                        <td className="px-4 py-3">{paymentMethodLabel(p.method)}</td>
+                        <td className="px-4 py-3 font-mono text-xs">{p.reference_number ?? "—"}</td>
+                      </tr>
+                    );
+                  })
+                )}
+              </tbody>
+            </table>
+          </Panel>
+          <p className="mt-2 text-xs text-[color:var(--color-brand-text-soft)]">
+            To edit, move or delete a payment, open its visit.
+          </p>
+
+          {changedPayments.length > 0 ? (
+            <details className="mt-4 rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-[color:var(--color-brand-bg)] px-4 py-3">
+              <summary className="cursor-pointer text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
+                Deleted, edited &amp; moved payments ({changedPayments.length})
+              </summary>
+              <ul className="mt-2 space-y-2 text-xs">
+                {changedPayments.map((p) => (
+                  <PaymentChangeEntry key={p.id} p={p} links={paymentLinks} showVisit />
+                ))}
+              </ul>
+            </details>
+          ) : null}
+        </section>
+      ) : null}
     </div>
   );
 }

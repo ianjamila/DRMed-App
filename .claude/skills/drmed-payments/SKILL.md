@@ -22,6 +22,7 @@ payments
   amount_php, method: 'cash' | 'gcash' | 'maya' | 'card' | 'bank_transfer' | 'hmo' | 'bpi' | 'maybank'  (0011 CHECK) + soft 'gift_code'
   reference_number, received_by, received_at
   voided_at / voided_by / void_reason (soft-void; recalc on void since 0111)
+  corrects_payment_id (0161) → the voided original an "Edit payment" replaced (unique: one correction per original)
 
 test_requests
   status: 'requested' | 'in_progress' | 'result_uploaded' | 'ready_for_release' | 'released' | 'cancelled'
@@ -72,7 +73,11 @@ eod_close_records       counted_cash_php + counted_denominations jsonb (0132: bi
 | Concern | Where |
 |---|---|
 | Record payment | `…/payments/new/actions.ts` → `recordPaymentAction` (`PaymentRecordSchema` in `src/lib/validations/payment.ts`), `audit({ action: 'payment.recorded' })` |
-| Void payment (soft) | `…/payments/[id]/void/actions.ts` → `voidPaymentAction`; resets a linked gift code to `'purchased'`; P0007 blocks un-void; reversal JE via the bridge |
+| Void payment (soft) — staff label **Delete** | `…/payments/[id]/void/actions.ts` → `voidPaymentAction`; resets a linked gift code to `'purchased'`; P0007 blocks un-void; reversal JE via the bridge. Dialog `void-payment-dialog.tsx` (modal, "Delete payment") |
+| Edit payment (method / amount / reference / notes) | `…/payments/[id]/edit/actions.ts` → `editPaymentAction` → service-role RPC `correct_payment` (0161), audit `payment.edited` (before/after, `money_changed`, `new_payment_id`). A money change INSERTS the corrected row first (same `visit_id`/`received_at`/`received_by`, `corrects_payment_id` = original) and THEN voids the original (`void_reason 'Edited: …'`, `voided_by` = editor) in ONE transaction — P0004 forbids editing money fields in place, and insert-first means the visit's paid total never dips. Reference/notes-only = in-place UPDATE, no JE churn. P0054 refuses voided, `gift_code`/`hmo`, legacy-import rows, non-counter target methods, >2dp, blank reason, no-op. Rules mirrored for the UI in `src/lib/visits/payment-edit.ts` (test pins them to the SQL). Note the new JE posts on the ORIGINAL received date while the reversal posts on the edit date |
+| Move payment to another visit | `…/payments/[id]/move/actions.ts` → `movePaymentAction` (+ `findVisitForMoveAction`, live visits by number) → the same `correct_payment` with `p_visit_id`: re-create on the target, void the original with `'Moved: …'`, one transaction; same refusals as Edit plus unknown/deleted target (P0054). Audit `payment.moved` (`from_visit_id`, `to_visit_id`, `cross_patient`). Revalidates both visits + both patients |
+| "What happened to this payment" | `src/lib/visits/payment-history.ts` (`linkPayments`: active / edited / moved / deleted from `corrects_payment_id` + `voided_at`, prefix fallback; `paymentMethodLabel`) + `payment-history-load.ts` (`PAYMENT_HISTORY_SELECT`, `loadLinkedPayments` — fetches the far side of a move, which lives on ANOTHER visit) + `src/components/staff/payment-change-note.tsx`. Used by the visit page, the patient page's **Payments** section and the report — never re-derive the fate inline |
+| Payment Changes report (admin) | `/staff/admin/reports/payment-changes` + `/api/admin/reports/payment-changes.csv` (audited `report.payment_changes.exported`); `src/lib/reports/payment-changes.ts`. Reads `payments` by `voided_at` window, not audit_log |
 | Waive balance (admin) | `…/visits/[id]/actions.ts` → `waiveVisitBalanceAction` — the one legitimate manual `payment_status` write; guarded against deleted visits |
 | Mark consult / procedure done | `…/visits/[id]/actions.ts` → `markDoctorLineDoneAction` (+ thin `markConsultationDoneAction` / `markProcedureDoneAction`); PF accrues via the 0064 trigger on release |
 | Assign attending physician | visit detail `attending-physician-dialog.tsx` (reception/admin) — the fix for a P0034 dead end |
@@ -115,6 +120,7 @@ Admin-managed `discount_types` catalog. Kinds `percent` / `fixed` / `custom` (cu
 - Test release → revenue JE with HMO splits + discount lines + doctor PF accrual (`bridge_test_request_released`).
 - Void / undo-release → reversal JE.
 - Everything routes through service-role RPCs (`ap_*` incl. `ap_reverse_je_for_source`, …) that take `p_actor_id` from `requireAdminStaff()` — that is NOT a spoofing hole (0118 revoked JWT callers; investigated and closed).
+- **Ledger totals count posted + reversed; posted-only is for finding the live entry, never for sums.** A reversal marks the original `'reversed'` and posts a mirrored `'posted'` entry, so `status = 'posted'` on a report drops the original and subtracts the amount twice instead of netting to zero (0173, `src/lib/accounting/ledger-status.ts`'s `LEDGER_TOTAL_STATUSES`).
 
 ## Hard rules
 

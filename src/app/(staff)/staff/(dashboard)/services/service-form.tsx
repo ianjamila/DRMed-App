@@ -6,11 +6,13 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
+  StableCheckbox,
   StableInput,
   StableSelect,
   StableTextarea,
 } from "@/components/forms/stable-fields";
 import { formatPhp } from "@/lib/marketing/format";
+import { SERVICE_KIND_LABEL } from "@/lib/services/kind-labels";
 import {
   createServiceAction,
   updateServiceAction,
@@ -22,14 +24,9 @@ export interface VendorLite {
   name: string;
 }
 
-const KIND_OPTIONS: { value: string; label: string }[] = [
-  { value: "lab_test", label: "Lab test" },
-  { value: "lab_package", label: "Lab package" },
-  { value: "doctor_consultation", label: "Doctor consultation" },
-  { value: "doctor_procedure", label: "Doctor procedure" },
-  { value: "home_service", label: "Home service" },
-  { value: "vaccine", label: "Vaccine" },
-];
+const KIND_OPTIONS: { value: string; label: string }[] = Object.entries(
+  SERVICE_KIND_LABEL,
+).map(([value, label]) => ({ value, label }));
 
 const SECTION_OPTIONS: { value: string; label: string }[] = [
   { value: "", label: "— None —" },
@@ -236,8 +233,7 @@ export function ServiceForm({ initial, vendors = [] }: Props) {
             </p>
           </div>
           <label className="flex items-start gap-2 text-sm sm:col-span-3">
-            <input
-              type="checkbox"
+            <StableCheckbox
               name="senior_pwd_eligible"
               defaultChecked={initial?.senior_pwd_eligible ?? true}
               className="mt-0.5"
@@ -303,11 +299,10 @@ export function ServiceForm({ initial, vendors = [] }: Props) {
 
         <div className="grid gap-3 sm:grid-cols-2">
           <label className="flex items-center gap-2 text-sm">
-            <input
-              type="checkbox"
+            <StableCheckbox
               name="is_send_out"
               defaultChecked={initial?.is_send_out ?? false}
-              onChange={(e) => setIsSendOut(e.target.checked)}
+              onCheckedChange={setIsSendOut}
             />
             <span>Send-out test</span>
           </label>
@@ -366,8 +361,7 @@ export function ServiceForm({ initial, vendors = [] }: Props) {
 
         <div className="grid gap-3 sm:grid-cols-2">
           <label className="flex items-center gap-2 text-sm">
-            <input
-              type="checkbox"
+            <StableCheckbox
               name="is_active"
               defaultChecked={initial?.is_active ?? true}
             />
@@ -377,8 +371,7 @@ export function ServiceForm({ initial, vendors = [] }: Props) {
             {/* Locked: the sign-off queue doesn't exist yet, so flipping this
                 on would strand results at "awaiting sign-off". The hidden
                 input preserves the current value so edits don't clear it. */}
-            <input
-              type="checkbox"
+            <StableCheckbox
               disabled
               defaultChecked={initial?.requires_signoff ?? false}
             />
