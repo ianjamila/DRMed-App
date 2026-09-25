@@ -416,3 +416,19 @@ export function releasedWhileUnpaidMessage(
 function capitalise(s: string): string {
   return s ? s[0]!.toUpperCase() + s.slice(1) : s;
 }
+
+/** What the payment dialogs may offer on a waived visit — mirrors 0183's P0070 guard. */
+export function waivedVisitPaymentRules(v: Pick<VisitMoney, "paymentStatus">): {
+  canDelete: boolean;
+  canMove: boolean;
+  amountLocked: boolean;
+  reason: string | null;
+} {
+  if (v.paymentStatus !== "waived") return { canDelete: true, canMove: true, amountLocked: false, reason: null };
+  return {
+    canDelete: false,
+    canMove: false,
+    amountLocked: true,
+    reason: "The balance on this visit was waived, so its payments are fixed. You can still change the method, reference or notes.",
+  };
+}

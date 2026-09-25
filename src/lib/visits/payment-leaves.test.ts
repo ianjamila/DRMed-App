@@ -12,6 +12,7 @@ import {
   paymentStatusAfter,
   releasedWhileUnpaidMessage,
   settledAfter,
+  waivedVisitPaymentRules,
   WAIVE_CLOSED_MONTH_MESSAGE,
   type ReleasableLine,
   type VisitMoney,
@@ -247,5 +248,19 @@ describe("amountRemovedByEdit (the Edit dialog's note)", () => {
 describe("WAIVE_CLOSED_MONTH_MESSAGE (0183)", () => {
   it("tells staff the month is closed", () => {
     expect(WAIVE_CLOSED_MONTH_MESSAGE).toMatch(/closed for this month/);
+  });
+});
+
+describe("waivedVisitPaymentRules (0183: money on a waived visit is fixed)", () => {
+  it("offers nothing that moves money on a waived visit", () => {
+    expect(waivedVisitPaymentRules(visit({ paymentStatus: "waived" }))).toEqual({
+      canDelete: false,
+      canMove: false,
+      amountLocked: true,
+      reason: "The balance on this visit was waived, so its payments are fixed. You can still change the method, reference or notes.",
+    });
+  });
+  it("leaves every other visit alone", () => {
+    expect(waivedVisitPaymentRules(visit())).toEqual({ canDelete: true, canMove: true, amountLocked: false, reason: null });
   });
 });

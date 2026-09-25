@@ -44,6 +44,7 @@ export function EditPaymentDialog({
   visit,
   visitNumber,
   released,
+  amountLocked = false,
 }: {
   paymentId: string;
   amount: number;
@@ -61,6 +62,8 @@ export function EditPaymentDialog({
   visitNumber: string;
   /** Completed work on the visit: released results and done doctor lines. */
   released: ReleasedCounts;
+  /** The visit's balance was waived (0183): the amount cannot change, only method/reference/notes. */
+  amountLocked?: boolean;
 }) {
   // A legacy method the counter no longer offers (bpi / maybank) starts
   // blank: defaulting it to Cash would let a reference-only fix silently turn
@@ -191,7 +194,13 @@ export function EditPaymentDialog({
                 min="0.01"
                 value={newAmount}
                 onChange={(e) => setNewAmount(e.target.value)}
+                disabled={amountLocked}
               />
+              {amountLocked ? (
+                <p className="text-xs text-[color:var(--color-brand-text-soft)]">
+                  Fixed — the balance on this visit was waived.
+                </p>
+              ) : null}
             </div>
 
             <div className="grid gap-1.5">
@@ -255,7 +264,7 @@ export function EditPaymentDialog({
                   {method === "cash" || newMethod === "cash" ? ", including the cash that day’s drawer should hold" : ""}.
                 </p>
               ) : null}
-              {removed !== null ? (
+              {!amountLocked && removed !== null ? (
                 <PaymentLeavesNotice
                   visit={visit}
                   visitNumber={visitNumber}
@@ -264,7 +273,7 @@ export function EditPaymentDialog({
                   className="mt-2"
                 />
               ) : null}
-              {moneyChanged && removed === null && balance !== null && balance > 0 ? (
+              {!amountLocked && moneyChanged && removed === null && balance !== null && balance > 0 ? (
                 <p className="mt-2 font-semibold text-amber-800">
                   This leaves {formatPhp(balance)} unpaid on the visit.
                 </p>

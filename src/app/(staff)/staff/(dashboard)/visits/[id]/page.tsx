@@ -38,6 +38,7 @@ import {
   countReleasedLines,
   paymentEditability,
   releasedWhileUnpaidMessage,
+  waivedVisitPaymentRules,
   type VisitMoney,
 } from "@/lib/visits/payment-edit";
 import { linkPayments, paymentMethodLabel as methodLabel } from "@/lib/visits/payment-history";
@@ -516,6 +517,9 @@ export default async function VisitDetailPage({ params, searchParams }: Props) {
     paymentStatus: visit.payment_status,
     hmoProviderId: visit.hmo_provider_id,
   };
+  // What the payment dialogs may offer on this visit (0183: a waived
+  // visit's money is fixed — P0070).
+  const waivedRules = waivedVisitPaymentRules(visitMoney);
   // The waive dialog's preview of the discount split waive_visit_balance
   // (0183) would post — nothing for an imported visit (the books never held
   // the balance), null when the lines don't add up (the amber warning).
@@ -1637,7 +1641,7 @@ export default async function VisitDetailPage({ params, searchParams }: Props) {
                         {/* Edit is offered only where correct_payment (0161)
                             would accept it — gift-code, HMO and imported
                             payments can still be deleted and re-recorded. */}
-                        {paymentEditability(p).editable ? (
+                        {paymentEditability(p).editable && waivedRules.canMove ? (
                           <MovePaymentDialog
                             paymentId={p.id}
                             amount={Number(p.amount_php)}
@@ -1669,19 +1673,22 @@ export default async function VisitDetailPage({ params, searchParams }: Props) {
                             visit={visitMoney}
                             visitNumber={visit.visit_number}
                             released={releasedCounts}
+                            amountLocked={waivedRules.amountLocked}
                           />
                         ) : null}
-                        <VoidPaymentDialog
-                          paymentId={p.id}
-                          amount={Number(p.amount_php)}
-                          amountLabel={formatPhp(p.amount_php)}
-                          methodLabel={methodLabel(p.method)}
-                          isGiftCode={p.method === "gift_code"}
-                          visitNumber={visit.visit_number}
-                          visit={visitMoney}
-                          released={releasedCounts}
-                          canMoveOrEdit={paymentEditability(p).editable}
-                        />
+                        {waivedRules.canDelete ? (
+                          <VoidPaymentDialog
+                            paymentId={p.id}
+                            amount={Number(p.amount_php)}
+                            amountLabel={formatPhp(p.amount_php)}
+                            methodLabel={methodLabel(p.method)}
+                            isGiftCode={p.method === "gift_code"}
+                            visitNumber={visit.visit_number}
+                            visit={visitMoney}
+                            released={releasedCounts}
+                            canMoveOrEdit={paymentEditability(p).editable}
+                          />
+                        ) : null}
                       </div>
                     ) : null}
                   </td>
@@ -1700,6 +1707,15 @@ export default async function VisitDetailPage({ params, searchParams }: Props) {
             </tbody>
           </table>
         </Panel>
+
+        {waivedRules.reason ? (
+          <p
+            className="mt-2 text-xs text-[color:var(--color-brand-text-soft)]"
+            data-testid="waived-payments-note"
+          >
+            {waivedRules.reason}
+          </p>
+        ) : null}
 
         {voidedPayments.length > 0 ? (
           <details className="mt-4 rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-[color:var(--color-brand-bg)] px-4 py-3">
