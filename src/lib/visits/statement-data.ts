@@ -28,7 +28,7 @@ export async function fetchStatement(
     .from("visits")
     .select(
       `
-        id, visit_number, visit_date, hmo_provider_id, payment_status,
+        id, visit_number, visit_date, hmo_provider_id, payment_status, is_sample,
         patients!inner (
           id, drm_id, first_name, middle_name, last_name, email,
           senior_pwd_id_number, deleted_at, merged_into_id

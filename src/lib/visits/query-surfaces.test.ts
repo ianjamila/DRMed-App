@@ -151,8 +151,8 @@ const SURFACES: Record<string, Surface> = {
     why: "Lab turnaround time. A consult goes requested → released at the counter with no bench step, so every one is a ~0-hour 'turnaround' that isn't one (#162).",
   },
   "lib/visits/released-results.ts": {
-    meaning: "lab",
-    why: "Counts RESULTS already released on a visit that now owes money (Delete payment audit row, Patient AR badge). A consult marked done is not a result that went out, and counting one would badge every unpaid consult visit.",
+    meaning: "all",
+    why: "Counts COMPLETED WORK on a visit that now owes money (Delete / Edit / Move audit rows and alert, Patient AR filter and badge): released results AND doctor consults / procedures marked done — the patient has had either. The results-vs-doctor split is countReleasedLines, in memory; a consult-only visit that owes again after its consult was done is exactly the exception these surfaces exist to flag.",
   },
   "lib/reports/stuck-tests.ts": {
     meaning: "lab",
@@ -456,6 +456,11 @@ const LIFECYCLES: Record<string, LifecycleSurface> = {
     lifecycle: "live",
     why: "Finds the visit a payment is moved onto. A deleted visit cannot take a payment (P0045), so it must not be offered as a target.",
   },
+  // --- Live: editing a payment (0161) --------------------------------------
+  "app/(staff)/staff/(dashboard)/payments/[id]/edit/actions.ts": {
+    lifecycle: "live",
+    why: "Re-reads the edited payment's visit after a money change, for the audit row and the released-and-owing alert. A deleted visit owes nothing and gets no alert; an edit on one is refused upstream anyway (P0045).",
+  },
 
   // --- Live: the lab bench and its result artefacts ------------------------
   "app/(staff)/staff/(dashboard)/queue/page.tsx": {
@@ -628,7 +633,7 @@ const LIFECYCLES: Record<string, LifecycleSurface> = {
   },
   "lib/visits/released-results.ts": {
     lifecycle: "live",
-    why: "Results that went out on a visit that still exists. A deleted line or a line on a deleted visit is not something the clinic still has to collect for.",
+    why: "Completed work on a visit that still exists. A deleted line or a line on a deleted visit is not something the clinic still has to collect for.",
   },
   "lib/reports/stuck-tests.ts": {
     lifecycle: "live",

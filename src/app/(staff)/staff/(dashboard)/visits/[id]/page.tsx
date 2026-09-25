@@ -23,6 +23,11 @@ import { SelectionProvider } from "./selection-context";
 import { RowSelectCheckbox } from "./row-select-checkbox";
 import { BulkActionBar } from "./bulk-action-bar";
 import { UndoReleaseDialog } from "./undo-release-dialog";
+import { DeleteSampleVisitDialog } from "./delete-sample-visit-dialog";
+import { DeleteBlockedHint } from "@/components/staff/delete-blocked-hint";
+import { SampleBadge } from "@/components/staff/sample-badge";
+import { SampleToggle } from "./sample-toggle";
+import { canMarkSample } from "@/lib/visits/sample";
 import { WaiveBalanceDialog } from "./waive-balance-dialog";
 import { AttendingPhysicianDialog } from "./attending-physician-dialog";
 import { VoidPaymentDialog } from "../../payments/[id]/void/void-payment-dialog";
@@ -47,7 +52,7 @@ import { paymentStatusLabel } from "@/lib/ui/payment-status";
 import { Panel } from "@/components/ui/panel";
 import {
   testDeletability,
-  visitDeletability,
+  visitDeleteAffordance,
   hasOpenHmoClaim,
   QUEUE_DELETE_ROLES,
   type ResultLinkRow,
@@ -85,7 +90,7 @@ const loadDetail = cache(async (id: string) => {
         id, visit_number, visit_date, payment_status,
         total_php, paid_php, notes, created_at,
         deleted_at, deleted_by, delete_reason,
-        visit_group_id,
+        visit_group_id, is_sample,
         hmo_provider_id, hmo_approval_date, hmo_authorization_no,
         attending_physician_id,
         patients!inner ( id, drm_id, first_name, last_name, preferred_release_medium, deleted_at, merged_into_id ),
@@ -443,19 +448,25 @@ export default async function VisitDetailPage({ params, searchParams }: Props) {
 
   const visitDeleted = visit.deleted_at !== null;
   const canManageDeletion = QUEUE_DELETE_ROLES.has(session.role);
-  const canDeleteVisit = visitDeletability(session.role, {
+  const liveTestStatuses = (tests ?? [])
+    .filter((t) => t.deleted_at === null)
+    .map((t) => t.status);
+  const visitDeleteShape = {
     payment_status: visit.payment_status,
     deleted_at: visit.deleted_at,
-    test_statuses: (tests ?? [])
-      .filter((t) => t.deleted_at === null)
-      .map((t) => t.status),
+    test_statuses: liveTestStatuses,
     // Unfiltered on deleted_at, unlike test_statuses above — the P0050 trigger
     // reaches every line of the visit, since a line deleted earlier whose
     // claim is still open is exactly the receivable it protects.
     has_open_hmo_claim: (tests ?? []).some((t) =>
       hasOpenHmoClaim(t.hmo_claim_items),
     ),
-  }).ok;
+  };
+  const visitDelete = visitDeleteAffordance(session.role, visitDeleteShape);
+  const releasedLineCount = (tests ?? []).filter(
+    (t) =>
+      t.deleted_at === null && t.status === "released" && !t.is_package_header,
+  ).length;
 
   // See-vs-act gate (owner decision, 2026-09-15 — reverses go-live "A4").
   // Reception SEES every bill line — name, code, price, discount, status —
@@ -650,6 +661,14 @@ export default async function VisitDetailPage({ params, searchParams }: Props) {
             Visit #{visit.visit_number} ·{" "}
             {manilaDate(visit.visit_date)}
           </p>
+          {visit.is_sample || (canMarkSample(session.role) && !visitDeleted && patientActive) ? (
+            <div className="mt-1 flex flex-wrap items-center gap-2">
+              {visit.is_sample ? <SampleBadge /> : null}
+              {canMarkSample(session.role) && !visitDeleted && patientActive ? (
+                <SampleToggle visitId={visit.id} isSample={visit.is_sample} />
+              ) : null}
+            </div>
+          ) : null}
           {sibling ? (
             <p className="mt-2 rounded-lg border border-dashed border-[color:var(--color-brand-cyan)] bg-[color:var(--color-brand-bg)] px-3 py-2 text-xs text-[color:var(--color-brand-navy)]">
               Part of the same patient visit as{" "}
@@ -742,12 +761,21 @@ export default async function VisitDetailPage({ params, searchParams }: Props) {
                 </Link>
               ) : null
             ) : null}
-            {canDeleteVisit && patientActive ? (
+            {/* 0167: no delete of any kind on an inactive patient's visit. */}
+            {!patientActive ? null : visitDelete.kind === "delete" ? (
               <QueueDeleteDialog
                 visitId={visit.id}
                 mode="delete"
                 entryLabel={`visit #${visit.visit_number}`}
               />
+            ) : visitDelete.kind === "sample" ? (
+              <DeleteSampleVisitDialog
+                visitId={visit.id}
+                visitNumber={visit.visit_number}
+                releasedCount={releasedLineCount}
+              />
+            ) : visitDelete.kind === "blocked" ? (
+              <DeleteBlockedHint hint={visitDelete.hint} />
             ) : null}
           </div>
         )}
@@ -1040,18 +1068,21 @@ export default async function VisitDetailPage({ params, searchParams }: Props) {
                     </div>
                     <div className="mt-3 overflow-x-auto rounded-lg border border-[color:var(--color-brand-bg-mid)]">
                       <table className="w-full text-sm">
-                        {/* Visually hidden header: keeps the plan-mandated
-                            6-column layout while giving screen readers
-                            column context (esp. the "—" price cells). */}
-                        <thead className="sr-only">
+                        {/* Same visible header as the single-tests table
+                            below. Components are ₱0 rows — the package is
+                            priced once, on its header — so the three price
+                            columns fold into one "Included in package" cell. */}
+                        <thead className="bg-[color:var(--color-brand-bg)] text-left text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
                           <tr>
-                            <th scope="col">Select</th>
-                            <th scope="col">Service</th>
-                            <th scope="col">Base</th>
-                            <th scope="col">Discount</th>
-                            <th scope="col">Final</th>
-                            <th scope="col">Status</th>
-                            <th scope="col">Action</th>
+                            <th scope="col" className="px-4 py-3">
+                              <span className="sr-only">Select</span>
+                            </th>
+                            <th scope="col" className="px-4 py-3">Service</th>
+                            <th scope="col" className="px-4 py-3 text-right">Base</th>
+                            <th scope="col" className="px-4 py-3 text-right">Discount</th>
+                            <th scope="col" className="px-4 py-3 text-right">Final</th>
+                            <th scope="col" className="px-4 py-3">Status</th>
+                            <th scope="col" className="px-4 py-3 text-right">Action</th>
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-[color:var(--color-brand-bg-mid)]">
@@ -1121,14 +1152,11 @@ export default async function VisitDetailPage({ params, searchParams }: Props) {
                                       </p>
                                     ) : null}
                                   </td>
-                                  <td className="px-4 py-3 text-right font-mono text-xs text-[color:var(--color-brand-text-soft)]">
-                                    —
-                                  </td>
-                                  <td className="px-4 py-3 text-right font-mono text-xs text-[color:var(--color-brand-text-soft)]">
-                                    —
-                                  </td>
-                                  <td className="px-4 py-3 text-right font-mono text-xs text-[color:var(--color-brand-text-soft)]">
-                                    —
+                                  <td
+                                    colSpan={3}
+                                    className="px-4 py-3 text-right text-xs text-[color:var(--color-brand-text-soft)]"
+                                  >
+                                    Included in package
                                   </td>
                                   <td className="px-4 py-3">
                                     <span
@@ -1438,8 +1466,8 @@ export default async function VisitDetailPage({ params, searchParams }: Props) {
           </table>
         </Panel>
         {/* Released results stay released (owner rule): a visit that owes
-            money again after its results went out — a payment deleted or
-            moved, or a line added later — says so instead of the generic
+            money again after work on it was completed — a payment deleted,
+            edited down or moved since — says so instead of the generic
             "blocked" note, which would read as if nothing had gone out. */}
         {releasedWhileUnpaid ? (
           <p
@@ -1612,6 +1640,9 @@ export default async function VisitDetailPage({ params, searchParams }: Props) {
                             }
                             visitTotal={Number(visit.total_php)}
                             visitPaid={Number(visit.paid_php)}
+                            visit={visitMoney}
+                            visitNumber={visit.visit_number}
+                            released={releasedCounts}
                           />
                         ) : null}
                         <VoidPaymentDialog

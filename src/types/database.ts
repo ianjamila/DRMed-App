@@ -6497,6 +6497,7 @@ export type Database = {
           hmo_authorization_no: string | null
           hmo_provider_id: string | null
           id: string
+          is_sample: boolean
           legacy_import_run_id: string | null
           legacy_source_ref: string | null
           notes: string | null
@@ -6521,6 +6522,7 @@ export type Database = {
           hmo_authorization_no?: string | null
           hmo_provider_id?: string | null
           id?: string
+          is_sample?: boolean
           legacy_import_run_id?: string | null
           legacy_source_ref?: string | null
           notes?: string | null
@@ -6545,6 +6547,7 @@ export type Database = {
           hmo_authorization_no?: string | null
           hmo_provider_id?: string | null
           id?: string
+          is_sample?: boolean
           legacy_import_run_id?: string | null
           legacy_source_ref?: string | null
           notes?: string | null

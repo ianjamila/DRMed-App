@@ -98,7 +98,7 @@ export default async function PatientDetailPage({ params }: Props) {
 
   const { data: visits } = await supabase
     .from("visits")
-    .select("id, visit_number, visit_date, payment_status, total_php, paid_php")
+    .select("id, visit_number, visit_date, payment_status, total_php, paid_php, is_sample")
     .eq("patient_id", id)
     // Queue-deleted visits (0125) live in the admin deleted-entries report,
     // not the patient's visit history.
@@ -345,6 +345,7 @@ export default async function PatientDetailPage({ params }: Props) {
                               visitId={v.id}
                               patientId={patient.id}
                               patientEmail={patient.email}
+                              isSample={v.is_sample}
                               size="compact"
                               accessibleName={`Email the statement for visit ${v.visit_number}`}
                             />

@@ -14,6 +14,7 @@ import { patientAlreadyAskedForReview } from "./review-cta";
 import { isDoctorKind } from "@/lib/visits/order-lines";
 import { checkPatientRecipient } from "./active-patient-recipient";
 import { auditSkippedInactiveRecipient } from "./inactive-recipient-audit";
+import { SAMPLE_SKIP_REASON } from "@/lib/visits/sample";
 
 interface Input {
   testRequestId: string;
@@ -43,6 +44,7 @@ export async function notifyResultReleased({
         services!inner ( name, kind ),
         visits!inner (
           id,
+          is_sample,
           patients!inner ( id, drm_id, first_name, phone, email )
         )
       `,
@@ -74,12 +76,18 @@ export async function notifyResultReleased({
   if (isDoctorKind(svc.kind)) return;
 
   // M7: physical hand-off (printout collected in person) — record the notified
-  // audit row as skipped on both channels and send nothing.
-  if (releaseMedium === "physical" || releaseMedium === "pickup") {
+  // audit row as skipped on both channels and send nothing. A sample visit
+  // (0181) is skipped the same way: the patient is never contacted about it.
+  const skipReason = visit.is_sample
+    ? SAMPLE_SKIP_REASON
+    : releaseMedium === "physical" || releaseMedium === "pickup"
+      ? "physical hand-off — no message sent"
+      : null;
+  if (skipReason) {
     const skipped = {
       ok: false as const,
       skipped: true as const,
-      reason: "physical hand-off — no message sent",
+      reason: skipReason,
     };
     await audit({
       actor_id: null,

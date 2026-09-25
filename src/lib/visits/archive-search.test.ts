@@ -8,7 +8,7 @@ const visit: ArchiveVisit = {
   id: "one", visit_number: "0037", visit_date: "2026-09-16",
   created_at: "2026-09-16T01:00:00Z", visit_group_id: "group",
   payment_status: "paid", total_php: 100, paid_php: 100,
-  deleted_at: null, delete_reason: null, payments: [],
+  deleted_at: null, delete_reason: null, is_sample: false, payments: [],
   patients: { id: "patient", drm_id: "DRM-001", first_name: "Juan", middle_name: null, last_name: "Cruz" },
 };
 
@@ -53,6 +53,24 @@ describe("Visits archive search", () => {
     for (const key of ["select", "or", "search_patient_0.or", "search_patient_1.or", "search_patient_2.or", "visit_date", "deleted_at"]) {
       expect(siblings.searchParams.getAll(key)).toEqual(page.searchParams.getAll(key));
     }
+  });
+
+  it("narrows to sample visits on the page query only, never the sibling top-up (0181)", async () => {
+    // visit_group_id makes the fixture a split visit, so a sibling request runs.
+    const { db, requests } = client();
+    const { rows } = await fetchArchiveWindow(db, { q: "", start: "", end: "", classes: new Set(), view: "active", sampleOnly: true }, DEFAULT_ARCHIVE_SORT, 0, 5);
+    const [page, siblings] = requests;
+    expect(page.searchParams.get("is_sample")).toBe("eq.true");
+    // The other half of a split visit still renders even if it was not marked.
+    expect(siblings.searchParams.has("is_sample")).toBe(false);
+    expect(page.searchParams.get("select")).toContain("is_sample");
+    expect(rows[0]?.sample).toBe(false);
+  });
+
+  it("leaves the sample filter off by default", async () => {
+    const { db, requests } = client();
+    await fetchArchiveWindow(db, { q: "", start: "", end: "", classes: new Set(), view: "active" }, DEFAULT_ARCHIVE_SORT, 0, 5);
+    expect(requests[0].searchParams.has("is_sample")).toBe(false);
   });
 
   it("quotes PostgREST syntax and escapes literal LIKE wildcards", () => {

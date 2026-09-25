@@ -8,6 +8,7 @@ import type { StatementData } from "@/lib/visits/statement-data";
 import { renderStatementEmail } from "@/lib/visits/statement-email";
 import { checkPatientRecipient } from "@/lib/notifications/active-patient-recipient";
 import { auditSkippedInactiveRecipient } from "@/lib/notifications/inactive-recipient-audit";
+import { SAMPLE_NO_CONTACT_MESSAGE } from "@/lib/visits/sample";
 
 export type SendStatementResult = { ok: true; data: { to: string } } | { ok: false; error: string };
 
@@ -43,6 +44,18 @@ export async function sendStatementEmail(
   actor: StatementEmailActor,
 ): Promise<SendStatementResult> {
   const visitId = data.visit.id;
+  // A sample visit (0181) never contacts the patient — checked first, before
+  // any lookup or claim, so nothing is reserved, sent or rate-limited.
+  if (data.visit.is_sample) {
+    return {
+      ok: false,
+      error:
+        actor.type === "staff"
+          ? SAMPLE_NO_CONTACT_MESSAGE
+          : "This statement can't be emailed. Ask reception for a printed copy.",
+    };
+  }
+
   const admin = createAdminClient();
 
   // 0167: re-check fresh, right before the send — data.patient.email was

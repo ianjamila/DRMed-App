@@ -1,6 +1,8 @@
 import { VisitsSearchInput } from "./_components/visits-search-input";
 import Link from "next/link";
 import { requireActiveStaff } from "@/lib/auth/require-staff";
+import { parseSampleFilter } from "@/lib/visits/sample";
+import { SampleBadge } from "@/components/staff/sample-badge";
 import { createClient } from "@/lib/supabase/server";
 import { isISODate, manilaDate, todayManilaISODate } from "@/lib/dates/manila";
 import { VisitsTabs } from "./_components/visits-tabs";
@@ -104,6 +106,7 @@ interface SearchProps {
     dir?: string;
     kind?: string;
     view?: string;
+    sample?: string;
   }>;
 }
 
@@ -120,13 +123,14 @@ export default async function VisitsIndexPage({ searchParams }: SearchProps) {
   const end = isISODate(params.end) ? params.end : "";
   const classes = parseVisitClasses(params.kind);
   const view = isVisitView(params.view) ? params.view : "active";
+  const sampleOnly = parseSampleFilter(params.sample);
   const sort = parseSort(params.sort, params.dir, ARCHIVE_SORT_COLUMNS, DEFAULT_ARCHIVE_SORT);
   const size = parsePageSize(params.size);
   const page = parsePage(params.page);
   const [offset] = rangeFor(page, size);
 
   const supabase = await createClient();
-  const filters = { start, end, classes, view, q: query };
+  const filters = { start, end, classes, view, q: query, sampleOnly };
 
   // The strip breaks down BY class, so it deliberately ignores the class chips
   // (applying them would zero every column the reader is trying to compare)
@@ -166,6 +170,7 @@ export default async function VisitsIndexPage({ searchParams }: SearchProps) {
     end: end || null,
     kind: serialiseVisitClasses(classes) || null,
     view: view === "active" ? null : view,
+    sample: sampleOnly ? "1" : null,
     size: size === DEFAULT_PAGE_SIZE ? null : String(size),
     sort: isDefaultSort ? null : sort.key,
     dir: isDefaultSort ? null : sort.dir,
@@ -209,6 +214,7 @@ export default async function VisitsIndexPage({ searchParams }: SearchProps) {
     exportQs.set("kind", serialiseVisitClasses(classes));
   }
   if (view !== "active") exportQs.set("view", view);
+  if (sampleOnly) exportQs.set("sample", "1");
   if (!isDefaultSort) {
     exportQs.set("sort", sort.key);
     exportQs.set("dir", sort.dir);
@@ -231,7 +237,9 @@ export default async function VisitsIndexPage({ searchParams }: SearchProps) {
           .map((c) => VISIT_CLASS_LABEL[c])
           .join(" + ");
 
-  const hasFilters = Boolean(query || start || end || chipLabel || view !== "active");
+  const hasFilters = Boolean(
+    query || start || end || chipLabel || view !== "active" || sampleOnly,
+  );
 
   return (
     <div className="px-4 py-8 sm:px-6 lg:px-8">
@@ -242,6 +250,7 @@ export default async function VisitsIndexPage({ searchParams }: SearchProps) {
             {count} visit{count === 1 ? "" : "s"} · {rangeLabel}
             {chipLabel ? ` · ${chipLabel}` : null}
             {view !== "active" ? ` · ${VISIT_VIEW_LABEL[view]}` : null}
+            {sampleOnly ? " · Sample visits only" : null}
             {splitCount > 0
               ? ` · ${splitCount} split visit${splitCount === 1 ? "" : "s"} shown as one row`
               : null}
@@ -316,6 +325,7 @@ export default async function VisitsIndexPage({ searchParams }: SearchProps) {
           <input type="hidden" name="kind" value={serialiseVisitClasses(classes)} />
         ) : null}
         {view !== "active" ? <input type="hidden" name="view" value={view} /> : null}
+        {sampleOnly ? <input type="hidden" name="sample" value="1" /> : null}
         <div className="flex flex-col">
           <label
             htmlFor="start"
@@ -368,6 +378,11 @@ export default async function VisitsIndexPage({ searchParams }: SearchProps) {
               />
             ))}
           </nav>
+          <FilterTab
+            href={buildHref({ sample: sampleOnly ? null : "1", page: null })}
+            label="Sample visits"
+            active={sampleOnly}
+          />
         </div>
         {hasFilters ? (
           <Link
@@ -381,7 +396,9 @@ export default async function VisitsIndexPage({ searchParams }: SearchProps) {
 
       {rows.length === 0 ? (
         <Panel className="p-8 text-center text-sm text-[color:var(--color-brand-text-soft)]">
-          {view === "deleted"
+          {sampleOnly
+            ? "No sample visits in this range."
+            : view === "deleted"
             ? "No deleted visits in this range."
             : chipLabel
               ? `No ${chipLabel.toLowerCase()} visits in this range.`
@@ -585,6 +602,11 @@ function VisitNumbers({ row }: { row: ArchiveRow }) {
               </Link>
             </>
           ) : null}
+        </span>
+      ) : null}
+      {row.sample ? (
+        <span className="mt-1 block">
+          <SampleBadge size="compact" />
         </span>
       ) : null}
       {row.deleted ? (
