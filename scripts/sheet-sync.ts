@@ -33,7 +33,13 @@ async function main() {
     error: outcome.error ?? null, per_tab: outcome.perTab }, null, 2));
   if (!commit) console.log(`\nDry run only. To apply: --commit --confirm=${expectedConfirmToken()}`);
   if (outcome.status === "skipped_paused") console.log("The sync is PAUSED — unpause it on /staff/admin/sheet-sync first.");
-  process.exit(outcome.status === "failed" ? 1 : 0);
+  // A --commit run must exit non-zero on anything but a clean "succeeded" —
+  // skipped_paused/partial/failed all mean it did not do what was asked, and
+  // a silent exit 0 would look like success to a script chaining on this.
+  // A dry run only ever fails loudly (status "failed"); skipped_paused/partial
+  // are informational there, so it keeps exiting 0 for those.
+  const exitCode = commit ? (outcome.status === "succeeded" ? 0 : 1) : (outcome.status === "failed" ? 1 : 0);
+  process.exit(exitCode);
 }
 
 main().catch((e) => { console.error(e instanceof Error ? e.message : e); process.exit(1); });

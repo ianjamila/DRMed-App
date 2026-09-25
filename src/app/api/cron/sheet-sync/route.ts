@@ -7,8 +7,9 @@ import { createSupabaseStore } from "@/lib/sheet-sync/store";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
-// 00:00 Manila. The first catch-up (~4.9k customers, ~3.9k mirror lines) runs via the
-// CLI; the nightly delta fits well inside 5 minutes (the admin page records duration).
+// 00:00 Manila. The runner re-stages every lab/consult row in the mirror window on
+// EVERY run, not just new ones (~36k sheet rows read, ~13 stage calls + 3 commits) —
+// est. 30-90s, well inside 5 minutes (the admin page records the actual duration).
 export const maxDuration = 300;
 
 export async function GET(request: Request) {
