@@ -247,7 +247,7 @@
 <div class="layout">
 <nav class="toc" aria-label="Contents">
   <p class="toc-brand">drmed<span>.</span>ph</p>
-  <p class="toc-tag">User guide · v2.18</p>
+  <p class="toc-tag">User guide · v2.19</p>
   <div class="filter" role="group" aria-label="Show chapters for">
     <button type="button" data-filter="all" aria-pressed="true">All roles</button>
     <button type="button" data-filter="reception">Reception</button>
@@ -812,13 +812,15 @@
   <section class="sub" id="lab-chem">
     <h3>4.4 The chemistry panel (one form for the whole order)</h3>
     <div class="screen"><div class="where"><code class="route">/staff/queue/consolidated/[visit]/[group]</code> · opened automatically from any chemistry test</div>
-      <dl><dt>Heading</dt><dd>The report group name, then <b>Ordered:</b> and the service codes on this visit</dd>
-      <dt>Buttons</dt><dd><kbd class="ui">Claim this report</kbd> · <kbd class="ui">Finalise + release</kbd> · <kbd class="ui">Back to queue</kbd></dd></dl></div>
-    <p>Chemistry tests (FBS, lipid profile, creatinine, and so on) are reported together on one consolidated form so the patient gets one chemistry report, not six. Clicking any chemistry test in the queue lands you here.</p>
+      <dl><dt>Heading</dt><dd>The report group name, then <b>Ordered:</b> and the service codes still to encode (<b>Still to encode:</b> when the visit already has a finished report)</dd>
+      <dt>Report cards</dt><dd>one card per finished report: its tests, <b>Finalised</b> date and medtech, <b>Released</b> date, a status chip, an <b>Edited</b> note if it was corrected, and <kbd class="ui">View PDF →</kbd></dd>
+      <dt>Buttons</dt><dd><kbd class="ui">Claim this report</kbd> · <kbd class="ui">Finalise + release</kbd> · <kbd class="ui">Back to queue</kbd> · <kbd class="ui">View PDF →</kbd></dd></dl></div>
+    <p>Chemistry tests (FBS, lipid profile, creatinine, and so on) are reported together on one consolidated form so the patient gets one chemistry report, not six. Clicking any chemistry test in the queue lands you here — and so does every other link to a chemistry test: the queue's <span class="tab">Released today</span> tab, Critical Alerts, the visit page, the notification bell and the lab reports.</p>
+    <p>Once a report is finalised it shows here as a <b>report card</b> instead of disappearing. A card reads <span class="status">Ready for release</span> with <q>Not released to the patient yet</q> while the visit is waiting for payment, and <span class="status">Released</span> once it has gone out. The card links the stored PDF, which is the report of record: it is exactly what the patient received. If a chemistry test is added to the visit after the panel was finalised, the card stays at the top and the form below it covers only the new test; finishing it makes a second report card.</p>
     <ol class="steps">
       <li><p class="step-title">Click <kbd class="ui">Claim this report</kbd>.</p><p>Until you claim, the value fields are hidden. If a colleague has it you see <q>This report is claimed by another medtech.</q></p></li>
       <li><p class="step-title">Fill in the rows that are enabled.</p><p>The table columns are <b>Test / SI Result / SI Unit / Conv Result / Conv Unit</b>. Rows for tests not ordered on this visit are greyed out and skipped.</p></li>
-      <li><p class="step-title">Click <kbd class="ui">Finalise + release</kbd>.</p><p>This form releases straight to the patient if the visit is paid, waived or HMO-billed. If it isn't, you see <q>Report finalised — release deferred: visit not yet paid (HMO visits are exempt). Record the payment, then come back and release these results — only packages release on their own.</q> Nothing is lost, but unlike a package this does <b>not</b> release itself once payment lands — reception records the payment, then someone comes back to this visit and clicks Release.</p></li>
+      <li><p class="step-title">Click <kbd class="ui">Finalise + release</kbd>.</p><p>This form releases straight to the patient if the visit is paid, waived or HMO-billed. If it isn't, you see <q>Report finalised — release deferred: visit not yet paid (HMO visits are exempt). Record the payment, then come back and release these results — only packages release on their own.</q> Nothing is lost, but unlike a package this does <b>not</b> release itself once payment lands — reception records the payment, then someone comes back to this visit and clicks Release.</p><p>When it does release, you stay on the page and the new report card appears at the top with its <kbd class="ui">View PDF →</kbd> button — that is your confirmation of what went to the patient.</p></li>
     </ol>
     <div class="note stop"><span class="k">Every field greyed out?</span><div><p>The screen will say so in plain words: it is a template configuration problem, not a data-entry one. Report it to Admin (the group template under Result Templates has no fields mapped for the ordered tests). Don't work around it by typing into another test.</p></div></div>
   </section>
@@ -905,8 +907,9 @@
     <div class="screen"><div class="where">Sidebar › Lab &amp; Imaging › <kbd class="ui">Results</kbd> · <code class="route">/staff/results</code></div>
       <dl><dt>Tabs</dt><dd><span class="tab">All</span> · <span class="tab">Released</span> · <span class="tab">Ready for release</span> · <span class="tab">In progress</span> · <span class="tab">Unclaimed</span> · <span class="tab">Cancelled</span></dd>
       <dt>Filters</dt><dd><b>Requested from</b> / <b>…to</b> · <b>Patient / service search</b></dd>
-      <dt>Per row</dt><dd>one line per visit with its tests, timestamps, a <b>PDF →</b> link per finished test, <b>Remarks</b> (each test's claim history — who claimed, unclaimed with the reason, or reassigned it — headed by the test code when the visit has several), and a link to the visit</dd></dl></div>
-    <p>This is the look-up screen, not a work screen: nothing here releases or amends. Use it to find an old result, open or print its PDF, or spot tests nobody has picked up. <span class="tab">Unclaimed</span> opens sorted oldest first (every other tab opens newest first), and you can re-sort by <b>Status</b>, <b>Requested</b>, <b>Completed</b>, <b>Released</b> or <b>Visit</b>; a row marked <b>awaiting payment</b> is one reception hasn't been paid for yet, which is why it isn't on your queue.</p>
+      <dt>Per row</dt><dd>one line per visit with its tests, timestamps, an <b>Edited</b> note for any corrected result, one <b>PDF →</b> link per report, <b>Remarks</b> (each test's claim history — who claimed, unclaimed with the reason, or reassigned it — headed by the test or report name when the visit has several), and a link to the visit</dd></dl></div>
+    <p>A chemistry panel reads as one line, for example <q>Chemistry (8 tests)</q> with the test names underneath, and has <b>one</b> <q>Chemistry PDF →</q> link, because the whole panel is one report. Other tests list one by one; the grey service code only appears when it says something the name doesn't. Click a test (or the chemistry line) to open it.</p>
+    <p>Nothing here releases a result. Use it to find an old result, open or print its PDF, or spot tests nobody has picked up. A finished single test also has an <b>Edit</b> link, which opens its page where <kbd class="ui">Amend result…</kbd> lives; every correction asks for a reason. The <b>Edited</b> column then shows when it was last changed and why, for example <q>Edited Sep 24, 2026, 4:52 PM — wrong unit on glucose</q> (with a count if it was edited more than once). A chemistry report can't be edited yet. <span class="tab">Unclaimed</span> opens sorted oldest first (every other tab opens newest first), and you can re-sort by <b>Status</b>, <b>Requested</b>, <b>Completed</b>, <b>Released</b> or <b>Visit</b>; a row marked <b>awaiting payment</b> is one reception hasn't been paid for yet, which is why it isn't on your queue.</p>
   </section>
 </section>
 
@@ -1198,7 +1201,7 @@
 </section>
 
 <footer class="end">
-  <p>drmed.ph User Guide · v2.18 · 25 September 2026 · Matches the production release at migration 0161. Every label in this guide was checked against the application code on that date. Print with <b>Ctrl/Cmd + P</b>; each chapter starts on a new page.</p>
+  <p>drmed.ph User Guide · v2.19 · 25 September 2026 · Matches the production release at migration 0161. Every label in this guide was checked against the application code on that date. Print with <b>Ctrl/Cmd + P</b>; each chapter starts on a new page.</p>
 </footer>
 </main>
 </div>

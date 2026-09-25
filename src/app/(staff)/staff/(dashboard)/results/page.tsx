@@ -36,6 +36,13 @@ import {
   type SortSpec,
 } from "@/lib/ui/table-params";
 import { SortableTh, PlainTh } from "@/components/staff/sortable-th";
+import {
+  foldArchiveRows,
+  type ArchiveItem,
+  type ArchiveResultLink,
+  type ArchiveTestRow,
+} from "@/lib/results/archive-fold";
+import { codeDuplicatesName } from "@/lib/results/consolidated-reports";
 import { ListPagination, PAGE_SIZES } from "@/components/staff/list-pagination";
 
 export const metadata = { title: "Results" };
@@ -118,7 +125,14 @@ interface ResultRow {
     hmo_provider_id: string | null;
     patients: { first_name: string; last_name: string; drm_id: string } | null;
   } | null;
-  services: { code: string; name: string; kind: string; section: string | null } | null;
+  services: {
+    code: string;
+    name: string;
+    kind: string;
+    section: string | null;
+    report_group_id: string | null;
+    report_groups: { name: string } | { name: string }[] | null;
+  } | null;
 }
 
 export default async function AllResultsPage({ searchParams }: SearchProps) {
@@ -154,7 +168,7 @@ export default async function AllResultsPage({ searchParams }: SearchProps) {
         id, status, released_at, completed_at, requested_at,
         visits!inner ( id, visit_number, payment_status, hmo_provider_id,
           patients!inner ( first_name, last_name, drm_id ) ),
-        services!inner ( code, name, kind, section )
+        services!inner ( code, name, kind, section, report_group_id, report_groups ( name ) )
       `,
       { count: "exact" },
     )
@@ -224,21 +238,48 @@ export default async function AllResultsPage({ searchParams }: SearchProps) {
   const { data, count } = await query.returns<ResultRow[]>();
   const rows = data ?? [];
 
-  // Pull which test_requests have a stored PDF — junction → results.storage_path.
+  // Which result each test_request links to — junction → results. A
+  // consolidated (chemistry) report is ONE results row shared by every member
+  // test, so the fold below keys PDFs and edit markers by result, not by test.
   // One query for the visible page, keyed by test_request_id.
   const trIds = rows.map((r) => r.id);
-  const hasPdfByTrId = new Map<string, boolean>();
+  const linkByTrId = new Map<string, ArchiveResultLink>();
   if (trIds.length > 0) {
     const { data: links } = await admin
       .from("result_test_requests")
-      .select("test_request_id, results!inner ( storage_path )")
+      .select("test_request_id, result_id, results!inner ( storage_path, amended_at, amendment_count )")
       .in("test_request_id", trIds);
     for (const link of links ?? []) {
-      const result = (link as { results: { storage_path: string | null } | { storage_path: string | null }[] | null }).results;
-      const resolved = Array.isArray(result) ? result[0] : result;
-      if (resolved?.storage_path) {
-        hasPdfByTrId.set(link.test_request_id as string, true);
-      }
+      const res = Array.isArray(link.results) ? link.results[0] : link.results;
+      if (!res) continue;
+      linkByTrId.set(link.test_request_id, {
+        resultId: link.result_id,
+        hasPdf: Boolean(res.storage_path),
+        amendedAt: res.amended_at,
+        amendmentCount: res.amendment_count,
+      });
+    }
+  }
+
+  // The latest edit's reason per amended result, for the Edited column. Only
+  // results on this page with amendment_count > 0, so this is empty on almost
+  // every render and bounded by the page size when it isn't.
+  const amendedIds = Array.from(
+    new Set(
+      Array.from(linkByTrId.values())
+        .filter((l) => l.amendmentCount > 0)
+        .map((l) => l.resultId),
+    ),
+  );
+  const lastEditReason = new Map<string, string>();
+  if (amendedIds.length > 0) {
+    const { data: amends } = await admin
+      .from("result_amendments")
+      .select("result_id, reason, amendment_seq")
+      .in("result_id", amendedIds)
+      .order("amendment_seq", { ascending: false });
+    for (const am of amends ?? []) {
+      if (!lastEditReason.has(am.result_id)) lastEditReason.set(am.result_id, am.reason);
     }
   }
 
@@ -247,7 +288,8 @@ export default async function AllResultsPage({ searchParams }: SearchProps) {
   // queue_claim_remarks gates on the caller's role, and the service role has
   // none, so it would answer empty.
   const claimEvents = await fetchClaimEvents(await createClient(), trIds);
-  const remarksFor = (testId: string) => claimRemarks(claimEvents.get(testId) ?? []);
+  const remarksFor = (testIds: string[]) =>
+    claimRemarks(testIds.flatMap((id) => claimEvents.get(id) ?? []));
 
   // Optional client-side filter when q is set. Server-side ilike across a join
   // is awkward in PostgREST, so post-filter the page rows here. Token-based:
@@ -261,6 +303,28 @@ export default async function AllResultsPage({ searchParams }: SearchProps) {
         return matchesAllTokens(`${name} ${drm} ${svc}`, q);
       })
     : rows;
+
+  // The fold works on plain rows; the lab-gate flag is per visit.
+  const awaitingByVisit = new Map<string, boolean>();
+  const archiveRows: ArchiveTestRow[] = [];
+  for (const r of filtered) {
+    const visit = r.visits;
+    if (!visit) continue;
+    if (!awaitingByVisit.has(visit.id)) awaitingByVisit.set(visit.id, !labQueueGate(visit).ok);
+    const grp = r.services?.report_groups;
+    archiveRows.push({
+      id: r.id,
+      status: r.status,
+      requestedAt: r.requested_at,
+      completedAt: r.completed_at,
+      releasedAt: r.released_at,
+      code: r.services?.code ?? "—",
+      name: r.services?.name ?? "",
+      reportGroupId: r.services?.report_group_id ?? null,
+      reportGroupName: (Array.isArray(grp) ? grp[0]?.name : grp?.name) ?? null,
+      visit: { id: visit.id, visitNumber: visit.visit_number, patient: visit.patients },
+    });
+  }
 
   const total = count ?? 0;
   const totalPages = pageCount(total, size);
@@ -459,25 +523,28 @@ export default async function AllResultsPage({ searchParams }: SearchProps) {
             <table className="w-full min-w-[1100px] text-sm">
               <thead className="bg-[color:var(--color-brand-bg)] text-left text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
                 <tr>
-                  {/* Patient, Tests and PDF can't be ordered — see SORTABLE_COLUMNS. */}
+                  {/* Patient, Tests, Edited and PDF can't be ordered — see SORTABLE_COLUMNS. */}
                   <PlainTh label="Patient" />
                   <PlainTh label="Tests" />
                   {th("status", "Status")}
                   {th("requested_at", "Requested")}
                   {th("completed_at", "Completed")}
                   {th("released_at", "Released")}
+                  <PlainTh label="Edited" />
                   <PlainTh label="PDF" />
                   <PlainTh label="Remarks" />
                   {th("visit_number", "Visit", "right")}
                 </tr>
               </thead>
               <tbody className="divide-y divide-[color:var(--color-brand-bg-mid)]">
-                {groupByVisit(filtered, hasPdfByTrId).map((g) => {
+                {foldArchiveRows(archiveRows, linkByTrId, (r) => ({
+                  awaitingPayment: awaitingByVisit.get(r.visit.id) ?? false,
+                })).map((g) => {
                   const pat = g.patient;
                   const patientLabel = pat
                     ? `${pat.last_name}, ${pat.first_name}`
                     : "—";
-                  const statusSummary = summarizeStatuses(g.tests.map((t) => t.status));
+                  const statusSummary = summarizeStatuses(g.statuses);
                   return (
                     <tr key={g.visitId} className="hover:bg-[color:var(--color-brand-bg)]">
                       <td className="px-4 py-3">
@@ -491,14 +558,9 @@ export default async function AllResultsPage({ searchParams }: SearchProps) {
                         ) : null}
                       </td>
                       <td className="px-4 py-3 text-xs">
-                        <div className="flex flex-col gap-0.5">
-                          {g.tests.map((t) => (
-                            <div key={t.id}>
-                              <span className="font-mono text-[color:var(--color-brand-text-soft)]">
-                                {t.code}
-                              </span>{" "}
-                              {t.name}
-                            </div>
+                        <div className="flex flex-col gap-1">
+                          {g.items.map((item) => (
+                            <ArchiveItemLabel key={item.key} item={item} visitId={g.visitId} />
                           ))}
                         </div>
                       </td>
@@ -526,7 +588,7 @@ export default async function AllResultsPage({ searchParams }: SearchProps) {
                             paid, waived, or billed to an HMO (item 10), so this
                             work isn't waiting on the bench — it's waiting on
                             reception. */}
-                        {status === "unclaimed" && g.awaitingPayment ? (
+                        {status === "unclaimed" && g.extra.awaitingPayment ? (
                           <div className="mt-1">
                             {/* Bordered, unlike the sibling status badges, so it
                                 doesn't read as another amber `in_progress`
@@ -547,30 +609,33 @@ export default async function AllResultsPage({ searchParams }: SearchProps) {
                         {g.releasedAt ? manilaDateTime(g.releasedAt) : "—"}
                       </td>
                       <td className="px-4 py-3 text-xs">
-                        <div className="flex flex-col gap-0.5">
-                          {g.tests.map((t) =>
-                            t.hasPdf ? (
-                              <a
-                                key={t.id}
-                                href={`/staff/results/${t.id}/pdf`}
-                                target="_blank"
-                                rel="noopener"
-                                className="font-semibold text-[color:var(--color-brand-cyan)] hover:underline"
-                              >
-                                {t.code} PDF →
-                              </a>
-                            ) : (
-                              <span
-                                key={t.id}
-                                className="text-[color:var(--color-brand-text-soft)]"
-                              >
-                                {t.code} —
-                              </span>
-                            ),
-                          )}
+                        <div className="flex flex-col gap-1">
+                          {g.items
+                            .filter((item) => item.amendmentCount > 0 && item.resultId)
+                            .map((item) => (
+                              <div key={item.key} className="max-w-[16rem]">
+                                <span className="font-semibold text-violet-800">
+                                  {g.items.length > 1 ? `${item.label}: ` : ""}
+                                  Edited {manilaDateTime(item.amendedAt)}
+                                  {item.amendmentCount > 1 ? ` (×${item.amendmentCount})` : ""}
+                                </span>
+                                {lastEditReason.get(item.resultId!) ? (
+                                  <span className="text-[color:var(--color-brand-text-mid)]">
+                                    {" "}— {lastEditReason.get(item.resultId!)}
+                                  </span>
+                                ) : null}
+                              </div>
+                            ))}
                         </div>
                       </td>
-                      <RemarksCell tests={g.tests} remarksFor={remarksFor} />
+                      <td className="px-4 py-3 text-xs">
+                        <div className="flex flex-col gap-1">
+                          {g.items.map((item) => (
+                            <ArchiveItemActions key={item.key} item={item} visitId={g.visitId} />
+                          ))}
+                        </div>
+                      </td>
+                      <RemarksCell items={g.items} remarksFor={remarksFor} />
                       <td className="px-4 py-3 text-right text-xs">
                         <Link
                           href={`/staff/visits/${g.visitId}`}
@@ -619,17 +684,20 @@ export default async function AllResultsPage({ searchParams }: SearchProps) {
 // Helpers
 // ---------------------------------------------------------------------------
 
-// One archive row is a whole visit, so its remarks are listed per test — the
-// test code heads each block when the visit has more than one test.
+// One archive row is a whole visit, so its remarks are listed per item — a
+// single test, or a chemistry report whose members were claimed together (a
+// group claim writes one event per member; claimRemarks folds those into one
+// line, as on the chemistry page). The item label heads each block when the
+// visit has more than one item.
 function RemarksCell({
-  tests,
+  items,
   remarksFor,
 }: {
-  tests: VisitGroup["tests"];
-  remarksFor: (testId: string) => ReturnType<typeof claimRemarks>;
+  items: ArchiveItem[];
+  remarksFor: (testIds: string[]) => ReturnType<typeof claimRemarks>;
 }) {
-  const blocks = tests
-    .map((t) => ({ test: t, remarks: remarksFor(t.id) }))
+  const blocks = items
+    .map((item) => ({ item, remarks: remarksFor(item.tests.map((t) => t.id)) }))
     .filter((b) => b.remarks.length > 0);
   if (blocks.length === 0) {
     return (
@@ -639,10 +707,10 @@ function RemarksCell({
   return (
     <td className="min-w-48 max-w-xs px-4 py-3 text-xs">
       <div className="flex flex-col gap-2">
-        {blocks.map(({ test, remarks }) => (
-          <div key={test.id}>
-            {tests.length > 1 ? (
-              <p className="font-mono text-[color:var(--color-brand-text-soft)]">{test.code}</p>
+        {blocks.map(({ item, remarks }) => (
+          <div key={item.key}>
+            {items.length > 1 ? (
+              <p className="font-semibold text-[color:var(--color-brand-text-soft)]">{item.label}</p>
             ) : null}
             <ClaimRemarksList remarks={remarks} max={MAX_REMARKS_SHOWN} />
           </div>
@@ -652,76 +720,76 @@ function RemarksCell({
   );
 }
 
-interface VisitGroup {
-  visitId: string;
-  visitNumber: string;
-  patient: { first_name: string; last_name: string; drm_id: string } | null;
-  tests: { id: string; status: string; code: string; name: string; hasPdf: boolean }[];
-  requestedAt: string;
-  completedAt: string | null;
-  releasedAt: string | null;
-  /**
-   * The visit hasn't cleared the lab-queue payment gate, so the bench can't
-   * even see these rows — only meaningful on the Unclaimed tab, where it
-   * separates "nobody has got to it" from "the queue is hiding it".
-   */
-  awaitingPayment: boolean;
+/** Where an item opens: a single test's page, or the report-group page
+ * scrolled to this report's card. */
+function itemHref(item: ArchiveItem, visitId: string): string {
+  if (item.kind === "test") return `/staff/queue/${item.tests[0].id}`;
+  const anchor = item.resultId ? `#result-${item.resultId}` : "";
+  return `/staff/queue/consolidated/${visitId}/${item.reportGroupId}${anchor}`;
 }
 
-/**
- * Fold the window's test rows into one row per visit.
- *
- * The result keeps the QUERY's order: `Map` iterates in insertion order, and
- * a group is inserted when its first test is seen, so a group sits exactly
- * where its first test sat. That is what lets the column headers order this
- * table at all — the previous version re-sorted by `requestedAt` afterwards,
- * which silently undid any other sort.
- *
- * A visit whose tests straddle a page boundary still renders on both pages,
- * holding the tests that landed on each. Ordering by `requested_at` (the
- * default) keeps a visit's tests together in practice, since they are written
- * in one transaction.
- */
-function groupByVisit(
-  rows: ResultRow[],
-  hasPdfByTrId: Map<string, boolean>,
-): VisitGroup[] {
-  const groups = new Map<string, VisitGroup>();
-  for (const r of rows) {
-    const visit = r.visits;
-    if (!visit) continue;
-    const existing = groups.get(visit.id);
-    const test = {
-      id: r.id,
-      status: r.status,
-      code: r.services?.code ?? "—",
-      name: r.services?.name ?? "",
-      hasPdf: hasPdfByTrId.get(r.id) === true,
-    };
-    if (existing) {
-      existing.tests.push(test);
-      // earliest requested, latest completed/released across the visit
-      if (r.requested_at < existing.requestedAt) existing.requestedAt = r.requested_at;
-      if (r.completed_at && (!existing.completedAt || r.completed_at > existing.completedAt)) {
-        existing.completedAt = r.completed_at;
-      }
-      if (r.released_at && (!existing.releasedAt || r.released_at > existing.releasedAt)) {
-        existing.releasedAt = r.released_at;
-      }
-    } else {
-      groups.set(visit.id, {
-        visitId: visit.id,
-        visitNumber: visit.visit_number,
-        patient: visit.patients,
-        tests: [test],
-        requestedAt: r.requested_at,
-        completedAt: r.completed_at,
-        releasedAt: r.released_at,
-        awaitingPayment: !labQueueGate(visit).ok,
-      });
-    }
+/** Statuses at which a single test's result can be edited (amended) on its
+ * page — mirrors `amendable` in queue/[id]/page.tsx. */
+const EDITABLE_STATUSES = new Set(["result_uploaded", "ready_for_release", "released"]);
+
+function ArchiveItemLabel({ item, visitId }: { item: ArchiveItem; visitId: string }) {
+  if (item.kind === "report") {
+    return (
+      <div>
+        <Link
+          href={itemHref(item, visitId)}
+          className="font-semibold text-[color:var(--color-brand-navy)] hover:underline"
+        >
+          {item.label} ({item.tests.length} {item.tests.length === 1 ? "test" : "tests"})
+        </Link>
+        <div className="text-[color:var(--color-brand-text-soft)]">
+          {item.tests.map((t) => t.name || t.code).join(" · ")}
+        </div>
+      </div>
+    );
   }
-  return Array.from(groups.values());
+  const t = item.tests[0];
+  return (
+    <div>
+      {/* The code only repeats the name for 265 of 273 services, which read
+          as every test listed twice — show it only when it adds something. */}
+      {codeDuplicatesName(t.code, t.name) ? null : (
+        <span className="font-mono text-[color:var(--color-brand-text-soft)]">{t.code} </span>
+      )}
+      <Link href={itemHref(item, visitId)} className="text-[color:var(--color-brand-navy)] hover:underline">
+        {t.name || t.code}
+      </Link>
+    </div>
+  );
+}
+
+function ArchiveItemActions({ item, visitId }: { item: ArchiveItem; visitId: string }) {
+  const editable =
+    item.kind === "test" && item.resultId !== null && EDITABLE_STATUSES.has(item.tests[0].status);
+  return (
+    <div className="flex flex-wrap items-baseline gap-x-2">
+      {item.pdfTestRequestId ? (
+        <a
+          href={`/staff/results/${item.pdfTestRequestId}/pdf`}
+          target="_blank"
+          rel="noopener"
+          className="font-semibold text-[color:var(--color-brand-cyan)] hover:underline"
+        >
+          {item.label} PDF →
+        </a>
+      ) : (
+        <span className="text-[color:var(--color-brand-text-soft)]">{item.label} —</span>
+      )}
+      {editable ? (
+        <Link
+          href={itemHref(item, visitId)}
+          className="font-semibold text-[color:var(--color-brand-cyan)] hover:underline"
+        >
+          Edit
+        </Link>
+      ) : null}
+    </div>
+  );
 }
 
 type StatusSummary =

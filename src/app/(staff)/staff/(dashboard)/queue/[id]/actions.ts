@@ -927,6 +927,31 @@ export async function uploadResultAction(
 
 export type AmendResult = { ok: true } | { ok: false; error: string };
 
+// A consolidated (report-group) result is ONE results row shared by every
+// member test (the chemistry panel). Both amend actions below are single-test
+// by construction: they load ONE test's per-service template and rewrite the
+// whole result. Called on a chemistry test, the structured path picked up the
+// per-service template 0053 deactivated (its lookup has no is_active filter)
+// and deleted every member's values. The page never offered it — the test
+// page redirects chemistry to the consolidated route — but a Server Action is
+// callable directly, so refuse here.
+const SHARED_REPORT_AMEND_ERROR =
+  "This test is part of a combined report (such as Chemistry), so it can't be edited on its own.";
+
+async function isSharedReport(
+  admin: ReturnType<typeof createAdminClient>,
+  resultId: string,
+  serviceReportGroupId: string | null,
+  resultReportGroupId: string | null,
+): Promise<boolean> {
+  if (serviceReportGroupId || resultReportGroupId) return true;
+  const { count } = await admin
+    .from("result_test_requests")
+    .select("test_request_id", { count: "exact", head: true })
+    .eq("result_id", resultId);
+  return (count ?? 0) > 1;
+}
+
 // Amend an already-released (or result_uploaded / ready_for_release)
 // result. Snapshots the prior version into result_amendments and
 // replaces results.storage_path with the new file. Original PDF is
@@ -964,7 +989,7 @@ export async function amendResultAction(
   // Load the current result + parent test_request + visit context.
   const { data: resultLink } = await admin
     .from("result_test_requests")
-    .select("result_id, results!inner(id, storage_path, file_size_bytes, uploaded_by, uploaded_at, notes, amendment_count)")
+    .select("result_id, results!inner(id, storage_path, file_size_bytes, uploaded_by, uploaded_at, notes, amendment_count, report_group_id)")
     .eq("test_request_id", testRequestId)
     .maybeSingle();
   const result = resultLink
@@ -979,7 +1004,7 @@ export async function amendResultAction(
   const { data: testRow } = await admin
     .from("test_requests")
     .select(
-      "id, status, visit_id, services!inner ( section ), visits!inner ( id, patient_id )",
+      "id, status, visit_id, services!inner ( section, report_group_id ), visits!inner ( id, patient_id )",
     )
     .eq("id", testRequestId)
     // Queue-deleted lines (0125) accept no result work.
@@ -995,6 +1020,16 @@ export async function amendResultAction(
       : testRow.services;
     if (!isSectionAllowed(sectionsForRole(session.role), gateSvc?.section ?? null)) {
       return { ok: false, error: SECTION_DENIED_ERROR };
+    }
+    if (
+      await isSharedReport(
+        admin,
+        result.id,
+        gateSvc?.report_group_id ?? null,
+        result.report_group_id,
+      )
+    ) {
+      return { ok: false, error: SHARED_REPORT_AMEND_ERROR };
     }
   }
   const visit = Array.isArray(testRow.visits) ? testRow.visits[0] : testRow.visits;
@@ -1154,7 +1189,7 @@ export async function amendStructuredResultAction(
     .select(
       `result_id, results!inner(
         id, storage_path, file_size_bytes, uploaded_by, uploaded_at, notes,
-        amendment_count, generation_kind, finalised_at,
+        amendment_count, generation_kind, finalised_at, report_group_id,
         image_storage_path, image_filename, image_mime_type, image_size_bytes
       )`,
     )
@@ -1186,7 +1221,7 @@ export async function amendStructuredResultAction(
     .from("test_requests")
     .select(
       `id, status, visit_id, service_id,
-       services!inner ( id, code, name, section ),
+       services!inner ( id, code, name, section, report_group_id ),
        visits!inner ( id, patient_id, visit_number )`,
     )
     .eq("id", testRequestId)
@@ -1208,6 +1243,9 @@ export async function amendStructuredResultAction(
   // RLS), so the role check has to happen here explicitly.
   if (!isSectionAllowed(sectionsForRole(session.role), svc.section)) {
     return { ok: false, error: SECTION_DENIED_ERROR };
+  }
+  if (await isSharedReport(admin, result.id, svc.report_group_id, result.report_group_id)) {
+    return { ok: false, error: SHARED_REPORT_AMEND_ERROR };
   }
 
   const allowed = new Set([
