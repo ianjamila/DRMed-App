@@ -595,6 +595,12 @@ export const STAFF_NAV: StaffNavSection[] = [
             description: "When the same person was accidentally registered twice (different spellings, different contact numbers), combine the two records into one. Visit history from both gets merged onto the surviving record.",
             roles: ["admin"],
           },
+          {
+            href: "/staff/admin/sheet-sync",
+            label: ROUTE_NAME["/staff/admin/sheet-sync"],
+            description: "Keep patients and patient-source numbers current from the reception Google Sheet.",
+            roles: ["admin"],
+          },
         ],
       },
     ],
