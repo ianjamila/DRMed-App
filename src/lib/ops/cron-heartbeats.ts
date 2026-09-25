@@ -74,6 +74,16 @@ export const CRON_HEARTBEATS = [
     maxAge: 8 * 24 * 60 * 60 * 1000,
     activeFrom: "2026-09-22",
   },
+  {
+    key: "sheet-sync",
+    label: "Reception sheet sync",
+    description: "Copies new patients and the day's lab and consultation lines from the reception Google Sheet. Skipped while paused.",
+    path: "/api/cron/sheet-sync",
+    schedule: "0 16 * * *",
+    actions: ["sheet_sync.completed", "sheet_sync.skipped"],
+    maxAge: 30 * 60 * 60 * 1000,
+    activeFrom: "2026-09-27",
+  },
 ] as const;
 
 export type CronKey = (typeof CRON_HEARTBEATS)[number]["key"];
