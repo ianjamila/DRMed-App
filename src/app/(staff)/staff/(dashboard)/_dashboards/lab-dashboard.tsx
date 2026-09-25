@@ -19,6 +19,10 @@ const LAB_SUBSCRIPTIONS = [
   { table: "test_requests", event: "INSERT" },
   { table: "test_requests", event: "UPDATE" },
   { table: "critical_alerts", event: "INSERT" },
+  // UPDATE too (0179): a withdrawal (or acknowledgement) updates the row
+  // rather than inserting one, so without this the dashboard's alert count
+  // and list only caught up on the next poll/navigation.
+  { table: "critical_alerts", event: "UPDATE" },
 ] as const satisfies readonly Subscription[];
 
 type Role = StaffSession["role"];
