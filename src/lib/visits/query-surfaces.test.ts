@@ -549,8 +549,8 @@ const LIFECYCLES: Record<string, LifecycleSurface> = {
     why: "The statement of account, printed and emailed (one loader for both) — same rule as the receipt: a deleted visit bills nothing, so there is nothing to state.",
   },
   "app/(patient)/portal/(authenticated)/visits/[id]/statement/print-action.ts": {
-    lifecycle: "live",
-    why: "Proves the visit is the patient's own (patient-scoped client) before logging statement.printed. The portal statement 404s on a deleted visit, so a deleted one here has nothing to have printed — skip the row rather than attribute it.",
+    lifecycle: "any",
+    why: "Hydrates the attribution on a patient statement.printed audit row, for the staff print action's reason: a visit deleted between render and print must not drop the record of a disclosure that did happen. Ownership is still enforced by the patient-scoped client and the patient_id match.",
   },
   "app/(staff)/staff/(dashboard)/visits/[id]/statement/log-print-action.ts": {
     lifecycle: "any",

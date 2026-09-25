@@ -92,6 +92,7 @@ export function renderStatementEmail(input: StatementEmailInput): RenderedEmail 
   const summaryRows: EmailAmountRow[] = [
     { label: "Total charges", amount: formatPhp(summary.charges) },
     { label: "Total paid", amount: formatPhp(summary.paid) },
+    ...(summary.waived > 0 ? [{ label: "Balance waived", amount: formatPhp(summary.waived) }] : []),
     { label: summary.balanceLabel, amount: balanceAmount, total: true },
   ];
   const hmoNote =

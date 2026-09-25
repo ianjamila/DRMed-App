@@ -39,9 +39,10 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import pg from "pg";
-import bcrypt from "bcryptjs";
+import { generatePin, hashPin } from "../src/lib/auth/pin";
+import { SignJWT } from "jose";
 import { PDFDocument } from "pdf-lib";
-import { chromium, type Page } from "playwright-core";
+import { chromium, type Browser, type Page } from "playwright-core";
 
 requireLocalOrExplicitProd("smoke:print", {
   writes:
@@ -97,6 +98,8 @@ interface Seed {
   /** Someone else's visit — the portal must 404 it. */
   otherPatientId: string;
   otherVisitId: string;
+  /** A service on the patient's bill that has since been retired (0175). */
+  retiredServiceId: string;
 }
 
 async function createAuthUser(email: string, password: string): Promise<string> {
@@ -141,9 +144,11 @@ async function seed(db: pg.Client, staffId: string, email: string, password: str
     serviceIds: [],
     paymentId: randomUUID(),
     drmId: "",
-    pin: randomBytes(6).toString("base64url").slice(0, 8).toUpperCase(),
+    // The app's own generator: the login form rejects anything outside its alphabet.
+    pin: generatePin(),
     otherPatientId: randomUUID(),
     otherVisitId: randomUUID(),
+    retiredServiceId: "",
   };
   const q = (sql: string, params: unknown[] = []) => db.query(sql, params);
 
@@ -239,11 +244,16 @@ async function seed(db: pg.Client, staffId: string, email: string, password: str
     [s.paymentId, s.visitId, staffId],
   );
 
+  // Retire the X-ray after billing it: the patient's portal copy must still
+  // name it (0175 lets a patient read catalog rows their own bill references).
+  s.retiredServiceId = xray;
+  await q("update services set is_active = false where id = $1", [xray]);
+
   // Portal access for the seeded patient: a live PIN on the package visit and
   // full consent on file (the portal shows nothing before consent).
   await q("insert into visit_pins (visit_id, pin_hash) values ($1, $2)", [
     s.visitId,
-    await bcrypt.hash(s.pin, 10),
+    await hashPin(s.pin),
   ]);
   await q(
     `insert into patient_consents (patient_id, event_type, method, notice_version, signatory, actor_kind)
@@ -290,7 +300,10 @@ async function seed(db: pg.Client, staffId: string, email: string, password: str
   return s;
 }
 
-async function cleanup(db: pg.Client, s: Partial<Seed> & { staffId: string }): Promise<void> {
+async function cleanup(
+  db: pg.Client,
+  s: Partial<Seed> & { staffId: string; rateLimitFloor?: string },
+): Promise<void> {
   const q = (sql: string, params: unknown[] = []) => db.query(sql, params);
   await q("rollback").catch(() => undefined);
   await q("begin");
@@ -333,6 +346,12 @@ async function cleanup(db: pg.Client, s: Partial<Seed> & { staffId: string }): P
   await q("delete from patients where id = any($1::uuid[])", [patientIds]);
   await q("delete from audit_log where actor_id = $1", [s.staffId]);
   await q("delete from rate_limit_attempts where identifier = $1", [`email:${s.email ?? ""}`]);
+  if (s.rateLimitFloor) {
+    await q(
+      "delete from rate_limit_attempts where id > $1 and bucket in ('staff_login', 'patient_pin', 'statement_email')",
+      [s.rateLimitFloor],
+    );
+  }
   await q("delete from staff_profiles where id = $1", [s.staffId]);
   await q("commit");
   await deleteAuthUser(s.staffId);
@@ -394,19 +413,30 @@ async function main(): Promise<void> {
   const email = `smoke-print-${randomBytes(4).toString("hex")}@drmed.local`;
   const password = `Smoke-${randomBytes(9).toString("base64url")}!`;
   const staffId = await createAuthUser(email, password);
-  let seeded: Partial<Seed> & { staffId: string; email: string } = { staffId, email };
+  // Both logins (and the statement email) leave rate_limit_attempts rows keyed
+  // by the local IP; note where the table stands so teardown removes this
+  // run's rows and repeated runs never throttle the next one.
+  const floor = await db.query("select coalesce(max(id), 0)::bigint as id from rate_limit_attempts");
+  let seeded: Partial<Seed> & { staffId: string; email: string; rateLimitFloor: string } = {
+    staffId,
+    email,
+    rateLimitFloor: String(floor.rows[0].id),
+  };
   const outDir = mkdtempSync(join(tmpdir(), "drmed-smoke-print-"));
   let failures = 0;
 
-  const browser = await chromium.launch({
-    ...(process.env.CHROME_PATH ? { executablePath: process.env.CHROME_PATH } : { channel: "chrome" }),
-    headless: true,
-    // Keep scrollbars: a clipped scroll box only shows when they are drawn.
-    ignoreDefaultArgs: ["--hide-scrollbars"],
-  });
+  // Launch inside the try: a missing Chrome must still tear down the auth user.
+  let launched: Browser | undefined;
   try {
+    const browser = await chromium.launch({
+      ...(process.env.CHROME_PATH ? { executablePath: process.env.CHROME_PATH } : { channel: "chrome" }),
+      headless: true,
+      // Keep scrollbars: a clipped scroll box only shows when they are drawn.
+      ignoreDefaultArgs: ["--hide-scrollbars"],
+    });
+    launched = browser;
     const s = await seed(db, staffId, email, password);
-    seeded = s;
+    seeded = { ...s, rateLimitFloor: seeded.rateLimitFloor };
     const targets: Target[] = [
       {
         name: "receipt",
@@ -436,7 +466,13 @@ async function main(): Promise<void> {
         name: "portal-statement",
         path: `/portal/visits/${s.visitId}/statement`,
         sheet: "article.receipt-sheet",
-        mustContain: ["Statement of account", "Payments received", "Balance due", "not an official receipt"],
+        mustContain: [
+          "Statement of account",
+          "Payments received",
+          "Balance due",
+          "not an official receipt",
+          "Chest X-Ray (Digital)", // retired after billing — 0175
+        ],
         minPages: 1,
         maxPages: 2,
         portal: true,
@@ -491,10 +527,13 @@ async function main(): Promise<void> {
     await portalPage.goto(`${APP_BASE}/portal/login`);
     await portalPage.fill('input[name="drm_id"]', s.drmId);
     await portalPage.fill('input[name="pin"]', s.pin);
-    await Promise.all([
-      portalPage.waitForURL((u) => !u.pathname.endsWith("/login"), { timeout: 60_000 }),
-      portalPage.click('button[type="submit"]'),
-    ]);
+    await portalPage.click('button[type="submit"]');
+    try {
+      await portalPage.waitForURL((u) => !u.pathname.endsWith("/login"), { timeout: 60_000 });
+    } catch {
+      const said = (await portalPage.getByRole("alert").allTextContents()).join(" / ");
+      throw new Error(`portal sign-in failed for ${s.drmId}${said ? `: ${said}` : ""}`);
+    }
 
     for (const t of targets) {
       const tp = t.portal ? portalPage : page;
@@ -588,6 +627,30 @@ async function main(): Promise<void> {
       ];
     });
 
+    await check("patient-page-statement-column", async () => {
+      await page.goto(`${APP_BASE}/staff/patients/${s.patientId}`, { timeout: 180_000 });
+      const problems: string[] = [];
+      if ((await page.locator(`a[href="/staff/visits/${s.visitId}/statement"]`).count()) !== 1) {
+        problems.push("no Open link to the visit's statement");
+      }
+      const { rows } = await db.query("select visit_number from visits where id = $1", [s.visitId]);
+      const email = page.getByRole("button", { name: `Email the statement for visit ${rows[0]?.visit_number}` });
+      if ((await email.count()) !== 1) problems.push("no per-visit Email button with its accessible name");
+      return problems;
+    });
+
+    await check("audit-log-statement-emails-chip", async () => {
+      await page.goto(`${APP_BASE}/staff/audit`, { timeout: 180_000 });
+      await page.getByRole("navigation", { name: "Quick filters" }).getByRole("link", { name: "Statement emails" }).click();
+      await page.waitForURL((u) => u.searchParams.get("action") === "statement.email");
+      // The send from statement-email above must be listed, and nothing else.
+      const cells = await page.locator("tbody tr").allTextContents();
+      const problems: string[] = [];
+      if (!cells.some((c) => /statement\.email/.test(c))) problems.push("the chip listed no statement email");
+      if (cells.some((c) => /statement\.(viewed|printed)/.test(c))) problems.push("the chip let other actions through");
+      return problems;
+    });
+
     await check("portal-statement-audited", async () => {
       const { rows } = await db.query(
         `select 1 from audit_log
@@ -596,6 +659,36 @@ async function main(): Promise<void> {
         [s.patientId, s.visitId],
       );
       return rows.length === 1 ? [] : [`expected 1 patient statement.viewed row, found ${rows.length}`];
+    });
+
+    // Straight at PostgREST with the portal's own token shape — RLS alone,
+    // no app code between (the page's 404 also has an app-level check).
+    await check("portal-rls-direct", async () => {
+      const secret = process.env.SUPABASE_JWT_SECRET;
+      const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+      if (!secret || !anonKey) return ["SUPABASE_JWT_SECRET / NEXT_PUBLIC_SUPABASE_ANON_KEY not set"];
+      const token = await new SignJWT({ role: "anon", patient_id: s.patientId })
+        .setProtectedHeader({ alg: "HS256" })
+        .setExpirationTime("5m")
+        .sign(new TextEncoder().encode(secret));
+      const rest = async (path: string, bearer: string) => {
+        const res = await fetch(`${SUPABASE_URL}/rest/v1/${path}`, {
+          headers: { apikey: anonKey, Authorization: `Bearer ${bearer}` },
+        });
+        return (await res.json()) as { id: string }[];
+      };
+      const problems: string[] = [];
+      const visits = await rest(`visits?select=id&id=in.(${s.visitId},${s.otherVisitId})`, token);
+      if (visits.length !== 1 || visits[0]?.id !== s.visitId) {
+        problems.push(`patient token saw visits ${JSON.stringify(visits)}, expected only their own`);
+      }
+      if ((await rest(`services?select=id&id=eq.${s.retiredServiceId}`, token)).length !== 1) {
+        problems.push("patient cannot read the retired service on their own bill (0175)");
+      }
+      if ((await rest(`services?select=id&id=eq.${s.retiredServiceId}`, anonKey)).length !== 0) {
+        problems.push("the public (no patient claim) can read a retired service — 0175 widened too far");
+      }
+      return problems;
     });
 
     await check("portal-other-patient-404", async () => {
@@ -611,7 +704,7 @@ async function main(): Promise<void> {
       return problems;
     });
   } finally {
-    await browser.close();
+    await launched?.close();
     await cleanup(db, seeded).catch((e) => {
       console.error("cleanup failed — remove the smoke rows by hand:", e);
       failures++;

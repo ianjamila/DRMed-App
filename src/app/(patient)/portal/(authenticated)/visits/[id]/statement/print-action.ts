@@ -10,6 +10,11 @@ import { auditPatientStatement } from "@/lib/portal/statement-audit";
  * The visit is looked up through the patient-scoped client, so a visit id
  * that is not the caller's writes nothing — the audit row can only ever name
  * the patient's own visit.
+ *
+ * Deliberately NOT filtered on deleted_at, for the staff print action's
+ * reason: the page 404s on a deleted visit, so arriving here with one means
+ * staff deleted it after the patient opened the statement — and the print
+ * (a disclosure) still happened.
  */
 export async function logPatientStatementPrintAction(visitId: string): Promise<void> {
   // requirePatientProfile, like the page: it follows a merged record to the
@@ -21,7 +26,6 @@ export async function logPatientStatementPrintAction(visitId: string): Promise<v
     .select("id, visit_number")
     .eq("id", visitId)
     .eq("patient_id", session.patient_id)
-    .is("deleted_at", null)
     .maybeSingle();
   if (!visit) return;
 

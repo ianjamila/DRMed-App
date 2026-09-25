@@ -32,7 +32,7 @@ function input(over: Partial<StatementEmailInput> = {}): StatementEmailInput {
     payments: [
       { amount_php: 2000, method: "cash", reference_number: null, received_at: "2026-09-24T02:00:00Z" },
     ],
-    summary: { charges: 3950, paid: 2000, balance: 1950, balanceLabel: "Balance due" },
+    summary: { charges: 3950, paid: 2000, balance: 1950, waived: 0, balanceLabel: "Balance due" },
     issuedAt: new Date("2026-09-25T03:00:00Z"),
     ...over,
   };
@@ -80,7 +80,7 @@ describe("renderStatementEmail", () => {
     const { text, html } = renderStatementEmail(
       input({
         hmoName: "Maxicare",
-        summary: { charges: 3950, paid: 0, balance: 3950, balanceLabel: "Balance" },
+        summary: { charges: 3950, paid: 0, balance: 3950, waived: 0, balanceLabel: "Balance" },
         payments: [],
       }),
     );
@@ -92,8 +92,18 @@ describe("renderStatementEmail", () => {
 
   it("shows an overpayment as a positive figure under its label", () => {
     const { text } = renderStatementEmail(
-      input({ summary: { charges: 3950, paid: 4000, balance: -50, balanceLabel: "Overpaid" } }),
+      input({ summary: { charges: 3950, paid: 4000, balance: -50, waived: 0, balanceLabel: "Overpaid" } }),
     );
     expect(text).toContain("Overpaid: ₱50");
+  });
+
+  it("shows a waived remainder and asks for nothing", () => {
+    const { text, html } = renderStatementEmail(
+      input({ summary: { charges: 3950, paid: 2000, waived: 1950, balance: 0, balanceLabel: "Nothing due" } }),
+    );
+    expect(text).toContain("Balance waived: ₱1,950");
+    expect(text).toContain("Nothing due: ₱0");
+    expect(text).not.toContain("Balance due");
+    expect(html).toContain("Balance waived");
   });
 });

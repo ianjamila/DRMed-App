@@ -17,12 +17,18 @@ export interface StatementPayment {
   voided_at: string | null;
 }
 
-export type BalanceLabel = "Balance due" | "Balance" | "Paid in full" | "Overpaid";
+export type BalanceLabel = "Balance due" | "Balance" | "Paid in full" | "Overpaid" | "Nothing due";
 
 export interface StatementSummary {
   charges: number;
   paid: number;
-  /** charges − paid; negative when more was paid than charged. */
+  /**
+   * The remainder the clinic waived (`payment_status = 'waived'`): charity,
+   * no-charge. Waiving writes no payment row, so without this a waived visit
+   * would read "Balance due" and ask the patient for money nobody expects.
+   */
+  waived: number;
+  /** charges − paid − waived; negative when more was paid than charged. */
   balance: number;
   balanceLabel: BalanceLabel;
 }
@@ -39,18 +45,22 @@ const cents = (n: number) => Math.round(n * 100);
 export function statementSummary(
   charges: number,
   payments: readonly StatementPayment[],
-  opts: { hmoBilled: boolean },
+  opts: { hmoBilled: boolean; waived: boolean },
 ): StatementSummary {
   const paid =
     livePayments(payments).reduce((s, p) => s + cents(Number(p.amount_php)), 0) / 100;
-  const balance = (cents(charges) - cents(paid)) / 100;
+  const owed = (cents(charges) - cents(paid)) / 100;
+  if (opts.waived && owed > 0) {
+    return { charges, paid, waived: owed, balance: 0, balanceLabel: "Nothing due" };
+  }
+  const balance = owed;
   let balanceLabel: BalanceLabel;
   if (balance === 0) balanceLabel = "Paid in full";
   else if (balance < 0) balanceLabel = "Overpaid";
   // An HMO visit never pays its share at the counter — the claim settles it —
   // so an open balance is not something the patient owes today.
   else balanceLabel = opts.hmoBilled ? "Balance" : "Balance due";
-  return { charges, paid, balance, balanceLabel };
+  return { charges, paid, waived: 0, balance, balanceLabel };
 }
 
 /**

@@ -135,6 +135,12 @@ export function StatementSheet({
           <dd className="text-right tabular-nums">{formatPhp(summary.charges)}</dd>
           <dt className="text-right text-[color:var(--color-brand-text-soft)]">Total paid</dt>
           <dd className="text-right tabular-nums">− {formatPhp(summary.paid)}</dd>
+          {summary.waived > 0 ? (
+            <>
+              <dt className="text-right text-[color:var(--color-brand-text-soft)]">Balance waived</dt>
+              <dd className="text-right tabular-nums">− {formatPhp(summary.waived)}</dd>
+            </>
+          ) : null}
           <dt className="border-t-2 border-[color:var(--color-brand-navy)] pt-2 text-right font-bold">
             {summary.balanceLabel}
           </dt>

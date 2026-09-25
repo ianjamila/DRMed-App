@@ -15,37 +15,61 @@ describe("livePayments", () => {
 
 describe("statementSummary", () => {
   it("owes the remainder after partial payment", () => {
-    expect(statementSummary(6438, [pay(3000), pay("1000.00")], { hmoBilled: false })).toEqual({
+    expect(statementSummary(6438, [pay(3000), pay("1000.00")], { hmoBilled: false, waived: false })).toEqual({
       charges: 6438,
       paid: 4000,
+      waived: 0,
       balance: 2438,
       balanceLabel: "Balance due",
     });
   });
 
   it("never counts a voided payment", () => {
-    const s = statementSummary(1000, [pay(1000, "2026-09-24T01:00:00Z")], { hmoBilled: false });
+    const s = statementSummary(1000, [pay(1000, "2026-09-24T01:00:00Z")], { hmoBilled: false, waived: false });
     expect(s.paid).toBe(0);
     expect(s.balanceLabel).toBe("Balance due");
   });
 
   it("is paid in full without float noise", () => {
-    const s = statementSummary(0.3, [pay(0.1), pay(0.2)], { hmoBilled: false });
+    const s = statementSummary(0.3, [pay(0.1), pay(0.2)], { hmoBilled: false, waived: false });
     expect(s.balance).toBe(0);
     expect(s.balanceLabel).toBe("Paid in full");
   });
 
   it("says overpaid rather than a negative balance due", () => {
-    const s = statementSummary(500, [pay(600)], { hmoBilled: false });
+    const s = statementSummary(500, [pay(600)], { hmoBilled: false, waived: false });
     expect(s.balance).toBe(-100);
     expect(s.balanceLabel).toBe("Overpaid");
   });
 
   it("does not call an HMO visit's open balance 'due'", () => {
-    expect(statementSummary(2000, [], { hmoBilled: true }).balanceLabel).toBe("Balance");
+    expect(statementSummary(2000, [], { hmoBilled: true, waived: false }).balanceLabel).toBe("Balance");
   });
 
   it("has nothing to pay on a ₱0 bill", () => {
-    expect(statementSummary(0, [], { hmoBilled: false }).balanceLabel).toBe("Paid in full");
+    expect(statementSummary(0, [], { hmoBilled: false, waived: false }).balanceLabel).toBe("Paid in full");
+  });
+
+  it("shows a waived remainder as waived, with nothing due", () => {
+    // ₱1,000 visit, ₱400 paid, the rest waived (charity / no-charge).
+    expect(statementSummary(1000, [pay(400)], { hmoBilled: false, waived: true })).toEqual({
+      charges: 1000,
+      paid: 400,
+      waived: 600,
+      balance: 0,
+      balanceLabel: "Nothing due",
+    });
+  });
+
+  it("does not invent a waiver on a visit that was paid in full before being waived", () => {
+    const s = statementSummary(1000, [pay(1000)], { hmoBilled: false, waived: true });
+    expect(s.waived).toBe(0);
+    expect(s.balanceLabel).toBe("Paid in full");
+  });
+
+  it("still says overpaid on a waived visit that took too much", () => {
+    const s = statementSummary(1000, [pay(1200)], { hmoBilled: false, waived: true });
+    expect(s.waived).toBe(0);
+    expect(s.balanceLabel).toBe("Overpaid");
   });
 });

@@ -13,7 +13,8 @@ export type RateLimitBucket =
   | "newsletter_resubscribe"
   | "appointment_cancel"
   | "patient_registration"
-  | "patient_id_recovery";
+  | "patient_id_recovery"
+  | "statement_email";
 
 export interface RateLimitConfig {
   bucket: RateLimitBucket;
@@ -126,4 +127,10 @@ export const RATE_LIMITS: Record<
   // Public DRM-ID recovery. Emails a DRM-ID to an on-file address only; 5/hour
   // per IP matches patient_registration / contact_form.
   patient_id_recovery: { windowSec: 60 * 60, max: 5 },
+  // One emailed statement per visit + recipient per 2 minutes, whoever sends
+  // it — a double-click, a second tab or a second receptionist is a
+  // duplicate, not a resend the patient asked for. Keyed on the statement,
+  // not the staff member. Insert-then-count means two simultaneous sends can
+  // never both pass (at worst both are refused).
+  statement_email: { windowSec: 2 * 60, max: 1 },
 };

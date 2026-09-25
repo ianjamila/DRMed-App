@@ -28,7 +28,7 @@ export async function fetchStatement(
     .from("visits")
     .select(
       `
-        id, visit_number, visit_date, hmo_provider_id,
+        id, visit_number, visit_date, hmo_provider_id, payment_status,
         patients!inner (
           id, drm_id, first_name, middle_name, last_name, email,
           senior_pwd_id_number
@@ -66,7 +66,10 @@ export async function fetchStatement(
   const lines = visibleReceiptLines((visit.test_requests ?? []).map(toReceiptLine));
   const { subtotal, totalDiscount, total } = receiptTotals(lines);
   const payments = livePayments(paymentRows ?? []);
-  const summary = statementSummary(total, payments, { hmoBilled: visit.hmo_provider_id != null });
+  const summary = statementSummary(total, payments, {
+    hmoBilled: visit.hmo_provider_id != null,
+    waived: visit.payment_status === "waived",
+  });
   const hasSeniorPwdLine = hasStatutoryDiscountLine(
     lines,
     new Set((statutoryRows ?? []).map((d) => d.code)),

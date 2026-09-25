@@ -4,7 +4,8 @@ import { requireActiveStaff } from "@/lib/auth/require-staff";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { audit } from "@/lib/audit/log";
-import { hasRecentAudit, ipAndAgent } from "@/lib/server/action-helpers";
+import { ipAndAgent } from "@/lib/server/action-helpers";
+import { checkRateLimit, RATE_LIMITS } from "@/lib/rate-limit/check";
 import { reportError } from "@/lib/observability/report-error";
 import { sendEmail } from "@/lib/notifications/email";
 import { STATEMENT_ROLES } from "@/lib/visits/statement";
@@ -13,9 +14,7 @@ import { renderStatementEmail } from "@/lib/visits/statement-email";
 
 type Result = { ok: true; data: { to: string } } | { ok: false; error: string };
 
-// A second click (or a second tab) inside this window is a duplicate, not a
-// resend the patient asked for.
-const RESEND_GUARD_MINUTES = 2;
+const RESEND_GUARD_MINUTES = RATE_LIMITS.statement_email.windowSec / 60;
 
 /**
  * Email a visit's statement of account to the patient.
@@ -27,8 +26,10 @@ const RESEND_GUARD_MINUTES = 2;
  * client, through the same loader the printed page uses.
  *
  * A delivered email leaves `statement.emailed`; a skipped or failed one
- * leaves `statement.email_failed`, so the log shows every attempt and only a
- * real disclosure counts toward the resend guard.
+ * leaves `statement.email_failed`, so the log shows every attempt. The resend
+ * guard is the `statement_email` rate-limit bucket, keyed on visit +
+ * recipient (not on who clicks), reserved before sending and released when
+ * the send does not go out, so a failure can be retried at once.
  */
 export async function emailStatementAction(visitId: string): Promise<Result> {
   const session = await requireActiveStaff();
@@ -53,18 +54,19 @@ export async function emailStatementAction(visitId: string): Promise<Result> {
     };
   }
 
-  const admin = createAdminClient();
-  const justSent = await hasRecentAudit(
-    admin,
-    { actor_id: session.user_id, action: "statement.emailed", resource_id: visitId },
-    RESEND_GUARD_MINUTES,
-  );
-  if (justSent) {
+  const guardId = `${visitId}:${to.toLowerCase()}`;
+  const reserved = await checkRateLimit({
+    bucket: "statement_email",
+    identifier: guardId,
+    ...RATE_LIMITS.statement_email,
+  });
+  if (!reserved.allowed) {
     return {
       ok: false,
-      error: `This statement was emailed in the last ${RESEND_GUARD_MINUTES} minutes. Check the patient's inbox (and spam) before sending again.`,
+      error: `This statement was just emailed (or is sending) — wait ${RESEND_GUARD_MINUTES} minutes and check the patient's inbox and spam before sending again.`,
     };
   }
+  const admin = createAdminClient();
 
   const email = renderStatementEmail({
     patient: data.patient,
@@ -113,6 +115,12 @@ export async function emailStatementAction(visitId: string): Promise<Result> {
   });
 
   if (result.ok) return { ok: true, data: { to } };
+  // Nothing went out: release the reservation so staff can retry now.
+  await admin
+    .from("rate_limit_attempts")
+    .delete()
+    .eq("bucket", "statement_email")
+    .eq("identifier", guardId);
   return {
     ok: false,
     error:
