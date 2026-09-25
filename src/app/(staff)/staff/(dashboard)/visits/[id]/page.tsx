@@ -65,6 +65,8 @@ import { printAllFiles, resultPdfStates } from "@/lib/results/pdf-availability";
 import { fetchPrintSummaries } from "@/lib/results/print-history";
 import type { PrintSummary } from "@/lib/results/print-summary";
 import { PrintedNote } from "@/components/staff/printed-note";
+import { outdatedCopyChip } from "@/lib/results/copy-followups";
+import { fetchCopyStates } from "@/lib/results/copy-followups.server";
 
 // Share the existing header lookup with metadata within this request.
 const loadDetail = cache(async (id: string) => {
@@ -219,6 +221,15 @@ export default async function VisitDetailPage({ params, searchParams }: Props) {
   // result" / "View PDF" without each row firing its own join.
   const allTestIds = (tests ?? []).map((t) => t.id);
   const pdfStates = await resultPdfStates(supabase, allTestIds);
+  // Whether the patient is holding an out-of-date portal download or
+  // printout of any of these results — drives the amber chip next to each
+  // status. Read with the signed-in client (the RPC gates rows by role).
+  const resultIds = [...new Set([...pdfStates.values()].map((s) => s.resultId))];
+  const copyStates = await fetchCopyStates(supabase, resultIds);
+  const outdatedChipFor = (id: string) => {
+    const s = pdfStates.get(id);
+    return s ? outdatedCopyChip(copyStates?.get(s.resultId)) : null;
+  };
   // "Printed … by …" under each Print button — per FILE (a shared chemistry
   // PDF printed from any member counts for all of them), read off the audit
   // log as a derived fact only.
@@ -1103,6 +1114,7 @@ export default async function VisitDetailPage({ params, searchParams }: Props) {
                                       {c.status.replace(/_/g, " ")}
                                     </span>
                                     <HandedBackBadge info={handedBackFor(c.id)} />
+                                    <OutdatedCopyChip chip={outdatedChipFor(c.id)} />
                                   </td>
                                   <td className="px-4 py-3 text-right">
                                     <TestAction
@@ -1328,6 +1340,7 @@ export default async function VisitDetailPage({ params, searchParams }: Props) {
                         {t.status.replace(/_/g, " ")}
                       </span>
                       <HandedBackBadge info={handedBackFor(t.id)} />
+                      <OutdatedCopyChip chip={outdatedChipFor(t.id)} />
                     </td>
                     <td className="px-4 py-3 text-right">
                       <TestAction
@@ -1663,6 +1676,15 @@ interface PfEntryShape {
   recognized_at: string | null;
   disbursement_id: string | null;
   voided_at: string | null;
+}
+
+function OutdatedCopyChip({ chip }: { chip: string | null }) {
+  if (!chip) return null;
+  return (
+    <span className="ml-1 inline-flex rounded bg-amber-50 px-1.5 py-0.5 text-xs text-amber-800 ring-1 ring-amber-200">
+      {chip}
+    </span>
+  );
 }
 
 function PfStatusBadge({ entry }: { entry: PfEntryShape }) {
