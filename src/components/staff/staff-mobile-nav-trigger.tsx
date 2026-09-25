@@ -27,9 +27,14 @@ import {
   type StaffRole,
 } from "./staff-nav-config";
 import { ROLE_LABEL } from "@/lib/staff/role-labels";
+import type { ActiveViewAs } from "@/lib/auth/view-as";
+import { ViewAsSelect } from "./view-as-select";
 
 interface Props {
   role: StaffRole;
+  /** Real role; the View-as picker shows only when this is "admin". */
+  actualRole: StaffRole;
+  viewAs: ActiveViewAs | null;
   email: string;
   fullName: string;
   // Count badges keyed by item href (e.g. `{ "/staff/messages": 3 }`).
@@ -230,7 +235,14 @@ function MobileCollapsibleSection({
 // Mobile-only hamburger + slide-in drawer for the staff portal. Mirrors
 // the desktop sidebar's nav so reception can navigate from a phone, and
 // closes itself on route change.
-export function StaffMobileNavTrigger({ role, email, fullName, badges }: Props) {
+export function StaffMobileNavTrigger({
+  role,
+  actualRole,
+  viewAs,
+  email,
+  fullName,
+  badges,
+}: Props) {
   const [open, setOpen] = useState(false);
   const pathname = usePathname();
   const close = () => setOpen(false);
@@ -305,8 +317,14 @@ export function StaffMobileNavTrigger({ role, email, fullName, badges }: Props) 
             {fullName}
           </p>
           <p className="text-xs text-[color:var(--color-brand-text-soft)]">
-            {ROLE_LABEL[role]} · {email}
+            {viewAs
+              ? `${ROLE_LABEL[role]} (viewing as) · ${ROLE_LABEL[actualRole]}`
+              : ROLE_LABEL[role]}{" "}
+            · {email}
           </p>
+          {actualRole === "admin" && (
+            <ViewAsSelect current={viewAs?.role ?? null} id="view-as-drawer" className="mt-3" />
+          )}
           <form action={signOutStaff} className="mt-3">
             <Button type="submit" variant="outline" className="w-full text-xs">
               Sign out
