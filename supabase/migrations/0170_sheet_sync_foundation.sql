@@ -220,7 +220,11 @@ create table public.sheet_sync_review_items (
   first_seen_at  timestamptz not null default now(),
   last_seen_at   timestamptz not null default now()
 );
-create unique index sheet_sync_review_items_open_key on public.sheet_sync_review_items (kind, item_key) where status = 'open';
+-- One OPEN item per key: the three identity kinds share one namespace
+-- (sheet_sync_upsert_review updates the item in place when the kind moves).
+create unique index sheet_sync_review_items_open_key on public.sheet_sync_review_items
+  ((case when kind in ('ambiguous_patient','identity_conflict','possible_existing_patient') then 'identity' else kind end), item_key)
+  where status = 'open';
 create index sheet_sync_review_items_list on public.sheet_sync_review_items (status, kind, last_seen_at desc, id);
 
 -- Before-images. No FK to patients: the history must outlive a reverted create.
@@ -808,70 +812,122 @@ begin
     'held', n_held, 'skipped', n_skipped));
 end $$;
 
+-- Review items for one tab. The three IDENTITY kinds (ambiguous_patient,
+-- identity_conflict, possible_existing_patient) share ONE item per link key:
+-- the kind the planner computes for a key can change from run to run (a held
+-- batch collision becomes a name match once its partner exists), and that
+-- must not resolve the old item and open a new one — first-seen, status and
+-- an admin's dismissal all live on the one item. Other kinds keep one item
+-- per (kind, item_key).
+--   1. an OPEN item for the key -> updated in place (kind, payload, last seen);
+--   2. else a DISMISSED item for the key stays dismissed (its kind and
+--      payload refreshed, identity kinds only) — unless one of its keys is
+--      HELD: a hold waits for an admin link / create, so hiding it would park
+--      the key forever. The exception is a "keep undone" dismissal
+--      (sheet_review_resolve): its undo holds are the admin's answer, so it
+--      stays dismissed until some key carries a DIFFERENT hold, or the
+--      CANDIDATES change (resolution.candidate_ids, saved at dismissal): an
+--      undo hold is never re-held by the planner, so a new matching patient
+--      (staff registered the real person) is the only signal the admin could
+--      now link the row. The re-opened item offers Keep undone again;
+--   3. else a new open item (a re-opened one keeps the dismissed item's
+--      first-seen date).
+-- clear_absent resolves open items the sheet no longer reports — an identity
+-- item counts as reported when its key is reported under ANY identity kind.
 create or replace function public.sheet_sync_upsert_review(
   p_lease_token uuid, p_tab text, p_items jsonb, p_clear_absent boolean
 ) returns jsonb language plpgsql security definer set search_path = '' as $$
 declare
   v_run uuid := public._sheet_sync_fence(p_lease_token, true);
   v_item jsonb;
-  n_opened int := 0; n_updated int := 0; n_cleared int := 0;
+  v_kind text;
+  v_key text;
+  v_payload jsonb;
+  v_keys jsonb;
+  v_ids jsonb;
+  v_identity boolean;
+  v_open public.sheet_sync_review_items%rowtype;
+  v_dis public.sheet_sync_review_items%rowtype;
+  n_opened int := 0; n_updated int := 0; n_cleared int := 0; n_kept int := 0;
 begin
   if p_tab not in ('customers','lab','consult') or jsonb_typeof(p_items) is distinct from 'array' then
     raise exception 'Bad review batch.' using errcode = '22023';
   end if;
   for v_item in select e from jsonb_array_elements(p_items) e loop
-    -- A dismissed item stays dismissed — unless one of its keys is HELD: a
-    -- hold waits for an admin link / create, so hiding it would park the key
-    -- forever. Then the item re-opens (as a new open row). The exception is a
-    -- "keep undone" dismissal (sheet_review_resolve): its undo holds are the
-    -- admin's answer, so it stays dismissed — under any identity kind a later
-    -- run computes for the key — until some key carries a DIFFERENT hold, or
-    -- the CANDIDATES change (resolution.candidate_ids, saved at dismissal):
-    -- an undo hold is never re-held by the planner, so a new matching patient
-    -- (staff registered the real person) is the only signal the admin could
-    -- now link the row. The re-opened item offers Keep undone again.
-    if exists (select 1 from public.sheet_sync_review_items i
-                where i.item_key = v_item->>'item_key' and i.status = 'dismissed'
-                  and (i.kind = v_item->>'kind'
-                       or (coalesce((i.resolution->>'keep_undone')::boolean, false)
-                           and i.kind in ('ambiguous_patient','identity_conflict','possible_existing_patient')
-                           and v_item->>'kind' in ('ambiguous_patient','identity_conflict','possible_existing_patient')))
-                  and not exists (
-                    select 1 from public.sheet_patient_links l
-                     where l.decision = 'review'
-                       and l.link_key in (select jsonb_array_elements_text(
-                             case when jsonb_typeof(v_item->'payload'->'link_keys') = 'array'
-                                  then v_item->'payload'->'link_keys' else '[]'::jsonb end))
-                       and (not coalesce((i.resolution->>'keep_undone')::boolean, false)
-                            or l.hold_reason is distinct from 'undone by an admin'))
-                  and (not coalesce((i.resolution->>'keep_undone')::boolean, false)
-                       or i.resolution->'candidate_ids' = (select coalesce(jsonb_agg(x order by x), '[]'::jsonb)
-                              from (select distinct c->>'patient_id' as x
-                                      from jsonb_array_elements(case when jsonb_typeof((v_item->'payload')->'candidates') = 'array'
-                                                                     then (v_item->'payload')->'candidates' else '[]'::jsonb end) c
-                                     where c->>'patient_id' is not null) s))) then
+    v_kind := v_item->>'kind';
+    v_key := v_item->>'item_key';
+    v_payload := coalesce(v_item->'payload', '{}'::jsonb);
+    v_identity := v_kind in ('ambiguous_patient','identity_conflict','possible_existing_patient');
+    v_keys := case when jsonb_typeof(v_payload->'link_keys') = 'array' then v_payload->'link_keys' else '[]'::jsonb end;
+    v_ids := (select coalesce(jsonb_agg(x order by x), '[]'::jsonb)
+                from (select distinct c->>'patient_id' as x
+                        from jsonb_array_elements(case when jsonb_typeof(v_payload->'candidates') = 'array'
+                                                       then v_payload->'candidates' else '[]'::jsonb end) c
+                       where c->>'patient_id' is not null) s);
+
+    -- 1. the open item for this key (one per key across the identity kinds)
+    select * into v_open from public.sheet_sync_review_items i
+     where i.item_key = v_key and i.status = 'open'
+       and (i.kind = v_kind
+            or (v_identity and i.kind in ('ambiguous_patient','identity_conflict','possible_existing_patient')))
+     limit 1
+     for update;
+    if v_open.id is not null then
+      update public.sheet_sync_review_items
+         set kind = v_kind, payload = v_payload, run_id = v_run, last_seen_at = now()
+       where id = v_open.id;
+      n_updated := n_updated + 1;
       continue;
     end if;
-    update public.sheet_sync_review_items i
-       set payload = coalesce(v_item->'payload', '{}'::jsonb), run_id = v_run, last_seen_at = now()
-     where i.kind = v_item->>'kind' and i.item_key = v_item->>'item_key' and i.status = 'open';
-    if found then
-      n_updated := n_updated + 1;
-    else
-      insert into public.sheet_sync_review_items (run_id, tab, item_key, kind, payload)
-      values (v_run, p_tab, v_item->>'item_key', v_item->>'kind', coalesce(v_item->'payload', '{}'::jsonb));
-      n_opened := n_opened + 1;
+
+    -- 2. a dismissed item for this key that still holds (any of them: an item
+    --    re-opened and dismissed again leaves the earlier dismissal behind)
+    select * into v_dis from public.sheet_sync_review_items i
+     where i.item_key = v_key and i.status = 'dismissed'
+       and (i.kind = v_kind
+            or (v_identity and i.kind in ('ambiguous_patient','identity_conflict','possible_existing_patient')))
+       and not exists (select 1 from public.sheet_patient_links l
+                        where l.decision = 'review'
+                          and l.link_key in (select jsonb_array_elements_text(v_keys))
+                          and (not coalesce((i.resolution->>'keep_undone')::boolean, false)
+                               or l.hold_reason is distinct from 'undone by an admin'))
+       and (not coalesce((i.resolution->>'keep_undone')::boolean, false)
+            or i.resolution->'candidate_ids' = v_ids)
+     order by i.resolved_at desc nulls last, i.id desc
+     limit 1
+     for update;
+    if v_dis.id is not null then
+      if v_identity then
+        update public.sheet_sync_review_items
+           set kind = v_kind, payload = v_payload, run_id = v_run, last_seen_at = now()
+         where id = v_dis.id;
+      end if;
+      n_kept := n_kept + 1;
+      continue;
     end if;
+
+    -- 3. a new open item
+    insert into public.sheet_sync_review_items (run_id, tab, item_key, kind, payload, first_seen_at)
+    values (v_run, p_tab, v_key, v_kind, v_payload,
+            coalesce((select min(i.first_seen_at) from public.sheet_sync_review_items i
+                       where i.item_key = v_key and i.status = 'dismissed'
+                         and (i.kind = v_kind
+                              or (v_identity and i.kind in ('ambiguous_patient','identity_conflict','possible_existing_patient')))),
+                     now()));
+    n_opened := n_opened + 1;
   end loop;
   if p_clear_absent then
     update public.sheet_sync_review_items i
        set status = 'resolved', resolution = jsonb_build_object('auto', 'no longer reported by the sheet'), resolved_at = now()
      where i.tab = p_tab and i.status = 'open'
        and not exists (select 1 from jsonb_array_elements(p_items) e
-                        where e->>'kind' = i.kind and e->>'item_key' = i.item_key);
+                        where e->>'item_key' = i.item_key
+                          and (e->>'kind' = i.kind
+                               or (e->>'kind' in ('ambiguous_patient','identity_conflict','possible_existing_patient')
+                                   and i.kind in ('ambiguous_patient','identity_conflict','possible_existing_patient'))));
     get diagnostics n_cleared = row_count;
   end if;
-  return jsonb_build_object('opened', n_opened, 'updated', n_updated, 'cleared', n_cleared);
+  return jsonb_build_object('opened', n_opened, 'updated', n_updated, 'cleared', n_cleared, 'kept_dismissed', n_kept);
 end $$;
 
 -- Re-sort only ever moves patients the May import created (the same set

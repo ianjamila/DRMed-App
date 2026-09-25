@@ -613,6 +613,26 @@ describe("planCustomers — round 2 (order-independent run-2 check, per-key trus
     expect(reviewFor(out2, key)[0].payload).toMatchObject({ reason: "held for an admin decision", held_because: "undone by an admin" });
     expect(out2.mirror[0]).toMatchObject({ patient_id: null });
   });
+  it("a held key's review KIND can change between runs under the same item key (0170 keeps one item per key across identity kinds)", () => {
+    // Run 1: "Reyes, Ana Marie" (1990) is new and is created; "Reyes, Ana Marie"
+    // (2009) and "Santos, Ana" (2009) look like one new person (same DOB, same
+    // first name) and are held as possible_existing_patient. Run 2: the created
+    // namesake now exists, so the held key's review is computed differently.
+    const rows = rowsOf({ name: "Reyes, Ana Marie", dob: 32874, ts: 46000 },
+      { name: "Reyes, Ana Marie", dob: 40000, ts: 46010 },
+      { name: "Santos, Ana", dob: 40000, ts: 46020 });
+    const key = "reyes|ana marie#2009-07-06";
+    const w0 = world([]);
+    const out1 = planIn(rows, w0);
+    expect(createOps(out1).map((c) => c.link_keys)).toEqual([["reyes|ana marie#1990-01-01"]]);
+    expect(reviewFor(out1, key).map((r) => r.kind)).toEqual(["possible_existing_patient"]);
+    const out2 = planIn(rows, applyOps(out1.ops, w0));
+    expect(out2.ops).toEqual([]);
+    const second = reviewFor(out2, key);
+    expect(second).toHaveLength(1); // still ONE item for the key per run…
+    expect(second[0].kind).not.toBe("possible_existing_patient"); // …under another identity kind
+    expect(["ambiguous_patient", "identity_conflict"]).toContain(second[0].kind);
+  });
   it("an undo-held key's review candidates change when a new matching patient appears (0170 re-opens a Keep-undone item on that)", () => {
     // The planner never re-holds an undo-held key, so the hold_reason stays
     // "undone by an admin" forever; the CANDIDATE set is what moves.

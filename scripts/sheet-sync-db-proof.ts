@@ -120,7 +120,13 @@
 //   # a kept patient keeps its links (… expected kept=1 deleted=0 held=0 …)
 //   # and FAIL Paged undo … (… the blocked patient's link left …).
 //   mutate sheet_sync_revert_run "and c.undo_outcome in ('kept','blocked')" "and false"
-//   npm run sheet-sync:db-proof          # expect exactly those two FAILs
+//   # M14 — identity kinds no longer share one review item per key. Expect:
+//   # FAIL Identity kinds share one review item per key … (the second report
+//   # opens another item, or hits the one-open-item-per-key index) and FAIL
+//   # Dismiss: refused on an evidence hold … (a keep-undone item re-opens
+//   # under another identity kind).
+//   mutate sheet_sync_upsert_review "or (v_identity and i.kind in (" "or (false and i.kind in ("
+//   npm run sheet-sync:db-proof          # expect exactly those four FAILs
 //   /opt/homebrew/bin/supabase db reset  # undo round C
 //
 //   ## Round D ##
@@ -131,7 +137,7 @@
 //   # M13 — a Keep-undone item ignores new candidates. Expect: FAIL Dismiss:
 //   # refused on an evidence hold … (… new candidates must re-open a
 //   # keep-undone item …).
-//   mutate sheet_sync_upsert_review "or i.resolution->'candidate_ids' = " "or true or i.resolution->'candidate_ids' = "
+//   mutate sheet_sync_upsert_review "or i.resolution->'candidate_ids' = v_ids)" "or true)"
 //   (M13 runs here, not in round A: M11 would stop that check before this step.)
 //   npm run sheet-sync:db-proof          # expect exactly those two FAILs
 //   /opt/homebrew/bin/supabase db reset  # undo round D, then re-run: all PASS
@@ -2507,7 +2513,49 @@ async function main() {
       assert(slow.length === 0, `over ${LIMIT_MS} ms: ${slow.map(([l, ms]) => `${l} (${ms} ms)`).join("; ")}`);
     });
 
-    // 32. Timing (M9) ---------------------------------------------------------
+    // 32. Identity kinds share one review item per key (e2e finding, round 8) --
+    // A held key's kind can move between runs (customer-plan.test.ts: "a held
+    // key's review KIND can change"). That must update the one item in place —
+    // never resolve it as "no longer reported" and open another.
+    await check("Identity kinds share one review item per key (a kind change never churns the item)", async () => {
+      await setRole("service_role", null);
+      const upsert = async (items: unknown[], clear: boolean) => {
+        const l = await acquire("manual", false);
+        const j = (await q<{ j: Json }>(`select public.sheet_sync_upsert_review($1::uuid, 'consult', $2::jsonb, $3) as j`, [
+          l.token, JSON.stringify(items), clear])).rows[0].j;
+        await finish(l.token);
+        return j;
+      };
+      const item = (kind: string, key: string) => ({ kind, item_key: key, payload: { link_keys: [key], reason: kind } });
+      const rows = async (key: string) => (await q<{ id: string; kind: string; status: string }>(
+        `select id::text, kind, status from public.sheet_sync_review_items where item_key = $1 order by first_seen_at, id`, [key])).rows;
+
+      const o1 = await upsert([item("possible_existing_patient", "ns:k1"), item("invalid_row", "ns:row")], false);
+      assert(o1.opened === 2, `first report: expected 2 opened, got ${JSON.stringify(o1)}`);
+      const [first] = await rows("ns:k1");
+      // Next run: same key, another identity kind, with clear_absent on.
+      const o2 = await upsert([item("ambiguous_patient", "ns:k1"), item("invalid_row", "ns:row")], true);
+      assert(o2.opened === 0 && o2.updated === 2, `kind change: expected 0 opened / 2 updated, got ${JSON.stringify(o2)}`);
+      const after = await rows("ns:k1");
+      assert(after.length === 1 && after[0].id === first.id && after[0].kind === "ambiguous_patient" && after[0].status === "open",
+        `kind change: expected the SAME open item, now ambiguous_patient, got ${JSON.stringify(after)}`);
+
+      // A dismissed identity item stays dismissed (and is refreshed) under a new kind.
+      await setRole("postgres", null);
+      await q(`update public.sheet_sync_review_items set status = 'dismissed', resolved_at = now(),
+                 resolution = '{"action":"dismiss"}'::jsonb where id = $1`, [first.id]);
+      await setRole("service_role", null);
+      const o3 = await upsert([item("identity_conflict", "ns:k1"), item("invalid_row", "ns:row")], true);
+      assert(o3.opened === 0 && o3.kept_dismissed === 1, `dismissed + kind change: expected kept dismissed, got ${JSON.stringify(o3)}`);
+      const after3 = await rows("ns:k1");
+      assert(after3.length === 1 && after3[0].status === "dismissed" && after3[0].kind === "identity_conflict",
+        `dismissed + kind change: expected one dismissed identity_conflict item, got ${JSON.stringify(after3)}`);
+      // Non-identity kinds still keep one item per (kind, key).
+      const o4 = await upsert([item("identity_conflict", "ns:k1"), item("unparseable_date", "ns:row")], true);
+      assert(o4.opened === 1 && o4.cleared >= 1, `non-identity kinds do not share: expected a new item and the old one cleared, got ${JSON.stringify(o4)}`);
+    });
+
+    // 33. Timing (M9) ---------------------------------------------------------
     await check("Timing: 5,000-row commit, 500-op create chunk, undo (each < 8,000 ms)", async () => {
       await setRole("service_role", null);
       const LIMIT_MS = 8000;
