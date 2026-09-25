@@ -20,8 +20,9 @@ const TABS = [
 export function PaymentsTabs() {
   // Carry the date/shift selection across tabs so reception can open the
   // drawer for a given day and close it out without re-picking the date.
-  // Petty Cash reads only `date`; the extra `shift` is harmless there and
-  // keeps the round trip drawer → petty cash → drawer lossless.
+  // Petty Cash also honours `shift` (falls back to the first active shift,
+  // same as Cash Drawer), so the round trip drawer → petty cash → drawer
+  // stays on one shift.
   const query = carryParams(useSearchParams(), ["date", "shift"], {
     unvalidated: ["shift"],
   });

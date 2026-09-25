@@ -9,8 +9,9 @@ import {
   type DashboardRole,
 } from "@/lib/dashboards/cards";
 import { DashboardCardSettingsClient } from "./client";
+import { ROUTE_NAME } from "@/lib/staff/route-names";
 
-export const metadata = { title: "Dashboard card settings" };
+export const metadata = { title: ROUTE_NAME["/staff/admin/settings/dashboard-cards"] };
 export const dynamic = "force-dynamic";
 
 interface PrefRow {
@@ -61,7 +62,7 @@ export default async function DashboardCardSettingsPage({
           ← Dashboard
         </Link>
         <h1 className="mt-3 font-heading text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
-          Dashboard card settings
+          {ROUTE_NAME["/staff/admin/settings/dashboard-cards"]}
         </h1>
         <p className="mt-1 max-w-2xl text-sm text-[color:var(--color-brand-text-soft)]">
           Hide sensitive cards from specific roles. When a card is hidden the

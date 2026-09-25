@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { claimRemarks, eventsByTest, handedBack, type ClaimEvent } from "./claim-remarks";
+import { manilaDateTime } from "@/lib/dates/manila";
 
 const T1 = "00000000-0000-0000-0000-000000000001";
 const T2 = "00000000-0000-0000-0000-000000000002";
@@ -82,5 +83,54 @@ describe("handedBack", () => {
     ]);
     expect(out?.count).toBe(2);
     expect(out?.latest.text).toBe("Ian unclaimed Melvin’s claim — “end of shift”");
+  });
+});
+
+describe("claimRemarks — edits of a finished result (0176)", () => {
+  const edit = (p: Partial<ClaimEvent> = {}) =>
+    ev({ action: "result.amended", created_at: "2026-09-25T07:04:00.000Z", actor_name: "Ana", reason: "wrong unit", ...p });
+
+  it("reads 'Updated <when> by <who> — “reason”' and carries its own time", () => {
+    const [r] = claimRemarks([edit()]);
+    expect(r.text).toBe(`Updated ${manilaDateTime("2026-09-25T07:04:00.000Z")} by Ana — “wrong unit”`);
+    expect(r.notable).toBe(true);
+    expect(r.timeInText).toBe(true);
+  });
+
+  it("collapses the per-member copies of one combined-report edit into one line", () => {
+    const out = claimRemarks([edit({ test_request_id: T1 }), edit({ test_request_id: T2 })]);
+    expect(out).toHaveLength(1);
+  });
+
+  it("keeps claims and edits in one oldest-first story", () => {
+    const out = claimRemarks([edit(), ev({ created_at: "2026-09-24T08:31:00.000Z" })]);
+    expect(out.map((r) => r.text)).toEqual([
+      "Claimed by Melvin",
+      `Updated ${manilaDateTime("2026-09-25T07:04:00.000Z")} by Ana — “wrong unit”`,
+    ]);
+    expect(out[0].timeInText).toBeUndefined();
+  });
+
+  it("is never a handed-back event", () => {
+    expect(handedBack([edit()])).toBeNull();
+  });
+
+  it("drops the dash when no reason came back", () => {
+    expect(claimRemarks([edit({ reason: null, actor_name: null })])[0].text).toBe(
+      `Updated ${manilaDateTime("2026-09-25T07:04:00.000Z")} by someone`,
+    );
+  });
+});
+
+describe("claimRemarks — two distinct edits in one minute", () => {
+  it("keeps both (only per-member copies of one edit collapse)", () => {
+    const e = (at: string, tr = T1) =>
+      ev({ test_request_id: tr, action: "result.amended", created_at: at, actor_name: "Ana", reason: "typo" });
+    const out = claimRemarks([
+      e("2026-09-25T07:04:01.100000Z"),
+      e("2026-09-25T07:04:01.100000Z", T2),
+      e("2026-09-25T07:04:40.500000Z"),
+    ]);
+    expect(out).toHaveLength(2);
   });
 });

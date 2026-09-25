@@ -195,8 +195,11 @@ export const STAFF_NAV: StaffNavSection[] = [
         href: "/staff/queue",
         quicklink: {"lab":{"order":0}},
         label: "Queue",
-        description: "The medtech / radtech / sonographer work queue. Shows every test that's been ordered, grouped by status: waiting (sample not yet collected), in-progress (running), sign-off pending, or released. Click a row to enter results.",
-        roles: ["medtech", "pathologist", "admin", "xray_technician"],
+        description: "The medtech / radtech / sonographer work queue. Shows every test that's been ordered, grouped by status: waiting (sample not yet collected), in-progress (running), sign-off pending, or released. Click a row to enter results. Reception sees only today's released results here, with a Print result button for the patient's copy.",
+        // Reception is here for ONE tab: "Released today", to print the
+        // patient's copy (owner decision 2026-09-24). The page redirects it
+        // there and hides every bench tab and control.
+        roles: ["medtech", "pathologist", "admin", "xray_technician", "reception"],
       },
       {
         href: "/staff/results",
@@ -228,22 +231,6 @@ export const STAFF_NAV: StaffNavSection[] = [
         quicklink: {"admin":{"order":7,"routeName":true}},
         label: SECTION_NAME["/staff/admin/accounting/ap"],
         description: "Everything expense-related in one place. Use + Quick expense on the overview for already-paid same-day expenses (cash, GCash, owner OOP). Tabs inside: Overview (what's outstanding), Vendor Bills (invoices with due dates), Bill Payments (the outflows), Vendors (master list), Recurring Bills (monthly auto-bills).",
-        roles: ["admin"],
-      },
-      {
-        href: "/staff/admin/accounting/cogs/send-outs",
-        label: ROUTE_NAME["/staff/admin/accounting/cogs/send-outs"],
-        // Outside-Lab Performance lives UNDER this href
-        // (…/send-outs/vendor-performance), so exclude it or both items light
-        // at once on that page.
-        excludePrefixes: ["/staff/admin/accounting/cogs/send-outs/vendor-performance"],
-        description: "Costs for tests the clinic doesn't run in-house and sends to another lab (e.g. Hi Precision). Two tabs: Accrued (you billed the patient but the other lab's invoice isn't in yet) and True-ups (matching your estimate to the real bill once it arrives).",
-        roles: ["admin"],
-      },
-      {
-        href: "/staff/admin/accounting/cogs/send-outs/vendor-performance",
-        label: ROUTE_NAME["/staff/admin/accounting/cogs/send-outs/vendor-performance"],
-        description: "How each outside lab is doing: average cost per test, turnaround time, and how close your cost estimates were. Use it when deciding whether to switch outside labs or renegotiate rates.",
         roles: ["admin"],
       },
     ],
@@ -335,6 +322,12 @@ export const STAFF_NAV: StaffNavSection[] = [
         heading: "Books & Reports",
         items: [
           {
+            href: "/staff/admin/accounting/send-out-labs",
+            label: ROUTE_NAME["/staff/admin/accounting/send-out-labs"],
+            description: "How much each partner lab costs per month, what send-out tests earn against that, and how fast each lab returns results.",
+            roles: ["admin"],
+          },
+          {
             href: "/staff/admin/accounting/journal",
             quicklink: {"admin":{"order":4}},
             // The list page's "+ New journal entry" button reaches /journal/new,
@@ -413,7 +406,13 @@ export const STAFF_NAV: StaffNavSection[] = [
           {
             href: "/staff/admin/reports/deleted-entries",
             label: ROUTE_NAME["/staff/admin/reports/deleted-entries"],
-            description: "Every visit or test deleted from the queues — who deleted it, why, what it was worth, and whether it was restored. Only unpaid entries can be deleted; paid ones need a payment void first.",
+            description: "Every visit or test deleted from the queues — who deleted it, why, what it was worth, and whether it was restored. Only unpaid entries can be deleted; paid ones need a payment deleted first.",
+            roles: ["admin"],
+          },
+          {
+            href: "/staff/admin/reports/payment-changes",
+            label: ROUTE_NAME["/staff/admin/reports/payment-changes"],
+            description: "Every payment that was deleted, edited (wrong method or amount) or moved to another visit — who changed it, when, why, and what it became. Use it to spot patterns, like one cashier fixing methods often.",
             roles: ["admin"],
           },
           {

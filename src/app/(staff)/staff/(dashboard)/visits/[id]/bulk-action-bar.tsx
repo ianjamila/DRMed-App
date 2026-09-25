@@ -23,6 +23,12 @@ interface Props {
   // any selected result has already been seen (same message the per-row undo
   // dialog carries; bulk must not be a quiet bypass).
   viewedCountById: Record<string, number>;
+  // 0172 §5 / §9 R6: which of the visit's released rows share a finished
+  // combined report, and that report's full membership — display only, so
+  // the bar can show "this also undoes N more tests" before the operator
+  // confirms. The server expansion in undoReleaseSelectedAction is what
+  // actually decides what reverts.
+  reportScopeByTrId: Record<string, { memberIds: string[]; label: string }>;
 }
 
 const MEDIUM_OPTIONS: { value: ReleaseMedium; label: string }[] = [
@@ -50,6 +56,7 @@ export function BulkActionBar({
   consentOnFile,
   gateRequired,
   viewedCountById,
+  reportScopeByTrId,
 }: Props) {
   const {
     releaseIds,
@@ -82,7 +89,22 @@ export function BulkActionBar({
   // Undo is a corrective action, not a delivery event — it's never
   // payment-gated (a visit can go back to unpaid after release, e.g. a void).
   const unreleaseDisabled = unreleasePending || unreleaseCount === 0;
-  const viewedSelected = unreleaseIds.filter(
+
+  // Display-only preview of the server's whole-report expansion (0172 §5 /
+  // §9 R6): every combined report any selected row belongs to, deduplicated,
+  // so the operator sees "this also undoes N more tests" before confirming.
+  // undoReleaseSelectedAction re-derives and enforces this itself — this is
+  // never what actually decides what reverts.
+  const touchedReports = new Map<string, { memberIds: string[]; label: string }>();
+  const expandedIds = new Set<string>(unreleaseIds);
+  for (const trId of unreleaseIds) {
+    const scope = reportScopeByTrId[trId];
+    if (!scope) continue;
+    touchedReports.set(scope.label + ":" + scope.memberIds.join(","), scope);
+    for (const id of scope.memberIds) expandedIds.add(id);
+  }
+  const extraFromReports = expandedIds.size - unreleaseCount;
+  const viewedSelected = Array.from(expandedIds).filter(
     (trId) => (viewedCountById[trId] ?? 0) > 0,
   ).length;
 
@@ -201,13 +223,22 @@ export function BulkActionBar({
 
         {unreleaseCount > 0 ? (
           <div className="flex items-center gap-1.5">
+            {touchedReports.size > 0 ? (
+              <span className="rounded-md border border-violet-300 bg-violet-50 px-2 py-1 text-[11px] font-semibold text-violet-900">
+                {Array.from(touchedReports.values())
+                  .map((r) => `the whole ${r.label} report (${r.memberIds.length} tests)`)
+                  .join(", ")}{" "}
+                {touchedReports.size === 1 ? "will" : "will each"} be undone as
+                a whole{extraFromReports > 0 ? ` — ${extraFromReports} more test${extraFromReports === 1 ? "" : "s"} beyond your selection` : ""}.
+              </span>
+            ) : null}
             {viewedSelected > 0 ? (
               <span className="rounded-md border border-amber-300 bg-amber-50 px-2 py-1 text-[11px] font-semibold text-amber-800">
                 {viewedSelected === 1
-                  ? unreleaseCount === 1
+                  ? expandedIds.size === 1
                     ? "Patient already viewed the selected result — undoing does not un-see it."
-                    : `Patient already viewed 1 of the ${unreleaseCount} selected results — undoing does not un-see it.`
-                  : `Patient already viewed ${viewedSelected} of the ${unreleaseCount} selected results — undoing does not un-see them.`}
+                    : `Patient already viewed 1 of the ${expandedIds.size} affected results — undoing does not un-see it.`
+                  : `Patient already viewed ${viewedSelected} of the ${expandedIds.size} affected results — undoing does not un-see them.`}
               </span>
             ) : null}
             <input

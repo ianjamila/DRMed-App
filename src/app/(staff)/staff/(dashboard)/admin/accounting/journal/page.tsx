@@ -81,7 +81,6 @@ const SOURCE_OPTIONS: { value: string; label: string }[] = [
   { value: "history_import", label: "History import (12.B)" },
   { value: "reversal", label: "Reversal" },
   { value: "doctor_pf_disbursement", label: "Doctor PF payout" },
-  { value: "cogs_send_out", label: "COGS send-out" },
 ];
 
 interface SearchProps {

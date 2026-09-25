@@ -3,6 +3,7 @@ import type { StaffSession } from "@/lib/auth/require-staff";
 import {
   canActOnResult,
   canSeeLine,
+  canViewResultPdf,
   roleCanActOnResults,
 } from "./line-visibility";
 
@@ -178,6 +179,54 @@ describe("the package-header section is a deny for every bench role", () => {
   it("is still see-able by reception, admin and pathologist", () => {
     for (const role of ["reception", "admin", "pathologist"] as const) {
       expect(canSeeLine(role, "package")).toBe(true);
+    }
+  });
+});
+
+describe("canViewResultPdf", () => {
+  const STATUSES = ["requested", "in_progress", "result_uploaded", "ready_for_release", "released", "cancelled"];
+
+  it("lets reception open a RELEASED lab or imaging result, so the counter can print it", () => {
+    for (const section of [...MEDTECH_SECTIONS, ...XRAY_SECTIONS]) {
+      expect(canViewResultPdf("reception", { section, status: "released", kind: "lab_test", reportReleased: true })).toBe(true);
+    }
+  });
+
+  it("keeps reception out of every result that has not been released", () => {
+    for (const status of STATUSES.filter((s) => s !== "released")) {
+      for (const section of [...MEDTECH_SECTIONS, ...XRAY_SECTIONS]) {
+        expect(canViewResultPdf("reception", { section, status, kind: "lab_test", reportReleased: true })).toBe(false);
+      }
+    }
+  });
+
+  it("never opens a doctor line for reception — a consultation has no result file", () => {
+    for (const kind of ["doctor_consultation", "doctor_procedure"]) {
+      expect(canViewResultPdf("reception", { section: null, status: "released", kind, reportReleased: true })).toBe(false);
+    }
+    // An unknown kind is not proof of a lab line.
+    expect(canViewResultPdf("reception", { section: "chemistry", status: "released", kind: null, reportReleased: true })).toBe(false);
+  });
+
+  it("keeps reception out of a shared report while ANY test on it is unreleased", () => {
+    // FBS released, Creatinine on the same consolidated PDF still pending or
+    // withdrawn: printing FBS would print Creatinine's values too.
+    expect(
+      canViewResultPdf("reception", { section: "chemistry", status: "released", kind: "lab_test", reportReleased: false }),
+    ).toBe(false);
+  });
+
+  it("leaves every lab role exactly where canActOnResult puts it, at every status", () => {
+    for (const role of ROLES.filter((r) => r !== "reception")) {
+      for (const section of [...MEDTECH_SECTIONS, ...XRAY_SECTIONS, SOME_OTHER_SECTION, null]) {
+        for (const status of STATUSES) {
+          for (const reportReleased of [true, false]) {
+            expect(canViewResultPdf(role, { section, status, kind: "lab_test", reportReleased })).toBe(
+              canActOnResult(role, section),
+            );
+          }
+        }
+      }
     }
   });
 });

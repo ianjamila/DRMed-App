@@ -4,6 +4,7 @@ import { requireAdminStaff } from "@/lib/auth/require-admin";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { todayManilaISODate } from "@/lib/dates/manila";
 import { VarianceRow } from "./variance-row";
+import { LEDGER_TOTAL_STATUSES } from "@/lib/accounting/ledger-status";
 
 export const metadata = { title: "Budget vs Actual" };
 export const dynamic = "force-dynamic";
@@ -98,7 +99,7 @@ export default async function VariancePage({ searchParams }: SearchProps) {
           chart_of_accounts!inner ( id, normal_balance )
         `,
         )
-        .eq("journal_entries.status", "posted")
+        .in("journal_entries.status", LEDGER_TOTAL_STATUSES)
         .gte("journal_entries.posting_date", yearStart)
         .lte("journal_entries.posting_date", yearEnd)
         .in("chart_of_accounts.type", ["revenue", "contra_revenue", "expense"])
@@ -164,7 +165,8 @@ export default async function VariancePage({ searchParams }: SearchProps) {
             Budget vs Actual
           </h1>
           <p className="mt-1 max-w-2xl text-sm text-[color:var(--color-brand-text-soft)]">
-            Annual budget per account compared to YTD actual posted JEs.
+            Annual budget per account compared to YTD actual posted (and
+            reversed-pair) JEs.
             YTD budget pro-rates the annual figure by elapsed months
             ({monthsElapsed}/12 = {(proration * 100).toFixed(0)}%).
           </p>
@@ -211,7 +213,7 @@ export default async function VariancePage({ searchParams }: SearchProps) {
         <SummaryTile
           label="YTD actual"
           value={PHP.format(totalActual)}
-          hint="Posted JEs only"
+          hint="Posted + reversed-pair JEs"
         />
         <SummaryTile
           label="YTD variance"

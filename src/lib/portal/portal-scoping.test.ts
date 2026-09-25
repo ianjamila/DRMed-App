@@ -35,6 +35,9 @@ const ADMIN_ALLOWLIST = new Set([
 const REQUIRE_PATIENT_CLIENT = [
   "(authenticated)/page.tsx",
   "(authenticated)/visits/[id]/page.tsx",
+  "(authenticated)/visits/[id]/statement/page.tsx",
+  "(authenticated)/visits/[id]/statement/print-action.ts",
+  "(authenticated)/visits/[id]/statement/email-action.ts",
   "(authenticated)/data-export/route.ts",
   "(authenticated)/actions.ts",
 ];

@@ -27,6 +27,7 @@ type Vendor = {
   name: string;
   tin: string | null;
   is_active: boolean;
+  is_partner_lab: boolean;
   outstanding_php: number;
   ytd_spend_php: number;
   last_bill_date: string | null;
@@ -208,6 +209,11 @@ export function VendorsIndexClient({ initialVendors }: { initialVendors: Vendor[
                   >
                     {v.name}
                   </Link>
+                  {v.is_partner_lab && (
+                    <span className="ml-2 inline-block rounded bg-[color:var(--color-brand-bg)] px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-[color:var(--color-brand-navy)]">
+                      Partner lab
+                    </span>
+                  )}
                   {!v.is_active && (
                     <span className="ml-2 text-xs text-gray-500">(inactive)</span>
                   )}

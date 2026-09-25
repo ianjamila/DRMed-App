@@ -359,11 +359,14 @@ export default async function QueueTestDetailPage({ params }: Props) {
   //                      uploaded-PDF result already in place
   //   upload-form      → send-out OR no template; editable
   //   nothing          → claimable / no actions
+  // A FINALISED structured result is changed only through Edit (versioned,
+  // 0172); the entry form is for drafts. The draft/finalise actions and the
+  // database refuse it too.
   const canStructured =
     editable &&
     templateLayout != null &&
     templateParams.length > 0 &&
-    (!result || result.generation_kind === "structured");
+    (!result || (result.generation_kind === "structured" && !result.finalised_at));
   const canUpload =
     editable &&
     !canStructured &&
@@ -482,9 +485,6 @@ export default async function QueueTestDetailPage({ params }: Props) {
               {svc.requires_signoff
                 ? "After Finalise the test moves to result_uploaded — pathologist sign-off required before release."
                 : "After Finalise the test moves to ready_for_release — reception can release it once the visit is paid."}
-              {result?.finalised_at
-                ? " Editing a finalised result will re-render the PDF on the next Finalise."
-                : ""}
             </p>
             <div className="mt-5">
               <StructuredResultForm
@@ -553,6 +553,7 @@ export default async function QueueTestDetailPage({ params }: Props) {
               {amendable ? (
                 <AmendResultForm
                   testRequestId={test.id}
+                  expectedAmendmentCount={result.amendment_count}
                   generationKind={
                     result.generation_kind === "structured"
                       ? "structured"
@@ -566,7 +567,12 @@ export default async function QueueTestDetailPage({ params }: Props) {
                           layout: templateLayout,
                           params: templateParams,
                           patientSex: normalisePatientSex(patient.sex),
-                          patientAgeMonths: calculateAgeMonths(patient.birthdate),
+                          // Ranges shown while editing are the ones the report
+                          // was issued under (its original date), as on the PDF.
+                          patientAgeMonths: calculateAgeMonths(
+                            patient.birthdate,
+                            result.finalised_at ? new Date(result.finalised_at) : new Date(),
+                          ),
                           initialValues,
                           currentImageFilename: result.image_filename ?? null,
                         }
@@ -582,7 +588,17 @@ export default async function QueueTestDetailPage({ params }: Props) {
             {amendments.length > 0 ? (
               <div className="mt-5 rounded-md border border-[color:var(--color-brand-bg-mid)] bg-[color:var(--color-brand-bg)] p-3">
                 <p className="text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
-                  Amendment history
+                  Edit history
+                </p>
+                <p className="mt-1 text-xs">
+                  <a
+                    href={`/staff/results/${test.id}/pdf`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="font-semibold text-[color:var(--color-brand-cyan)] hover:underline"
+                  >
+                    Current version (v{result.amendment_count + 1})
+                  </a>
                 </p>
                 <ul className="mt-2 grid gap-2 text-xs">
                   {amendments.map((a) => (
@@ -598,9 +614,16 @@ export default async function QueueTestDetailPage({ params }: Props) {
                       <p className="mt-1 text-[color:var(--color-brand-text-mid)]">
                         {a.reason}
                       </p>
-                      <p className="mt-1 font-mono text-[10px] text-[color:var(--color-brand-text-soft)]">
-                        Replaced version uploaded{" "}
-                        {manilaDateTime(a.prior_uploaded_at)}
+                      <p className="mt-1 text-[10px] text-[color:var(--color-brand-text-soft)]">
+                        <a
+                          href={`/staff/results/${test.id}/pdf?version=${a.amendment_seq}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="font-semibold text-[color:var(--color-brand-cyan)] hover:underline"
+                        >
+                          View replaced version (v{a.amendment_seq})
+                        </a>{" "}
+                        · uploaded {manilaDateTime(a.prior_uploaded_at)}
                       </p>
                     </li>
                   ))}

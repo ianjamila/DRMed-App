@@ -8,8 +8,9 @@ import {
   type RateKind,
   type WtBracketRow,
 } from "./rates-client";
+import { ROUTE_NAME } from "@/lib/staff/route-names";
 
-export const metadata = { title: "Statutory rates" };
+export const metadata = { title: ROUTE_NAME["/staff/admin/payroll/rates"] };
 export const dynamic = "force-dynamic";
 
 const ALL_KINDS: ReadonlySet<RateKind> = new Set<RateKind>([
@@ -138,7 +139,7 @@ export default async function PayrollRatesPage({ searchParams }: PageProps) {
     <div className="mx-auto max-w-[1400px] px-4 py-8 sm:px-6 lg:px-8">
       <header className="mb-6">
         <h1 className="font-heading text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
-          Statutory rates
+          {ROUTE_NAME["/staff/admin/payroll/rates"]}
         </h1>
         <p className="mt-1 text-sm text-[color:var(--color-brand-text-soft)]">
           SSS, PhilHealth, Pag-IBIG and Withholding Tax brackets used by the

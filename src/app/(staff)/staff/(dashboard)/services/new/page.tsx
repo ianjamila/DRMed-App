@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { requireAdminStaff } from "@/lib/auth/require-admin";
+import { createAdminClient } from "@/lib/supabase/admin";
 import { ServiceForm } from "../service-form";
 import { Panel } from "@/components/ui/panel";
 
@@ -9,6 +10,15 @@ export const metadata = {
 
 export default async function NewServicePage() {
   await requireAdminStaff();
+
+  const admin = createAdminClient();
+  const { data: partnerLabs } = await admin
+    .from("vendors")
+    .select("id, name")
+    .eq("is_partner_lab", true)
+    .eq("is_active", true)
+    .order("name");
+
   return (
     <div className="mx-auto max-w-3xl px-4 py-8 sm:px-6 lg:px-8">
       <Link
@@ -21,7 +31,7 @@ export default async function NewServicePage() {
         New service
       </h1>
       <Panel className="mt-6 p-6">
-        <ServiceForm />
+        <ServiceForm partnerLabs={partnerLabs ?? []} />
       </Panel>
     </div>
   );

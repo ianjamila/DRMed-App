@@ -18,25 +18,25 @@ Key reference artifacts:
 - `IMPLEMENTATION_PLAN.md` — original phase plan (historical; cross-check before relying on it)
 - `README.md` — operational setup
 - `.env.example` — env-var inventory
-- `docs/drmed-user-guide.html` — the staff + patient user guide (v2.14, 24 Sep 2026): every
+- `docs/drmed-user-guide.html` — the staff + patient user guide (v2.23, 25 Sep 2026): every
   screen, label and blocked-message the app shows, checked against the code. Update it in the
   PR that changes a flow it describes.
 - `docs/superpowers/specs/` and `docs/superpowers/audits/` — design specs and audits for
   every post-1.0 programme (partner revisions, release lifecycle, group templates, EOD
   denomination count…). Read the spec before re-deriving a design decision.
 
-Migration ledger: **prod head = 0160** (`queue_claim_remarks` — the lab queue Remarks reader, #214,
-pushed by Claude before merge and verified by object 2026-09-24). **0159** (`retire_send_out_accrual`,
-#211) and **0158** (`resolve_patient_referral_source`, #206) are applied. **0157**
-(`online_booking_staff_alert`) and **0156** (`contact_message_form_location`, #200) are applied. **0155**
-(`staff_alert_recipients`, #203) was pushed AFTER 0156 with `db push --include-all` (0156 landed
-first from a parallel branch) and verified by object 2026-09-24; **0154** (#198) and **0153**
-(#196) are applied and verified. **0151** (`rls_initplan_and_policy_consolidation`,
-#192) is also applied and verified: 159 public policies, zero unwrapped helper calls, and no
-unexpected policyless tables. Prod also has **0163** (`drm_id_width`) out of order, so 0161/0162
-land later with `db push --include-all`. **0170** (`sheet_sync_foundation`, P0062–P0064, this PR)
-exists only on `feat/sheet-sync` — not yet applied to prod. Apply it (`--include-all`, since
-later numbers are already live out of order) right before this PR merges, per the plan's Task 19+.
+Migration ledger: **prod head = 0177** (`statement_email_claim`, #212) as of 2026-09-25, plus
+**0176** (`result_patient_download_and_remarks`, #226) once pushed — it lands OUT OF ORDER after 0177,
+so it needs `db push --include-all`. The prod ledger is not contiguous (no 0165, 0167–0170, 0176 yet):
+**0175** (`patient_billed_catalog_read`) and **0177** (#212), **0174** (`correct_payment_stale_guard`,
+#224), **0173** (`ledger_reversal_pairs`, #222), **0172** (`result_edit_commit`, #223 — applied
+after 0173 with `--include-all`), **0171**, **0166** (`drop_send_out_accrual_tables`, #211, pushed
+after #211 deployed), **0164**, **0163** and **0159**–**0162** are all applied and verified by object.
+Numbers 0165 (retired), 0167 and 0170 are held by open branches — `npm run claim -- list`. Earlier
+history: **0160** (`queue_claim_remarks`, #214) and **0151** (`rls_initplan_and_policy_consolidation`,
+#192: 159 public policies, zero unwrapped helper calls) are applied and verified.
+**0170** (`sheet_sync_foundation`, P0062–P0064) exists only on `feat/sheet-sync` — not yet on prod.
+Apply it with `db push --include-all` (later numbers are already live) right before that PR merges.
 
 **Rule — claim a number before you use it: `npm run claim -- migration` / `npm run claim -- pcode <n>`.**
 Several sessions work here at once, each in its own worktree, and picking "the next number" by
@@ -100,6 +100,7 @@ Compliance target: **Philippine Data Privacy Act (RA 10173)**. Locale: en-PH, As
 | `supabase start` | Run a local Supabase stack (needs Docker) — the only "staging" |
 | `npm run seed:test` / `seed:services` / `seed:physicians` / `seed:hmo` / `seed:templates` / `seed:signatures` / etc. | Idempotent seed scripts — target the **local** stack by default (see below) |
 | `npm run smoke:results` / `smoke:chemistry` / `smoke:dashboards` | Render-pipeline / consolidated-chemistry / dashboard smoke tests |
+| `npm run smoke:print` | Every staff print surface in real Chrome with scrollbars on (local stack; needs a dev server — `APP_BASE=http://localhost:3007 npm run smoke:print`). Seeds and deletes its own data; checks clip, repeating `<tfoot>`, required text and PDF page count, plus the statement's Email-to-patient, Patient AR link and the patient's own portal statement (start the dev server with `SUPABASE_JWT_SECRET` from `supabase status -o env`) |
 
 There is **no PR-triggered CI** — `.github/workflows/` holds only scheduled jobs:
 `db-backup.yml` and `cron-watchdog.yml` (independent jobs for Vercel cron heartbeats
@@ -173,11 +174,11 @@ A Postgres trigger on `test_requests` (`enforce_payment_before_release`) blocks 
 Other DB-side automation to be aware of (details and P-codes in the `drmed-migrations` / `drmed-payments` skills):
 - `payments` insert (and void, 0111) recalculates `visits.paid_php` and `visits.payment_status`; `'waived'` is preserved.
 - Linking a result to a test (insert on `result_test_requests`) auto-flips `test_requests.status` from `in_progress` → `result_uploaded` (or `ready_for_release` when no pathologist sign-off is configured). For structured results the same flip also happens when `results.finalised_at` transitions from NULL → not-NULL.
-- Release also fires the GL bridge (`bridge_test_request_released`: revenue JE + doctor PF accrual; P0034 when a PF-carrying doctor line has no attending physician) and the consent gate (`enforce_consent_before_release`, ships OFF).
+- Release also fires the GL bridge (`bridge_test_request_released`: revenue JE + doctor PF accrual — no send-out cost since 0159, that is the "Send Out" expense; P0034 when a PF-carrying doctor line has no attending physician) and the consent gate (`enforce_consent_before_release`, ships OFF).
 - **Soft delete (0125):** `visits` and `test_requests` carry `deleted_at/by/reason`; guard triggers P0042–P0046 decide deletability (only `unpaid`) and block payments/status changes on deleted visits. **Every read of those tables filters `deleted_at is null`.** **0147 adds P0050** to both delete guards: an entry carrying a non-voided `hmo_claim_item` is money already billed to an HMO, and since 0146 the HMO reports skip deleted rows, so deleting it would drop a real receivable out of AR. Reachable via undo-release — a claimed line goes back to `ready_for_release`, 0110 does not void its claim, and 0133 keeps an HMO visit `unpaid` forever, so neither P0042 nor P0043 fires. `src/lib/visits/deletion.ts` mirrors it for the UI (`hasOpenHmoClaim`, reason `hmo_claimed`) and `deletion.test.ts` pins the migration's SQL text so the two can't drift.
 - Package headers (0040) auto-promote to `ready_for_release`; components are ₱0 rows with `parent_id`. Multi-row inserts list headers before components.
 - The statutory Senior/PWD discount row is locked at 20% (P0047, 0128); the EOD denomination breakdown must tie to the counted total (P0048, 0132).
-- Every `raise exception` with a `P00NN` code needs a translation in `src/lib/accounting/pg-errors.ts` (in use on main as of 2026-09-25: P0001–P0034, P0040–P0054, P0065–P0067; the gap P0055–P0064 is open-branch claims not yet merged, including this PR's P0062–P0064 — another sync is running, lease lost, review item no longer open — claim with `npm run claim -- pcode <n>` / peek the next free one with `npm run claim -- peek pcode`, never pick by hand).
+- Every `raise exception` with a `P00NN` code needs a translation in `src/lib/accounting/pg-errors.ts` (in use on main: P0001–P0034, P0040–P0054, P0065–P0067, and P0062–P0064 on `feat/sheet-sync` (sheet sync busy / lease lost / review item no longer open); open branches hold more — claim with `npm run claim -- pcode <n>`, never pick by hand).
 - **And every RUNTIME `raise exception` needs an errcode at all.** A bare raise is untranslatable by construction — `translatePgError` has no key to match, so the `default:` branch shows the user the raw Postgres string. Use a `P00NN` (and register it above) or a standard SQLSTATE like `check_violation` where that is genuinely what it is. Post-condition asserts inside a `do $ … $` block are exempt — they abort a deploy, never a user. `pg-error-coverage.test.ts` enforces both rules and freezes the three pre-existing bare raises — all internal-consistency guards — so the set can only shrink.
 
 ### Three Supabase clients with strict separation
@@ -235,6 +236,7 @@ All Server Actions return `{ ok: true, data } | { ok: false, error }`. User-faci
 | Discount arithmetic (form preview AND server recompute) | `src/lib/pricing/discounts.ts` |
 | Shared visit actions (queue delete/restore, PIN re-issue) | `src/lib/actions/visits/{queue-deletion,reissue-pin}.ts` |
 | Cash denominations, amount-in-words, PF labels, Expenses (AP) bill-status + payment-method labels, chart-of-accounts grouping + same-type parent rule | `src/lib/accounting/{cash-denominations,amount-in-words,pf-labels,ap-labels,account-groups}.ts` |
+| Send Out expenses and partner labs: the "Which lab?" rule (`sendOutLabRule`), `SEND_OUT_CATEGORY` / 6420, `loadPartnerLabs` / `verifyPartnerLab`; the Send-out Labs report pivots | `src/lib/accounting/partner-labs{,.server}.ts`, `src/lib/reports/send-out-labs.ts` |
 | Words for a stored snake_case code with no label yet (`humaniseCode`) — label maps fall back to it so a raw code never reaches a staff screen | `src/lib/format/humanise-code.ts` |
 | CSV escaping (one copy) | `src/lib/csv/escape.ts` |
 | Results-archive tab config and per-test status words (`testStatusLabel`, shared with the portal), template drift checks | `src/lib/results/{status-filter,template-health}.ts` |
@@ -274,6 +276,7 @@ All Server Actions return `{ ok: true, data } | { ok: false, error }`. User-faci
 - **Print surfaces** each append a named `@page` + `@media print` block at the tail of `src/app/globals.css`; two print PRs in flight always conflict there and the resolution is keep both.
 - **`<input pattern>`** is compiled with the RegExp `v` flag — a bare trailing `-` in a class makes the whole pattern silently ignored; write `[a-z0-9\-]+`.
 - **A repo-wide guard must cover read paths too**, not only `--commit` branches (a dry-run that reads prod PII is still a disclosure).
+- **Ledger totals count posted + reversed; posted-only is for finding the live entry, never for sums.** Reversing an entry marks the original `'reversed'` and posts a mirrored `'posted'` entry — a `status = 'posted'` filter on a report keeps the mirror and drops the original, subtracting the amount twice instead of netting to zero (0173). Every report/aggregation filters `status in ('posted', 'reversed')` (`LEDGER_TOTAL_STATUSES`, `src/lib/accounting/ledger-status.ts`); an operational lookup that finds "the live entry to reverse/link" stays posted-only.
 
 ## Conventions
 

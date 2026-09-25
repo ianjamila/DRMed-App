@@ -13,10 +13,9 @@ export const ROUTE_NAME: Record<string, string> = {
   "/staff/results": "Results",
   "/staff/admin/accounting/hmo-claims": "HMO Claims",
   "/staff/admin/accounting/ap": "Expenses Overview",
-  "/staff/admin/accounting/cogs/send-outs": "Outside-Lab Costs",
-  "/staff/admin/accounting/cogs/send-outs/vendor-performance": "Outside-Lab Performance",
   "/staff/admin/accounting/pf-payouts": "Pay Doctors",
   "/staff/admin/accounting/pf-ytd-summary": "Doctor Pay (This Year)",
+  "/staff/admin/accounting/send-out-labs": "Send-out Labs",
   "/staff/admin/payroll/runs": "Run Payroll",
   "/staff/admin/payroll/periods": "Pay Periods",
   "/staff/admin/payroll/employees": "Employees",
@@ -38,6 +37,7 @@ export const ROUTE_NAME: Record<string, string> = {
   "/staff/admin/reports/stuck-tests": "Stuck Tests",
   "/staff/admin/reports/undone-releases": "Undone Releases",
   "/staff/admin/reports/deleted-entries": "Deleted Queue Entries",
+  "/staff/admin/reports/payment-changes": "Payment Changes",
   "/staff/admin/reports/patients-without-consent": "Patients Without Consent",
   "/staff/admin/accounting": "External Sync Status",
   "/staff/admin/closures": "Closures",
@@ -112,6 +112,7 @@ export const ROUTE_NAME: Record<string, string> = {
   "/staff/queue/consolidated/[visitId]/[groupId]": "Chemistry report",
   "/staff/visits/[id]": "Visit",
   "/staff/visits/[id]/receipt": "Receipt",
+  "/staff/visits/[id]/statement": "Statement",
   "/staff/visits/group/[groupId]/receipt": "Combined receipt"
 };
 

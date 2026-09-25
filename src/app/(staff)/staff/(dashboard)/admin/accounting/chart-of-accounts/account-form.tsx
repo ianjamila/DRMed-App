@@ -5,6 +5,12 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import type { CoaResult } from "./actions";
 import { accountTypeGroupLabel, groupAccountsByType } from "@/lib/accounting/account-groups";
+import {
+  StableCheckbox,
+  StableInput,
+  StableTextarea,
+  useResetSafeSelect,
+} from "@/components/forms/stable-fields";
 
 interface AccountDefaults {
   id?: string;
@@ -50,7 +56,14 @@ export function AccountForm({
   const router = useRouter();
   const [type, setType] = useState(defaults.type);
   const [parentId, setParentId] = useState(defaults.parent_id ?? "");
+  // React 19 resets the form when the action returns, so a failed save used
+  // to put back every value typed. Text fields, tick-boxes and dropdowns use the
+  // shared reset-safe helpers so they keep what was entered.
   const parentGroups = useMemo(() => groupAccountsByType(parents), [parents]);
+  // Type and Parent stay local state (changing Type clears a Parent that no
+  // longer fits), so they take the reset-safe hook directly.
+  const typeRef = useResetSafeSelect(type);
+  const parentRef = useResetSafeSelect(parentId);
 
   // A parent must be the same type (the server enforces it too), so changing
   // Type drops a parent that no longer fits rather than leaving a choice the
@@ -70,7 +83,7 @@ export function AccountForm({
       ) : null}
 
       <Field label="Code" hint={mode === "edit" ? "Read-only — codes are stable identifiers." : "e.g. 4100"}>
-        <input
+        <StableInput
           type="text"
           name="code"
           required
@@ -81,7 +94,7 @@ export function AccountForm({
       </Field>
 
       <Field label="Name">
-        <input
+        <StableInput
           type="text"
           name="name"
           required
@@ -92,6 +105,7 @@ export function AccountForm({
 
       <Field label="Type">
         <select
+          ref={typeRef}
           name="type"
           required
           value={type}
@@ -111,6 +125,7 @@ export function AccountForm({
         hint={`Used for roll-up hierarchy. Only ${accountTypeGroupLabel(type)} accounts can be picked — a parent must be the same type as this account.`}
       >
         <select
+          ref={parentRef}
           name="parent_id"
           value={parentId}
           onChange={(e) => setParentId(e.target.value)}
@@ -130,7 +145,7 @@ export function AccountForm({
       </Field>
 
       <Field label="Description (optional)">
-        <textarea
+        <StableTextarea
           name="description"
           rows={3}
           defaultValue={defaults.description ?? ""}
@@ -141,7 +156,7 @@ export function AccountForm({
       {mode === "edit" ? (
         <Field label="Active">
           <div className="inline-flex min-h-[44px] items-center gap-2">
-            <input type="checkbox" name="is_active" defaultChecked={defaults.is_active} value="true" />
+            <StableCheckbox name="is_active" defaultChecked={defaults.is_active} value="true" />
             <span className="text-sm">Account is active and accepts new postings</span>
           </div>
         </Field>
@@ -152,8 +167,7 @@ export function AccountForm({
         hint="When enabled, this account appears in the HMO Mark-as-paid dropdown as a payment method. Use for cash/bank/wallet accounts that receive HMO settlements."
       >
         <div className="inline-flex min-h-[44px] items-center gap-2">
-          <input
-            type="checkbox"
+          <StableCheckbox
             name="is_settlement_destination"
             defaultChecked={defaults.is_settlement_destination ?? false}
             value="true"

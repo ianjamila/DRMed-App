@@ -207,3 +207,57 @@ export function startingPick(
   if (!account || account.code === SUSPENSE_CODE) return "";
   return account.id;
 }
+
+/**
+ * Mirrors `resolve_cash_adjustment_account` (0043): the account code an
+ * `eod_cash_adjustments` row will actually post to, whether or not the
+ * account picker is even shown. An explicit contra pick always wins;
+ * otherwise the routing row decides — unless it requires a staff pick (and
+ * `startingPick` above never pre-fills one), in which case the DB posts to
+ * 9999 Suspense rather than the mapped default.
+ *
+ * Lets a caller (e.g. "is this a Send Out payout?") test the account the
+ * database will actually use, not just whatever a hidden picker happens to
+ * hold — `staffPicksAccount(kind, rule) === false` means no picker renders
+ * at all, so `contraAccountId` is always empty for that kind.
+ */
+export function effectiveCashAccountCode(
+  contraAccountId: string | null | undefined,
+  rule: CashRule | undefined,
+  accounts: readonly RoutingAccount[],
+): string | undefined {
+  if (contraAccountId) return accounts.find((a) => a.id === contraAccountId)?.code;
+  if (!rule || rule.requires_user_choice) return SUSPENSE_CODE;
+  return accounts.find((a) => a.id === rule.account_id)?.code;
+}
+
+/** A chart row as the SERVER sees it — including switched-off accounts, which
+ *  the Cash Drawer page never sends to the browser. */
+export type CashAccountRow = { id: string; code: string; is_active: boolean };
+
+/** Shown when the Money Routing default for a kind points at a switched-off
+ *  account. Reception has no picker to route around it, so the fix is an admin's. */
+export const INACTIVE_ROUTED_ACCOUNT_ERROR =
+  "This payout is set to post to an account that has been switched off. Ask an admin to fix it in Money Routing, then try again.";
+
+/**
+ * Server-side twin of `effectiveCashAccountCode`: the same resolution, but over
+ * rows that may be inactive, so it can also say whether the effective account
+ * is switched off. The browser only receives ACTIVE accounts, so for an
+ * inactive routed default it resolves nothing and shows no "Which lab?"
+ * picker — the server must then answer with `INACTIVE_ROUTED_ACCOUNT_ERROR`,
+ * not "Pick which lab you paid", which reception has no way to do.
+ */
+export function resolveCashAdjustmentAccount(
+  contraAccountId: string | null | undefined,
+  rule: CashRule | undefined,
+  rows: readonly CashAccountRow[],
+): { code: string | undefined; inactive: boolean } {
+  const pick = (id: string) => {
+    const row = rows.find((a) => a.id === id);
+    return { code: row?.code, inactive: row ? !row.is_active : false };
+  };
+  if (contraAccountId) return pick(contraAccountId);
+  if (!rule || rule.requires_user_choice) return { code: SUSPENSE_CODE, inactive: false };
+  return pick(rule.account_id);
+}

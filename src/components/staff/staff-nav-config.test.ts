@@ -281,23 +281,6 @@ describe("Visit Records highlighting", () => {
   });
 });
 
-describe("Outside-Lab Costs vs Outside-Lab Performance", () => {
-  it("lights only Outside-Lab Performance on the vendor-performance route", () => {
-    expect(
-      activeHrefs("/staff/admin/accounting/cogs/send-outs/vendor-performance"),
-    ).toEqual(["/staff/admin/accounting/cogs/send-outs/vendor-performance"]);
-  });
-
-  it("lights only Outside-Lab Costs on the send-outs tabs", () => {
-    expect(activeHrefs("/staff/admin/accounting/cogs/send-outs")).toEqual([
-      "/staff/admin/accounting/cogs/send-outs",
-    ]);
-    expect(activeHrefs("/staff/admin/accounting/cogs/send-outs/true-ups")).toEqual([
-      "/staff/admin/accounting/cogs/send-outs",
-    ]);
-  });
-});
-
 describe("activePrefixes", () => {
   it("keeps Expenses lit across every AP tab and dark on unrelated admin routes", () => {
     const expenses = itemByHref("/staff/admin/accounting/ap");
@@ -376,6 +359,9 @@ describe("visible hrefs per role", () => {
       "/staff/visits/queue",
       "/staff/visits",
       "/staff/payments/cash-drawer",
+      // Lab & Imaging › Queue, which for reception is only "Released today"
+      // — where it prints the patient's copy (owner decision 2026-09-24).
+      "/staff/queue",
       "/staff/profile",
       "/staff/payslips",
     ]);
@@ -482,7 +468,7 @@ const NAME_EXCEPTIONS: NameException[] = [
   },
   ...[NAV_FILE].map((file) => ({
     file, href: "/staff/queue", label: "Queue",
-    why: "Queue is a shared role-neutral entry point: queueTitleForRole correctly renders Imaging queue for x-ray staff and Lab queue for medtechs.",
+    why: "Queue is a shared role-neutral entry point: queueTitleForRole correctly renders Imaging queue for x-ray staff, Lab queue for medtechs and Released results for reception (which sees only the Released today tab).",
   })),
 ];
 

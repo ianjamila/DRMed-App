@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import {
+  ResetSafeSelect,
   StableInput,
   StableTextarea,
 } from "@/components/forms/stable-fields";
@@ -40,7 +41,7 @@ export function PaymentForm({ visitId, balance }: Props) {
 
       <div className="grid gap-1.5">
         <Label htmlFor="method">Method</Label>
-        <select
+        <ResetSafeSelect
           id="method"
           name="method"
           required
@@ -53,7 +54,7 @@ export function PaymentForm({ visitId, balance }: Props) {
               {m.label}
             </option>
           ))}
-        </select>
+        </ResetSafeSelect>
       </div>
 
       {isGiftCode ? (

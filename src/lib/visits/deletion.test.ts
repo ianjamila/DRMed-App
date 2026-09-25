@@ -3,8 +3,10 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   hasOpenHmoClaim,
+  sharedReportTestIds,
   testDeletability,
   visitDeletability,
+  type ResultLinkRow,
   type TestDeleteShape,
   type VisitDeleteShape,
 } from "./deletion";
@@ -27,6 +29,7 @@ function test_(overrides: Partial<TestDeleteShape> = {}): TestDeleteShape {
     visit_payment_status: "unpaid",
     visit_deleted_at: null,
     has_open_hmo_claim: false,
+    has_shared_report: false,
     ...overrides,
   };
 }
@@ -194,6 +197,145 @@ describe("hasOpenHmoClaim", () => {
 
   it("is true when any batch is still open", () => {
     expect(hasOpenHmoClaim([{ batch_voided: true }, { batch_voided: false }])).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 0172 / P0067 — a test on a finished combined report cannot be deleted alone
+// ---------------------------------------------------------------------------
+
+describe("a finished combined report's members block deletion", () => {
+  it("blocks a line that shares a finished report with another test", () => {
+    const got = testDeletability("reception", test_({ has_shared_report: true }));
+    expect(got).toEqual({
+      ok: false,
+      reason: "shared_report",
+      hint: "Part of a finished combined report (e.g. Chemistry) — it can’t be deleted on its own.",
+    });
+  });
+
+  it("comes after released and package_component, before the HMO-claim reason", () => {
+    // Mirrors the trigger's order (0172): P0043, P0044, P0067, P0050, P0042.
+    expect(
+      testDeletability("reception", test_({ status: "released", has_shared_report: true })),
+    ).toMatchObject({ ok: false, reason: "released" });
+    expect(
+      testDeletability(
+        "reception",
+        test_({ parent_id: "header-id", has_shared_report: true }),
+      ),
+    ).toMatchObject({ ok: false, reason: "package_component" });
+    expect(
+      testDeletability(
+        "reception",
+        test_({ has_shared_report: true, has_open_hmo_claim: true }),
+      ),
+    ).toMatchObject({ ok: false, reason: "shared_report" });
+  });
+
+  it("a single-member (non-combined) report does not block anything", () => {
+    expect(
+      testDeletability("reception", test_({ has_shared_report: false })).ok,
+    ).toBe(true);
+  });
+});
+
+describe("sharedReportTestIds", () => {
+  function link(overrides: Partial<ResultLinkRow> = {}): ResultLinkRow {
+    return {
+      test_request_id: "t1",
+      result_id: "r1",
+      storage_path: "results/r1.pdf",
+      ...overrides,
+    };
+  }
+
+  it("is empty with no links", () => {
+    expect(sharedReportTestIds([]).size).toBe(0);
+  });
+
+  it("does not flag a result linked to exactly one test", () => {
+    const got = sharedReportTestIds([link()]);
+    expect(got.has("t1")).toBe(false);
+  });
+
+  it("flags every member of a result linked to more than one test", () => {
+    const got = sharedReportTestIds([
+      link({ test_request_id: "t1" }),
+      link({ test_request_id: "t2" }),
+      link({ test_request_id: "t3" }),
+    ]);
+    expect(got.has("t1")).toBe(true);
+    expect(got.has("t2")).toBe(true);
+    expect(got.has("t3")).toBe(true);
+  });
+
+  it("ignores a result with no stored PDF yet, however many tests link to it", () => {
+    const got = sharedReportTestIds([
+      link({ test_request_id: "t1", storage_path: null }),
+      link({ test_request_id: "t2", storage_path: null }),
+    ]);
+    expect(got.size).toBe(0);
+  });
+
+  it("keeps two different reports separate", () => {
+    const got = sharedReportTestIds([
+      link({ test_request_id: "t1", result_id: "r1" }),
+      link({ test_request_id: "t2", result_id: "r1" }),
+      link({ test_request_id: "t3", result_id: "r2" }),
+    ]);
+    expect(got.has("t3")).toBe(false);
+  });
+});
+
+describe("migration 0172 — P0067, the combined-report delete guard", () => {
+  // 0172 re-creates enforce_deletable_test_request from its 0147 body plus a
+  // new P0067 check. This is now the LATEST body of the function — a future
+  // migration that touches it again should pin its own text, not 0147's.
+  const sql = readFileSync(
+    join(process.cwd(), "supabase/migrations/0172_result_edit_commit.sql"),
+    "utf8",
+  );
+  const fnBody = sql.slice(sql.indexOf("enforce_deletable_test_request"));
+
+  it("re-creates enforce_deletable_test_request", () => {
+    expect(sql).toMatch(
+      /create or replace function public\.enforce_deletable_test_request\(\)/,
+    );
+  });
+
+  it("raises P0067 for a test linked to a report shared by another test", () => {
+    expect(fnBody).toMatch(/errcode = 'P0067'/);
+  });
+
+  it("checks a stored PDF and another test linked to the same result", () => {
+    expect(fnBody).toMatch(/r\.storage_path is not null/);
+    expect(fnBody).toMatch(/other\.test_request_id <> old\.id/);
+  });
+
+  it("checks P0067 before the HMO-claim reason (P0050)", () => {
+    expect(fnBody.indexOf("'P0067'")).toBeGreaterThan(0);
+    expect(fnBody.indexOf("'P0067'")).toBeLessThan(fnBody.indexOf("'P0050'"));
+  });
+
+  it("keeps every guard carried over from 0147/0125", () => {
+    for (const code of ["P0042", "P0043", "P0044", "P0050"]) {
+      expect(fnBody).toMatch(new RegExp(`errcode = '${code}'`));
+    }
+  });
+
+  it("restates the function ACL", () => {
+    expect(sql).toMatch(
+      /revoke all on function public\.enforce_deletable_test_request\(\) from public, anon, authenticated;/,
+    );
+  });
+
+  it("has a user-facing translation for P0067", () => {
+    const pgErrors = readFileSync(
+      join(process.cwd(), "src/lib/accounting/pg-errors.ts"),
+      "utf8",
+    );
+    expect(pgErrors).toMatch(/case "P0067":/);
   });
 });
 

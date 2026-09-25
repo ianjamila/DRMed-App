@@ -7,6 +7,8 @@ import { requireActiveStaff } from "@/lib/auth/require-staff";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { MovementForm } from "./movement-form";
 import { Panel } from "@/components/ui/panel";
+import { manilaDate, manilaDateTime } from "@/lib/dates/manila";
+import { humaniseCode } from "@/lib/format/humanise-code";
 
 // Share the existing header lookup with metadata within this request.
 const loadDetail = cache(async (id: string) => {
@@ -187,7 +189,7 @@ export default async function InventoryItemPage({ params }: PageProps) {
         />
         <SummaryTile
           label="Next expiry"
-          value={nextExpiry ?? "—"}
+          value={manilaDate(nextExpiry)}
           hint={
             item.expiry_tracking ? "Earliest non-passed lot" : "Not tracked"
           }
@@ -242,10 +244,10 @@ export default async function InventoryItemPage({ params }: PageProps) {
                     return (
                       <tr key={m.id}>
                         <td className="px-4 py-2 text-xs text-[color:var(--color-brand-text-soft)]">
-                          {m.created_at.slice(0, 16).replace("T", " ")}
+                          {manilaDateTime(m.created_at)}
                         </td>
                         <td className="px-4 py-2">
-                          {TYPE_LABEL[m.movement_type] ?? m.movement_type}
+                          {TYPE_LABEL[m.movement_type] ?? humaniseCode(m.movement_type)}
                         </td>
                         <td
                           className={`px-4 py-2 text-right font-mono ${qtyClass}`}
@@ -259,7 +261,7 @@ export default async function InventoryItemPage({ params }: PageProps) {
                             : "—"}
                         </td>
                         <td className="px-4 py-2 text-xs text-[color:var(--color-brand-text-soft)]">
-                          {m.expiry_date ? `exp ${m.expiry_date}` : "—"}
+                          {m.expiry_date ? `exp ${manilaDate(m.expiry_date)}` : "—"}
                           {m.lot_number ? ` · ${m.lot_number}` : ""}
                         </td>
                         <td className="px-4 py-2 text-xs text-[color:var(--color-brand-text-soft)]">

@@ -8,6 +8,7 @@ import { newEventId } from "@/lib/analytics/event-id";
 import { submitRegistrationAction, type RegistrationResult } from "./actions";
 import { PUBLIC_REFERRAL_OPTIONS, PUBLIC_REFERRAL_QUESTION } from "@/lib/patients/referral-sources";
 import { PUBLIC_FORM_CONSENT, PUBLIC_FORM_PRIVACY_HREF } from "@/lib/consent/public-form-consent";
+import { ResetSafeCheckbox, ResetSafeSelect } from "@/components/forms/stable-fields";
 
 // The text/email/tel/date fields use the shared <Input> (h-11 + focus ring,
 // matching /schedule). Only the <select> keeps this hand-rolled class — with a
@@ -129,11 +130,11 @@ export function RegisterForm() {
         </label>
         <label className="flex flex-col gap-1 text-sm">
           Sex
-          <select name="sex" value={f.sex} onChange={(e) => setF({ ...f, sex: e.target.value as "" | "male" | "female" })} className={INPUT}>
+          <ResetSafeSelect name="sex" value={f.sex} onChange={(e) => setF({ ...f, sex: e.target.value as "" | "male" | "female" })} className={INPUT}>
             <option value="">—</option>
             <option value="female">Female</option>
             <option value="male">Male</option>
-          </select>
+          </ResetSafeSelect>
         </label>
         <label className="flex flex-col gap-1 text-sm">
           Phone
@@ -154,7 +155,7 @@ export function RegisterForm() {
 
       <label className="flex flex-col gap-1 text-sm">
         {PUBLIC_REFERRAL_QUESTION}
-        <select
+        <ResetSafeSelect
           name="referral_source"
           required
           value={f.referral_source}
@@ -167,12 +168,11 @@ export function RegisterForm() {
               {o.label}
             </option>
           ))}
-        </select>
+        </ResetSafeSelect>
       </label>
 
       <label className="flex items-start gap-2 text-sm">
-        <input
-          type="checkbox"
+        <ResetSafeCheckbox
           name="data_privacy_consent"
           required
           checked={f.data_privacy_consent}
@@ -186,8 +186,7 @@ export function RegisterForm() {
       </label>
 
       <label className="flex items-start gap-2 text-sm">
-        <input
-          type="checkbox"
+        <ResetSafeCheckbox
           name="marketing_consent"
           checked={f.marketing_consent}
           onChange={(e) => setF({ ...f, marketing_consent: e.target.checked })}

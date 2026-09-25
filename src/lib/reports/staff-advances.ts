@@ -2,6 +2,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "@/types/database";
 import type { SortSpec } from "@/lib/ui/table-params";
+import { humaniseCode } from "@/lib/format/humanise-code";
 import { chunk, fetchAllRows, IN_CHUNK, unique } from "./paging";
 
 type AnyClient = SupabaseClient<Database>;
@@ -23,6 +24,19 @@ export interface StaffAdvanceRow {
   outstanding_balance_php: number;
   status: string;
   source_adjustment_id: string | null;
+}
+
+// staff_advances.status — the CHECK constraint in 0043. The report shows these
+// words; the CSV keeps the stored code.
+export const STAFF_ADVANCE_STATUS_LABEL: Record<string, string> = {
+  outstanding: "Outstanding",
+  settled: "Paid back",
+  voided: "Voided",
+  written_off: "Written off",
+};
+
+export function staffAdvanceStatusLabel(status: string): string {
+  return STAFF_ADVANCE_STATUS_LABEL[status] ?? humaniseCode(status);
 }
 
 export type StaffNameMap = ReadonlyMap<string, { full_name: string; role: string }>;

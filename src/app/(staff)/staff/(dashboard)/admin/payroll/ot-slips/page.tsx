@@ -8,8 +8,9 @@ import {
   type OtSlipRow,
   type StatusFilter,
 } from "./ot-slips-client";
+import { ROUTE_NAME } from "@/lib/staff/route-names";
 
-export const metadata = { title: "OT slips" };
+export const metadata = { title: ROUTE_NAME["/staff/admin/payroll/ot-slips"] };
 export const dynamic = "force-dynamic";
 
 const STATUS_FILTERS: ReadonlySet<StatusFilter> = new Set<StatusFilter>([
@@ -192,7 +193,7 @@ export default async function OtSlipsPage({ searchParams }: PageProps) {
     <div className="mx-auto max-w-[1400px] px-4 py-8 sm:px-6 lg:px-8">
       <header className="mb-6">
         <h1 className="font-heading text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
-          OT slips
+          {ROUTE_NAME["/staff/admin/payroll/ot-slips"]}
         </h1>
         <p className="mt-1 text-sm text-[color:var(--color-brand-text-soft)]">
           Overtime requests. Pending slips block the run until approved or

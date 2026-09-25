@@ -16,7 +16,7 @@ import {
 import { useRouter } from "next/navigation";
 import { formatPhp } from "@/lib/marketing/format";
 import { formatPeriodRange, formatManilaDate } from "@/lib/payroll/format";
-import { PAYMENT_LABEL } from "@/lib/payroll/labels";
+import { PAYMENT_LABEL, RUN_STATUS_BADGE, runStatusLabel } from "@/lib/payroll/labels";
 import { EarningDeductionDrawer } from "./_components/earning-deduction-drawer";
 import { ConfirmDialog } from "./_components/confirm-dialog";
 import {
@@ -125,20 +125,6 @@ interface Props {
 // Status pill
 // =============================================================================
 
-const RUN_STATUS_LABEL: Record<string, string> = {
-  draft: "Draft",
-  computed: "Computed",
-  finalised: "Finalised",
-  voided: "Voided",
-};
-
-const RUN_STATUS_BADGE: Record<string, string> = {
-  draft: "bg-slate-200 text-slate-700",
-  computed: "bg-amber-100 text-amber-900",
-  finalised: "bg-emerald-100 text-emerald-900",
-  voided: "bg-rose-100 text-rose-900",
-};
-
 function RunStatusPill({ status }: { status: string }) {
   return (
     <span
@@ -146,7 +132,7 @@ function RunStatusPill({ status }: { status: string }) {
         RUN_STATUS_BADGE[status] ?? "bg-slate-200 text-slate-700"
       }`}
     >
-      {RUN_STATUS_LABEL[status] ?? status}
+      {runStatusLabel(status)}
     </span>
   );
 }
@@ -715,7 +701,7 @@ export function RunReviewClient({ run, employeeRuns, loadError }: Props) {
           <div className="space-y-3">
             <p>
               This run is currently{" "}
-              <strong className="text-amber-800">{run.status}</strong>.
+              <strong className="text-amber-800">{runStatusLabel(run.status).toLowerCase()}</strong>.
               Re-importing the DTR will:
             </p>
             <ul className="list-inside list-disc space-y-1 text-sm">

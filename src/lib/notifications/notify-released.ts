@@ -5,6 +5,7 @@ import { reportError } from "@/lib/observability/report-error";
 import { SITE } from "@/lib/marketing/site";
 import { reviewLinkAbsolute } from "@/lib/seo/review";
 import { sendEmail } from "./email";
+import { STATEMENT_NOTE } from "./statement-note";
 import { sendSms } from "./sms";
 import {
   renderEmailShell, emailParagraph, emailDetailBox, emailButton, emailFinePrint, escapeHtml, emailReviewCta,
@@ -125,6 +126,8 @@ export async function notifyResultReleased({
     `  Secure PIN: (printed on your receipt)`,
     "",
     "Your PIN is valid for 60 days. Keep it private — anyone with your PIN can view your lab results.",
+    "",
+    STATEMENT_NOTE,
     ...(includeReviewCta
       ? [
           "",
@@ -147,6 +150,7 @@ export async function notifyResultReleased({
       ]) +
       emailButton("Sign in to view your result", portalUrl, "cyan") +
       emailFinePrint("Your PIN is valid for 60 days. Keep it private — anyone with your PIN can view your lab results.") +
+      emailFinePrint(escapeHtml(STATEMENT_NOTE)) +
       (includeReviewCta ? emailReviewCta(reviewUrl) : ""),
     receivedNote: "You received this because a result was released for your DRMed visit.",
   });

@@ -4,6 +4,7 @@ import { requireAdminStaff } from "@/lib/auth/require-admin";
 import { createClient } from "@/lib/supabase/server";
 import { manilaDateTime } from "@/lib/dates/manila";
 import { CRON_HEARTBEATS, deriveCronStatus } from "@/lib/ops/cron-heartbeats";
+import { describeCronSchedule } from "@/lib/ops/cron-schedule";
 import { ROUTE_NAME } from "@/lib/staff/route-names";
 
 export const metadata = { title: ROUTE_NAME["/staff/admin/operations/cron-health"] };
@@ -58,10 +59,11 @@ export default async function CronHealthPage() {
         </p>
       ) : null}
       <div className="overflow-x-auto rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white">
-        <table className="w-full min-w-[820px] text-sm">
+        <table className="w-full min-w-[960px] text-sm">
           <thead className="bg-[color:var(--color-brand-bg)] text-left text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
             <tr>
               <PlainTh label="Scheduled Task" />
+              <PlainTh label="Runs (Manila)" />
               <PlainTh label="Status" />
               <PlainTh label="Last Seen (Manila)" />
               <PlainTh label="Age" />
@@ -78,6 +80,7 @@ export default async function CronHealthPage() {
                     <div className="font-semibold text-[color:var(--color-brand-navy)]">{cron.label}</div>
                     <div className="mt-0.5 text-xs text-[color:var(--color-brand-text-soft)]">{cron.description}</div>
                   </td>
+                  <td className="px-4 py-3 whitespace-nowrap">{describeCronSchedule(cron.schedule)}</td>
                   <td className="px-4 py-3">
                     <span className={`rounded-md px-2 py-0.5 text-xs font-semibold uppercase ${STATUS_STYLE[status]}`}>{status}</span>
                   </td>

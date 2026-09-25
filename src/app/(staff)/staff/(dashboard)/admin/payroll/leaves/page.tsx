@@ -3,8 +3,9 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { requireAdminStaff } from "@/lib/auth/require-admin";
 import { todayManilaISODate } from "@/lib/dates/manila";
 import { LeavesClient, type LeaveRow } from "./leaves-client";
+import { ROUTE_NAME } from "@/lib/staff/route-names";
 
-export const metadata = { title: "Leaves" };
+export const metadata = { title: ROUTE_NAME["/staff/admin/payroll/leaves"] };
 export const dynamic = "force-dynamic";
 
 interface PageProps {
@@ -191,7 +192,7 @@ export default async function PayrollLeavesPage({ searchParams }: PageProps) {
     <div className="mx-auto max-w-[1400px] px-4 py-8 sm:px-6 lg:px-8">
       <header className="mb-6">
         <h1 className="font-heading text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
-          Leave dashboard
+          {ROUTE_NAME["/staff/admin/payroll/leaves"]}
         </h1>
         <p className="mt-1 text-sm text-[color:var(--color-brand-text-soft)]">
           Cross-employee view of VL and SL balances, year-to-date usage and the

@@ -259,6 +259,12 @@ export const RecordCashAdjustmentSchema = z
     payee: z.string().trim().max(120).nullable().optional(),
     payee_staff_id: z.string().uuid().nullable().optional(),
     contra_account_id: z.string().uuid().nullable().optional(),
+    // 0164: the partner lab a Send Out (6420) petty-cash payout paid. Whether
+    // it's required (or must be blank) depends on the CHOSEN ACCOUNT, which
+    // this schema can't see (it only has the account's uuid, not its code) —
+    // that check is `sendOutLabRule` in the action, after the account is
+    // looked up.
+    vendor_id: z.string().uuid().nullable().optional(),
     notes: z.string().trim().max(500).nullable().optional(),
   })
   .refine(
@@ -576,6 +582,9 @@ export const vendorCreateSchema = z.object({
   default_wt_classification: z.string().nullable().optional(),
   default_wt_rate: z.number().min(0).max(1).nullable().optional(),
   notes: z.string().nullable().optional(),
+  // Partner labs are the short list reception can pick from when tagging a
+  // Send Out payout / cash-drawer adjustment (0164). Admin-only to flip.
+  is_partner_lab: z.boolean().optional(),
 });
 
 export const vendorUpdateSchema = vendorCreateSchema.extend({
@@ -728,24 +737,9 @@ export const PfBulkPayoutSchema = z.object({
   ).min(1),
 });
 
-export const SendOutTrueupCreateSchema = z.object({
-  vendor_id: z.string().uuid(),
-  bill_id: z.string().uuid().optional(),  // null for manual writeoff
-  period_start_date: z.string().refine((d) => /^\d{4}-\d{2}-\d{2}$/.test(d)),
-  period_end_date: z.string().refine((d) => /^\d{4}-\d{2}-\d{2}$/.test(d)),
-  billed_total_php: phpAmountSchema,
-  notes: z.string().max(500).optional(),
-});
-
 export const CompensationArrangementSchema = z.object({
   physician_id: z.string().uuid(),
   compensation_arrangement: z.enum(["pf_split", "rent_paying", "shareholder"]),
-});
-
-export const SendOutConfigSchema = z.object({
-  service_id: z.string().uuid(),
-  send_out_unit_cost_php: phpAmountSchema,
-  send_out_vendor_id: z.string().uuid(),
 });
 
 export const VisitAttendingSchema = z.object({
@@ -755,7 +749,5 @@ export const VisitAttendingSchema = z.object({
 
 export type PfDisbursementCreate = z.infer<typeof PfDisbursementCreateSchema>;
 export type PfBulkPayout = z.infer<typeof PfBulkPayoutSchema>;
-export type SendOutTrueupCreate = z.infer<typeof SendOutTrueupCreateSchema>;
 export type CompensationArrangement = z.infer<typeof CompensationArrangementSchema>;
-export type SendOutConfig = z.infer<typeof SendOutConfigSchema>;
 export type VisitAttending = z.infer<typeof VisitAttendingSchema>;

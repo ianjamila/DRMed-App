@@ -247,10 +247,10 @@ function blockFor(rowNum: number): Block | null {
 // not from migrations (0116's UPDATE matches nothing on an empty catalogue),
 // which makes this list the actual source of truth for those columns.
 //
-// Columns NOT listed here — `send_out_unit_cost_php` above all — are absent
-// from the upsert payload on purpose, so PostgREST leaves whatever is already
-// in the row alone. Never add a cost figure to this file: it feeds COGS and the
-// general ledger, and the clinic enters real ones through the admin UI.
+// Columns NOT listed here are absent from the upsert payload on purpose, so
+// PostgREST leaves whatever is already in the row alone. (There is no per-test
+// send-out cost any more — 0166 dropped it; send-out cost is the "Send Out"
+// expense, tagged with its partner lab.)
 
 interface ServiceOverride {
   section?: ServiceSection;

@@ -113,6 +113,14 @@ export interface ResultDocumentInput {
   visit: { visit_number: string };
   controlNo: number | null;
   finalisedAt: Date | null;
+  /**
+   * The instant the patient's age is taken at — for the printed age AND for
+   * picking the age band behind every reference range, flag and critical
+   * threshold. Defaults to `finalisedAt` (then now). An edited report keeps
+   * the ORIGINAL report date (0172), so a correction made after a birthday
+   * cannot move the patient into another age band.
+   */
+  ageAsOf?: Date | null;
   medtech: {
     full_name: string;
     prc_license_kind: string | null;

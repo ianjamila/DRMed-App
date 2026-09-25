@@ -7,6 +7,7 @@ import { createPatientClient } from "@/lib/supabase/patient";
 import { audit } from "@/lib/audit/log";
 import { getPatientSession } from "@/lib/auth/patient-session-cookies";
 import { renderResultPdf } from "@/lib/results/render-pdf";
+import { notePatientDownload, type ServedResultFile } from "@/lib/results/patient-download";
 import { loadConsultantSignatures, resolvePerformer } from "@/lib/results/signatures";
 import {
   isResultDownloadEligible,
@@ -154,6 +155,8 @@ export async function getPatientConsolidatedResultDownloadUrl(
     ip_address: h.get("x-forwarded-for")?.split(",")[0]?.trim() ?? null,
     user_agent: h.get("user-agent"),
   });
+  // The portal's "Result updated" marker keys off this (0176).
+  await notePatientDownload(admin, [{ resultId, storagePath }]);
 
   return { ok: true, url: signed.signedUrl };
 }
@@ -265,6 +268,10 @@ export async function getPatientResultDownloadUrl(
     ip_address: h.get("x-forwarded-for")?.split(",")[0]?.trim() ?? null,
     user_agent: h.get("user-agent"),
   });
+  // The portal's "Result updated" marker keys off this (0176).
+  await notePatientDownload(admin, [
+    { resultId: result.id, storagePath: result.storage_path },
+  ]);
 
   return { ok: true, url: signed.signedUrl };
 }
@@ -488,9 +495,12 @@ export async function getPackagePdfDownloadUrl(
   };
 
   let skippedWithdrawn = 0;
+  // Every component file that actually went into the merged PDF — each one is
+  // a download of that result for the "Result updated" marker (0176).
+  const servedByIndex = new Map<number, ServedResultFile>();
   const [coverPdfBytes, ...componentPdfBytes] = await Promise.all([
     renderResultPdf(coverInput),
-    ...releasedComponents.map(async (c) => {
+    ...releasedComponents.map(async (c, i) => {
       const result = resultByTrId.get(c.id);
       if (!result || !result.storage_path) return null;
       if (!(await checkEligible(result.id))) {
@@ -501,6 +511,7 @@ export async function getPackagePdfDownloadUrl(
         .from("results")
         .download(result.storage_path);
       if (dl.error || !dl.data) return null;
+      servedByIndex.set(i, { resultId: result.id, storagePath: result.storage_path });
       return new Uint8Array(await dl.data.arrayBuffer());
     }),
   ]);
@@ -518,7 +529,8 @@ export async function getPackagePdfDownloadUrl(
   for (const p of coverPages) merged.addPage(p);
 
   let skippedMalformed = 0;
-  for (const bytes of componentPdfBytes) {
+  const served: ServedResultFile[] = [];
+  for (const [i, bytes] of componentPdfBytes.entries()) {
     if (!bytes) {
       skippedMalformed++;
       continue;
@@ -527,6 +539,8 @@ export async function getPackagePdfDownloadUrl(
       const doc = await PDFDocument.load(bytes);
       const pages = await merged.copyPages(doc, doc.getPageIndices());
       for (const p of pages) merged.addPage(p);
+      const file = servedByIndex.get(i);
+      if (file) served.push(file);
     } catch (err) {
       skippedMalformed++;
       console.error("Failed to load component PDF; skipping:", err);
@@ -558,10 +572,14 @@ export async function getPackagePdfDownloadUrl(
       skipped_cancelled_components: cancelledComponents.length,
       skipped_malformed_components: skippedMalformed,
       skipped_withdrawn_components: skippedWithdrawn,
+      // Which result files the merged PDF carried (the marker below).
+      result_ids: [...new Set(served.map((f) => f.resultId))],
     },
     ip_address: h.get("x-forwarded-for")?.split(",")[0]?.trim() ?? null,
     user_agent: h.get("user-agent"),
   });
+  // The portal's "Result updated" marker keys off this (0176).
+  await notePatientDownload(admin, served);
 
   const safePkgCode = (headerService?.code ?? "PACKAGE").replace(
     /[^A-Z0-9_-]/gi,

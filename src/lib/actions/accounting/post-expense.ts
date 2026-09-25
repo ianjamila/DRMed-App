@@ -49,6 +49,9 @@ export async function postExpenseJournalEntry(args: {
   actorId: string;
   sourceKind: SourceKind;
   notesTag: string;
+  /** 0164: the partner lab a Send Out expense paid. Set ONLY on the debit
+   *  (expense) line — the credit line is the payment source, not the lab. */
+  vendor_id?: string | null;
 }): Promise<PostExpenseResult> {
   // Unreachable from the UI — createQuickExpenseAction routes this MOP to
   // postTillCashExpense() before ever calling here. This is the backstop that
@@ -125,6 +128,7 @@ export async function postExpenseJournalEntry(args: {
       credit_php: 0,
       description: lineDesc.slice(0, 500),
       line_order: 1,
+      vendor_id: args.vendor_id ?? null,
     },
     {
       entry_id: je.id,

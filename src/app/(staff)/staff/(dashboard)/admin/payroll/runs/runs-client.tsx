@@ -8,6 +8,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { formatPhp } from "@/lib/marketing/format";
 import { Panel } from "@/components/ui/panel";
+import { RUN_STATUS_BADGE, runStatusLabel } from "@/lib/payroll/labels";
 
 export interface RunListRow {
   id: string;
@@ -290,17 +291,12 @@ export function RunsClient({
 }
 
 function RunStatusPill({ status }: { status: string }) {
-  // Colors per the task spec: draft=gray, computed=amber, finalised=green, voided=red.
-  let cls = "bg-slate-200 text-slate-700";
-  if (status === "draft") cls = "bg-slate-200 text-slate-700";
-  else if (status === "computed") cls = "bg-amber-100 text-amber-900";
-  else if (status === "finalised") cls = "bg-emerald-100 text-emerald-900";
-  else if (status === "voided") cls = "bg-rose-100 text-rose-900";
+  const cls = RUN_STATUS_BADGE[status] ?? "bg-slate-200 text-slate-700";
   return (
     <span
       className={`rounded-md px-2 py-0.5 text-[10px] font-bold uppercase ${cls}`}
     >
-      {status}
+      {runStatusLabel(status)}
     </span>
   );
 }

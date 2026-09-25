@@ -75,6 +75,7 @@ export const PETTY_CASH_CATEGORY_OPTIONS: {
   { value: "Utilities", hint: "Small cash top-ups for water / power" },
   { value: "Telecommunication / Internet", hint: "Prepaid load, small internet top-ups" },
   { value: "Marketing: Ads & Promotion", hint: "Flyers, tarpaulins, small print jobs" },
+  { value: "Send Out", hint: "Paying a partner lab (e.g. Hi Precision, Micromedic) for send-out tests" },
 ];
 
 export const PETTY_CASH_CATEGORIES: ExpenseCategory[] =
@@ -127,7 +128,7 @@ export function isTillCashMop(mop: Mop): boolean {
  * A till expense stores its category as `eod_cash_adjustments.contra_account_id`,
  * so the Petty cash history list maps the account back to the everyday phrase
  * reception picked. Restricted to the subset on purpose: the full map is not
- * injective (Benefits and "Past HMO of Doctors" share 6120), whereas the eight
+ * injective (Benefits and "Past HMO of Doctors" share 6120), whereas the nine
  * petty-cash categories are one-to-one. Anything outside the subset — an admin
  * Quick expense booked to, say, Rent — falls back to the account name.
  */

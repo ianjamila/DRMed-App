@@ -66,7 +66,7 @@ export default async function SellGiftCodePage({ searchParams }: PageProps) {
             href="/staff/gift-codes/refund"
             className="font-semibold text-[color:var(--color-brand-cyan)] hover:underline"
           >
-            Refund a gift code sale
+            Refund Gift Code Sale
           </Link>{" "}
           instead of trying again here.
         </p>

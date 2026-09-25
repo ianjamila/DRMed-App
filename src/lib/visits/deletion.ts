@@ -21,6 +21,7 @@ export type DeleteBlockedReason =
   | "waived"
   | "released"
   | "package_component"
+  | "shared_report"
   | "hmo_claimed";
 
 export type Deletability =
@@ -34,6 +35,8 @@ const HINTS: Record<DeleteBlockedReason, string> = {
   waived: "Balance was waived — deletion not available.",
   released: "Has a released result — undo the release first.",
   package_component: "Part of a package — delete the whole package instead.",
+  shared_report:
+    "Part of a finished combined report (e.g. Chemistry) — it can’t be deleted on its own.",
   hmo_claimed: "Already claimed from an HMO — void the claim batch first.",
 };
 
@@ -58,6 +61,48 @@ export function hasOpenHmoClaim(
   items: readonly ClaimItemEmbed[] | null | undefined,
 ): boolean {
   return (items ?? []).some((ci) => !ci.batch_voided);
+}
+
+/**
+ * One `result_test_requests` row, flattened for the fold below: which result
+ * a test links to, and whether that result has a stored PDF.
+ */
+export interface ResultLinkRow {
+  test_request_id: string;
+  result_id: string;
+  storage_path: string | null;
+}
+
+/**
+ * Which test_request ids sit on a FINISHED combined report — linked to a
+ * result with a stored PDF that has more than one linked test (0172, P0067).
+ *
+ * A result linked to exactly one test is an ordinary single-test report and
+ * stays deletable as before; only a report shared by several tests (the
+ * chemistry panel) locks its members, because deleting one alone would leave
+ * a PDF that still reports a test the bill no longer has.
+ *
+ * Fold, not a per-row lookup: whether a test is "shared" depends on how many
+ * OTHER rows link to the same result, so the caller fetches every relevant
+ * junction row once (batched) and this counts membership.
+ */
+export function sharedReportTestIds(
+  links: readonly ResultLinkRow[],
+): ReadonlySet<string> {
+  const byResult = new Map<string, string[]>();
+  for (const l of links) {
+    if (!l.storage_path) continue;
+    const members = byResult.get(l.result_id) ?? [];
+    members.push(l.test_request_id);
+    byResult.set(l.result_id, members);
+  }
+  const shared = new Set<string>();
+  for (const members of byResult.values()) {
+    if (members.length > 1) {
+      for (const id of members) shared.add(id);
+    }
+  }
+  return shared;
 }
 
 export interface VisitDeleteShape {
@@ -94,6 +139,13 @@ export interface TestDeleteShape {
   visit_deleted_at: string | null;
   /** Does THIS line carry a non-voided `hmo_claim_item`? (0147, P0050.) */
   has_open_hmo_claim: boolean;
+  /**
+   * Is this line one of SEVERAL tests linked to a finished combined report
+   * (0172, P0067) — `sharedReportTestIds` says so. Required rather than
+   * optional so a new caller has to answer it — defaulting it to false would
+   * quietly re-offer a delete the DB refuses.
+   */
+  has_shared_report: boolean;
 }
 
 export function testDeletability(
@@ -106,8 +158,10 @@ export function testDeletability(
   }
   if (test.status === "released") return blocked("released");
   if (test.parent_id !== null) return blocked("package_component");
-  // Mirrors the trigger's order: the specific money reason wins over the
-  // generic "not unpaid" (which an HMO visit never trips anyway — 0133).
+  // Mirrors the trigger's order (0172): the combined-report reason comes
+  // next, then the HMO-claim reason, both ahead of the generic "not unpaid"
+  // (which an HMO visit never trips anyway — 0133).
+  if (test.has_shared_report) return blocked("shared_report");
   if (test.has_open_hmo_claim) return blocked("hmo_claimed");
   if (test.visit_payment_status === "waived") return blocked("waived");
   if (test.visit_payment_status !== "unpaid") return blocked("has_payments");

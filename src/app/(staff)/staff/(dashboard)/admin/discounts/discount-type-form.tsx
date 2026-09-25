@@ -4,7 +4,11 @@ import { useActionState, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
-import { StableInput } from "@/components/forms/stable-fields";
+import {
+  ResetSafeCheckbox,
+  StableCheckbox,
+  StableInput,
+} from "@/components/forms/stable-fields";
 import {
   createDiscountTypeAction,
   updateDiscountTypeAction,
@@ -118,7 +122,7 @@ export function DiscountTypeForm({ initial }: Props) {
 
           <div className="flex gap-4 text-sm">
             <label className="flex items-center gap-2">
-              <input
+              <ResetSafeCheckbox
                 type="radio"
                 name="kind"
                 value="percent"
@@ -128,7 +132,7 @@ export function DiscountTypeForm({ initial }: Props) {
               <span>Percent off</span>
             </label>
             <label className="flex items-center gap-2">
-              <input
+              <ResetSafeCheckbox
                 type="radio"
                 name="kind"
                 value="fixed"
@@ -182,8 +186,7 @@ export function DiscountTypeForm({ initial }: Props) {
 
       {!isStatutory ? (
         <label className="flex items-center gap-2 text-sm">
-          <input
-            type="checkbox"
+          <StableCheckbox
             name="active"
             defaultChecked={initial?.active ?? true}
           />

@@ -10,8 +10,10 @@ interface Props {
 
 export function PatientShell({ patient, children }: Props) {
   return (
-    <div className="flex min-h-screen flex-col bg-[color:var(--color-brand-bg)]">
-      <header className="border-b border-[color:var(--color-brand-bg-mid)] bg-white">
+    <div className="flex min-h-screen flex-col bg-[color:var(--color-brand-bg)] print:min-h-0 print:bg-white">
+      {/* Header and footer stay off paper: the portal's printable page (the
+          statement of account) prints on its own A5 sheet. */}
+      <header className="border-b border-[color:var(--color-brand-bg-mid)] bg-white print:hidden">
         <div className="mx-auto flex max-w-5xl items-center justify-between px-4 py-4 sm:px-6 lg:px-8">
           <Link
             href="/portal"
@@ -52,7 +54,7 @@ export function PatientShell({ patient, children }: Props) {
 
       <main className="flex-1">{children}</main>
 
-      <footer className="border-t border-[color:var(--color-brand-bg-mid)] bg-white py-4 text-center text-xs text-[color:var(--color-brand-text-soft)]">
+      <footer className="border-t border-[color:var(--color-brand-bg-mid)] bg-white py-4 print:hidden text-center text-xs text-[color:var(--color-brand-text-soft)]">
         🔒 Protected under the Philippine Data Privacy Act (RA 10173).
       </footer>
     </div>

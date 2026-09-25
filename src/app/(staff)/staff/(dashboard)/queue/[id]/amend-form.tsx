@@ -19,6 +19,10 @@ interface Props {
   // 'structured' renders the StructuredResultForm in amend mode so the
   // medtech can edit per-parameter values and regenerate the PDF.
   generationKind: "uploaded" | "structured";
+  // results.amendment_count this page was rendered on. Sent back with the
+  // save so an edit made by someone else in the meantime is refused (P0065)
+  // instead of silently overwritten.
+  expectedAmendmentCount: number;
   // Only used when generationKind === 'structured'. Reuses the same data
   // the finalise flow loads in page.tsx.
   structured?: {
@@ -39,6 +43,7 @@ interface Props {
 export function AmendResultForm({
   testRequestId,
   generationKind,
+  expectedAmendmentCount,
   structured,
 }: Props) {
   const router = useRouter();
@@ -53,7 +58,7 @@ export function AmendResultForm({
         onClick={() => setOpen(true)}
         className="text-xs font-bold uppercase tracking-wider text-amber-700 hover:underline"
       >
-        Amend result…
+        Edit result…
       </button>
     );
   }
@@ -91,6 +96,7 @@ export function AmendResultForm({
           initial={structured.initialValues}
           alreadyFinalised={false}
           mode="amend"
+          expectedAmendmentCount={expectedAmendmentCount}
           currentImageFilename={structured.currentImageFilename}
         />
       </div>
@@ -113,6 +119,11 @@ export function AmendResultForm({
       }}
       className="grid gap-3 rounded-md border border-amber-300 bg-amber-50/60 p-4"
     >
+      <input
+        type="hidden"
+        name="expected_amendment_count"
+        value={expectedAmendmentCount}
+      />
       <p className="text-xs font-bold uppercase tracking-wider text-amber-900">
         Amend result
       </p>

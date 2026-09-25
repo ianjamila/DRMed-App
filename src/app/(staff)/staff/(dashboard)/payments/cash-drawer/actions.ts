@@ -23,6 +23,14 @@ import {
   ReopenEodSchema,
   type RecordCashAdjustmentInput,
 } from "@/lib/validations/accounting";
+import {
+  INACTIVE_ROUTED_ACCOUNT_ERROR,
+  resolveCashAdjustmentAccount,
+  type CashAccountRow,
+  type CashRule,
+} from "@/lib/accounting/money-routing";
+import { SEND_OUT_ACCOUNT_CODE, sendOutLabRule } from "@/lib/accounting/partner-labs";
+import { verifyPartnerLab } from "@/lib/accounting/partner-labs.server";
 import type { Database } from "@/types/database";
 
 type ActionResult<T = void> = { ok: true; data: T } | { ok: false; error: string };
@@ -73,6 +81,64 @@ export async function recordCashAdjustmentAction(
   }
 
   const admin = createAdminClient();
+
+  // 0164: the schema only knows `contra_account_id` is a uuid, not what it
+  // points at — look up its code so we can tell whether this is a Send Out
+  // (6420) petty-cash payout, which is the only case a lab is required (or
+  // allowed).
+  //
+  // An explicit pick always wins. Without one, DON'T assume "no account" —
+  // `resolve_cash_adjustment_account` (0043) still resolves the EFFECTIVE
+  // account from `cash_adjustment_account_map`, and posts there even though
+  // no picker showed (see money-routing.ts's `staffPicksAccount`): the row
+  // requiring a staff pick falls back to 9999 Suspense, but one that
+  // doesn't uses its mapped default outright — which Money Routing lets an
+  // admin point straight at 6420 Send Out. Checking only the account the
+  // client happened to send would let that default silently bypass the
+  // lab requirement below.
+  const contraId = parsed.data.contra_account_id || null;
+  let rule: CashRule | undefined;
+  if (!contraId && parsed.data.kind === "petty_cash") {
+    const { data: map } = await admin
+      .from("cash_adjustment_account_map")
+      .select("account_id, requires_user_choice")
+      .eq("kind", "petty_cash")
+      .maybeSingle();
+    rule = map ?? undefined;
+  }
+  const lookupId = contraId ?? (rule && !rule.requires_user_choice ? rule.account_id : null);
+  const { data: accountRows } = lookupId
+    ? await admin.from("chart_of_accounts").select("id, code, is_active").eq("id", lookupId)
+    : { data: [] as CashAccountRow[] };
+  const effective =
+    contraId || parsed.data.kind === "petty_cash"
+      ? resolveCashAdjustmentAccount(contraId, rule, accountRows ?? [])
+      : { code: undefined, inactive: false };
+  // The browser never lists a switched-off account, so an inactive routed
+  // default leaves reception with no lab picker and nothing to choose — say
+  // what actually needs fixing instead of "Pick which lab you paid". (An
+  // explicit inactive pick can only come from a crafted POST; the DB's
+  // inactive-account guard answers that one.)
+  if (!contraId && effective.inactive) return { ok: false, error: INACTIVE_ROUTED_ACCOUNT_ERROR };
+  const isSendOut = parsed.data.kind === "petty_cash" && effective.code === SEND_OUT_ACCOUNT_CODE;
+  const labError = sendOutLabRule(isSendOut, parsed.data.vendor_id);
+  if (labError) return { ok: false, error: labError };
+
+  // If reception left "Paid to" blank, default it to the lab's name — same
+  // parity as the Petty Cash tab / Quick expense (postTillCashExpense).
+  let labName: string | null = null;
+  if (parsed.data.vendor_id) {
+    const verifyError = await verifyPartnerLab(parsed.data.vendor_id);
+    if (verifyError) return { ok: false, error: verifyError };
+    const { data: lab } = await admin
+      .from("vendors")
+      .select("name")
+      .eq("id", parsed.data.vendor_id)
+      .maybeSingle();
+    labName = lab?.name ?? null;
+  }
+  const payee = parsed.data.payee?.trim() || labName || null;
+
   const { data, error } = await admin
     .from("eod_cash_adjustments")
     .insert({
@@ -80,9 +146,10 @@ export async function recordCashAdjustmentAction(
       shift_id: parsed.data.shift_id,
       kind: parsed.data.kind,
       amount_php: parsed.data.amount_php,
-      payee: parsed.data.payee ?? null,
+      payee,
       payee_staff_id: parsed.data.payee_staff_id ?? null,
       contra_account_id: parsed.data.contra_account_id ?? null,
+      vendor_id: parsed.data.vendor_id ?? null,
       notes: parsed.data.notes ?? null,
       recorded_by: session.user_id,
     })
@@ -113,6 +180,7 @@ export async function recordCashAdjustmentAction(
       shift_id: parsed.data.shift_id,
       contra_account_id: parsed.data.contra_account_id ?? null,
       payee_staff_id: parsed.data.payee_staff_id ?? null,
+      vendor_id: parsed.data.vendor_id ?? null,
       journal_entry_id: je?.id ?? null,
       journal_entry_number: je?.entry_number ?? null,
     },

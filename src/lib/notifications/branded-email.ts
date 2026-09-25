@@ -175,3 +175,32 @@ export function renderEmailShell(opts: EmailShellOptions): string {
 </body>
 </html>`;
 }
+
+export interface EmailAmountRow {
+  label: string;
+  /** Already formatted; "" leaves the amount cell blank. */
+  amount: string;
+  /** A muted, indented sub-line (a test included in a package). */
+  sub?: boolean;
+  /** A bold total with a rule above it. */
+  total?: boolean;
+}
+
+// A two-column label/amount table — a bill or a list of payments. Labels and
+// amounts are escaped (data).
+export function emailAmountTable(rows: readonly EmailAmountRow[]): string {
+  const body = rows
+    .map((r) => {
+      const rule = r.total ? `border-top:2px solid ${NAVY};` : `border-top:1px solid ${TINT};`;
+      const weight = r.total ? "font-weight:700;color:" + NAVY + ";" : "";
+      const label = r.sub
+        ? `<td style="padding:3px 8px 3px 18px;font-size:13px;color:${SOFT};">${escapeHtml(r.label)}</td>`
+        : `<td style="padding:7px 8px 7px 0;font-size:14px;${rule}${weight}">${escapeHtml(r.label)}</td>`;
+      const amount = r.sub
+        ? `<td style="padding:3px 0;"></td>`
+        : `<td align="right" style="padding:7px 0;font-size:14px;white-space:nowrap;${rule}${weight}">${escapeHtml(r.amount)}</td>`;
+      return `<tr>${label}${amount}</tr>`;
+    })
+    .join("");
+  return `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:10px 0 18px;color:${INK};">${body}</table>`;
+}

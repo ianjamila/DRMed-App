@@ -2,11 +2,13 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { requireAdminStaff } from "@/lib/auth/require-admin";
 import { ExportCsvLink } from "@/components/staff/export-csv-link";
 import { manilaDate } from "@/lib/dates/manila";
+import { roleLabel } from "@/lib/staff/user-filters";
 import { REPORT_EXPORT_MAX_ROWS } from "@/lib/reports/paging";
 import {
   compareStaffAdvanceRows,
   compareStaffAdvanceSummaryRows,
   loadStaffAdvances,
+  staffAdvanceStatusLabel,
   staffAdvancesCsvHref,
   STAFF_ADVANCES_DEFAULT_SORT,
   STAFF_ADVANCES_SORTABLE_COLUMNS,
@@ -28,8 +30,9 @@ import {
 } from "@/lib/ui/table-params";
 import { SortableTh } from "@/components/staff/sortable-th";
 import { ListPagination, PAGE_SIZES } from "@/components/staff/list-pagination";
+import { ROUTE_NAME } from "@/lib/staff/route-names";
 
-export const metadata = { title: "Staff advances" };
+export const metadata = { title: ROUTE_NAME["/staff/admin/reports/staff-advances"] };
 export const dynamic = "force-dynamic";
 
 const PESO = (n: number) =>
@@ -149,7 +152,7 @@ export default async function StaffAdvancesPage({
       <header className="mb-6">
         <p className="text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-cyan)]">Books &amp; Reports</p>
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <h1 className="mt-1 font-heading text-3xl font-extrabold text-[color:var(--color-brand-navy)]">Staff advances</h1>
+          <h1 className="mt-1 font-heading text-3xl font-extrabold text-[color:var(--color-brand-navy)]">{ROUTE_NAME["/staff/admin/reports/staff-advances"]}</h1>
           <ExportCsvLink href={staffAdvancesCsvHref()} />
         </div>
       </header>
@@ -170,7 +173,7 @@ export default async function StaffAdvancesPage({
             {summaryRows.map((r) => (
               <tr key={r.staff_id} className="border-t">
                 <td className="px-3 py-2">{r.full_name}</td>
-                <td className="px-3 py-2">{r.role}</td>
+                <td className="px-3 py-2">{roleLabel(r.role)}</td>
                 <td className="px-3 py-2">{r.advance_count}</td>
                 <td className="px-3 py-2 font-mono">{PESO(Number(r.outstanding_php ?? 0))}</td>
                 <td className="px-3 py-2">{manilaDate(r.oldest_advance_date)}</td>
@@ -215,7 +218,7 @@ export default async function StaffAdvancesPage({
                 </td>
                 <td className="px-3 py-2 font-mono">{PESO(Number(r.original_amount_php))}</td>
                 <td className="px-3 py-2 font-mono">{PESO(Number(r.outstanding_balance_php))}</td>
-                <td className="px-3 py-2">{r.status}</td>
+                <td className="px-3 py-2">{staffAdvanceStatusLabel(r.status)}</td>
               </tr>
             ))}
           </tbody>

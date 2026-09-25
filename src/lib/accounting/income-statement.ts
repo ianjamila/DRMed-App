@@ -1,6 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "@/types/database";
 import { fetchAllRows } from "@/lib/reports/paging";
+import { LEDGER_TOTAL_STATUSES } from "./ledger-status";
 
 export interface IncomeStatementLine {
   debit_php: number;
@@ -14,7 +15,7 @@ export async function loadIncomeStatementLines(client: SupabaseClient<Database>,
   const { rows, truncated } = await fetchAllRows<IncomeStatementLine>((from, to) =>
     client.from("journal_lines")
       .select("debit_php, credit_php, journal_entries!inner ( posting_date, status ), chart_of_accounts!inner ( id, code, name, type, normal_balance )")
-      .eq("journal_entries.status", "posted")
+      .in("journal_entries.status", LEDGER_TOTAL_STATUSES)
       .gte("journal_entries.posting_date", start)
       .lte("journal_entries.posting_date", end)
       .in("chart_of_accounts.type", ["revenue", "contra_revenue", "expense"])

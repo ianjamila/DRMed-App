@@ -21,8 +21,9 @@ import {
 } from "@/lib/ui/table-params";
 import { SortableTh, PlainTh } from "@/components/staff/sortable-th";
 import { ListPagination, PAGE_SIZES } from "@/components/staff/list-pagination";
+import { ROUTE_NAME } from "@/lib/staff/route-names";
 
-export const metadata = { title: "Patient AR aging" };
+export const metadata = { title: ROUTE_NAME["/staff/admin/accounting/patient-ar"] };
 export const dynamic = "force-dynamic";
 
 const PHP = new Intl.NumberFormat("en-PH", {
@@ -336,7 +337,7 @@ export default async function PatientArPage({ searchParams }: SearchProps) {
           ← Dashboard
         </Link>
         <h1 className="mt-3 font-heading text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
-          Patient AR aging
+          {ROUTE_NAME["/staff/admin/accounting/patient-ar"]}
         </h1>
         <p className="mt-1 text-sm text-[color:var(--color-brand-text-soft)]">
           Outstanding balances on unpaid / partially-paid visits, bucketed by
@@ -388,7 +389,7 @@ export default async function PatientArPage({ searchParams }: SearchProps) {
           </p>
         ) : (
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[720px] text-sm">
+            <table className="w-full min-w-[800px] text-sm">
               <thead className="bg-[color:var(--color-brand-bg)] text-left text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
                 <tr>
                   {th("visit_date", "Visit date")}
@@ -399,6 +400,10 @@ export default async function PatientArPage({ searchParams }: SearchProps) {
                   {th("hmo", "HMO")}
                   {th("outstanding", "Outstanding", "right")}
                   {th("payment_status", "Status")}
+                  {/* One click to the PIN-free statement of account — the
+                      paper that proves an open balance to the patient or
+                      their company. */}
+                  <PlainTh label="Statement" />
                 </tr>
               </thead>
               <tbody className="divide-y divide-[color:var(--color-brand-bg-mid)]">
@@ -458,6 +463,15 @@ export default async function PatientArPage({ searchParams }: SearchProps) {
                         >
                           {paymentStatusLabel(v.payment_status)}
                         </span>
+                      </td>
+                      <td className="px-4 py-3">
+                        <Link
+                          href={`/staff/visits/${v.id}/statement`}
+                          aria-label={`Statement of account for visit #${String(v.visit_number).padStart(4, "0")}`}
+                          className="text-xs font-semibold text-[color:var(--color-brand-cyan)] hover:underline"
+                        >
+                          Open
+                        </Link>
                       </td>
                     </tr>
                   );

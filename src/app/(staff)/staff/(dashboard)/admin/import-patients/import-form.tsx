@@ -1,9 +1,12 @@
 "use client";
 
-import { useActionState } from "react";
+import { useActionState, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
-import { StableTextarea } from "@/components/forms/stable-fields";
+import {
+  StableCheckbox,
+  StableTextarea,
+} from "@/components/forms/stable-fields";
 import { importPatientsAction, type ImportResult } from "./actions";
 
 const SAMPLE = `first_name,last_name,middle_name,birthdate,sex,phone,email,address
@@ -12,34 +15,44 @@ Juan,dela Cruz,Reyes,1972-11-08,male,,,Sampaloc Manila
 Ana,Lim,,1990/06/22,F,0917 555 0102,,`;
 
 export function ImportPatientsForm() {
+  // A successful import empties the box. The CSV field keeps its text across
+  // the form reset (so a failed import never loses a pasted file), which also
+  // meant a second click re-imported the same rows. Bumping the key remounts
+  // the fields empty once rows have gone in.
+  const [imports, setImports] = useState(0);
   const [state, formAction, pending] = useActionState<
     ImportResult | null,
     FormData
-  >(importPatientsAction, null);
+  >(async (prev, formData) => {
+    const result = await importPatientsAction(prev, formData);
+    if (result.ok && result.imported > 0) setImports((n) => n + 1);
+    return result;
+  }, null);
 
   return (
     <form action={formAction} className="grid gap-4">
-      <div className="grid gap-1.5">
+      <div key={`csv-${imports}`} className="grid gap-1.5">
         <Label htmlFor="csv">CSV</Label>
         <StableTextarea
           id="csv"
           name="csv"
           rows={14}
           required
-          defaultValue={SAMPLE}
+          defaultValue={imports === 0 ? SAMPLE : ""}
           className="rounded-md border border-[color:var(--color-brand-bg-mid)] bg-white px-3 py-2 font-mono text-xs focus:border-[color:var(--color-brand-cyan)] focus:outline-none"
         />
         <p className="text-xs text-[color:var(--color-brand-text-soft)]">
           Required columns: <code>first_name</code>, <code>last_name</code>,{" "}
           <code>birthdate</code>. Optional: <code>middle_name</code>,{" "}
           <code>sex</code> (male/female/M/F), <code>phone</code>,{" "}
-          <code>email</code>, <code>address</code>. Up to 2000 rows.
+          <code>email</code>, <code>address</code> — leave these columns out
+          of the file entirely, or leave the cells blank, if your
+          spreadsheet doesn&apos;t have that information. Up to 2000 rows.
         </p>
       </div>
 
-      <label className="flex items-center gap-2 text-sm">
-        <input
-          type="checkbox"
+      <label key={`pre-${imports}`} className="flex items-center gap-2 text-sm">
+        <StableCheckbox
           name="pre_registered"
           defaultChecked
         />

@@ -1107,188 +1107,6 @@ export type Database = {
         }
         Relationships: []
       }
-      cogs_send_out_entries: {
-        Row: {
-          accrued_at: string
-          id: string
-          journal_entry_id: string | null
-          service_id: string
-          test_request_id: string
-          trued_up_at: string | null
-          trueup_id: string | null
-          unit_cost_php: number
-          vendor_id: string | null
-          void_reason: string | null
-          voided_at: string | null
-          voided_by: string | null
-        }
-        Insert: {
-          accrued_at?: string
-          id?: string
-          journal_entry_id?: string | null
-          service_id: string
-          test_request_id: string
-          trued_up_at?: string | null
-          trueup_id?: string | null
-          unit_cost_php: number
-          vendor_id?: string | null
-          void_reason?: string | null
-          voided_at?: string | null
-          voided_by?: string | null
-        }
-        Update: {
-          accrued_at?: string
-          id?: string
-          journal_entry_id?: string | null
-          service_id?: string
-          test_request_id?: string
-          trued_up_at?: string | null
-          trueup_id?: string | null
-          unit_cost_php?: number
-          vendor_id?: string | null
-          void_reason?: string | null
-          voided_at?: string | null
-          voided_by?: string | null
-        }
-        Relationships: [
-          {
-            foreignKeyName: "cogs_send_out_entries_journal_entry_id_fkey"
-            columns: ["journal_entry_id"]
-            isOneToOne: false
-            referencedRelation: "journal_entries"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "cogs_send_out_entries_service_id_fkey"
-            columns: ["service_id"]
-            isOneToOne: false
-            referencedRelation: "services"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "cogs_send_out_entries_service_id_fkey"
-            columns: ["service_id"]
-            isOneToOne: false
-            referencedRelation: "v_daily_revenue_by_service"
-            referencedColumns: ["service_id"]
-          },
-          {
-            foreignKeyName: "cogs_send_out_entries_test_request_id_fkey"
-            columns: ["test_request_id"]
-            isOneToOne: false
-            referencedRelation: "test_requests"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "cogs_send_out_entries_trueup_id_fkey"
-            columns: ["trueup_id"]
-            isOneToOne: false
-            referencedRelation: "cogs_send_out_trueups"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "cogs_send_out_entries_vendor_id_fkey"
-            columns: ["vendor_id"]
-            isOneToOne: false
-            referencedRelation: "vendors"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "cogs_send_out_entries_voided_by_fkey"
-            columns: ["voided_by"]
-            isOneToOne: false
-            referencedRelation: "staff_profiles"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
-      cogs_send_out_trueups: {
-        Row: {
-          accrued_total_php: number
-          bill_id: string | null
-          billed_total_php: number
-          id: string
-          journal_entry_id: string | null
-          matched_at: string
-          matched_by: string
-          period_end_date: string
-          period_start_date: string
-          variance_php: number
-          vendor_id: string
-          void_reason: string | null
-          voided_at: string | null
-          voided_by: string | null
-        }
-        Insert: {
-          accrued_total_php: number
-          bill_id?: string | null
-          billed_total_php: number
-          id?: string
-          journal_entry_id?: string | null
-          matched_at?: string
-          matched_by: string
-          period_end_date: string
-          period_start_date: string
-          variance_php: number
-          vendor_id: string
-          void_reason?: string | null
-          voided_at?: string | null
-          voided_by?: string | null
-        }
-        Update: {
-          accrued_total_php?: number
-          bill_id?: string | null
-          billed_total_php?: number
-          id?: string
-          journal_entry_id?: string | null
-          matched_at?: string
-          matched_by?: string
-          period_end_date?: string
-          period_start_date?: string
-          variance_php?: number
-          vendor_id?: string
-          void_reason?: string | null
-          voided_at?: string | null
-          voided_by?: string | null
-        }
-        Relationships: [
-          {
-            foreignKeyName: "cogs_send_out_trueups_bill_id_fkey"
-            columns: ["bill_id"]
-            isOneToOne: false
-            referencedRelation: "bills"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "cogs_send_out_trueups_journal_entry_id_fkey"
-            columns: ["journal_entry_id"]
-            isOneToOne: false
-            referencedRelation: "journal_entries"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "cogs_send_out_trueups_matched_by_fkey"
-            columns: ["matched_by"]
-            isOneToOne: false
-            referencedRelation: "staff_profiles"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "cogs_send_out_trueups_vendor_id_fkey"
-            columns: ["vendor_id"]
-            isOneToOne: false
-            referencedRelation: "vendors"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "cogs_send_out_trueups_voided_by_fkey"
-            columns: ["voided_by"]
-            isOneToOne: false
-            referencedRelation: "staff_profiles"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
       consent_settings: {
         Row: {
           gate_required: boolean
@@ -2080,6 +1898,7 @@ export type Database = {
           recorded_at: string
           recorded_by: string
           shift_id: string
+          vendor_id: string | null
           void_reason: string | null
           voided_at: string | null
           voided_by: string | null
@@ -2098,6 +1917,7 @@ export type Database = {
           recorded_at?: string
           recorded_by: string
           shift_id: string
+          vendor_id?: string | null
           void_reason?: string | null
           voided_at?: string | null
           voided_by?: string | null
@@ -2116,6 +1936,7 @@ export type Database = {
           recorded_at?: string
           recorded_by?: string
           shift_id?: string
+          vendor_id?: string | null
           void_reason?: string | null
           voided_at?: string | null
           voided_by?: string | null
@@ -2161,6 +1982,13 @@ export type Database = {
             columns: ["shift_id"]
             isOneToOne: false
             referencedRelation: "cash_shifts"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "eod_cash_adjustments_vendor_id_fkey"
+            columns: ["vendor_id"]
+            isOneToOne: false
+            referencedRelation: "vendors"
             referencedColumns: ["id"]
           },
           {
@@ -3098,6 +2926,7 @@ export type Database = {
           entry_id: string
           id: string
           line_order: number
+          vendor_id: string | null
         }
         Insert: {
           account_id: string
@@ -3107,6 +2936,7 @@ export type Database = {
           entry_id: string
           id?: string
           line_order: number
+          vendor_id?: string | null
         }
         Update: {
           account_id?: string
@@ -3116,6 +2946,7 @@ export type Database = {
           entry_id?: string
           id?: string
           line_order?: number
+          vendor_id?: string | null
         }
         Relationships: [
           {
@@ -3130,6 +2961,13 @@ export type Database = {
             columns: ["entry_id"]
             isOneToOne: false
             referencedRelation: "journal_entries"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "journal_lines_vendor_id_fkey"
+            columns: ["vendor_id"]
+            isOneToOne: false
+            referencedRelation: "vendors"
             referencedColumns: ["id"]
           },
         ]
@@ -3661,6 +3499,7 @@ export type Database = {
       payments: {
         Row: {
           amount_php: number
+          corrects_payment_id: string | null
           created_at: string
           id: string
           legacy_import_run_id: string | null
@@ -3677,6 +3516,7 @@ export type Database = {
         }
         Insert: {
           amount_php: number
+          corrects_payment_id?: string | null
           created_at?: string
           id?: string
           legacy_import_run_id?: string | null
@@ -3693,6 +3533,7 @@ export type Database = {
         }
         Update: {
           amount_php?: number
+          corrects_payment_id?: string | null
           created_at?: string
           id?: string
           legacy_import_run_id?: string | null
@@ -3708,6 +3549,13 @@ export type Database = {
           voided_by?: string | null
         }
         Relationships: [
+          {
+            foreignKeyName: "payments_corrects_payment_id_fkey"
+            columns: ["corrects_payment_id"]
+            isOneToOne: false
+            referencedRelation: "payments"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "payments_legacy_import_run_id_fkey"
             columns: ["legacy_import_run_id"]
@@ -4887,6 +4735,8 @@ export type Database = {
           amended_at: string
           amended_by: string
           amendment_seq: number
+          attempt_id: string | null
+          commit_outcome: Json | null
           id: string
           prior_file_size_bytes: number | null
           prior_image_filename: string | null
@@ -4906,6 +4756,8 @@ export type Database = {
           amended_at?: string
           amended_by: string
           amendment_seq: number
+          attempt_id?: string | null
+          commit_outcome?: Json | null
           id?: string
           prior_file_size_bytes?: number | null
           prior_image_filename?: string | null
@@ -4925,6 +4777,8 @@ export type Database = {
           amended_at?: string
           amended_by?: string
           amendment_seq?: number
+          attempt_id?: string | null
+          commit_outcome?: Json | null
           id?: string
           prior_file_size_bytes?: number | null
           prior_image_filename?: string | null
@@ -5265,6 +5119,7 @@ export type Database = {
           image_uploaded_at: string | null
           image_uploaded_by: string | null
           notes: string | null
+          patient_last_downloaded_at: string | null
           report_group_id: string | null
           storage_path: string | null
           updated_at: string
@@ -5288,6 +5143,7 @@ export type Database = {
           image_uploaded_at?: string | null
           image_uploaded_by?: string | null
           notes?: string | null
+          patient_last_downloaded_at?: string | null
           report_group_id?: string | null
           storage_path?: string | null
           updated_at?: string
@@ -5311,6 +5167,7 @@ export type Database = {
           image_uploaded_at?: string | null
           image_uploaded_by?: string | null
           notes?: string | null
+          patient_last_downloaded_at?: string | null
           report_group_id?: string | null
           storage_path?: string | null
           updated_at?: string
@@ -5409,7 +5266,6 @@ export type Database = {
           requires_time_slot: boolean
           section: string | null
           send_out_lab: string | null
-          send_out_unit_cost_php: number | null
           send_out_vendor_id: string | null
           senior_discount_php: number | null
           senior_pwd_eligible: boolean
@@ -5436,7 +5292,6 @@ export type Database = {
           requires_time_slot?: boolean
           section?: string | null
           send_out_lab?: string | null
-          send_out_unit_cost_php?: number | null
           send_out_vendor_id?: string | null
           senior_discount_php?: number | null
           senior_pwd_eligible?: boolean
@@ -5463,7 +5318,6 @@ export type Database = {
           requires_time_slot?: boolean
           section?: string | null
           send_out_lab?: string | null
-          send_out_unit_cost_php?: number | null
           send_out_vendor_id?: string | null
           senior_discount_php?: number | null
           senior_pwd_eligible?: boolean
@@ -6502,6 +6356,7 @@ export type Database = {
           email: string | null
           id: string
           is_active: boolean
+          is_partner_lab: boolean
           name: string
           notes: string | null
           phone: string | null
@@ -6518,6 +6373,7 @@ export type Database = {
           email?: string | null
           id?: string
           is_active?: boolean
+          is_partner_lab?: boolean
           name: string
           notes?: string | null
           phone?: string | null
@@ -6534,6 +6390,7 @@ export type Database = {
           email?: string | null
           id?: string
           is_active?: boolean
+          is_partner_lab?: boolean
           name?: string
           notes?: string | null
           phone?: string | null
@@ -7185,11 +7042,33 @@ export type Database = {
         Args: { p_business_date: string; p_shift_id: string }
         Returns: Json
       }
+      claim_statement_email: {
+        Args: {
+          p_recipient: string
+          p_visit_id: string
+          p_window_seconds?: number
+        }
+        Returns: number
+      }
       coa_account_has_open_period_postings: {
         Args: { p_account_id: string }
         Returns: boolean
       }
       coa_uuid_for_code: { Args: { p_code: string }; Returns: string }
+      correct_payment: {
+        Args: {
+          p_actor_id: string
+          p_amount_php: number
+          p_expected?: Json
+          p_method: string
+          p_notes: string
+          p_payment_id: string
+          p_reason: string
+          p_reference_number: string
+          p_visit_id?: string
+        }
+        Returns: string
+      }
       current_patient_id: { Args: never; Returns: string }
       employee_leave_balance: {
         Args: { p_as_of_date?: string; p_employee_id: string; p_kind: string }
@@ -7204,6 +7083,7 @@ export type Database = {
       has_role: { Args: { roles: string[] }; Returns: boolean }
       is_staff: { Args: never; Returns: boolean }
       je_next_number: { Args: { p_fiscal_year: number }; Returns: string }
+      lab_sections_for_role: { Args: { p_role: string }; Returns: string[] }
       next_pf_disbursement_batch_number: {
         Args: { p_year: number }
         Returns: number
@@ -7263,6 +7143,95 @@ export type Database = {
       resolve_revenue_account: {
         Args: { p_service_kind: string }
         Returns: string
+      }
+      partner_labs: {
+        Args: never
+        Returns: {
+          id: string
+          name: string
+        }[]
+      }
+      result_edit_commit: {
+        Args: {
+          p_alerts: Json
+          p_anchor_test_request_id: string
+          p_attempt_id: string
+          p_editor: string
+          p_expected_amendment_count: number
+          p_new_file_size_bytes: number
+          p_new_image: Json
+          p_new_storage_path: string
+          p_reason: string
+          p_result_id: string
+          p_values: Json
+        }
+        Returns: Json
+      }
+      result_amendment_remarks: {
+        Args: { p_test_request_ids: string[] }
+        Returns: {
+          action: string
+          actor_name: string
+          created_at: string
+          new_holder_name: string
+          previous_holder_name: string
+          reason: string
+          test_request_id: string
+        }[]
+      }
+      result_finalise_commit: {
+        Args: {
+          p_alerts: Json
+          p_file_size_bytes: number
+          p_finalised_at: string
+          p_finaliser: string
+          p_new_image: Json
+          p_result_id: string
+          p_storage_path: string
+          p_values: Json
+        }
+        Returns: Json
+      }
+      result_note_patient_download: {
+        Args: { p_served: Json }
+        Returns: number
+      }
+      result_save_draft: {
+        Args: { p_result_id: string; p_values: Json }
+        Returns: undefined
+      }
+      send_out_monthly_margin: {
+        Args: { p_end?: string; p_start?: string }
+        Returns: {
+          margin_php: number
+          month: string
+          revenue_php: number
+          spend_php: number
+          tests: number
+        }[]
+      }
+      send_out_spend_by_lab: {
+        Args: { p_end?: string; p_start?: string }
+        Returns: {
+          entries: number
+          month: string
+          spend_php: number
+          vendor_id: string
+          vendor_name: string
+        }[]
+      }
+      send_out_turnaround_by_lab: {
+        Args: { p_end?: string; p_start?: string }
+        Returns: {
+          avg_hours: number
+          lab_name: string
+          median_hours: number
+          p90_hours: number
+          tests: number
+          vendor_id: string
+          with_promise: number
+          within_promise: number
+        }[]
       }
       set_patient_context: {
         Args: { p_patient_id: string }
@@ -7349,6 +7318,10 @@ export type Database = {
       }
       show_limit: { Args: never; Returns: number }
       show_trgm: { Args: { "": string }; Returns: string[] }
+      staff_can_read_finished_result: {
+        Args: { p_result_id: string }
+        Returns: boolean
+      }
       staff_role: { Args: never; Returns: string }
       visits_classification_summary: {
         Args: { p_deleted?: string; p_end?: string; p_start?: string }

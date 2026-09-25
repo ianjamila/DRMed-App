@@ -2,6 +2,8 @@ import { PageHeader } from "@/components/staff/page-header";
 import { ROUTE_NAME, SECTION_NAME } from "@/lib/staff/route-names";
 import { requireAdminStaff } from "@/lib/auth/require-admin";
 import { todayManilaISODate } from "@/lib/dates/manila";
+import { createClient } from "@/lib/supabase/server";
+import { loadPartnerLabs } from "@/lib/accounting/partner-labs.server";
 import { QuickExpenseForm } from "./quick-expense-form";
 
 export const metadata = { title: ROUTE_NAME["/staff/admin/accounting/ap/quick-expense"] };
@@ -10,6 +12,9 @@ export const dynamic = "force-dynamic";
 export default async function QuickExpensePage() {
   await requireAdminStaff();
   const today = todayManilaISODate();
+
+  const supabase = await createClient();
+  const partnerLabs = await loadPartnerLabs(supabase);
 
   return (
     <div className="max-w-3xl space-y-6">
@@ -24,7 +29,7 @@ export default async function QuickExpensePage() {
         />
       </div>
 
-      <QuickExpenseForm defaultDate={today} />
+      <QuickExpenseForm defaultDate={today} partnerLabs={partnerLabs} />
     </div>
   );
 }

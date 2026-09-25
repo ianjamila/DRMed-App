@@ -48,4 +48,27 @@ describe("reversePfJournalLine", () => {
     expect(out.line_order).toBe(4);
     expect(out.account_id).toBe("acct-3");
   });
+
+  it("carries a Send Out line's partner-lab tag into its reversal (0164)", () => {
+    const out = reversePfJournalLine("je-9", {
+      account_id: "acct-6420",
+      debit_php: 1500,
+      credit_php: 0,
+      description: "Send Out — Hi Precision",
+      line_order: 1,
+      vendor_id: "vendor-hi-precision",
+    });
+    expect(out.vendor_id).toBe("vendor-hi-precision");
+  });
+
+  it("defaults vendor_id to null when the original line carried none", () => {
+    const out = reversePfJournalLine("je-9", {
+      account_id: "acct-1",
+      debit_php: 1500,
+      credit_php: 0,
+      description: "Doctor PF accrual (cash)",
+      line_order: 1,
+    });
+    expect(out.vendor_id).toBeNull();
+  });
 });

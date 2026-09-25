@@ -5,6 +5,7 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { audit } from "@/lib/audit/log";
 import { requireAdminStaff } from "@/lib/auth/require-admin";
+import { manilaDateTime } from "@/lib/dates/manila";
 import {
   rewindWatermark,
   runAccountingSync,
@@ -118,7 +119,8 @@ export async function rewindAndSyncAction(
     await rewindWatermark(
       onlyKey ?? "all",
       manilaIso,
-      `manual rewind by ${session.user_id} from ${parsed.data.from} (Manila): ${parsed.data.reason}`,
+      // Staff read this note on the page, so it names the admin, not their user id.
+      `Manual rewind by ${session.full_name} from ${manilaDateTime(manilaIso)}: ${parsed.data.reason}`,
     );
     const result = await runAccountingSync({
       trigger: "manual",

@@ -6,6 +6,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { paginatedFetch } from "@/lib/supabase/paginated-fetch";
 import { shiftISODate, todayManilaISODate } from "@/lib/dates/manila";
 import { PeriodPresets } from "../_components/period-presets";
+import { LEDGER_TOTAL_STATUSES } from "@/lib/accounting/ledger-status";
 
 export const metadata = { title: ROUTE_NAME["/staff/admin/accounting/financial-statements/cash-flow"] };
 export const dynamic = "force-dynamic";
@@ -131,7 +132,7 @@ export default async function CashFlowPage({ searchParams }: SearchProps) {
         chart_of_accounts!inner ( id, code, name )
       `,
       )
-      .eq("journal_entries.status", "posted")
+      .in("journal_entries.status", LEDGER_TOTAL_STATUSES)
       .lte("journal_entries.posting_date", beginningDate)
       .in("account_id", cashAccountIds)
       .range(from, to)
@@ -161,7 +162,7 @@ export default async function CashFlowPage({ searchParams }: SearchProps) {
         chart_of_accounts!inner ( id, code, name )
       `,
       )
-      .eq("journal_entries.status", "posted")
+      .in("journal_entries.status", LEDGER_TOTAL_STATUSES)
       .gte("journal_entries.posting_date", start)
       .lte("journal_entries.posting_date", end)
       .in("account_id", cashAccountIds)
@@ -422,8 +423,10 @@ export default async function CashFlowPage({ searchParams }: SearchProps) {
         <div className="mt-3 space-y-2 text-xs text-[color:var(--color-brand-text-soft)]">
           <p>
             Cash flow uses the <strong>direct method</strong>: for each posted
-            journal line touching a cash account (codes 1010, 1020, 1021,
-            1030 by convention), debits are inflows and credits are outflows.
+            or reversed journal line touching a cash account (codes 1010, 1020,
+            1021, 1030 by convention), debits are inflows and credits are
+            outflows — both halves of a reversed pair count, so they net to
+            zero rather than subtracting the amount twice.
             Lines are grouped by their source journal entry&apos;s{" "}
             <code>source_kind</code> (e.g. <code>payment</code>,{" "}
             <code>bill_payment</code>, <code>payroll_run</code>) so each

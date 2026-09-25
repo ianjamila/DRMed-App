@@ -1,5 +1,12 @@
+import Papa from "papaparse";
 import { z } from "zod";
 
+// An optional column that is left out of the CSV header row entirely (as
+// opposed to a column that's present with a blank cell) comes back from
+// Papa.parse with the key simply absent from the row object, i.e. `undefined`
+// — not `""`. `.optional()` accepts that, and the trailing transform folds
+// both "blank cell" and "omitted column" down to the same `null`, so an
+// omitted optional column behaves exactly like an empty cell.
 const trimmed = (max: number) =>
   z
     .string()
@@ -7,7 +14,9 @@ const trimmed = (max: number) =>
     .max(max)
     .or(z.literal(""))
     .transform((v) => (v === "" ? null : v))
-    .nullable();
+    .nullable()
+    .optional()
+    .transform((v) => v ?? null);
 
 // Coerce common Filipino-clinic date formats into ISO. Accepts:
 //   2026-04-30, 2026/04/30, 04/30/2026, 30/04/2026, Apr 30 2026
@@ -62,7 +71,9 @@ export const PatientImportRowSchema = z
           .transform((v) => (v === "m" ? "male" : v === "f" ? "female" : v))
           .nullable(),
       )
-      .nullable(),
+      .nullable()
+      .optional()
+      .transform((v) => v ?? null),
     phone: trimmed(40),
     // M10: optional, but a present value must be a real address (dedup key +
     // DRM-ID delivery channel) — matches PatientFields.email in patient.ts.
@@ -73,7 +84,9 @@ export const PatientImportRowSchema = z
       .max(160)
       .or(z.literal(""))
       .transform((v) => (v === "" ? null : v))
-      .nullable(),
+      .nullable()
+      .optional()
+      .transform((v) => v ?? null),
     address: trimmed(160),
   })
   .strip();
@@ -90,3 +103,31 @@ export const EXPECTED_COLUMNS = [
   "email",
   "address",
 ] as const;
+
+// Only these three MUST be present as header columns. The rest are optional
+// — omit the column entirely or leave individual cells blank, same result.
+export const REQUIRED_IMPORT_COLUMNS: readonly (typeof EXPECTED_COLUMNS)[number][] =
+  ["first_name", "last_name", "birthdate"];
+
+/** Same header normalization the import CSV parser uses. */
+export function normalizeImportHeader(h: string): string {
+  return h.trim().toLowerCase().replace(/\s+/g, "_");
+}
+
+/** Which required columns (by normalized name) are absent from the header row. */
+export function missingRequiredImportColumns(
+  fields: readonly string[],
+): string[] {
+  return EXPECTED_COLUMNS.filter(
+    (c) => REQUIRED_IMPORT_COLUMNS.includes(c) && !fields.includes(c),
+  );
+}
+
+/** Parses import CSV text the same way for the server action and for tests. */
+export function parseImportCsv(csv: string) {
+  return Papa.parse<Record<string, string>>(csv, {
+    header: true,
+    skipEmptyLines: "greedy",
+    transformHeader: normalizeImportHeader,
+  });
+}

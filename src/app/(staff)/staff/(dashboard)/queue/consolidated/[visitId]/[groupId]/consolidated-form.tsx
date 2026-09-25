@@ -2,10 +2,10 @@
 
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import Link from "next/link";
 import { claimConsolidated, finaliseConsolidated } from "./actions";
 import type { ConsolidatedFormTemplate, ConsolidatedFormVisit } from "./page";
 import { normalisePatientSex } from "@/lib/results/types";
+import { ConsolidatedValuesTable, useConsolidatedValues } from "./consolidated-values-table";
 
 interface Props {
   group: { id: string; code: string; name: string };
@@ -19,7 +19,10 @@ interface Props {
   /** Set when the visit is still waiting for payment (item 10) — replaces the
    * claim button with a notice. Server action enforces the same gate. */
   claimBlockedHint: string | null;
-  /** Server-rendered claim history + Unclaim, shown under the header. */
+  /** The visit already has a finished report for this group (shown above the
+   * form by the page) — these fields are for the tests added since. */
+  hasFinishedReports: boolean;
+  /** Server-rendered claim history + Unclaim, shown above the form. */
   claimPanel?: React.ReactNode;
 }
 
@@ -43,42 +46,7 @@ export function ConsolidatedForm(props: Props) {
     .filter((p) => !p.gender || p.gender === patientSex)
     .sort((a, b) => a.sort_order - b.sort_order);
 
-  // Controlled state for each param's SI + conventional values.
-  const [values, setValues] = useState<
-    Record<string, { si: string; conv: string }>
-  >({});
-
-  function updateSi(
-    paramId: string,
-    factor: number | null,
-    raw: string,
-  ) {
-    setValues((prev) => {
-      const si = raw;
-      const numeric = parseFloat(raw);
-      const conv =
-        factor && !Number.isNaN(numeric)
-          ? (numeric * factor).toFixed(2)
-          : (prev[paramId]?.conv ?? "");
-      return { ...prev, [paramId]: { si, conv } };
-    });
-  }
-
-  function updateConv(
-    paramId: string,
-    factor: number | null,
-    raw: string,
-  ) {
-    setValues((prev) => {
-      const conv = raw;
-      const numeric = parseFloat(raw);
-      const si =
-        factor && factor !== 0 && !Number.isNaN(numeric)
-          ? (numeric / factor).toFixed(4)
-          : (prev[paramId]?.si ?? "");
-      return { ...prev, [paramId]: { si, conv } };
-    });
-  }
+  const { values, updateSi, updateConv, payload: buildPayload } = useConsolidatedValues();
 
   const isClaimedByMe = props.claimedBy === props.myStaffId;
 
@@ -98,19 +66,7 @@ export function ConsolidatedForm(props: Props) {
 
   function handleFinalise() {
     setError(null);
-    const payload = params
-      .filter((p) => enabledParamIds.has(p.id))
-      .map((p) => ({
-        parameter_id: p.id,
-        numeric_value_si:
-          values[p.id]?.si ? parseFloat(values[p.id].si) : null,
-        numeric_value_conv:
-          values[p.id]?.conv ? parseFloat(values[p.id].conv) : null,
-      }))
-      .filter(
-        (row) =>
-          row.numeric_value_si != null || row.numeric_value_conv != null,
-      );
+    const payload = buildPayload(params, enabledParamIds);
 
     startTransition(async () => {
       const res = await finaliseConsolidated({
@@ -129,41 +85,14 @@ export function ConsolidatedForm(props: Props) {
         setDeferredReason(res.data.deferredReason ?? "payment");
         return;
       }
-      router.push("/staff/queue");
+      // Stay here: the page re-renders with the new report card (and its
+      // PDF) above, which is the medtech's confirmation of what was sent.
+      router.refresh();
     });
   }
 
   return (
-    <div className="px-4 py-8 sm:px-6 lg:px-8">
-      <Link
-        href="/staff/queue"
-        className="text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-cyan)] hover:underline"
-      >
-        ← Queue
-      </Link>
-
-      <header className="mt-3">
-        <h1 className="font-heading text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
-          {props.group.name}
-        </h1>
-        {/* DRM-ID + visit number deliberately omitted from result entry —
-            partner revision 11: the bench identifies the patient by name. */}
-        <p className="mt-1 font-semibold text-[color:var(--color-brand-navy)]">
-          {props.visit.patients.last_name}, {props.visit.patients.first_name}
-        </p>
-        <div className="mt-1 flex flex-wrap items-baseline gap-x-1.5 gap-y-1 text-sm text-[color:var(--color-brand-text-soft)]">
-          <span>Ordered:</span>
-          {props.orderedServiceCodes.map((code) => (
-            <span
-              key={code}
-              className="font-mono text-xs text-[color:var(--color-brand-navy)]"
-            >
-              {code}
-            </span>
-          ))}
-        </div>
-      </header>
-
+    <>
       {props.claimPanel}
 
       <section className="mt-6 rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white p-6">
@@ -225,7 +154,7 @@ export function ConsolidatedForm(props: Props) {
           >
             <div>
               <h2 className="font-heading text-lg font-extrabold text-[color:var(--color-brand-navy)]">
-                Enter result values
+                {props.hasFinishedReports ? "Enter the remaining results" : "Enter result values"}
               </h2>
               <p className="mt-1 text-sm text-[color:var(--color-brand-text-soft)]">
                 Rows for un-ordered tests are greyed out. Enter SI or
@@ -248,76 +177,14 @@ export function ConsolidatedForm(props: Props) {
               </p>
             ) : null}
 
-            <div className="overflow-x-auto rounded-lg border border-[color:var(--color-brand-bg-mid)]">
-              <table className="w-full text-sm">
-                <thead className="bg-[color:var(--color-brand-bg)] text-left text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
-                  <tr>
-                    <th className="px-3 py-2">Test</th>
-                    <th className="px-3 py-2 text-right">SI Result</th>
-                    <th className="px-3 py-2">SI Unit</th>
-                    <th className="px-3 py-2 text-right">Conv Result</th>
-                    <th className="px-3 py-2">Conv Unit</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-[color:var(--color-brand-bg-mid)]">
-                  {params.map((p) => {
-                    const enabled = enabledParamIds.has(p.id);
-                    return (
-                      <tr
-                        key={p.id}
-                        className={
-                          enabled
-                            ? "hover:bg-[color:var(--color-brand-bg)]"
-                            : "opacity-40"
-                        }
-                      >
-                        <td className="px-3 py-2 font-medium text-[color:var(--color-brand-navy)]">
-                          {p.parameter_name}
-                        </td>
-                        <td className="px-3 py-2">
-                          <input
-                            type="number"
-                            step="any"
-                            disabled={!enabled || pending}
-                            value={values[p.id]?.si ?? ""}
-                            onChange={(e) =>
-                              updateSi(
-                                p.id,
-                                p.si_to_conv_factor,
-                                e.target.value,
-                              )
-                            }
-                            className="w-24 rounded border border-[color:var(--color-brand-bg-mid)] px-2 py-1 text-right min-h-[44px] disabled:bg-[color:var(--color-brand-bg)] disabled:cursor-not-allowed"
-                          />
-                        </td>
-                        <td className="px-3 py-2 text-[color:var(--color-brand-text-soft)]">
-                          {p.unit_si ?? "—"}
-                        </td>
-                        <td className="px-3 py-2">
-                          <input
-                            type="number"
-                            step="any"
-                            disabled={!enabled || pending}
-                            value={values[p.id]?.conv ?? ""}
-                            onChange={(e) =>
-                              updateConv(
-                                p.id,
-                                p.si_to_conv_factor,
-                                e.target.value,
-                              )
-                            }
-                            className="w-24 rounded border border-[color:var(--color-brand-bg-mid)] px-2 py-1 text-right min-h-[44px] disabled:bg-[color:var(--color-brand-bg)] disabled:cursor-not-allowed"
-                          />
-                        </td>
-                        <td className="px-3 py-2 text-[color:var(--color-brand-text-soft)]">
-                          {p.unit_conv ?? "—"}
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
+            <ConsolidatedValuesTable
+              params={params}
+              enabled={enabledParamIds}
+              values={values}
+              onSi={updateSi}
+              onConv={updateConv}
+              disabled={pending}
+            />
 
             {error ? (
               <p className="rounded-lg border border-destructive bg-destructive/5 p-3 text-sm text-destructive">
@@ -342,12 +209,6 @@ export function ConsolidatedForm(props: Props) {
         ) : null}
       </section>
 
-      <Link
-        href={`/staff/visits/${props.visit.id}`}
-        className="mt-6 inline-block text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-cyan)] hover:underline"
-      >
-        Open visit →
-      </Link>
-    </div>
+    </>
   );
 }

@@ -91,7 +91,11 @@ export function StaffShell({ session, children, badges }: Props) {
           </div>
         </header>
 
-        <main className="min-w-0 flex-1 overflow-x-auto">
+        {/* Scrolls wide tables on screen, but never on paper: printed, a
+            scroll box is clipped to one page with its scrollbar drawn in
+            (on a Mac showing scroll bars), cutting off every slip's right
+            edge and anything past page one. */}
+        <main className="min-w-0 flex-1 overflow-x-auto print:overflow-visible">
           <div className="mx-auto w-full max-w-screen-2xl">{children}</div>
         </main>
       </div>

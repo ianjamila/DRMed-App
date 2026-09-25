@@ -1,12 +1,14 @@
 "use client";
 
 import { useState, useTransition } from "react";
+import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import {
   getPackagePdfDownloadUrl,
   getPatientResultDownloadUrl,
 } from "./actions";
 import { manilaDate } from "@/lib/dates/manila";
+import { ResultUpdatedBadge } from "./result-updated-badge";
 
 // Per-component status surface for the "Show individual results" panel.
 // `released` shows a download link, `cancelled` is rendered greyed out
@@ -18,6 +20,8 @@ export interface PackageComponentRow {
   test_name: string;
   test_code: string;
   has_result: boolean;
+  /** Corrected by the clinic after the patient downloaded it. */
+  updated: boolean;
 }
 
 export interface PackageCardProps {
@@ -34,6 +38,8 @@ export interface PackageCardProps {
   releasedCount: number;
   totalCount: number; // excludes cancelled
   consolidatedAvailable: boolean;
+  /** Any component was corrected after the patient downloaded it. */
+  updated: boolean;
 }
 
 // Patient-facing card for a package result. Shows a single
@@ -44,6 +50,7 @@ export function PackageCard(props: PackageCardProps) {
   const [pending, start] = useTransition();
   const [expanded, setExpanded] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const router = useRouter();
 
   function downloadConsolidated() {
     setError(null);
@@ -68,6 +75,8 @@ export function PackageCard(props: PackageCardProps) {
       a.click();
       a.remove();
       URL.revokeObjectURL(url);
+      // The download cleared any "Result updated" marker; re-read the page.
+      router.refresh();
     });
   }
 
@@ -79,6 +88,7 @@ export function PackageCard(props: PackageCardProps) {
       return;
     }
     window.open(result.url, "_blank", "noopener,noreferrer");
+    router.refresh();
   }
 
   return (
@@ -88,6 +98,11 @@ export function PackageCard(props: PackageCardProps) {
           <h2 className="font-heading text-lg font-extrabold text-[color:var(--color-brand-navy)]">
             {props.header.package_name}
           </h2>
+          {props.updated ? (
+            <div className="mt-1">
+              <ResultUpdatedBadge show />
+            </div>
+          ) : null}
           <p className="mt-0.5 font-mono text-xs text-[color:var(--color-brand-text-soft)]">
             {props.header.package_code} · Visit #{props.header.visit_number} ·{" "}
             {manilaDate(props.header.visit_date)}
@@ -151,6 +166,11 @@ export function PackageCard(props: PackageCardProps) {
                 <p className="font-mono text-xs text-[color:var(--color-brand-text-soft)]">
                   {c.test_code}
                 </p>
+                {c.updated ? (
+                  <div className="mt-1">
+                    <ResultUpdatedBadge show />
+                  </div>
+                ) : null}
               </div>
               {c.status === "released" && c.has_result ? (
                 <button

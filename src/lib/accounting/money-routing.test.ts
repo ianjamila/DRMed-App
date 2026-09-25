@@ -7,9 +7,13 @@ import {
   FIXED_CASH_KINDS,
   FIXED_PAYMENT_METHODS,
   PAYMENT_METHOD_LABEL,
+  SUSPENSE_CODE,
   accountChoicesFor,
   cashKindLabel,
   cashRoutingGroup,
+  effectiveCashAccountCode,
+  INACTIVE_ROUTED_ACCOUNT_ERROR,
+  resolveCashAdjustmentAccount,
   groupAccounts,
   isAllowedAccount,
   paymentMethodLabel,
@@ -175,5 +179,67 @@ describe("the Cash Drawer picker", () => {
     expect(startingPick({ account_id: "id-1020", requires_user_choice: false }, CHART)).toBe("");
     expect(startingPick(undefined, CHART)).toBe("");
     expect(startingPick({ account_id: "id-gone", requires_user_choice: true }, CHART)).toBe("");
+  });
+});
+
+describe("effectiveCashAccountCode", () => {
+  // Mirrors resolve_cash_adjustment_account (0043): the account the DB will
+  // actually post to, whether or not a picker is showing.
+  it("an explicit contra pick always wins", () => {
+    expect(effectiveCashAccountCode("id-6400", { account_id: "id-6320", requires_user_choice: false }, CHART)).toBe("6400");
+  });
+
+  it("no contra, no staff pick required: falls back to the routing row's account", () => {
+    expect(effectiveCashAccountCode(null, { account_id: "id-6320", requires_user_choice: false }, CHART)).toBe("6320");
+  });
+
+  it("no contra, staff pick required and skipped: the DB posts to 9999 Suspense, not the mapped default", () => {
+    expect(effectiveCashAccountCode(null, { account_id: "id-6400", requires_user_choice: true }, CHART)).toBe(SUSPENSE_CODE);
+  });
+
+  it("no contra and no routing row at all: also Suspense", () => {
+    expect(effectiveCashAccountCode(null, undefined, CHART)).toBe(SUSPENSE_CODE);
+    expect(effectiveCashAccountCode("", undefined, CHART)).toBe(SUSPENSE_CODE);
+  });
+});
+
+describe("resolveCashAdjustmentAccount (server twin, sees inactive accounts)", () => {
+  const ROWS = [
+    { id: "id-6420", code: "6420", is_active: true },
+    { id: "id-6400", code: "6400", is_active: false },
+  ];
+
+  it("resolves exactly like effectiveCashAccountCode for active accounts", () => {
+    expect(resolveCashAdjustmentAccount("id-6420", undefined, ROWS)).toEqual({ code: "6420", inactive: false });
+    expect(resolveCashAdjustmentAccount(null, { account_id: "id-6420", requires_user_choice: false }, ROWS)).toEqual({ code: "6420", inactive: false });
+    expect(resolveCashAdjustmentAccount(null, { account_id: "id-6420", requires_user_choice: true }, ROWS)).toEqual({ code: SUSPENSE_CODE, inactive: false });
+    expect(resolveCashAdjustmentAccount(null, undefined, ROWS)).toEqual({ code: SUSPENSE_CODE, inactive: false });
+  });
+
+  it("flags a switched-off routed default the browser could never show", () => {
+    const rule = { account_id: "id-6400", requires_user_choice: false };
+    expect(resolveCashAdjustmentAccount(null, rule, ROWS)).toEqual({ code: "6400", inactive: true });
+    // The browser only holds active accounts, so it resolves nothing there — no lab picker.
+    const activeOnly = CHART.filter((a) => a.id !== "id-6400");
+    expect(effectiveCashAccountCode(null, rule, activeOnly)).toBeUndefined();
+    expect(INACTIVE_ROUTED_ACCOUNT_ERROR).toMatch(/Money Routing/);
+  });
+});
+
+describe("the Cash Drawer resolves the EFFECTIVE account on both sides", () => {
+  // Reverting either side to "whatever the picker holds" silently lets a
+  // Money Routing default of 6420 skip the Which-lab rule.
+  const read = (p: string) =>
+    readFileSync(fileURLToPath(new URL(`../../app/(staff)/staff/(dashboard)/payments/cash-drawer/${p}`, import.meta.url)), "utf8");
+
+  it("the modal decides Send Out from effectiveCashAccountCode", () => {
+    expect(read("cash-drawer-client.tsx")).toMatch(/const selectedAccountCode = effectiveCashAccountCode\(/);
+  });
+
+  it("the server action decides Send Out from resolveCashAdjustmentAccount and refuses an inactive default", () => {
+    const src = read("actions.ts");
+    expect(src).toMatch(/resolveCashAdjustmentAccount\(contraId, rule,/);
+    expect(src).toMatch(/effective\.code === SEND_OUT_ACCOUNT_CODE/);
+    expect(src).toMatch(/effective\.inactive\) return \{ ok: false, error: INACTIVE_ROUTED_ACCOUNT_ERROR \}/);
   });
 });

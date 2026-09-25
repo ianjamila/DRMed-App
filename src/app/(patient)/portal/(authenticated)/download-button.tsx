@@ -1,6 +1,7 @@
 "use client";
 
 import { useTransition, useState } from "react";
+import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { getPatientResultDownloadUrl, getPatientConsolidatedResultDownloadUrl } from "./actions";
 
@@ -15,6 +16,7 @@ interface Props {
 export function DownloadButton({ testRequestId, resultId }: Props) {
   const [pending, start] = useTransition();
   const [error, setError] = useState<string | null>(null);
+  const router = useRouter();
 
   return (
     <div className="flex flex-col items-end gap-1">
@@ -40,6 +42,8 @@ export function DownloadButton({ testRequestId, resultId }: Props) {
               return;
             }
             window.open(downloadResult.url, "_blank", "noopener,noreferrer");
+            // The download cleared any "Result updated" marker; re-read the page.
+            router.refresh();
           })
         }
       >

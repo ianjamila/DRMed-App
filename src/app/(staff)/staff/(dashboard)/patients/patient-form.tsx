@@ -20,6 +20,7 @@ import {
   type PatientUpdateResult,
 } from "./[id]/edit-actions";
 import { manilaDate } from "@/lib/dates/manila";
+import { ResetSafeSelect, StableCheckbox } from "@/components/forms/stable-fields";
 
 interface PatientDefaults {
   id?: string;
@@ -208,7 +209,7 @@ export function PatientForm({ initial, referralOptions }: Props) {
         <div className="grid gap-4 sm:grid-cols-3">
           <div className="grid gap-1.5">
             <Label htmlFor="sex">Sex</Label>
-            <select
+            <ResetSafeSelect
               id="sex"
               name="sex"
               value={sex}
@@ -218,7 +219,7 @@ export function PatientForm({ initial, referralOptions }: Props) {
               <option value="">—</option>
               <option value="female">Female</option>
               <option value="male">Male</option>
-            </select>
+            </ResetSafeSelect>
           </div>
           <Field
             label="Phone"
@@ -286,7 +287,7 @@ export function PatientForm({ initial, referralOptions }: Props) {
             <Label htmlFor="referral_source">
               Referral source{!isEdit ? " *" : ""}
             </Label>
-            <select
+            <ResetSafeSelect
               id="referral_source"
               name="referral_source"
               required={!isEdit}
@@ -299,13 +300,13 @@ export function PatientForm({ initial, referralOptions }: Props) {
                   {o.label}
                 </option>
               ))}
-            </select>
+            </ResetSafeSelect>
           </div>
           <div className="grid gap-1.5">
             <Label htmlFor="preferred_release_medium">
               Preferred result release
             </Label>
-            <select
+            <ResetSafeSelect
               id="preferred_release_medium"
               name="preferred_release_medium"
               value={releaseMedium}
@@ -317,7 +318,7 @@ export function PatientForm({ initial, referralOptions }: Props) {
                   {o.label}
                 </option>
               ))}
-            </select>
+            </ResetSafeSelect>
           </div>
         </div>
         {referralSource === "doctor_referral" ? (
@@ -348,7 +349,7 @@ export function PatientForm({ initial, referralOptions }: Props) {
         <div className="grid gap-4 sm:grid-cols-2">
           <div className="grid gap-1.5">
             <Label htmlFor="senior_pwd_id_kind">ID kind</Label>
-            <select
+            <ResetSafeSelect
               id="senior_pwd_id_kind"
               name="senior_pwd_id_kind"
               value={seniorPwdKind}
@@ -358,7 +359,7 @@ export function PatientForm({ initial, referralOptions }: Props) {
               <option value="">— None —</option>
               <option value="senior">Senior Citizen</option>
               <option value="pwd">PWD</option>
-            </select>
+            </ResetSafeSelect>
           </div>
           <Field
             label="ID number"
@@ -383,8 +384,7 @@ export function PatientForm({ initial, referralOptions }: Props) {
         ) : (
           <>
             <label className="flex items-start gap-2 text-sm">
-              <input
-                type="checkbox"
+              <StableCheckbox
                 name="consent_given_today"
                 className="mt-1"
               />
@@ -396,7 +396,7 @@ export function PatientForm({ initial, referralOptions }: Props) {
             <div className="grid gap-4 sm:grid-cols-3">
               <div className="grid gap-1.5">
                 <Label htmlFor="consent_signatory">Signed by</Label>
-                <select
+                <ResetSafeSelect
                   id="consent_signatory"
                   name="consent_signatory"
                   value={consentSignatory}
@@ -406,7 +406,7 @@ export function PatientForm({ initial, referralOptions }: Props) {
                   <option value="self">Patient signed</option>
                   <option value="guardian">Guardian signed</option>
                   <option value="representative">Representative signed</option>
-                </select>
+                </ResetSafeSelect>
               </div>
               <Field
                 label="Signatory name (if not patient)"
