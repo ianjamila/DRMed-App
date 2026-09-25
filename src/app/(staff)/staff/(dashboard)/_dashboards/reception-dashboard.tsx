@@ -9,6 +9,7 @@ import { fetchAllRows, REPORT_EXPORT_MAX_ROWS, type PageFetcher } from "@/lib/re
 import { reportError } from "@/lib/observability/report-error";
 import { RealtimeRefresher, type Subscription } from "@/components/staff/realtime-refresher";
 import { DashboardHeader } from "./_components/dashboard-header";
+import { EodReminderBanner } from "./_components/eod-reminder-banner";
 import { SectionHeading } from "./_components/section-heading";
 import { StatCard } from "./_components/stat-card";
 import { QuickLinks } from "./_components/quick-links";
@@ -628,6 +629,8 @@ export async function ReceptionDashboard({
         title="Today at the front desk"
         updatedAt={new Date()}
       />
+
+      <EodReminderBanner />
 
       {hasSnapshot && (
         <SectionHeading title="Today's snapshot">
