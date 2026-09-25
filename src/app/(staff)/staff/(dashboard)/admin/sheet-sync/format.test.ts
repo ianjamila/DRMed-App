@@ -21,6 +21,7 @@ import {
   resolutionSummary,
   releaseSummaryLine,
   canRelease,
+  isKeptUndoneActionable,
   revertSummaryLine,
   tabErrorLabel,
 } from "./format";
@@ -319,5 +320,21 @@ describe("canRelease — Let the sync decide again", () => {
   });
   it("never on a run that is not an undo", () => {
     for (const trigger of ["cron", "manual", "cli", "resort", "alias", "release"]) expect(canRelease(undo({ trigger }))).toBe(false);
+  });
+});
+
+describe("isKeptUndoneActionable — Link / Create on a handled kept-undone row", () => {
+  const item = (over: Partial<Parameters<typeof isKeptUndoneActionable>[0]> = {}) =>
+    ({ kind: "ambiguous_patient", status: "dismissed", resolution: { action: "dismiss", keep_undone: true }, ...over });
+  it("yes for an identity item kept undone — by an admin or raised that way after an undo", () => {
+    expect(isKeptUndoneActionable(item())).toBe(true);
+    expect(isKeptUndoneActionable(item({ kind: "identity_conflict", resolution: { action: "dismiss", keep_undone: true, auto_from_undo: true } }))).toBe(true);
+    expect(isKeptUndoneActionable(item({ kind: "possible_existing_patient" }))).toBe(true);
+  });
+  it("no for a plain dismissal, a resolved / released item, or a non-identity kind", () => {
+    expect(isKeptUndoneActionable(item({ resolution: { action: "dismiss", keep_undone: false } }))).toBe(false);
+    expect(isKeptUndoneActionable(item({ status: "resolved", resolution: { action: "released" } }))).toBe(false);
+    expect(isKeptUndoneActionable(item({ kind: "unparseable_date" }))).toBe(false);
+    expect(isKeptUndoneActionable(item({ resolution: null }))).toBe(false);
   });
 });

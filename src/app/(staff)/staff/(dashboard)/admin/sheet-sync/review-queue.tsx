@@ -19,7 +19,7 @@ import {
 import { fetchAllRows, REPORT_EXPORT_MAX_ROWS } from "@/lib/reports/paging";
 import { manilaDate, manilaDateTime } from "@/lib/dates/manila";
 import type { ReviewKind, TabKey } from "@/lib/sheet-sync/types";
-import { KIND_LABEL, TAB_LABEL, resolutionSummary, isAutoResolution } from "./format";
+import { KIND_LABEL, TAB_LABEL, resolutionSummary, isAutoResolution, isKeptUndoneActionable } from "./format";
 import {
   IdentityItemControls,
   SimpleDismissControls,
@@ -490,24 +490,57 @@ function HandledTable({
         </thead>
         <tbody>
           {items.map((item) => (
-            <tr key={item.id} className="border-b border-[color:var(--color-brand-bg-mid)] last:border-0">
-              <td className="px-3 py-2 whitespace-nowrap">{KIND_LABEL[item.kind]}</td>
-              <td className="px-3 py-2">{itemSummary(item)}</td>
-              <td className="px-3 py-2">{resolutionSummary(item.resolution)}</td>
-              <td className="px-3 py-2 whitespace-nowrap">
-                {isAutoResolution(item.resolution)
-                  ? "Automatic"
-                  : item.resolved_by
-                    ? (resolverNames.get(item.resolved_by) ?? "—")
-                    : "—"}
-              </td>
-              <td className="px-3 py-2 whitespace-nowrap">
-                {item.resolved_at ? manilaDateTime(item.resolved_at) : "—"}
-              </td>
-            </tr>
+            <HandledRows key={item.id} item={item} resolverNames={resolverNames} />
           ))}
         </tbody>
       </table>
     </Panel>
+  );
+}
+
+/**
+ * One handled item. A row kept undone also gets the open card's evidence,
+ * candidates and Link / Create controls on a second line — keeping it undone
+ * parked the row, it did not answer who it is (0170's sheet_review_resolve
+ * accepts link / create on it). No Dismiss / Keep undone there.
+ */
+function HandledRows({ item, resolverNames }: { item: ReviewItemRow; resolverNames: Map<string, string> }) {
+  const actionable = isKeptUndoneActionable(item);
+  const payload = actionable ? (item.payload as unknown as IdentityPayload) : null;
+  return (
+    <>
+      <tr className={actionable ? "" : "border-b border-[color:var(--color-brand-bg-mid)] last:border-0"}>
+        <td className="px-3 py-2 whitespace-nowrap">{KIND_LABEL[item.kind]}</td>
+        <td className="px-3 py-2">{itemSummary(item)}</td>
+        <td className="px-3 py-2">{resolutionSummary(item.resolution)}</td>
+        <td className="px-3 py-2 whitespace-nowrap">
+          {isAutoResolution(item.resolution)
+            ? "Automatic"
+            : item.resolved_by
+              ? (resolverNames.get(item.resolved_by) ?? "—")
+              : "—"}
+        </td>
+        <td className="px-3 py-2 whitespace-nowrap">
+          {item.resolved_at ? manilaDateTime(item.resolved_at) : "—"}
+        </td>
+      </tr>
+      {payload && (
+        <tr className="border-b border-[color:var(--color-brand-bg-mid)] last:border-0">
+          <td colSpan={5} className="px-3 pb-3">
+            <p className="text-sm font-semibold text-[color:var(--color-brand-navy)]">{payload.reason}</p>
+            {payload.held_because && (
+              <p className="text-xs text-[color:var(--color-brand-text-soft)]">Held because: {payload.held_because}</p>
+            )}
+            <EvidenceTable rows={payload.rows} />
+            <IdentityItemControls
+              itemId={item.id}
+              candidates={payload.candidates}
+              holdState="kept_undone"
+              rowLabel={rowLabelFor(item)}
+            />
+          </td>
+        </tr>
+      )}
+    </>
   );
 }

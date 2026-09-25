@@ -1443,7 +1443,18 @@ begin
   if v_live.id is not null and not v_live.dry_run and public._sheet_sync_lease_live(v_live.heartbeat_at) then
     raise exception 'Another sheet sync is running.' using errcode = 'P0062';
   end if;
-  select * into v_item from public.sheet_sync_review_items i where i.id = p_item_id and i.status = 'open' for update;
+  -- An OPEN item, or a KEPT-UNDONE identity item (dismissed by an admin's Keep
+  -- undone, or raised that way after an undo) for Link / Create: keeping a row
+  -- undone parks it, it does not close the question — the admin can still
+  -- decide who it is. Anything else (resolved, released, a plain dismissal,
+  -- or Dismiss on a kept-undone item) is no longer actionable: P0064.
+  select * into v_item from public.sheet_sync_review_items i
+   where i.id = p_item_id
+     and (i.status = 'open'
+          or (i.status = 'dismissed' and coalesce((i.resolution->>'keep_undone')::boolean, false)
+              and i.kind in ('ambiguous_patient','identity_conflict','possible_existing_patient')
+              and p_action in ('link','create')))
+   for update;
   if not found then
     raise exception 'This review item was already handled.' using errcode = 'P0064';
   end if;
@@ -1485,6 +1496,14 @@ begin
      set status = 'resolved', resolved_by = p_actor, resolved_at = now(),
          resolution = jsonb_build_object('action', p_action, 'patient_id', p_patient_id)
    where id = p_item_id;
+  -- The same key's other identity items (an earlier kept-undone dismissal, or
+  -- an item re-opened since) are answered by this decision too.
+  update public.sheet_sync_review_items i
+     set status = 'resolved', resolved_by = p_actor, resolved_at = now(),
+         resolution = jsonb_build_object('action', p_action, 'patient_id', p_patient_id, 'via_item', p_item_id)
+   where i.item_key = v_item.item_key and i.id <> p_item_id
+     and i.kind in ('ambiguous_patient','identity_conflict','possible_existing_patient')
+     and i.status in ('open','dismissed');
 end $$;
 
 -- ACLs: born closed since 0119, restated by name (hosted Supabase keeps direct

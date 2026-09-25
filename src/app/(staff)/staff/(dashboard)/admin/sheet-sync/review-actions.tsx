@@ -86,8 +86,10 @@ export interface CandidatePayload {
  * "blocked": at least one held key has a different hold reason — the SQL
  * refuses dismiss (22023), so Dismiss/Keep undone is hidden entirely and
  * only Link / Create remain.
+ * "kept_undone": the item is already kept undone (Show handled) — only Link /
+ * Create, which answer who the row is (0170 accepts them on such an item).
  */
-export type HoldState = "none" | "keep_undone" | "blocked";
+export type HoldState = "none" | "keep_undone" | "blocked" | "kept_undone";
 
 export function IdentityItemControls({
   itemId,
@@ -185,7 +187,7 @@ export function IdentityItemControls({
         >
           {pending ? "Working…" : "Create a new patient"}
         </button>
-        {holdState !== "blocked" && (
+        {(holdState === "none" || holdState === "keep_undone") && (
           <button
             type="button"
             disabled={pending}

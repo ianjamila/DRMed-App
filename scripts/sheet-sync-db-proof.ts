@@ -113,9 +113,10 @@
 //   mutate sheet_alias_apply "c.registered_on asc nulls last" "c.registered_on asc nulls first"
 //   # M15 — undo-held rows are raised as OPEN items (the flood). Expect: FAIL
 //   # Undo-held items are raised kept undone … (… expected 4 raised kept undone
-//   # and none open …).
+//   # and none open …) and FAIL Link / Create on a kept-undone item … (at its
+//   # setup, which needs rows raised kept undone).
 //   mutate sheet_sync_upsert_review "if v_identity and jsonb_array_length(v_keys) > 0" "if false and jsonb_array_length(v_keys) > 0"
-//   npm run sheet-sync:db-proof          # expect exactly those five FAILs
+//   npm run sheet-sync:db-proof          # expect exactly those six FAILs
 //   /opt/homebrew/bin/supabase db reset  # undo round B
 //
 //   ## Round C ##
@@ -147,7 +148,12 @@
 //   # keep-undone item …).
 //   mutate sheet_sync_upsert_review "or i.resolution->'candidate_ids' = v_ids)" "or true)"
 //   (M13 runs here, not in round A: M11 would stop that check before this step.)
-//   npm run sheet-sync:db-proof          # expect exactly those two FAILs
+//   # M17 — a kept-undone item takes no Link / Create. Expect: FAIL Link /
+//   # Create on a kept-undone item … (… link a kept-undone row: unexpected
+//   # error — [P0064] …).
+//   mutate sheet_review_resolve "or (i.status = 'dismissed' and coalesce(" "or (false and i.status = 'dismissed' and coalesce("
+//   (M17 runs here, not in round B: M15 would stop that check at its setup.)
+//   npm run sheet-sync:db-proof          # expect exactly those three FAILs
 //   /opt/homebrew/bin/supabase db reset  # undo round D, then re-run: all PASS
 import "./lib/load-env";
 import { requireLocalOrExplicitProd } from "./lib/env-guard";
@@ -2662,7 +2668,66 @@ async function main() {
       assert(up2.opened === 1 && up2.kept_undone === 0, `after release: expected a normal open item, got ${JSON.stringify(up2)}`);
     });
 
-    // 34. Timing (M9) ---------------------------------------------------------
+    // 34. A row kept undone can still be linked or created (round 9) ---------
+    await check("Link / Create on a kept-undone item replaces its hold like an open item; nothing else handled is actionable", async () => {
+      await setRole("service_role", null);
+      const create = (key: string) => ({ op: "create", create_key: key, method: "auto_exact",
+        fields: { first_name: key, last_name: "KeptUndone", middle_name: null }, link_keys: [key], admin_link_keys: [],
+        legacy_intake: {}, facts: { registered_on: null, new_repeat: null, source_ref: key } });
+      const keys = ["ku:0", "ku:1", "ku:2", "ku:3"];
+      const r = await acquire("manual", false);
+      await q(`select public.sheet_sync_apply_customer_ops($1::uuid, $2::jsonb)`, [r.token, JSON.stringify(keys.map(create))]);
+      await finish(r.token);
+      const rv = await acquire("revert", false);
+      await q(`select public.sheet_sync_revert_run($1::uuid, $2::uuid)`, [rv.token, r.runId]);
+      await finish(rv.token);
+      const l = await acquire("manual", false);
+      const up = (await q<{ j: Json }>(`select public.sheet_sync_upsert_review($1::uuid, 'customers', $2::jsonb, false) as j`, [
+        l.token, JSON.stringify(keys.map((k) => ({ kind: "ambiguous_patient", item_key: k,
+          payload: { link_keys: [k], candidates: [{ patient_id: fx.patientPId }], reason: "held for an admin decision" } })))])).rows[0].j;
+      await finish(l.token);
+      assert(up.kept_undone === 4, `setup: expected 4 items raised kept undone, got ${JSON.stringify(up)}`);
+      const idOf = async (key: string, status = "dismissed") => (await q<{ id: string }>(
+        `select id::text from public.sheet_sync_review_items where item_key = $1 and status = $2 order by first_seen_at, id limit 1`, [key, status])).rows[0]?.id;
+      const resolve = (id: string, action: string, patient: string | null) =>
+        q(`select public.sheet_review_resolve($1::uuid, $2::uuid, $3, $4::uuid)`, [id, fx.adminId, action, patient]);
+      const link = async (key: string) => (await q<{ decision: string; method: string; patient_id: string | null; hold_reason: string | null }>(
+        `select decision, method, patient_id::text as patient_id, hold_reason from public.sheet_patient_links where link_key = $1`, [key])).rows[0];
+
+      // Link and Create both work on a kept-undone item and replace the undo hold.
+      const i0 = (await idOf("ku:0"))!;
+      await expectOk("link a kept-undone row", () => resolve(i0, "link", fx.patientPId));
+      const l0 = await link("ku:0");
+      assert(l0.decision === "link" && l0.method === "admin" && l0.patient_id === fx.patientPId && l0.hold_reason === null,
+        `link: expected an admin link replacing the hold, got ${JSON.stringify(l0)}`);
+      await expectOk("create for a kept-undone row", async () => resolve((await idOf("ku:1"))!, "create", null));
+      const l1 = await link("ku:1");
+      assert(l1.decision === "create" && l1.method === "admin", `create: expected an admin create decision, got ${JSON.stringify(l1)}`);
+      const st = await q<{ status: string; action: string }>(
+        `select status, resolution->>'action' as action from public.sheet_sync_review_items where id = $1`, [i0]);
+      assert(st.rows[0].status === "resolved" && st.rows[0].action === "link", `link: item should be resolved, got ${JSON.stringify(st.rows[0])}`);
+
+      // Not actionable: Dismiss on a kept-undone item, anything on a resolved item, a plain dismissal.
+      await expectPgError("dismiss a kept-undone item again", "P0064", async () => resolve((await idOf("ku:2"))!, "dismiss", null));
+      await expectPgError("link a resolved item", "P0064", () => resolve(i0, "link", fx.patientPId));
+      await setRole("postgres", null);
+      const plain = await q<{ id: string }>(
+        `insert into public.sheet_sync_review_items (tab, item_key, kind, payload, status, resolution, resolved_at)
+         values ('customers', 'ku:plain', 'ambiguous_patient', '{"link_keys":["ku:plain"]}'::jsonb, 'dismissed', '{"action":"dismiss","keep_undone":false}'::jsonb, now())
+         returning id::text`);
+      // An item re-opened for ku:3 beside its kept-undone one: one decision answers both.
+      await q(`insert into public.sheet_sync_review_items (tab, item_key, kind, payload) values
+                 ('customers', 'ku:3', 'possible_existing_patient', '{"link_keys":["ku:3"]}'::jsonb)`);
+      await setRole("service_role", null);
+      await expectPgError("link a plain dismissed item", "P0064", () => resolve(plain.rows[0].id, "link", fx.patientPId));
+      await expectOk("create from the kept-undone item of ku:3", async () => resolve((await idOf("ku:3"))!, "create", null));
+      const k3 = await q<{ status: string; n: string }>(
+        `select status, count(*)::text as n from public.sheet_sync_review_items where item_key = 'ku:3' group by 1`);
+      assert(k3.rows.length === 1 && k3.rows[0].status === "resolved" && k3.rows[0].n === "2",
+        `ku:3: both items should be resolved by the one decision, got ${JSON.stringify(k3.rows)}`);
+    });
+
+    // 35. Timing (M9) ---------------------------------------------------------
     await check("Timing: 5,000-row commit, 500-op create chunk, undo (each < 8,000 ms)", async () => {
       await setRole("service_role", null);
       const LIMIT_MS = 8000;

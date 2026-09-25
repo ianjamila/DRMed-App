@@ -81,6 +81,21 @@ export function canRelease(run: {
   return !!result && typeof result === "object" && (result.held ?? 0) > 0;
 }
 
+/**
+ * A HANDLED item that still takes Link / Create: an identity item kept undone
+ * (an admin's Keep undone, or raised that way after an undo). Keeping a row
+ * undone parks it without answering who it is, so 0170's sheet_review_resolve
+ * accepts link / create on it (never dismiss). Everything else handled is
+ * read-only.
+ */
+export function isKeptUndoneActionable(item: {
+  kind: string; status: string; resolution: Record<string, unknown> | null | undefined;
+}): boolean {
+  return item.status === "dismissed"
+    && (item.kind === "ambiguous_patient" || item.kind === "identity_conflict" || item.kind === "possible_existing_patient")
+    && item.resolution?.keep_undone === true;
+}
+
 /** Plain words for a "Let the sync decide again" run's result (Run history + the dialog). */
 export function releaseSummaryLine(r: ReleaseSummary): string {
   const rows = `${r.released} row${r.released === 1 ? "" : "s"} handed back to the sync`;
