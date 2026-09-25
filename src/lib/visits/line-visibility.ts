@@ -1,6 +1,7 @@
 import { sectionsForRole } from "@/lib/auth/role-sections";
 import type { StaffSession } from "@/lib/auth/require-staff";
 import type { ServiceSection } from "@/lib/auth/role-sections";
+import { isDoctorKind } from "./order-lines";
 
 /**
  * Two different questions about a visit's bill line, deliberately kept apart:
@@ -8,8 +9,10 @@ import type { ServiceSection } from "@/lib/auth/role-sections";
  *   canSeeLine()      — may this role see the line at all (name, code,
  *                        price, discount, status)?
  *   canActOnResult()  — may this role act on the RESULT behind the line
- *                        (mark done, release, undo, open the bench page,
- *                        download the PDF)?
+ *                        (mark done, release, undo, open the bench page)?
+ *   canViewResultPdf() — may this role open the result PDF? Everyone who can
+ *                        act on it, plus reception once the line is released
+ *                        (2026-09-24), so the counter can print it.
  *
  * Owner decision (2026-09-15) reverses the go-live "A4" rule. Under A4,
  * `sectionsForRole("reception") === []` was read as a blanket DENY on the
@@ -49,7 +52,7 @@ export function canSeeLine(
 
 /**
  * May this role ACT on the result behind the line (mark done, release, undo,
- * open the bench page, download the PDF)? Unchanged from the pre-split
+ * open the bench page)? Unchanged from the pre-split
  * `isVisible` gate: built directly on `sectionsForRole`, so reception is
  * denied ([] = deny) and medtech/xray_technician are limited to their own
  * sections.
@@ -59,6 +62,50 @@ export function canActOnResult(
   section: string | null | undefined,
 ): boolean {
   return sectionAllowed(sectionsForRole(role), section);
+}
+
+/**
+ * May this role open a line's result PDF — to read it, or to print it for the
+ * patient at the counter?
+ *
+ * Every role that may act on the result can (`canActOnResult`), at any status
+ * the PDF exists — the lab reviews its own finished work before releasing it.
+ *
+ * Reception can too, but only once the line is RELEASED (owner decision,
+ * 2026-09-24: the counter hands the printed result over, so it must be able
+ * to print one). Released means the patient can already read it on the portal
+ * — reception is handing over a copy of something that has left the building,
+ * not seeing work still on the bench. A doctor line (consultation/procedure)
+ * never has a result file, so it never qualifies.
+ *
+ * "Released" has to hold for the whole FILE, not just this line: a
+ * consolidated chemistry report is one PDF linked to every test in the panel,
+ * and release/undo are per line — so FBS can be released while Creatinine on
+ * the same PDF is not (or was withdrawn). `reportReleased` is "every test
+ * linked to the newest result is released" (allLinksReleased in
+ * lib/results/release-eligibility.ts, the rule the portal already enforces);
+ * reception needs it, the lab — reviewing its own work — does not.
+ *
+ * This is the gate the PDF route enforces; the pages call it too so they only
+ * draw the Print button where the route will answer.
+ */
+export function canViewResultPdf(
+  role: StaffSession["role"],
+  line: {
+    section: string | null | undefined;
+    status: string;
+    kind: string | null | undefined;
+    reportReleased: boolean;
+  },
+): boolean {
+  if (canActOnResult(role, line.section)) return true;
+  return (
+    role === "reception" &&
+    line.status === "released" &&
+    line.reportReleased &&
+    line.kind != null &&
+    !isDoctorKind(line.kind)
+  );
 }
 
 /**

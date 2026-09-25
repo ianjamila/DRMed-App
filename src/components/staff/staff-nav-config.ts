@@ -195,8 +195,11 @@ export const STAFF_NAV: StaffNavSection[] = [
         href: "/staff/queue",
         quicklink: {"lab":{"order":0}},
         label: "Queue",
-        description: "The medtech / radtech / sonographer work queue. Shows every test that's been ordered, grouped by status: waiting (sample not yet collected), in-progress (running), sign-off pending, or released. Click a row to enter results.",
-        roles: ["medtech", "pathologist", "admin", "xray_technician"],
+        description: "The medtech / radtech / sonographer work queue. Shows every test that's been ordered, grouped by status: waiting (sample not yet collected), in-progress (running), sign-off pending, or released. Click a row to enter results. Reception sees only today's released results here, with a Print result button for the patient's copy.",
+        // Reception is here for ONE tab: "Released today", to print the
+        // patient's copy (owner decision 2026-09-24). The page redirects it
+        // there and hides every bench tab and control.
+        roles: ["medtech", "pathologist", "admin", "xray_technician", "reception"],
       },
       {
         href: "/staff/results",

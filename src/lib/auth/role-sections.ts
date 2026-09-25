@@ -126,7 +126,9 @@ export function queueTitleForRole(role: StaffSession["role"]): string {
     case "pathologist":
     case "admin":
       return "Queue";
+    // Reception only ever sees the "Released today" tab (owner decision
+    // 2026-09-24), where it prints the patient's copy of a result.
     case "reception":
-      return "Queue";
+      return "Released results";
   }
 }
