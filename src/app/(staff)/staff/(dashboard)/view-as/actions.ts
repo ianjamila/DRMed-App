@@ -14,11 +14,21 @@ import { redirect } from "next/navigation";
 import { requireActiveStaff } from "@/lib/auth/require-staff";
 import { exitViewAs, startViewAs } from "@/lib/auth/view-as-switch";
 import { ipAndAgent } from "@/lib/server/action-helpers";
+import { reportError } from "@/lib/observability/report-error";
 
 export async function startViewAsAction(formData: FormData): Promise<void> {
   const session = await requireActiveStaff();
   const { ip, ua } = await ipAndAgent();
-  await startViewAs(session, formData.get("role"), { ip, ua });
+  const result = await startViewAs(session, formData.get("role"), { ip, ua });
+  if (!result.ok) {
+    // Silent to the admin (they land home unchanged) but never silent to us:
+    // a refused or failed switch is worth a Sentry line.
+    await reportError({
+      scope: "view-as.start",
+      error: new Error(result.error),
+      metadata: { userId: session.user_id, actual_role: session.actual_role },
+    });
+  }
   revalidatePath("/staff", "layout");
   redirect("/staff");
 }
@@ -26,7 +36,14 @@ export async function startViewAsAction(formData: FormData): Promise<void> {
 export async function exitViewAsAction(): Promise<void> {
   const session = await requireActiveStaff();
   const { ip, ua } = await ipAndAgent();
-  await exitViewAs(session, { ip, ua });
+  const result = await exitViewAs(session, { ip, ua });
+  if (!result.ok) {
+    await reportError({
+      scope: "view-as.exit",
+      error: new Error(result.error),
+      metadata: { userId: session.user_id, actual_role: session.actual_role },
+    });
+  }
   revalidatePath("/staff", "layout");
   redirect("/staff");
 }

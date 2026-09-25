@@ -75,7 +75,8 @@ export async function exitViewAs(
   const { error } = await createAdminClient()
     .from("staff_profiles")
     .update({ view_as_role: null, view_as_until: null })
-    .eq("id", session.user_id);
+    .eq("id", session.user_id)
+    .eq("role", "admin");
   if (error) return { ok: false, error: "Could not exit the role view." };
 
   // No active override (expired, or stale columns) → nothing to bracket.

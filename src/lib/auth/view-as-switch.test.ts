@@ -125,7 +125,7 @@ describe("exitViewAs", () => {
     const s = admin({ role: "reception", until: "2026-09-25T07:00:00.000Z" });
     expect(await exitViewAs(s, ctx)).toEqual({ ok: true });
     expect(fx.updates[0].values).toEqual({ view_as_role: null, view_as_until: null });
-    expect(fx.updates[0].filters).toEqual([["id", "admin-1"]]);
+    expect(fx.updates[0].filters).toEqual([["id", "admin-1"], ["role", "admin"]]);
     expect(fx.audits).toEqual([
       expect.objectContaining({
         action: "staff.view_as.ended",
