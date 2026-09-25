@@ -521,3 +521,31 @@ needing a focused review round of their own (Codex: astra high on conversion-to-
 - Spec v3 **approved** for PRs 1–3; PRs 4–5 need their own spec + review.
 - Review queue: **admins only**.
 - Nightly run: **00:00 Manila** (`0 16 * * *` UTC), as in §5.4.
+
+## 14. Planning refinements (2026-09-24)
+
+Settled while planning PR 1 (`docs/superpowers/plans/2026-09-24-sheet-sync-pr1.md` §0) from code
+and live data the spec above predates. Binding for PR 1.
+
+| # | Decision |
+|---|---|
+| D1 | Migration **0170** (renumbered from 0159 — open PRs took 0159–0165), P-codes **P0062** (another sync is running), **P0063** (lease lost), **P0064** (review item no longer open). |
+| D2 | Channel ownership is decided by a transaction-local setting `app.referral_origin`, set only inside our security-definer RPCs (`resolve_patient_guarded` → `patient`, sync/re-sort/alias/revert → `sheet` or the restored value); any write without it becomes `staff`. The spec's "decide by caller role" rule cannot work — PostgREST cannot call `set_config`. |
+| D3 | Every patient-changing admin action (re-sort approval, map-answer-to-channel, revert) runs as its own `sheet_sync_runs` row (`trigger = resort / alias / revert`) under the same lease — fenced, listed in run history, and itself revertable. |
+| D4 | Review kind `possible_existing_patient` is added to the kind list (the spec used it in §5.3 but left it out of §4.2's list). |
+| D5 | Sheet-created patients carry a `legacy_import_runs` row (one per sync run, `source = 'sheet_sync:CUSTOMER LIST2'`) in `patients.legacy_import_run_id`, since 0054 requires it or a birthdate and ~25% of Customers rows have no DOB. |
+| D6 | Names parse with the May importer's own `parseName`, phones with `normalizePhone`, sex/release medium/Senior-PWD with `vocabulary-mapper.ts`; `name_norm` matches what the May import produced so a re-read Customers row finds the patient it created. |
+| D7 | 87 distinct "How did you know" spellings exist today (spec said 72; live read 2026-09-24). The committed fixture excludes one-offs containing a person's name. |
+| D8 | Re-sort never proposes moving a specific channel to `other` — only to a different specific channel, or NULL for a blank answer, since the old mapper's `other` bucket would be a downgrade. |
+| D9 | The public forms (`/schedule`, `/register`) gain the new channels; `customer_referral`'s public wording becomes "Another DRMed patient told me" and `family_friends` becomes "A friend or family member" so no two options read the same. |
+| D10 | Heartbeat actions are `sheet_sync.completed` + `sheet_sync.skipped` only — `partial`/`failed` are audited but not heartbeats, so a sync that keeps failing goes STALE on the watchdog (same rule as `sync-accounting`). |
+| D11 | Database proofs live in a hand-run, local-only script `scripts/sheet-sync-db-proof.ts` (`npm run sheet-sync:db-proof`), following `scripts/perf/rls-*.ts` — `npm test` stays pure of Postgres. |
+
+### Later review-round decisions (2026-09-25)
+
+- Holds are enforced in SQL, not just in the app.
+- Undo (`sheet_sync_revert_run`) is paged and resumable via `p_limit`.
+- "Keep undone" replaces Dismiss on a review item whose every hold came from an earlier undo.
+- The lease is considered stale after a 10-minute heartbeat gap (`_sheet_sync_lease_live`).
+- Blank formula-only filler/template rows at the bottom of the sheet are skipped silently.
+- A row with a blank surname before the comma stays a review item rather than falling back to some other name (D6).

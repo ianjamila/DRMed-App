@@ -247,7 +247,7 @@
 <div class="layout">
 <nav class="toc" aria-label="Contents">
   <p class="toc-brand">drmed<span>.</span>ph</p>
-  <p class="toc-tag">User guide · v2.16</p>
+  <p class="toc-tag">User guide · v2.23</p>
   <div class="filter" role="group" aria-label="Show chapters for">
     <button type="button" data-filter="all" aria-pressed="true">All roles</button>
     <button type="button" data-filter="reception">Reception</button>
@@ -301,6 +301,7 @@
         <li><a href="#adm-doctors">Paying doctors</a></li>
         <li><a href="#adm-people">People &amp; access</a></li>
         <li><a href="#adm-patients">Patient tools</a></li>
+        <li><a href="#adm-sheet-sync">Sheet Sync</a></li>
         <li><a href="#adm-books">Books, payroll &amp; marketing</a></li>
       </ol></li>
     <li data-role="patient"><a href="#pt"><span class="toc-role-dot" style="background:var(--r-patient)"></span>6 · Patients</a>
@@ -1013,8 +1014,41 @@
   </section>
 
   <!-- 5.7 -->
+  <section class="sub" id="adm-sheet-sync">
+    <h3>5.7 Sheet Sync</h3>
+    <div class="screen"><div class="where">Admin › Admin Tools › <kbd class="ui">Sheet Sync</kbd> · <code class="route">/staff/admin/sheet-sync</code> · Admin only</div></div>
+    <p class="intro">Keeps patients current from the reception Google Sheet <q>LAB SERVICES (RECEPTION)</q>, and keeps a reporting-only copy of its lab and consultation rows for patient-source counts. It ships <b>paused</b> — an admin turns it on. Nothing it does creates a visit, a payment or an accounting entry; a linked or created patient still needs a real visit at the counter like any other.</p>
+    <p>Four views, along the tabs at the top:</p>
+    <dl class="defs">
+      <dt>Overview</dt><dd>The on/off switch, <kbd class="ui">Preview (dry run)</kbd> / <kbd class="ui">Sync now</kbd>, and a table of the last run's rows read, copied rows and open issues per sheet tab.</dd>
+      <dt>Review queue</dt><dd>Items the sync couldn't resolve on its own, grouped by kind with filter chips; a count badge shows how many are open. <kbd class="ui">Show handled</kbd> lists what was already resolved or dismissed, by whom and when.</dd>
+      <dt>Re-sort</dt><dd>Patients imported by the original May import's older, rougher <q>how did you hear about us</q> mapping. Each row proposes moving a group of patients who gave the same answer from their current channel to a more specific one; nothing changes until you approve a group.</dd>
+      <dt>Run history</dt><dd>Every sync, re-sort approval, answer mapping and undo, newest first: when it ran, its type, status, duration, what changed, any error, and — where it applies — an <kbd class="ui">Undo</kbd> link. Paged.</dd>
+    </dl>
+    <p>Every open review item is one of seven kinds:</p>
+    <dl class="defs">
+      <dt>Which patient is this?</dt><dd>More than one existing patient could match a sheet row; pick one to <kbd class="ui">Link to selected patient</kbd>, or <kbd class="ui">Create a new patient</kbd> instead.</dd>
+      <dt>Details don't match the patient</dt><dd>A likely match exists, but something about it (DOB, phone) disagrees enough to ask first.</dd>
+      <dt>Might already be a patient</dt><dd>A softer version of the above — a possible match worth a look before creating a new record.</dd>
+      <dt>Unknown &ldquo;how did you hear&rdquo; answer</dt><dd>The sheet's answer doesn't match any channel yet. Choose one from the dropdown and click <kbd class="ui">Map answer</kbd> to update every patient who gave that answer, or <kbd class="ui">Dismiss</kbd>.</dd>
+      <dt>Date the sync can't read</dt><dd>A date cell in the sheet isn't in a format the sync understands.</dd>
+      <dt>Row the sync can't use</dt><dd>The row is missing something the sync needs to make a patient — most often a name that has no last name before the comma, or no first name. <b>Fix it in the sheet — the next sync picks it up.</b></dd>
+      <dt>Sheet shrank suddenly</dt><dd>A sheet tab has far fewer rows than last time, so the sync skipped it rather than risk deleting real rows from the reporting copy. Only accept the new count if rows were deleted on purpose.</dd>
+    </dl>
+    <ol class="steps">
+      <li><p class="step-title">Turn it on.</p><p>Click <kbd class="ui">Preview (dry run)</kbd> first — it reads the sheet and shows exactly what a real sync would do (rows read, patients to link / create / fill, registration dates recorded, and any review items) without changing anything. Preview works even while the sync is paused. Once the numbers look right, switch it on from Overview; a confirm dialog offers an optional reason for the record. On, it reads <q>On — runs every night at 12:00 midnight</q>. Turning it off (pausing) asks for an optional reason too and stops the nightly run — Preview keeps working while paused.</p></li>
+      <li><p class="step-title">Handle a review item on Review queue.</p><p>For a patient-matching item (<q>Which patient is this?</q>, <q>Details don't match the patient</q>, <q>Might already be a patient</q>), the evidence table shows the sheet rows behind it — name as typed, DOB, registration date, and phone as its <b>last four digits only</b> (<code class="id">••1234</code>), never the full number. Pick a candidate and <kbd class="ui">Link to selected patient</kbd>, or <kbd class="ui">Create a new patient</kbd>. <kbd class="ui">Dismiss</kbd> is offered too — unless every hold behind the item came from an earlier <kbd class="ui">Undo</kbd>, in which case the button reads <kbd class="ui">Keep undone</kbd> instead: the item only comes back if a new matching patient shows up in the sheet. Date and row problems (<q>Date the sync can't read</q>, <q>Row the sync can't use</q>) only offer <kbd class="ui">Dismiss</kbd>, with the hint <q>Fix it in the sheet — the next sync picks it up.</q> A shrunk-sheet item (<q>Sheet shrank suddenly</q>) offers <kbd class="ui">Accept the new row count</kbd> instead, with a warning to check for an accidental filter or a sort in progress first.</p></li>
+      <li><p class="step-title">Map an answer.</p><p>For an <q>Unknown &ldquo;how did you hear&rdquo; answer</q> item, choose the closest channel from <kbd class="ui">Choose a channel</kbd> and click <kbd class="ui">Map answer</kbd>. This updates every patient who gave that exact answer, not just the one row shown.</p></li>
+      <li><p class="step-title">Approve a re-sort group.</p><p>On Re-sort, each row shows a sample answer as typed, the channel patients are on now, the proposed channel, and how many patients are affected. Click <kbd class="ui">Approve</kbd>, confirm in the dialog — this can be undone from Run history. Patients whose channel staff have changed since the import are left alone and counted separately, below the table.</p></li>
+      <li><p class="step-title">Undo a run.</p><p>From Run history, click <kbd class="ui">Undo</kbd> beside an eligible run and confirm. Undo is offered for a sync run (nightly, Sync now, or the command line) that succeeded, partly succeeded, or failed but had already written something, and for a re-sort approval or answer mapping that succeeded — never for an undo itself, a run still in progress, or one already undone. A large undo can span more than one click; each one reports patients <b>restored</b> (details put back), <b>left alone because staff changed it</b> since, <b>kept because in use</b>, <b>already removed</b> by staff, and links <b>sent back to review</b>. Changes to the reporting copy (lab and consultation rows) are never undone — the next sync rebuilds it.</p></li>
+    </ol>
+    <div class="note why"><span class="k">A few sheet quirks the sync handles on its own</span><div><p>Blank template/filler rows at the bottom of the sheet — left over from copy-paste, with no name and no data except a formula-filled Age cell — are skipped silently; they never appear as review items. A row with a blank surname before the comma (no last name typed) is not silently dropped either way: it stays a <q>Row the sync can't use</q> review item until staff fix the surname in the sheet.</p></div></div>
+    <div class="note why"><span class="k">The public forms gained new channels</span><div><p>Turning on the sheet's fuller list of <q>how did you hear about us?</q> answers added the matching channels to the website's own question on <code class="route">/schedule</code> and <code class="route">/register</code>. Two existing options were reworded so no two read the same: <q>Customer referral</q> now asks patients <q>Another DRMed patient told me</q>, and <q>Family / friends</q> asks <q>A friend or family member</q>.</p></div></div>
+  </section>
+
+  <!-- 5.8 -->
   <section class="sub" id="adm-books">
-    <h3>5.7 Books, payroll and marketing (orientation)</h3>
+    <h3>5.8 Books, payroll and marketing (orientation)</h3>
     <p>These modules are used by the bookkeeper and keep their accounting vocabulary on purpose. Each has plain hints on screen. What you need to know to find things:</p>
     <h4>Books &amp; Reports</h4>
     <dl class="defs">
@@ -1175,11 +1209,12 @@
     <dt>Reply (website message)</dt><dd>An email or text sent from inside a website message's Reply panel (3.11), to the sender's own address or number only. Kept in that message's Reply history; sending one moves a New message to Replied automatically.</dd>
     <dt>Referral source (How did you hear about us?)</dt><dd>Where a patient first heard about the clinic — Facebook, Google, a doctor, a friend and so on. Stored once on the patient record: reception picks it on New Patient, and new patients answer it themselves on the website booking and registration forms. Counted in Booking Sources as <b>New patients by how they heard about us</b>. Not the same as Source below, which is how one appointment was made.</dd>
     <dt>Source (How did they reach us?)</dt><dd>How a patient reached the clinic for an appointment: online booking, the patient portal, a website message, phone, text, Messenger, walk-in, referral or other. Shown as <q>via …</q> on an appointment card and as a Source column and filter on Appointments (3.1).</dd>
+    <dt>Sheet Sync</dt><dd>The Admin Tools page (5.7) that keeps patients current from the reception Google Sheet and keeps a reporting-only copy of its lab and consultation rows. Ships paused; nothing it does creates a visit or a payment.</dd>
   </dl>
 </section>
 
 <footer class="end">
-  <p>drmed.ph User Guide · v2.16 · 24 September 2026 · Matches the production release at migration 0160. Every label in this guide was checked against the application code on that date. Print with <b>Ctrl/Cmd + P</b>; each chapter starts on a new page.</p>
+  <p>drmed.ph User Guide · v2.23 · 25 September 2026 · Matches the production release at migration 0170. Every label in this guide was checked against the application code on that date. Print with <b>Ctrl/Cmd + P</b>; each chapter starts on a new page.</p>
 </footer>
 </main>
 </div>

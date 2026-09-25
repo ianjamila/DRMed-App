@@ -34,7 +34,9 @@ first from a parallel branch) and verified by object 2026-09-24; **0154** (#198)
 (#196) are applied and verified. **0151** (`rls_initplan_and_policy_consolidation`,
 #192) is also applied and verified: 159 public policies, zero unwrapped helper calls, and no
 unexpected policyless tables. Prod also has **0163** (`drm_id_width`) out of order, so 0161/0162
-land later with `db push --include-all`.
+land later with `db push --include-all`. **0170** (`sheet_sync_foundation`, P0062–P0064, this PR)
+exists only on `feat/sheet-sync` — not yet applied to prod. Apply it (`--include-all`, since
+later numbers are already live out of order) right before this PR merges, per the plan's Task 19+.
 
 **Rule — claim a number before you use it: `npm run claim -- migration` / `npm run claim -- pcode <n>`.**
 Several sessions work here at once, each in its own worktree, and picking "the next number" by
@@ -175,7 +177,7 @@ Other DB-side automation to be aware of (details and P-codes in the `drmed-migra
 - **Soft delete (0125):** `visits` and `test_requests` carry `deleted_at/by/reason`; guard triggers P0042–P0046 decide deletability (only `unpaid`) and block payments/status changes on deleted visits. **Every read of those tables filters `deleted_at is null`.** **0147 adds P0050** to both delete guards: an entry carrying a non-voided `hmo_claim_item` is money already billed to an HMO, and since 0146 the HMO reports skip deleted rows, so deleting it would drop a real receivable out of AR. Reachable via undo-release — a claimed line goes back to `ready_for_release`, 0110 does not void its claim, and 0133 keeps an HMO visit `unpaid` forever, so neither P0042 nor P0043 fires. `src/lib/visits/deletion.ts` mirrors it for the UI (`hasOpenHmoClaim`, reason `hmo_claimed`) and `deletion.test.ts` pins the migration's SQL text so the two can't drift.
 - Package headers (0040) auto-promote to `ready_for_release`; components are ₱0 rows with `parent_id`. Multi-row inserts list headers before components.
 - The statutory Senior/PWD discount row is locked at 20% (P0047, 0128); the EOD denomination breakdown must tie to the counted total (P0048, 0132).
-- Every `raise exception` with a `P00NN` code needs a translation in `src/lib/accounting/pg-errors.ts` (in use on main: P0001–P0034, P0040–P0053; open branches hold more — claim with `npm run claim -- pcode <n>`, never pick by hand).
+- Every `raise exception` with a `P00NN` code needs a translation in `src/lib/accounting/pg-errors.ts` (in use on main as of 2026-09-25: P0001–P0034, P0040–P0054, P0065–P0067; the gap P0055–P0064 is open-branch claims not yet merged, including this PR's P0062–P0064 — another sync is running, lease lost, review item no longer open — claim with `npm run claim -- pcode <n>` / peek the next free one with `npm run claim -- peek pcode`, never pick by hand).
 - **And every RUNTIME `raise exception` needs an errcode at all.** A bare raise is untranslatable by construction — `translatePgError` has no key to match, so the `default:` branch shows the user the raw Postgres string. Use a `P00NN` (and register it above) or a standard SQLSTATE like `check_violation` where that is genuinely what it is. Post-condition asserts inside a `do $ … $` block are exempt — they abort a deploy, never a user. `pg-error-coverage.test.ts` enforces both rules and freezes the three pre-existing bare raises — all internal-consistency guards — so the set can only shrink.
 
 ### Three Supabase clients with strict separation
@@ -237,6 +239,7 @@ All Server Actions return `{ ok: true, data } | { ok: false, error }`. User-faci
 | CSV escaping (one copy) | `src/lib/csv/escape.ts` |
 | Results-archive tab config and per-test status words (`testStatusLabel`, shared with the portal), template drift checks | `src/lib/results/{status-filter,template-health}.ts` |
 | Shared staff components (page header, section tabs, nav config, delete dialog, no-receipt notice, PIN re-issue button) | `src/components/staff/` |
+| Sheet Sync (reception Google Sheet → patients + reporting mirror): parsers, identity rules, lease-fenced runner, CLI — `src/lib/sheet-sync/`, `scripts/sheet-sync.ts`; admin page `/staff/admin/sheet-sync`; mirror tables readable only there (`mirror-readers.test.ts`) | `src/lib/sheet-sync/`, `src/app/(staff)/staff/(dashboard)/admin/sheet-sync/` |
 | Migrations (sequential numbering) | `supabase/migrations/` |
 | Script env guard (local by default, `--prod` opt-in, `--confirm=<target>`) | `scripts/lib/{load-env,env-guard}.ts` |
 
