@@ -18,7 +18,7 @@ Key reference artifacts:
 - `IMPLEMENTATION_PLAN.md` — original phase plan (historical; cross-check before relying on it)
 - `README.md` — operational setup
 - `.env.example` — env-var inventory
-- `docs/drmed-user-guide.html` — the staff + patient user guide (v2.28, 25 Sep 2026): every
+- `docs/drmed-user-guide.html` — the staff + patient user guide (v2.30, 25 Sep 2026): every
   screen, label and blocked-message the app shows, checked against the code. Update it in the
   PR that changes a flow it describes.
 - `docs/superpowers/specs/` and `docs/superpowers/audits/` — design specs and audits for
@@ -38,6 +38,10 @@ history: **0160** (`queue_claim_remarks`, #214) and **0151** (`rls_initplan_and_
 
 **0167** (`patient_soft_delete`, PR 2 of the patient-delete rollout) is in flight on
 `feat/patient-delete`; it must be pushed AFTER 0162 and right before its PR merges.
+
+**0179** (`result_copy_followups`, corrected-result follow-ups) is in flight on
+`feat/result-copy-followups`; it lands OUT OF ORDER after 0180/0181 are already on prod, so push it
+with `supabase db push --include-all` (dry-run first) — the same pattern 0172 used landing after 0173.
 
 **Rule — claim a number before you use it: `npm run claim -- migration` / `npm run claim -- pcode <n>`.**
 Several sessions work here at once, each in its own worktree, and picking "the next number" by
@@ -179,7 +183,7 @@ Other DB-side automation to be aware of (details and P-codes in the `drmed-migra
 - **Soft delete (0125):** `visits` and `test_requests` carry `deleted_at/by/reason`; guard triggers P0042–P0046 decide deletability (only `unpaid`) and block payments/status changes on deleted visits. **Every read of those tables filters `deleted_at is null`.** **0147 adds P0050** to both delete guards: an entry carrying a non-voided `hmo_claim_item` is money already billed to an HMO, and since 0146 the HMO reports skip deleted rows, so deleting it would drop a real receivable out of AR. Reachable via undo-release — a claimed line goes back to `ready_for_release`, 0110 does not void its claim, and 0133 keeps an HMO visit `unpaid` forever, so neither P0042 nor P0043 fires. `src/lib/visits/deletion.ts` mirrors it for the UI (`hasOpenHmoClaim`, reason `hmo_claimed`) and `deletion.test.ts` pins the migration's SQL text so the two can't drift.
 - Package headers (0040) auto-promote to `ready_for_release`; components are ₱0 rows with `parent_id`. Multi-row inserts list headers before components.
 - The statutory Senior/PWD discount row is locked at 20% (P0047, 0128); the EOD denomination breakdown must tie to the counted total (P0048, 0132).
-- Every `raise exception` with a `P00NN` code needs a translation in `src/lib/accounting/pg-errors.ts` (in use on main: P0001–P0034, P0040–P0054, P0065–P0067; open branches hold more — claim with `npm run claim -- pcode <n>`, never pick by hand).
+- Every `raise exception` with a `P00NN` code needs a translation in `src/lib/accounting/pg-errors.ts` (in use on main: P0001–P0034, P0040–P0054, P0065–P0068; open branches hold more — claim with `npm run claim -- pcode <n>`, never pick by hand).
 - **And every RUNTIME `raise exception` needs an errcode at all.** A bare raise is untranslatable by construction — `translatePgError` has no key to match, so the `default:` branch shows the user the raw Postgres string. Use a `P00NN` (and register it above) or a standard SQLSTATE like `check_violation` where that is genuinely what it is. Post-condition asserts inside a `do $ … $` block are exempt — they abort a deploy, never a user. `pg-error-coverage.test.ts` enforces both rules and freezes the three pre-existing bare raises — all internal-consistency guards — so the set can only shrink.
 
 ### Three Supabase clients with strict separation
