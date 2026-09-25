@@ -8,16 +8,16 @@
 // client control (review-actions.tsx) navigates to `?...&done=<kind>&n=<count>`
 // on success, page.tsx renders this banner from those (validated) params,
 // and this component strips them back out on mount so a later refresh or a
-// bookmarked/shared link doesn't repeat a stale success message.
+// bookmarked/shared link doesn't repeat a stale success message. The strip
+// uses window.history.replaceState, which Next's App Router keeps in sync
+// without a server round trip — router.replace would re-render the page
+// without the params and unmount this banner immediately.
 import { useEffect } from "react";
-import { useRouter } from "next/navigation";
 import { doneBannerMessage, type DoneKind } from "./format";
 
 export function DoneBanner({ kind, n, clearHref }: { kind: DoneKind; n: number; clearHref: string }) {
-  const router = useRouter();
-
   useEffect(() => {
-    router.replace(clearHref, { scroll: false });
+    window.history.replaceState(null, "", clearHref);
     // Runs once, right after this banner is shown from the URL — never
     // re-runs on a later render, so it can't fight a subsequent navigation.
     // eslint-disable-next-line react-hooks/exhaustive-deps

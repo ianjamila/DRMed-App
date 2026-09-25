@@ -116,7 +116,7 @@ interface LastRunRow {
 function parseDoneParams(searchParams: Record<string, string | undefined>): { kind: DoneKind; n: number } | null {
   if (!isDoneKind(searchParams.done)) return null;
   const n = Number(searchParams.n);
-  if (!Number.isInteger(n) || n < 0) return null;
+  if (!Number.isInteger(n) || n < 0 || n > 1_000_000) return null;
   return { kind: searchParams.done, n };
 }
 
