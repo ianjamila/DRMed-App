@@ -27,9 +27,9 @@
 comment on function public.coa_account_has_open_period_postings(uuid) is
   'Chart-of-accounts deactivation gate: does a LIVE posted line hit this account in an open period? '
   'Posted-only on purpose - this is a lookup, not a ledger total. A reversed original is no longer a '
-  'live posting, and it is always accompanied by its posted mirror on the same account (dated on or '
-  'after it), which is what this gate sees - so a reversal still blocks deactivation while the '
-  'mirror sits in an open period. Do not widen to '
+  'live posting, and it is always accompanied by its posted mirror on the same account, which is '
+  'what this gate sees - so a reversal still blocks deactivation while the mirror sits in an open '
+  'period (the mirror has its own posting date, which can differ from the original). Do not widen to '
   'posted + reversed: that rule (LEDGER_TOTAL_STATUSES, src/lib/accounting/ledger-status.ts; '
   'CLAUDE.md "Ledger totals count posted + reversed") is for sums. Listed in SQL_LOOKUPS '
   '(src/lib/accounting/ledger-status-sql.test.ts).';
@@ -59,7 +59,7 @@ comment on function public.bridge_payment_void() is
 
 comment on function public.bridge_payment_delete() is
   'GL bridge (payment delete). Posted-only journal read on purpose: finds the live payment JE to '
-  'reverse when an unpaid payment row is deleted. A lookup, not a ledger total; totals count '
+  'reverse when a payment row is hard-deleted before being voided. A lookup, not a ledger total; totals count '
   'posted + reversed (LEDGER_TOTAL_STATUSES, src/lib/accounting/ledger-status.ts; CLAUDE.md). '
   'Listed in SQL_LOOKUPS (src/lib/accounting/ledger-status-sql.test.ts).';
 

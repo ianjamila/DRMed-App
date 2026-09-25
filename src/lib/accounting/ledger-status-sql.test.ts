@@ -85,7 +85,7 @@ const SQL_LOOKUPS: Record<string, string> = {
   "function:bridge_payment_void":
     "Finds the live payment JE to reverse; a reversed one must not be reversed twice.",
   "function:bridge_payment_delete":
-    "Finds the live payment JE to reverse when an unpaid payment row is deleted.",
+    "Finds the live payment JE to reverse when a payment row is hard-deleted before being voided.",
   "function:bridge_test_request_released":
     "Idempotency: one live revenue JE per released line; a reversed one (after an undo) lets a re-release post again.",
   "function:bridge_test_request_cancelled":
