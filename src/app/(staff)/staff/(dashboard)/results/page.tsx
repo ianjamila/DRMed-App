@@ -48,6 +48,12 @@ import { codeDuplicatesName } from "@/lib/results/consolidated-reports";
 import { ListPagination, PAGE_SIZES } from "@/components/staff/list-pagination";
 import { fetchCompleteRowsByIds } from "@/lib/reports/paging";
 import { fetchPrintState } from "@/lib/results/print-history";
+import {
+  parseUpdatedFilter,
+  updatedSinceIso,
+  UPDATED_FILTER_LABEL,
+  type UpdatedFilter,
+} from "@/lib/results/updated-filter";
 
 export const metadata = { title: "Results" };
 export const dynamic = "force-dynamic";
@@ -113,6 +119,7 @@ interface SearchProps {
     dir?: string;
     page?: string;
     size?: string;
+    updated?: string;
   }>;
 }
 
@@ -164,6 +171,39 @@ export default async function AllResultsPage({ searchParams }: SearchProps) {
   const q = sp.q?.trim() ?? "";
 
   const admin = createAdminClient();
+  // Hoisted above the main query: the "Updated" filter (below) needs it to
+  // read result_amendments before the archive query runs, and the Updated
+  // column further down reuses the same client.
+  const staffDb = await createClient();
+
+  // "Updated" filter (?updated=7d|mine) — narrows the archive to tests whose
+  // result was corrected recently, or by the signed-in staff member. Applied
+  // IN the query (not post-fetch, CLAUDE.md) so count:"exact" + .range()
+  // paging stay correct. Read through the signed-in client: RLS on
+  // result_amendments (0172) keeps this to results the caller may see.
+  const updated: UpdatedFilter | null = parseUpdatedFilter(sp.updated);
+  let updatedTestIds: string[] | null = null;
+  let updatedFilterError = false;
+  let updatedFilterCapped = false;
+  if (updated) {
+    let amQuery = staffDb.from("result_amendments").select("result_id").order("result_id");
+    amQuery =
+      updated === "7d"
+        ? amQuery.gte("amended_at", updatedSinceIso())
+        : amQuery.eq("amended_by", staff.user_id);
+    const { data: am, error: amErr } = await amQuery.limit(1000);
+    if (amErr) {
+      updatedFilterError = true;
+      updatedTestIds = [];
+    } else {
+      const resultIds = [...new Set((am ?? []).map((r) => r.result_id))];
+      updatedFilterCapped = (am ?? []).length === 1000;
+      const { data: links } = resultIds.length
+        ? await admin.from("result_test_requests").select("test_request_id").in("result_id", resultIds)
+        : { data: [] as { test_request_id: string }[] };
+      updatedTestIds = (links ?? []).map((l) => l.test_request_id);
+    }
+  }
 
   let query = admin
     .from("test_requests")
@@ -237,6 +277,13 @@ export default async function AllResultsPage({ searchParams }: SearchProps) {
     } else {
       query = query.in("services.section", allowedSections);
     }
+  }
+
+  if (updatedTestIds) {
+    query = query.in(
+      "id",
+      updatedTestIds.length ? updatedTestIds : ["00000000-0000-0000-0000-000000000000"],
+    );
   }
 
   const { data, count } = await query.returns<ResultRow[]>();
@@ -315,7 +362,7 @@ export default async function AllResultsPage({ searchParams }: SearchProps) {
   // SIGNED-IN client, not `admin`: RLS on result_amendments (0172,
   // staff_can_read_finished_result) keeps the reason from a medtech whose
   // sections cover only part of a combined report — the date still shows.
-  const staffDb = await createClient();
+  // (staffDb was hoisted above the main query for the Updated filter.)
   const amendedIds = Array.from(
     new Set(
       Array.from(linkByTrId.values())
@@ -423,6 +470,7 @@ export default async function AllResultsPage({ searchParams }: SearchProps) {
     sort: isDefaultSort ? null : sort.key,
     dir: isDefaultSort ? null : sort.dir,
     size: size === DEFAULT_SIZE ? null : String(size),
+    updated,
   };
 
   function buildHref(overrides: Record<string, string | null>): string {
@@ -451,7 +499,7 @@ export default async function AllResultsPage({ searchParams }: SearchProps) {
     />
   );
 
-  const hasFilters = Boolean(start || end || q || status !== "all");
+  const hasFilters = Boolean(start || end || q || status !== "all" || updated);
 
   return (
     <div className="px-4 py-8 sm:px-6 lg:px-8">
@@ -500,6 +548,45 @@ export default async function AllResultsPage({ searchParams }: SearchProps) {
         })}
       </nav>
 
+      <nav className="mb-4 flex flex-wrap gap-2" aria-label="Updated filter">
+        {(Object.keys(UPDATED_FILTER_LABEL) as UpdatedFilter[]).map((key) => {
+          const active = updated === key;
+          return (
+            <Link
+              key={key}
+              // Toggling an Updated chip keeps the sort, page size and status
+              // tab — only the Updated filter and the page change.
+              href={buildHref({ updated: active ? null : key, page: null })}
+              aria-pressed={active}
+              className={`min-h-11 rounded-full border px-4 py-2 text-sm font-medium transition-colors ${
+                active
+                  ? "border-violet-600 bg-violet-600 text-white"
+                  : "border-[color:var(--color-brand-bg-mid)] bg-white text-[color:var(--color-brand-navy)] hover:border-violet-600"
+              }`}
+            >
+              {UPDATED_FILTER_LABEL[key]}
+            </Link>
+          );
+        })}
+      </nav>
+
+      {updated && updatedFilterError ? (
+        <p
+          role="alert"
+          className="mb-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-900"
+        >
+          Couldn&apos;t apply the Updated filter — try again in a moment.
+        </p>
+      ) : null}
+      {updated && updatedFilterCapped ? (
+        <p
+          role="status"
+          className="mb-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900"
+        >
+          Showing results from the latest 1000 corrections.
+        </p>
+      ) : null}
+
       <form
         className="mb-6 grid grid-cols-1 gap-3 rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white p-4 sm:grid-cols-2 lg:grid-cols-4"
         action="/staff/results"
@@ -516,6 +603,8 @@ export default async function AllResultsPage({ searchParams }: SearchProps) {
         {size === DEFAULT_SIZE ? null : (
           <input type="hidden" name="size" value={String(size)} />
         )}
+        {/* Submitting Apply must not silently drop an active Updated chip. */}
+        {updated ? <input type="hidden" name="updated" value={updated} /> : null}
         <div className="flex flex-col">
           <label htmlFor="start" className="text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
             Requested from
@@ -570,6 +659,7 @@ export default async function AllResultsPage({ searchParams }: SearchProps) {
                 start: null,
                 end: null,
                 q: null,
+                updated: null,
                 page: null,
               })}
               className="min-h-11 rounded-md border border-[color:var(--color-brand-bg-mid)] px-4 py-1.5 text-sm text-[color:var(--color-brand-text-soft)] transition-colors hover:border-[color:var(--color-brand-cyan)]"
