@@ -175,6 +175,14 @@ begin
   -- Best-effort: neither worker should still be mid-transaction, but if a
   -- failure happened before a commit/rollback, clear that first so s0's
   -- deletes below don't hang waiting on a lock nobody will ever release.
+  -- Cancel any still-in-flight query FIRST (e.g. scenario 5's
+  -- wait_for_deadlock timed out with both workers still blocked
+  -- server-side) — a `rollback` sent to a connection that is still busy
+  -- processing an earlier async query errors with "another command is
+  -- already in progress" without ever reaching the server, so the worker
+  -- keeps its locks and s0's deletes below would hang indefinitely.
+  begin perform dblink_cancel_query('s1'); exception when others then null; end;
+  begin perform dblink_cancel_query('s2'); exception when others then null; end;
   begin perform dblink_exec('s1', 'rollback'); exception when others then null; end;
   begin perform dblink_exec('s2', 'rollback'); exception when others then null; end;
 
