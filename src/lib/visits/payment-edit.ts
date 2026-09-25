@@ -90,3 +90,56 @@ export function balanceAfterEdit(input: {
 function toCentavos(php: number): number {
   return Math.round(php * 100);
 }
+
+/** payments.amount_php is numeric(10,2); correct_payment (0174) refuses more. */
+export const MAX_PAYMENT_PHP = 99_999_999.99;
+
+/**
+ * The payment as the caller saw it — sent to correct_payment as p_expected
+ * (0174). Under the row lock the function refuses the change if any of these
+ * no longer match, so a second person's edit in between is never overwritten.
+ */
+// A type alias, not an interface: it is sent as the RPC's jsonb argument,
+// and only an alias is assignable to the generated Json index signature.
+export type PaymentSnapshot = {
+  amount_php: number;
+  method: string | null;
+  reference_number: string | null;
+  notes: string | null;
+  visit_id?: string;
+};
+
+export function paymentSnapshot(p: {
+  amount_php: number | string;
+  method: string | null;
+  reference_number: string | null;
+  notes: string | null;
+  visit_id?: string;
+}): PaymentSnapshot {
+  const text = (v: string | null) => (v && v.trim() !== "" ? v.trim() : null);
+  return {
+    amount_php: Number(p.amount_php),
+    method: p.method,
+    reference_number: text(p.reference_number),
+    notes: text(p.notes),
+    ...(p.visit_id ? { visit_id: p.visit_id } : {}),
+  };
+}
+
+/**
+ * What is left to pay on a visit after its paid total moves by `paidDelta`
+ * (negative = a payment leaves it). Centavo arithmetic; negative = overpaid.
+ */
+export function visitBalanceAfter(visitTotal: number, visitPaid: number, paidDelta: number): number {
+  return (toCentavos(visitTotal) - toCentavos(visitPaid) - toCentavos(paidDelta)) / 100;
+}
+
+/**
+ * je_period_lock_check (0029) refuses a money Edit or Move of a payment
+ * received in a closed accounting month: the corrected payment's journal
+ * entry posts on the ORIGINAL received date. Delete still works — its
+ * reversal posts today — so say that instead of the raw "Cannot modify
+ * journal entry dated …".
+ */
+export const CLOSED_MONTH_MESSAGE =
+  "This payment was received in a month the books are already closed for, so it cannot be edited or moved. Delete it and record it again (the correction then lands in this month), or ask an admin to reopen that month.";

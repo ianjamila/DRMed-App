@@ -30,6 +30,23 @@ describe("escapeCell", () => {
     expect(escapeCell('a"b"c')).toBe('"a""b""c"');
   });
 
+  it("neutralises a cell a spreadsheet would run as a formula", () => {
+    expect(escapeCell("=HYPERLINK(\"http://x\")")).toBe('"\'=HYPERLINK(""http://x"")"');
+    expect(escapeCell("+SUM(A1:A9)")).toBe("'+SUM(A1:A9)");
+    expect(escapeCell("-2+cmd|' /C calc'!A0")).toBe("'-2+cmd|' /C calc'!A0");
+    expect(escapeCell("@SUM(1)")).toBe("'@SUM(1)");
+    expect(escapeCell("\t=1")).toBe("'\t=1");
+  });
+
+  it("leaves numbers, amounts and phone numbers alone", () => {
+    expect(escapeCell(-500)).toBe("-500");
+    expect(escapeCell("-500.00")).toBe("-500.00");
+    expect(escapeCell("+63 917 123 4567")).toBe("+63 917 123 4567");
+    expect(escapeCell("+(02) 8123-4567")).toBe("+(02) 8123-4567");
+    expect(escapeCell("Paid by GCash")).toBe("Paid by GCash");
+    expect(escapeCell("a=b")).toBe("a=b");
+  });
+
   // A patient name is the realistic injection vector here.
   it("keeps a comma-bearing name in one cell", () => {
     const line = csvRow(["0037", "Dela Cruz, Juan", 1500]);
