@@ -7,7 +7,7 @@ import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { requireActiveStaff } from "@/lib/auth/require-staff";
 import { formatPhp } from "@/lib/marketing/format";
-import { manilaDate, manilaDateTime } from "@/lib/dates/manila";
+import { manilaDate, manilaDateTime, manilaISODate, todayManilaISODate } from "@/lib/dates/manila";
 import {
   canActOnResult,
   canSeeLine,
@@ -1522,6 +1522,9 @@ export default async function VisitDetailPage({ params, searchParams }: Props) {
                             patientName={`${patient.last_name}, ${patient.first_name}`}
                             patientDrmId={patient.drm_id}
                             otherVisits={otherVisits}
+                            currentVisitTotal={Number(visit.total_php)}
+                            currentVisitPaid={Number(visit.paid_php)}
+                            currentVisitReleasedCount={releasedRowIds.length}
                           />
                         ) : null}
                         {paymentEditability(p).editable ? (
@@ -1533,6 +1536,11 @@ export default async function VisitDetailPage({ params, searchParams }: Props) {
                             referenceNumber={p.reference_number}
                             notes={p.notes}
                             receivedLabel={manilaDateTime(p.received_at)}
+                            receivedOnOtherDay={
+                              manilaISODate(p.received_at) === todayManilaISODate()
+                                ? null
+                                : manilaDate(p.received_at)
+                            }
                             visitTotal={Number(visit.total_php)}
                             visitPaid={Number(visit.paid_php)}
                           />

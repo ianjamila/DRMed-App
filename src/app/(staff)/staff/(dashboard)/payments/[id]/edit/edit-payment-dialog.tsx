@@ -18,6 +18,7 @@ import {
   balanceAfterEdit,
   isEditablePaymentMethod,
   isMoneyChange,
+  paymentSnapshot,
 } from "@/lib/visits/payment-edit";
 import { editPaymentAction } from "./actions";
 
@@ -32,6 +33,7 @@ export function EditPaymentDialog({
   referenceNumber,
   notes,
   receivedLabel,
+  receivedOnOtherDay,
   visitTotal,
   visitPaid,
 }: {
@@ -42,6 +44,8 @@ export function EditPaymentDialog({
   referenceNumber: string | null;
   notes: string | null;
   receivedLabel: string;
+  /** The Manila date it was received, when that is not today; else null. */
+  receivedOnOtherDay: string | null;
   visitTotal: number;
   visitPaid: number;
 }) {
@@ -95,6 +99,7 @@ export function EditPaymentDialog({
         referenceNumber: newReference,
         notes: newNotes,
         reason: reason.trim(),
+        expected: paymentSnapshot({ amount_php: amount, method, reference_number: referenceNumber, notes }),
       });
       if (!result.ok) {
         setErr(result.error);
@@ -221,6 +226,12 @@ export function EditPaymentDialog({
               ) : (
                 <p>Only the reference or notes change. The amount and the books stay as they are.</p>
               )}
+              {moneyChanged && receivedOnOtherDay ? (
+                <p className="mt-2">
+                  It was received on {receivedOnOtherDay}, so that day’s collection totals change too
+                  {method === "cash" || newMethod === "cash" ? ", including the cash that day’s drawer should hold" : ""}.
+                </p>
+              ) : null}
               {moneyChanged && balance !== null && balance > 0 ? (
                 <p className="mt-2 font-semibold text-amber-800">
                   This leaves {formatPhp(balance)} unpaid on the visit.

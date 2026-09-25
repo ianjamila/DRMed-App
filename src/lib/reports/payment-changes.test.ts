@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   comparePaymentChanges,
+  deriveInPlaceEdits,
   derivePaymentChanges,
   parsePaymentChangesParams,
   paymentChangeOutcome,
@@ -106,5 +107,61 @@ describe("parsePaymentChangesParams", () => {
   it("carries a kind into the CSV link only when set", () => {
     expect(paymentChangesCsvHref({ start: "2026-09-01", end: "2026-09-24", kind: "all" })).not.toContain("kind");
     expect(paymentChangesCsvHref({ start: "2026-09-01", end: "2026-09-24", kind: "edited" })).toContain("kind=edited");
+  });
+});
+
+describe("deriveInPlaceEdits (reference/notes-only edits leave no voided row)", () => {
+  const pay = row({ id: "p1", reference_number: "OR-2" });
+  const audits = [
+    {
+      id: 41,
+      created_at: "2026-09-25T02:00:00Z",
+      actor_id: "s2",
+      resource_id: "p1",
+      metadata: {
+        money_changed: false,
+        reason: " typo in OR ",
+        before: { reference_number: "OR-1", notes: null },
+        after: { reference_number: "OR-2", notes: "paid at desk" },
+      },
+    },
+    {
+      id: 42,
+      created_at: "2026-09-25T03:00:00Z",
+      actor_id: null,
+      resource_id: "gone",
+      metadata: { money_changed: false, before: { reference_number: "X", notes: "a" }, after: { reference_number: "X", notes: "b" } },
+    },
+  ];
+  const [e1, e2] = deriveInPlaceEdits(audits, new Map([["p1", pay]]), STAFF);
+
+  it("reads as an edit on the payment's own visit, by the audit's actor", () => {
+    expect(e1.id).toBe("audit-41");
+    expect(e1.fate).toBe("edited");
+    expect(e1.changedAt).toBe("2026-09-25T02:00:00Z");
+    expect(e1.visitNumber).toBe("0043");
+    expect(e1.byName).toBe("Ben Cruz");
+    expect(e1.reason).toBe("typo in OR");
+    expect(e1.replacement).toBeNull();
+    expect(e1.reference).toBe("OR-1");
+  });
+
+  it("says what changed", () => {
+    expect(paymentChangeOutcome(e1)).toBe("Reference OR-1 → OR-2 · Notes changed");
+    expect(paymentChangeOutcome(e2)).toBe("Notes changed");
+  });
+
+  it("survives a payment the report could not load", () => {
+    expect(e2.visitNumber).toBeNull();
+    expect(e2.byName).toBeNull();
+  });
+
+  it("counts in the Edited tile", () => {
+    expect(summarisePaymentChanges([e1, e2]).edited).toBe(2);
+  });
+
+  it("exports its before → after in the CSV Outcome column", () => {
+    const [, line] = paymentChangesCsvRows([e1]);
+    expect(line[PAYMENT_CHANGES_CSV_HEADER.indexOf("Outcome")]).toBe("Reference OR-1 → OR-2 · Notes changed");
   });
 });

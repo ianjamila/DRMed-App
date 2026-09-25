@@ -7,7 +7,12 @@ import { audit } from "@/lib/audit/log";
 import { requireActiveStaff } from "@/lib/auth/require-staff";
 import { PaymentEditSchema } from "@/lib/validations/payment";
 import { translatePgError } from "@/lib/accounting/pg-errors";
-import { isMoneyChange, paymentEditability } from "@/lib/visits/payment-edit";
+import {
+  CLOSED_MONTH_MESSAGE,
+  isMoneyChange,
+  paymentEditability,
+  type PaymentSnapshot,
+} from "@/lib/visits/payment-edit";
 
 export type EditPaymentResult = { ok: true } | { ok: false; error: string };
 
@@ -24,6 +29,8 @@ export async function editPaymentAction(input: {
   referenceNumber: string;
   notes: string;
   reason: string;
+  /** The payment as the dialog showed it — refused if it changed since (0174). */
+  expected: PaymentSnapshot;
 }): Promise<EditPaymentResult> {
   const session = await requireActiveStaff();
   if (!canEditPayment(session.role)) {
@@ -37,6 +44,7 @@ export async function editPaymentAction(input: {
     reference_number: input.referenceNumber,
     notes: input.notes,
     reason: input.reason,
+    expected: input.expected,
   });
   if (!parsed.success) {
     return {
@@ -74,8 +82,14 @@ export async function editPaymentAction(input: {
     p_notes: d.notes,
     p_reason: d.reason,
     p_actor_id: session.user_id,
+    p_expected: { ...d.expected, visit_id: before.visit_id },
   });
-  if (rpcErr) return { ok: false, error: translatePgError(rpcErr) };
+  if (rpcErr) {
+    return {
+      ok: false,
+      error: rpcErr.code === "P0002" ? CLOSED_MONTH_MESSAGE : translatePgError(rpcErr),
+    };
+  }
 
   const h = await headers();
   await audit({

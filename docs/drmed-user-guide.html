@@ -247,7 +247,7 @@
 <div class="layout">
 <nav class="toc" aria-label="Contents">
   <p class="toc-brand">drmed<span>.</span>ph</p>
-  <p class="toc-tag">User guide · v2.21</p>
+  <p class="toc-tag">User guide · v2.22</p>
   <div class="filter" role="group" aria-label="Show chapters for">
     <button type="button" data-filter="all" aria-pressed="true">All roles</button>
     <button type="button" data-filter="reception">Reception</button>
@@ -611,14 +611,14 @@
     <h4>Fixing a payment: wrong method, amount or reference</h4>
     <ol class="steps">
       <li><p class="step-title">Open the visit, find the payment under <b>Payments</b>, click <kbd class="ui">Edit</kbd>.</p></li>
-      <li><p class="step-title">Change the method, amount, reference or notes, and type why.</p><p>The box under the form says what will happen before you save, and warns you if the new amount leaves part of the bill unpaid or goes over the visit total.</p></li>
+      <li><p class="step-title">Change the method, amount, reference or notes, and type why.</p><p>The box under the form says what will happen before you save, and warns you if the new amount leaves part of the bill unpaid or goes over the visit total. For a payment received on an earlier day it also says so: changing its method or amount changes that day's collection totals, including the cash that day's drawer should hold.</p></li>
       <li><p class="step-title">Click <kbd class="ui">Save changes</kbd>.</p><p>A new method or amount replaces the payment in one step. The corrected payment keeps the original date and cashier, and shows <q>Edited · was ₱… Cash</q>. The old one moves to <b>Deleted, edited &amp; moved payments</b> with your reason. The cash drawer and the books correct themselves. A change to the reference or notes only is saved on the same payment and leaves the books alone.</p></li>
     </ol>
     <p><kbd class="ui">Edit</kbd> is not offered on gift-code redemptions, HMO settlements or payments from the imported history. Delete those and record them again instead.</p>
     <h4>Moving a payment to the right visit</h4>
     <ol class="steps">
       <li><p class="step-title">Open the visit the payment was wrongly recorded on and click <kbd class="ui">Move</kbd> beside the payment.</p></li>
-      <li><p class="step-title">Pick the right visit.</p><p>The list shows the same patient's other visits with what each still owes. For another patient's visit, type its number and click <kbd class="ui">Find</kbd>. The box then names the patient, warns in amber if it is a different patient, and says if the payment is more than that visit still owes.</p></li>
+      <li><p class="step-title">Pick the right visit.</p><p>The list shows the same patient's other visits with what each still owes. For another patient's visit, type its number and click <kbd class="ui">Find</kbd>. The box then names the patient, warns in amber if it is a different patient, and says if the payment is more than that visit still owes. It also says what the visit you are moving it <em>from</em> will still owe, in amber when results on that visit are already released: they stay released, so collect the balance or check the move is right.</p></li>
       <li><p class="step-title">Type why, then click <kbd class="ui">Move payment</kbd>.</p><p>The payment is recorded on the right visit with the same date, method and cashier, marked <q>Moved from visit #…</q>. The wrong visit shows it under <b>Deleted, edited &amp; moved payments</b> as <q>Moved to visit #…</q>. Both balances update in one step, and the books follow.</p></li>
     </ol>
     <p><kbd class="ui">Move</kbd> follows the same rules as <kbd class="ui">Edit</kbd>: not for gift-code redemptions, HMO settlements or imported history, and never onto a deleted visit.</p>
@@ -629,6 +629,8 @@
       <li><p class="step-title">If the money was real, record it again correctly.</p><p>A deleted payment cannot be brought back.</p></li>
     </ol>
     <div class="note why"><span class="k">After End of Day is closed</span><div><p>None of <kbd class="ui">Edit</kbd>, <kbd class="ui">Move</kbd> or <kbd class="ui">Delete</kbd> works on a payment from a day whose End of Day is closed, because the count for that day has been signed off. Ask Admin to reopen the close first.</p></div></div>
+    <div class="note why"><span class="k">After the month is closed in the books</span><div><p><kbd class="ui">Edit</kbd> and <kbd class="ui">Move</kbd> say <q>This payment was received in a month the books are already closed for…</q>: the corrected payment would post into that closed month. <kbd class="ui">Delete</kbd> still works (its reversal lands in the current month), so delete it and record it again, or ask Admin to reopen the month.</p></div></div>
+    <div class="note why"><span class="k">Two people on one payment</span><div><p>If someone else edits, moves or deletes the same payment while your dialog is open, your save stops with <q>Someone else changed this payment since you opened it. Refresh the visit and try again.</q> (or, for Delete, <q>Someone else already deleted, edited or moved this payment. Refresh the visit.</q>). Nothing of yours was saved, and nothing of theirs was overwritten.</p></div></div>
     <p><b>Waiving</b> a balance (deciding not to collect) is Admin-only: <kbd class="ui">Waive balance</kbd> → <kbd class="ui">Confirm waive</kbd> on the visit page. A waived visit releases like a paid one but can no longer be deleted.</p>
   </section>
 
@@ -995,7 +997,7 @@
         <tr><td>Lab turnaround</td><td>Books &amp; Reports › <b>Lab Turnaround Time</b></td><td>Median, P95 and worst hours from request to release per section, plus the twenty worst SLA breaches. Samples over 60 days old are dropped as outliers; the SLA comes from each service's turnaround hours. Consultations and procedures are left out: reception releases them over the counter, so they have no turnaround to measure and used to sit in the table as a section-less block of nought-hour rows. A small <q>(unset)</q> row can still appear: it holds the old <q>Legacy lab test</q> code carried over from the pre-app records, which stands in for whatever the paper result said and so belongs to no one section. <kbd class="ui">Export CSV</kbd> gives one row per released test, not the section averages.</td></tr>
         <tr><td>Things that got stuck</td><td>Books &amp; Reports › <b>Stuck Tests</b></td><td>Packages with no tests, visits with no lines, package headers that never auto-released, and lab tests older than N days (the <b>days</b> box, 3 by default). Usually a reception slip that needs a delete or a call. Consultations and procedures are left out — they never go to the bench, so one left open would sit here for ever; chase those on <b>Visits</b> under the <q>Doctor Consults</q> chip. <kbd class="ui">Export CSV</kbd> merges all four lists into one file with a <i>List</i> column.</td></tr>
         <tr><td>Undo and delete oversight</td><td>Books &amp; Reports › <b>Undone Releases</b> · <b>Deleted Queue Entries</b></td><td>Every release taken back (with whether the patient had already viewed it) and every queue entry deleted, by whom and why. These are your RA 10173 review screens. Both <kbd class="ui">Export CSV</kbd>.</td></tr>
-        <tr><td>Payment corrections</td><td>Books &amp; Reports › <b>Payment Changes</b></td><td>Every payment deleted, edited or moved: when, by whom, why, and what it became (a moved payment links to its new visit). Filter by date and by kind of change; the tiles count each kind and name who made the most changes, which is where a habit like keying GCash as Cash shows up. The last 90 days by default. <kbd class="ui">Export CSV</kbd>.</td></tr>
+        <tr><td>Payment corrections</td><td>Books &amp; Reports › <b>Payment Changes</b></td><td>Every payment deleted, edited or moved: when, by whom, why, and what it became (a moved payment links to its new visit; a reference or notes fix shows its before → after). Filter by date and by kind of change; the tiles count each kind and name who made the most changes, which is where a habit like keying GCash as Cash shows up. The last 90 days by default. <kbd class="ui">Export CSV</kbd>.</td></tr>
         <tr><td>Consent coverage</td><td>Books &amp; Reports › <b>Patients Without Consent</b></td><td>Who still needs the form signed before you turn the consent gate on. <kbd class="ui">Export CSV</kbd> is the call list — it includes phone and email. <kbd class="ui">Print</kbd> on each row opens that patient's pre-filled consent form.</td></tr>
         <tr><td>HMO money</td><td>Admin › <b>HMO Claims</b> · Daily Monitoring › <span class="tab">HMO Receivables</span></td><td>Unbilled claims, batches sent, aging by provider.</td></tr>
         <tr><td>Who did what</td><td>Admin Tools › <b>Audit Log</b></td><td>Filter by action, DRM-ID, actor (Staff · Patient · System · Anonymous) and dates. Read-only by design.</td></tr>
@@ -1215,7 +1217,7 @@
 </section>
 
 <footer class="end">
-  <p>drmed.ph User Guide · v2.21 · 25 September 2026 · Matches the production release at migration 0173 (0166, which only removes retired send-out cost tables, follows this release). Every label in this guide was checked against the application code on that date. Print with <b>Ctrl/Cmd + P</b>; each chapter starts on a new page.</p>
+  <p>drmed.ph User Guide · v2.22 · 25 September 2026 · Matches the production release at migration 0174 (0166, which only removes retired send-out cost tables, follows this release). Every label in this guide was checked against the application code on that date. Print with <b>Ctrl/Cmd + P</b>; each chapter starts on a new page.</p>
 </footer>
 </main>
 </div>

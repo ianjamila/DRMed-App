@@ -1,4 +1,11 @@
-/** Payment Changes (0161) — every deleted, edited or moved payment. Shared by the page and its CSV. Not `server-only`. */
+/**
+ * Payment Changes (0161) — every deleted, edited or moved payment. Shared by the page and its CSV. Not `server-only`.
+ *
+ * Two sources: a delete, a money edit and a move each VOID a payment, so they
+ * are read off `payments.voided_at`; a reference/notes-only edit updates the
+ * payment in place and leaves no voided row, so it is read off its
+ * `payment.edited` audit row (`money_changed: false`) instead.
+ */
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "@/types/database";
 import { isISODate, manilaRangeUtc, shiftISODate, todayManilaISODate } from "@/lib/dates/manila";
@@ -58,8 +65,9 @@ export interface VoidedPaymentRow extends HistoryPayment {
 }
 
 export interface PaymentChange {
+  /** The voided payment's id, or `audit-<id>` for an in-place edit. */
   id: string;
-  voidedAt: string;
+  changedAt: string;
   receivedAt: string;
   amountPhp: number;
   method: string | null;
@@ -79,6 +87,65 @@ export interface PaymentChange {
   } | null;
   byName: string | null;
   reason: string | null;
+  /** Set only for a reference/notes-only edit, which changes no money. */
+  textEdit?: {
+    referenceBefore: string | null;
+    referenceAfter: string | null;
+    notesChanged: boolean;
+  };
+}
+
+/** A `payment.edited` audit row. Only the in-place (`money_changed: false`) ones are read. */
+export interface InPlaceEditAudit {
+  id: number;
+  created_at: string;
+  actor_id: string | null;
+  resource_id: string | null;
+  metadata: unknown;
+}
+
+interface EditedMetadata {
+  reason?: unknown;
+  before?: { reference_number?: unknown; notes?: unknown } | null;
+  after?: { reference_number?: unknown; notes?: unknown } | null;
+}
+
+function textOrNull(v: unknown): string | null {
+  return typeof v === "string" && v.trim() !== "" ? v.trim() : null;
+}
+
+export function deriveInPlaceEdits(
+  audits: readonly InPlaceEditAudit[],
+  paymentsById: ReadonlyMap<string, VoidedPaymentRow>,
+  staffNameById: ReadonlyMap<string, string>,
+): PaymentChange[] {
+  return audits.map((a) => {
+    const meta = (a.metadata ?? {}) as EditedMetadata;
+    const p = a.resource_id ? paymentsById.get(a.resource_id) : undefined;
+    const visit = p ? pluckOne(p.visits) : null;
+    const referenceBefore = textOrNull(meta.before?.reference_number);
+    const referenceAfter = textOrNull(meta.after?.reference_number);
+    return {
+      id: `audit-${a.id}`,
+      changedAt: a.created_at,
+      receivedAt: p?.received_at ?? "",
+      amountPhp: Number(p?.amount_php ?? 0),
+      method: p?.method ?? null,
+      reference: referenceBefore,
+      fate: "edited" as const,
+      visitId: p?.visit_id ?? "",
+      visitNumber: visit?.visit_number ?? null,
+      patient: pluckOne(visit?.patients ?? null),
+      replacement: null,
+      byName: a.actor_id ? (staffNameById.get(a.actor_id) ?? null) : null,
+      reason: textOrNull(meta.reason),
+      textEdit: {
+        referenceBefore,
+        referenceAfter,
+        notesChanged: textOrNull(meta.before?.notes) !== textOrNull(meta.after?.notes),
+      },
+    };
+  });
 }
 
 export interface PaymentChangesSummary {
@@ -118,7 +185,7 @@ export function derivePaymentChanges(
     const reason = links.reason(p);
     return {
       id: p.id,
-      voidedAt: p.voided_at ?? "",
+      changedAt: p.voided_at ?? "",
       receivedAt: p.received_at,
       amountPhp: Number(p.amount_php),
       method: p.method,
@@ -202,18 +269,57 @@ export async function loadPaymentChanges(
     replacements.push(...(data ?? []));
   }
 
+  const audits = await fetchAllRows<InPlaceEditAudit>(
+    (from, to) =>
+      client
+        .from("audit_log")
+        .select("id, created_at, actor_id, resource_id, metadata")
+        .eq("action", "payment.edited")
+        .eq("metadata->>money_changed", "false")
+        .gte("created_at", fromIso!)
+        .lt("created_at", toIso!)
+        .order("created_at", { ascending: false })
+        .order("id", { ascending: true })
+        .range(from, to)
+        .returns<InPlaceEditAudit[]>(),
+    maxRows,
+  );
+  const editedPayments = new Map<string, VoidedPaymentRow>();
+  for (const ids of chunk(unique(audits.rows.map((a) => a.resource_id)), IN_CHUNK)) {
+    const { data } = await client
+      .from("payments")
+      .select(VOIDED_SELECT)
+      .in("id", ids)
+      .returns<VoidedPaymentRow[]>();
+    for (const p of data ?? []) editedPayments.set(p.id, p);
+  }
+
   const staffNameById = new Map<string, string>();
-  for (const ids of chunk(unique(rows.map((r) => r.voided_by)), IN_CHUNK)) {
+  for (const ids of chunk(
+    unique([...rows.map((r) => r.voided_by), ...audits.rows.map((a) => a.actor_id)]),
+    IN_CHUNK,
+  )) {
     const { data } = await client.from("staff_profiles").select("id, full_name").in("id", ids);
     for (const s of data ?? []) staffNameById.set(s.id, s.full_name);
   }
 
-  const all = derivePaymentChanges(rows, replacements, staffNameById);
+  const all = [
+    ...derivePaymentChanges(rows, replacements, staffNameById),
+    ...deriveInPlaceEdits(audits.rows, editedPayments, staffNameById),
+  ];
   const entries = params.kind === "all" ? all : all.filter((e) => e.fate === params.kind);
-  return { entries, summary: summarisePaymentChanges(all), truncated };
+  return { entries, summary: summarisePaymentChanges(all), truncated: truncated || audits.truncated };
 }
 
 export function paymentChangeOutcome(e: PaymentChange): string {
+  if (e.textEdit) {
+    const parts: string[] = [];
+    if (e.textEdit.referenceBefore !== e.textEdit.referenceAfter) {
+      parts.push(`Reference ${e.textEdit.referenceBefore ?? "none"} → ${e.textEdit.referenceAfter ?? "none"}`);
+    }
+    if (e.textEdit.notesChanged) parts.push("Notes changed");
+    return parts.length > 0 ? parts.join(" · ") : "Reference or notes changed";
+  }
   if (e.fate === "deleted") return "Deleted";
   if (!e.replacement) return e.fate === "moved" ? "Moved" : "Edited";
   const money = `${formatPhp(e.replacement.amountPhp)} ${paymentMethodLabel(e.replacement.method)}`;
@@ -244,7 +350,7 @@ export function comparePaymentChanges(
   let cmp = 0;
   switch (sort.key) {
     case "when":
-      cmp = dirMul * a.voidedAt.localeCompare(b.voidedAt);
+      cmp = dirMul * a.changedAt.localeCompare(b.changedAt);
       break;
     case "amount":
       cmp = dirMul * (a.amountPhp - b.amountPhp);
@@ -287,7 +393,7 @@ export function paymentChangesCsvRows(entries: readonly PaymentChange[]): unknow
   return [
     [...PAYMENT_CHANGES_CSV_HEADER],
     ...entries.map((e) => [
-      csvManilaStamp(e.voidedAt),
+      csvManilaStamp(e.changedAt),
       PAYMENT_FATE_LABEL[e.fate],
       e.patient ? `${e.patient.last_name}, ${e.patient.first_name}` : "",
       e.patient?.drm_id ?? "",

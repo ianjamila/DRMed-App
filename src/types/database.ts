@@ -6404,6 +6404,7 @@ export type Database = {
         Args: {
           p_actor_id: string
           p_amount_php: number
+          p_expected?: Json
           p_method: string
           p_notes: string
           p_payment_id: string

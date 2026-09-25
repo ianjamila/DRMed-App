@@ -242,13 +242,13 @@ begin
   exception when sqlstate 'P0054' then raise notice 'PASS L: no actor → P0054';
   end;
 
-  -- ---- M: ACL ----------------------------------------------------------------
+  -- ---- M: ACL (looked up by name: 0174 replaced the 8-argument signature)
   if has_function_privilege('anon',
-       'public.correct_payment(uuid, numeric, text, text, text, text, uuid, uuid)', 'execute')
+       (select oid from pg_proc where proname = 'correct_payment'), 'execute')
      or has_function_privilege('authenticated',
-       'public.correct_payment(uuid, numeric, text, text, text, text, uuid, uuid)', 'execute')
+       (select oid from pg_proc where proname = 'correct_payment'), 'execute')
      or not has_function_privilege('service_role',
-       'public.correct_payment(uuid, numeric, text, text, text, text, uuid, uuid)', 'execute') then
+       (select oid from pg_proc where proname = 'correct_payment'), 'execute') then
     raise exception 'M FAIL: correct_payment EXECUTE is not service_role-only';
   end if;
   raise notice 'PASS M: service_role only';
