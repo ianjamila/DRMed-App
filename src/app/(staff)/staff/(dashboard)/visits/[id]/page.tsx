@@ -243,6 +243,11 @@ export default async function VisitDetailPage({ params, searchParams }: Props) {
   // status. Read with the signed-in client (the RPC gates rows by role).
   const resultIds = [...new Set([...pdfStates.values()].map((s) => s.resultId))];
   const copyStates = await fetchCopyStates(supabase, resultIds);
+  // R5: fetchCopyStates returns null on an RPC error. copyStates?.get(...)
+  // then reads exactly like "checked, nothing outdated" — the spec (design
+  // doc) requires the read failing to show as its own notice, never a quiet
+  // all-clear.
+  const copyStatesFailed = copyStates === null && resultIds.length > 0;
   const outdatedChipFor = (id: string) => {
     const s = pdfStates.get(id);
     return s ? outdatedCopyChip(copyStates?.get(s.resultId)) : null;
@@ -967,6 +972,16 @@ export default async function VisitDetailPage({ params, searchParams }: Props) {
             />
           ) : null}
         </div>
+
+        {copyStatesFailed ? (
+          <p
+            role="status"
+            className="mb-3 rounded-md border border-amber-300 bg-amber-50 p-2 text-xs text-amber-900"
+          >
+            Couldn&apos;t load follow-ups — a patient holding an out-of-date copy of a result
+            below may not be flagged.
+          </p>
+        ) : null}
 
         {packageHeaders.length > 0 ? (
           <>
