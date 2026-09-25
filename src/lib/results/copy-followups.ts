@@ -90,4 +90,10 @@ export const NOTIFY_OUTCOME_TEXT: Record<string, string> = {
   // between "download" and "correct" — the portal only serves released
   // results, so a notice would point the patient at a copy they can't open.
   not_released: " No patient notice was sent — the result isn't released, so the patient can't open it yet. They stay on Result follow-ups.",
+  // R6: the copy-state read itself failed (RPC error, or no row — anomalous
+  // right after a commit), so nothing is known about whether the patient
+  // holds a copy or has contact on file. Never claim they're on Result
+  // follow-ups here — that depends on holds_copy, which this outcome never
+  // learned.
+  check_failed: " Couldn't check whether the patient has a copy, so no notice was sent.",
 };

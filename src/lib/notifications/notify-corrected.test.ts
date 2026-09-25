@@ -13,6 +13,9 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
  */
 
 vi.mock("server-only", () => ({}));
+vi.mock("@/lib/results/copy-followups.server", () => ({
+  fetchCopyStateAdmin: vi.fn(),
+}));
 
 const fx = vi.hoisted(() => ({
   claim: null as null | (() => Promise<{ data: unknown; error: { message: string } | null }>),
@@ -93,7 +96,8 @@ vi.mock("@/lib/observability/report-error", () => ({
 
 import { sendEmail } from "./email";
 import { sendSms } from "./sms";
-import { notifyResultCorrected } from "./notify-corrected";
+import { fetchCopyStateAdmin } from "@/lib/results/copy-followups.server";
+import { notifyResultCorrected, resolveCorrectedNotifyOutcome } from "./notify-corrected";
 
 const okClaim = () =>
   Promise.resolve({
@@ -340,5 +344,68 @@ describe("notifyResultCorrected", () => {
     expect(sendEmail).not.toHaveBeenCalled();
     expect(sendSms).not.toHaveBeenCalled();
     expect(fx.errors.some((e) => e.scope === "notify/result-corrected:release-check")).toBe(true);
+  });
+});
+
+// R6: the shared decide-and-send helper the three edit actions now call
+// instead of duplicating shouldOfferNotify(await fetchCopyStateAdmin(...)).
+const offeredState = {
+  result_id: "r1",
+  latest_amendment_id: "am-1",
+  amendment_count: 2,
+  amended_at: "2026-09-25T00:00:00Z",
+  holds_copy: true,
+  portal_outdated: true,
+  printed_outdated: false,
+  followed_up: false,
+  notified_at: null,
+  notify_failed: false,
+  has_email: true,
+  has_phone: false,
+};
+
+describe("resolveCorrectedNotifyOutcome", () => {
+  const helperArgs = {
+    resultId: "r1",
+    amendmentId: "am-1",
+    testName: "Chemistry",
+    actorId: "u1",
+    patientId: "pt1",
+  };
+
+  it("wantsNotify false: undefined, fetchCopyStateAdmin never called", async () => {
+    const out = await resolveCorrectedNotifyOutcome({ ...helperArgs, wantsNotify: false });
+    expect(out).toBeUndefined();
+    expect(fetchCopyStateAdmin).not.toHaveBeenCalled();
+    expect(fx.claimCalls).toBe(0);
+  });
+
+  it("R6: the copy-state read fails — check_failed, reportError, no claim", async () => {
+    vi.mocked(fetchCopyStateAdmin).mockResolvedValue({ ok: false });
+    const out = await resolveCorrectedNotifyOutcome({ ...helperArgs, wantsNotify: true });
+    expect(out).toBe("check_failed");
+    expect(fx.claimCalls).toBe(0);
+    expect(fx.errors.some((e) => e.scope === "notify/result-corrected:check")).toBe(true);
+  });
+
+  it("copy state read ok but offer refuses (no copy on file): not_offered, no claim", async () => {
+    vi.mocked(fetchCopyStateAdmin).mockResolvedValue({
+      ok: true,
+      state: { ...offeredState, holds_copy: false },
+    });
+    const out = await resolveCorrectedNotifyOutcome({ ...helperArgs, wantsNotify: true });
+    expect(out).toBe("not_offered");
+    expect(fx.claimCalls).toBe(0);
+  });
+
+  it("copy state read ok and offered: delegates to notifyResultCorrected", async () => {
+    vi.mocked(fetchCopyStateAdmin).mockResolvedValue({ ok: true, state: offeredState });
+    vi.mocked(sendEmail).mockResolvedValue({ ok: true, id: "em-1" });
+    vi.mocked(sendSms).mockResolvedValue({ ok: false, kind: "skipped", reason: "patient has no phone on file" });
+
+    const out = await resolveCorrectedNotifyOutcome({ ...helperArgs, wantsNotify: true });
+
+    expect(out).toBe("sent");
+    expect(fx.claimCalls).toBe(1);
   });
 });

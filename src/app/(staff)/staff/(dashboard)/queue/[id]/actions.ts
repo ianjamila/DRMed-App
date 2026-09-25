@@ -41,15 +41,14 @@ import {
   commitResultFinalise,
 } from "@/lib/actions/results/result-edit-core";
 import { translatePgError } from "@/lib/accounting/pg-errors";
-import { shouldOfferNotify } from "@/lib/results/copy-followups";
-import { fetchCopyStateAdmin } from "@/lib/results/copy-followups.server";
-import { notifyResultCorrected, type NotifyOutcome } from "@/lib/notifications/notify-corrected";
+import { resolveCorrectedNotifyOutcome, type CorrectedNotifyOutcome } from "@/lib/notifications/notify-corrected";
 import type { Json } from "@/types/database";
 import { assertPatientActive } from "@/lib/patients/require-active";
 
-/** The edit forms' notify outcome — a real send outcome, or the server's own
- * "no" when the client asked but the server-side re-check refused. */
-export type NotifyResultOutcome = NotifyOutcome | "not_offered";
+/** The edit forms' notify outcome — a real send outcome, or one of the
+ * server's own "no"s when the client asked but the server-side re-check
+ * refused or could not complete. */
+export type NotifyResultOutcome = CorrectedNotifyOutcome;
 
 const MAX_BYTES = 10 * 1024 * 1024; // 10 MB
 
@@ -1028,20 +1027,14 @@ export async function amendResultAction(
   // Opt-in patient notice (0179): only after the edit committed, and only
   // once the server re-checks the offer itself — the client's checkbox is
   // never trusted on its own.
-  const wantsNotify = formData.get("notify_patient") === "on";
-  let notify: NotifyResultOutcome | undefined;
-  if (wantsNotify) {
-    const offer = shouldOfferNotify(await fetchCopyStateAdmin(result.id));
-    notify = offer.offered
-      ? await notifyResultCorrected({
-          amendmentId: committed.data.amendmentId,
-          resultId: result.id,
-          testName,
-          actorId: session.user_id,
-          patientId: visit.patient_id,
-        })
-      : "not_offered";
-  }
+  const notify = await resolveCorrectedNotifyOutcome({
+    wantsNotify: formData.get("notify_patient") === "on",
+    resultId: result.id,
+    amendmentId: committed.data.amendmentId,
+    testName,
+    actorId: session.user_id,
+    patientId: visit.patient_id,
+  });
 
   revalidatePath(`/staff/queue/${testRow.id}`);
   revalidatePath(`/staff/visits/${visit.id}`);
@@ -1403,20 +1396,14 @@ export async function amendStructuredResultAction(
   // Opt-in patient notice (0179): only after the edit committed, and only
   // once the server re-checks the offer itself — the client's checkbox is
   // never trusted on its own.
-  const wantsNotify = formData.get("notify_patient") === "on";
-  let notify: NotifyResultOutcome | undefined;
-  if (wantsNotify) {
-    const offer = shouldOfferNotify(await fetchCopyStateAdmin(result.id));
-    notify = offer.offered
-      ? await notifyResultCorrected({
-          amendmentId: committed.data.amendmentId,
-          resultId: result.id,
-          testName: svc.name,
-          actorId: session.user_id,
-          patientId: visit.patient_id,
-        })
-      : "not_offered";
-  }
+  const notify = await resolveCorrectedNotifyOutcome({
+    wantsNotify: formData.get("notify_patient") === "on",
+    resultId: result.id,
+    amendmentId: committed.data.amendmentId,
+    testName: svc.name,
+    actorId: session.user_id,
+    patientId: visit.patient_id,
+  });
 
   revalidatePath(`/staff/queue`);
   revalidatePath(`/staff/queue/${testRow.id}`);

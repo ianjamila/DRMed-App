@@ -10,8 +10,15 @@ import { buildCorrectedResultMessages } from "./corrected-result-message";
 import { PORTAL_URL } from "./portal-url";
 import { checkPatientRecipient } from "./active-patient-recipient";
 import { auditSkippedInactiveRecipient } from "./inactive-recipient-audit";
+import { shouldOfferNotify } from "@/lib/results/copy-followups";
+import { fetchCopyStateAdmin } from "@/lib/results/copy-followups.server";
 
 export type NotifyOutcome = "sent" | "failed" | "already" | "inactive" | "not_released";
+
+/** Every outcome an edit form's "let the patient know" checkbox can settle
+ * on, including the two that are decided before notifyResultCorrected is
+ * even called. */
+export type CorrectedNotifyOutcome = NotifyOutcome | "not_offered" | "check_failed";
 
 interface Args {
   /**
@@ -276,4 +283,47 @@ export async function notifyResultCorrected({
   }
 
   return channels.length > 0 ? "sent" : "failed";
+}
+
+// R6: the single place every edit action calls to decide-and-send the opt-in
+// "let the patient know" notice, so the three call sites (single-test
+// PDF-replace, single-test structured, consolidated report) can't drift or
+// diverge on how a failed copy-state read is worded. Re-reads the copy state
+// itself (admin client, the service-role internal RPC — the client's
+// checkbox offer is never trusted on its own) and never throws.
+//
+// A failed read (RPC error, or no row — itself anomalous right after a
+// commit) is its own outcome, "check_failed": telling staff "no copy or no
+// contact on file" there would be false, since the read never got that far.
+export async function resolveCorrectedNotifyOutcome({
+  wantsNotify,
+  resultId,
+  amendmentId,
+  testName,
+  actorId,
+  patientId,
+}: {
+  wantsNotify: boolean;
+  resultId: string;
+  amendmentId: string | null;
+  testName: string;
+  actorId: string;
+  patientId: string;
+}): Promise<CorrectedNotifyOutcome | undefined> {
+  if (!wantsNotify) return undefined;
+
+  const read = await fetchCopyStateAdmin(resultId);
+  if (!read.ok) {
+    await reportError({
+      scope: "notify/result-corrected:check",
+      error: new Error("copy-state read failed before notify"),
+      metadata: { result_id: resultId },
+    });
+    return "check_failed";
+  }
+
+  const offer = shouldOfferNotify(read.state);
+  if (!offer.offered) return "not_offered";
+
+  return notifyResultCorrected({ amendmentId, resultId, testName, actorId, patientId });
 }

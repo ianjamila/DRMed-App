@@ -20,9 +20,7 @@ import { countValueChanges, isEditableStatus, validateEditReason } from "@/lib/r
 import { buildValueRows, detectCrossings, valueRowsToDocValues } from "@/lib/results/value-rows";
 import { auditAlertChanges, commitResultEdit } from "@/lib/actions/results/result-edit-core";
 import { REPORT_VALUES_LOAD_FAILED, reportEditLoadState } from "@/lib/results/consolidated-reports";
-import { shouldOfferNotify } from "@/lib/results/copy-followups";
-import { fetchCopyStateAdmin } from "@/lib/results/copy-followups.server";
-import { notifyResultCorrected, type NotifyOutcome } from "@/lib/notifications/notify-corrected";
+import { resolveCorrectedNotifyOutcome, type CorrectedNotifyOutcome } from "@/lib/notifications/notify-corrected";
 import { assertPatientActive } from "@/lib/patients/require-active";
 
 // Editing a FINISHED combined report (chemistry): one results row + one PDF
@@ -42,13 +40,13 @@ export interface AmendConsolidatedInput {
     numeric_value_conv: number | null;
   }>;
   // 0179: opt-in "let the patient know an updated copy is ready" checkbox.
-  // The server re-checks the offer (fetchCopyStateAdmin + shouldOfferNotify)
-  // before sending — this flag alone never sends.
+  // The server re-checks the offer (resolveCorrectedNotifyOutcome) before
+  // sending — this flag alone never sends.
   notifyPatient?: boolean;
 }
 
 export type AmendConsolidatedResult =
-  | { ok: true; data: { amendmentSeq: number }; notify?: NotifyOutcome | "not_offered" }
+  | { ok: true; data: { amendmentSeq: number }; notify?: CorrectedNotifyOutcome }
   | { ok: false; error: string; stale?: boolean };
 
 type One<T> = T | T[] | null;
@@ -329,26 +327,17 @@ export async function amendConsolidatedReport(
   // once the server re-checks the offer itself — the client's checkbox is
   // never trusted on its own. testName is the report group's patient-facing
   // display name, never the reason.
-  let notify: NotifyOutcome | "not_offered" | undefined;
-  if (input.notifyPatient) {
-    const offer = shouldOfferNotify(await fetchCopyStateAdmin(result.id));
-    if (offer.offered) {
-      const { data: group } = await admin
-        .from("report_groups")
-        .select("name")
-        .eq("id", result.report_group_id!)
-        .maybeSingle();
-      notify = await notifyResultCorrected({
-        amendmentId: committed.data.amendmentId,
-        resultId: result.id,
-        testName: group?.name ?? "your report",
-        actorId: session.user_id,
-        patientId,
-      });
-    } else {
-      notify = "not_offered";
-    }
-  }
+  const { data: group } = input.notifyPatient
+    ? await admin.from("report_groups").select("name").eq("id", result.report_group_id!).maybeSingle()
+    : { data: null };
+  const notify = await resolveCorrectedNotifyOutcome({
+    wantsNotify: Boolean(input.notifyPatient),
+    resultId: result.id,
+    amendmentId: committed.data.amendmentId,
+    testName: group?.name ?? "your report",
+    actorId: session.user_id,
+    patientId,
+  });
 
   revalidatePath("/staff/queue");
   revalidatePath(`/staff/queue/consolidated/${anchor.visit_id}/${result.report_group_id}`);

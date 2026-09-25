@@ -17,19 +17,28 @@ export async function fetchCopyStates(db: Db, resultIds: readonly string[]): Pro
   return out;
 }
 
+/** Result of fetchCopyStateAdmin: `ok: false` covers both an RPC error and a
+ * missing row, which is itself anomalous for a result that was just edited —
+ * either way the caller cannot tell holds_copy/has_email/etc, so R6 treats
+ * both as "the check failed", never as "no copy on file". */
+export type CopyStateAdminRead = { ok: true; state: CopyState } | { ok: false };
+
 /** Server-side re-check before sending a notice (service role, internal function). */
-export async function fetchCopyStateAdmin(resultId: string): Promise<CopyState | undefined> {
+export async function fetchCopyStateAdmin(resultId: string): Promise<CopyStateAdminRead> {
   const { createAdminClient } = await import("@/lib/supabase/admin");
   const { data, error } = await createAdminClient().rpc("result_copy_states_internal", { p_result_ids: [resultId] });
-  if (error || !data?.[0]) return undefined;
+  if (error || !data?.[0]) return { ok: false };
   const r = data[0];
   return {
-    result_id: r.result_id, latest_amendment_id: r.latest_amendment_id,
-    amendment_count: r.amendment_count, amended_at: r.amended_at,
-    holds_copy: r.holds_copy, portal_outdated: r.portal_outdated,
-    printed_outdated: r.printed_outdated, followed_up: r.followed_up,
-    notified_at: r.notified_at, notify_failed: r.notify_error != null,
-    has_email: r.has_email, has_phone: r.has_phone,
+    ok: true,
+    state: {
+      result_id: r.result_id, latest_amendment_id: r.latest_amendment_id,
+      amendment_count: r.amendment_count, amended_at: r.amended_at,
+      holds_copy: r.holds_copy, portal_outdated: r.portal_outdated,
+      printed_outdated: r.printed_outdated, followed_up: r.followed_up,
+      notified_at: r.notified_at, notify_failed: r.notify_error != null,
+      has_email: r.has_email, has_phone: r.has_phone,
+    },
   };
 }
 
