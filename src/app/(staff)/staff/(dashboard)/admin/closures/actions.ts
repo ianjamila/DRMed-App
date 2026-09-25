@@ -8,11 +8,14 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { audit } from "@/lib/audit/log";
 import { requireAdminStaff } from "@/lib/auth/require-admin";
 import { manilaRangeUtc } from "@/lib/dates/manila";
+import { fetchCompleteRows } from "@/lib/reports/paging";
 import {
   isActivePatient,
   PATIENT_LIFECYCLE_COLUMNS,
   type PatientLifecycle,
 } from "@/lib/patients/active";
+
+const UPDATE_CHUNK = 200;
 
 export type ClosureResult = { ok: true } | { ok: false; error: string };
 export type BulkRescheduleResult =
@@ -130,36 +133,48 @@ export async function bulkRescheduleForClosureAction(
   }
 
   const admin = createAdminClient();
-  const { data: candidates, error: selectError } = await admin
-    .from("appointments")
-    .select(`id, patient_id, patients ( ${PATIENT_LIFECYCLE_COLUMNS} )`)
-    .gte("scheduled_at", startIso)
-    .lt("scheduled_at", endIso)
-    .in("status", ["confirmed", "arrived"])
-    .returns<RescheduleCandidate[]>();
+  // The whole matching set, paged with a unique order — a bare select would
+  // stop silently at PostgREST's 1,000-row cap.
+  const { data: candidates, error: selectError } = await fetchCompleteRows((from, to) =>
+    admin
+      .from("appointments")
+      .select(`id, patient_id, patients ( ${PATIENT_LIFECYCLE_COLUMNS} )`)
+      .gte("scheduled_at", startIso)
+      .lt("scheduled_at", endIso)
+      .in("status", ["confirmed", "arrived"])
+      .order("id")
+      .range(from, to)
+      .returns<RescheduleCandidate[]>(),
+  );
   if (selectError) return { ok: false, error: selectError.message };
 
   let skipped = 0;
-  const rows: RescheduleCandidate[] = [];
+  const eligibleIds: string[] = [];
   for (const r of candidates ?? []) {
     const patient = Array.isArray(r.patients) ? (r.patients[0] ?? null) : r.patients;
     // Walk-ins (patient_id null, no embedded patient) always reschedule.
     if (patient === null || isActivePatient(patient)) {
-      rows.push(r);
+      eligibleIds.push(r.id);
     } else {
       skipped++;
     }
   }
 
-  if (rows.length > 0) {
-    const { error: updateError } = await admin
+  // The update restates the status/date predicates, so a row reception
+  // cancelled or completed after the select is left alone; only the rows
+  // actually changed are counted and audited.
+  const rows: { id: string; patient_id: string | null }[] = [];
+  for (let i = 0; i < eligibleIds.length; i += UPDATE_CHUNK) {
+    const { data: updated, error: updateError } = await admin
       .from("appointments")
       .update({ status: "pending_callback", scheduled_at: null })
-      .in(
-        "id",
-        rows.map((r) => r.id),
-      );
+      .in("id", eligibleIds.slice(i, i + UPDATE_CHUNK))
+      .gte("scheduled_at", startIso)
+      .lt("scheduled_at", endIso)
+      .in("status", ["confirmed", "arrived"])
+      .select("id, patient_id");
     if (updateError) return { ok: false, error: updateError.message };
+    rows.push(...(updated ?? []));
   }
 
   // One audit row per RESCHEDULED appointment so the trail is searchable
