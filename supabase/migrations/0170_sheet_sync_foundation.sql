@@ -136,7 +136,7 @@ create or replace function public.resolve_patient_guarded(
 returns table (id uuid, drm_id text, reused boolean)
 language plpgsql
 security definer
-set search_path = public
+set search_path = ''
 as $$
 declare
   v record;
@@ -204,7 +204,7 @@ create table public.sheet_sync_runs (
   summary               jsonb not null default '{}'::jsonb,
   error                 text,
   legacy_import_run_id  uuid references public.legacy_import_runs(id),
-  reverted_by_run_id    uuid references public.sheet_sync_runs(id),
+  reverted_by_run_id    uuid references public.sheet_sync_runs(id) on delete set null,
   -- an undo run whose holds "Let the sync decide again" took back (sheet_sync_release_undo)
   released_by_run_id    uuid references public.sheet_sync_runs(id) on delete set null
 );
@@ -625,6 +625,37 @@ begin
   return v_n;
 end $$;
 
+-- General patients helper (NOT sheet-sync-private, despite living in this
+-- migration): same normalization as names.ts's nameNormOf/normalizeName
+-- (lower, drop apostrophes, other punctuation -> space, collapse whitespace)
+-- MINUS diacritic folding (no unaccent extension here) — a defensive-only
+-- gap, see the concurrent-registration guard in sheet_sync_apply_customer_ops
+-- below. IMMUTABLE so the functional index below can be used. Deliberately
+-- named and granted OUTSIDE the sheet_/​_sheet_sync_ "closed to every JWT
+-- role" convention (see the ACL do-block and post-conditions further down):
+-- the index makes this function run on EVERY insert/update that touches
+-- patients' name columns, from every part of the app, most of them under the
+-- `authenticated` role (the staff RLS-scoped client edits a patient's name
+-- directly, e.g. src/app/(staff)/staff/(dashboard)/patients/[id]/edit-actions.ts)
+-- — closing it to authenticated the way the sheet-sync control-plane RPCs are
+-- closed would break every one of those writes with "permission denied for
+-- function patients_name_norm". No `anon` grant: every anon-reachable write
+-- path to patients (resolve_patient_guarded) is itself SECURITY DEFINER
+-- (owner postgres), so its internal INSERT never runs as anon.
+create or replace function public.patients_name_norm(p_last text, p_first text, p_middle text)
+returns text language sql immutable set search_path = '' as $$
+  select
+    trim(regexp_replace(regexp_replace(lower(replace(coalesce(p_last, ''), '''', '')), '[^a-z0-9\s]', ' ', 'g'), '\s+', ' ', 'g'))
+    || '|' ||
+    trim(regexp_replace(regexp_replace(lower(replace(coalesce(p_first, '') || ' ' || coalesce(p_middle, ''), '''', '')), '[^a-z0-9\s]', ' ', 'g'), '\s+', ' ', 'g'));
+$$;
+revoke all on function public.patients_name_norm(text, text, text) from public;
+grant execute on function public.patients_name_norm(text, text, text) to authenticated, service_role;
+
+create index sheet_sync_patients_name_norm on public.patients
+  (public.patients_name_norm(last_name, first_name, middle_name))
+  where merged_into_id is null;
+
 -- Applies one chunk of the planner's customer ops. Contract (types.ts CustomerOp):
 --   create — new sheet-owned patient; each link key is written 'admin' when it
 --            is in admin_link_keys (a subset of link_keys) and 'auto_exact'
@@ -632,14 +663,26 @@ end $$;
 --            a hold, nor over an admin row unless that row is an admin
 --            "create" decision. A key it may not write raises 22023 (the
 --            whole chunk rolls back), so a create never leaves a patient
---            that no key points at.
+--            that no key points at. Skipped (counted `skipped_existing`, no
+--            link written) when a LIVE non-merged patient already matches
+--            this op's normalized name plus its birthdate (or, when the op
+--            has none, its normalized phone) — front desk may have
+--            registered this exact person since the planner read patients.
+--            Exempt: an ADMIN create (this op's own method = 'admin') is
+--            never second-guessed by this check.
 --   link   — auto link (method auto_exact / auto_loose only, else 22023),
---            never over an admin row or a hold (skipped).
+--            never over an admin row or a hold (skipped). Skipped (counted
+--            `stale`) when the op carries expected_row_version and the
+--            target patient's row_version no longer matches — staff changed
+--            the patient after the planner read it.
 --   fill   — fill-only-if-empty (+ the channel when unset or sheet-owned).
+--            Same `stale` skip as link, checked before the fill.
 --   facts  — acquisition facts upsert.
 --   hold   — persist a review: (link_key, no patient, 'review', reason),
 --            never over an admin row.
--- create / link / hold stamp sheet_patient_links.run_id with this run.
+-- create / link / hold stamp sheet_patient_links.run_id with this run. A
+-- stale or skipped-existing op is simply dropped: the next run re-plans it
+-- from a fresh read.
 create or replace function public.sheet_sync_apply_customer_ops(p_lease_token uuid, p_ops jsonb)
 returns jsonb language plpgsql security definer set search_path = '' as $$
 declare
@@ -657,7 +700,12 @@ declare
   v_hit boolean;
   v_rows int;
   v_created jsonb := '{}'::jsonb;
+  v_link_ver bigint;
+  v_op_phone_digits text;
+  v_op_phone text;
+  v_dupe_id uuid;
   n_created int := 0; n_linked int := 0; n_filled int := 0; n_facts int := 0; n_held int := 0; n_skipped int := 0;
+  n_stale int := 0; n_skipped_existing int := 0;
 begin
   if jsonb_typeof(p_ops) is distinct from 'array' then
     raise exception 'Bad ops batch.' using errcode = '22023';
@@ -679,6 +727,40 @@ begin
         update public.sheet_sync_runs set legacy_import_run_id = v_import where id = v_run;
       end if;
       v_f := v_op->'fields';
+      -- Concurrent-registration guard (Codex P2): the planner read patients
+      -- once; front desk may have registered this exact person since. Same
+      -- normalization as the planner's (names.ts nameNormOf/normalizeName —
+      -- lower, drop apostrophes, other punctuation -> space, collapse
+      -- whitespace; diacritics are not folded here, a gap this backstop
+      -- accepts since the planner's own full-name index is the primary
+      -- match). A LIVE, non-merged patient with the same normalized name
+      -- plus the same birthdate (both present) — or, when this op has no
+      -- birthdate, the same normalized phone — means someone else already
+      -- holds this identity: skip the create (counted `skipped_existing`,
+      -- no link written), leaving the row for the next run to link or review.
+      -- ADMIN creates are exempt (v_op->>'method' = 'admin', an admin's own
+      -- "create new patient" decision) — same trust rule as everywhere else
+      -- in this function (an admin link skips the conflict test too): an
+      -- admin already looked at this row and decided it is not an existing
+      -- patient, so this heuristic must not silently veto that decision (and
+      -- must not turn it into a re-asked question every run — the saved
+      -- 'create' link decision has no patient yet until this insert runs).
+      v_dupe_id := null;
+      if v_op->>'method' <> 'admin' then
+        v_op_phone_digits := regexp_replace(coalesce(v_f->>'phone', ''), '[^0-9]', '', 'g');
+        v_op_phone := case when length(v_op_phone_digits) between 10 and 12 then right(v_op_phone_digits, 10) else null end;
+        select p.id into v_dupe_id from public.patients p
+         where p.merged_into_id is null
+           and public.patients_name_norm(p.last_name, p.first_name, p.middle_name)
+               = public.patients_name_norm(v_f->>'last_name', v_f->>'first_name', v_f->>'middle_name')
+           and ( (nullif(v_f->>'birthdate', '') is not null and p.birthdate = (v_f->>'birthdate')::date)
+              or (nullif(v_f->>'birthdate', '') is null and v_op_phone is not null and p.phone_normalized = v_op_phone) )
+         limit 1;
+      end if;
+      if v_dupe_id is not null then
+        n_skipped_existing := n_skipped_existing + 1;
+        continue;
+      end if;
       v_src := (select rs.id from public.referral_sources rs where rs.id = nullif(v_f->>'referral_source', ''));
       perform set_config('app.referral_origin', 'sheet', true);
       insert into public.patients (first_name, last_name, middle_name, birthdate, sex, phone, email, address,
@@ -723,6 +805,15 @@ begin
       if coalesce(v_op->>'method', '') not in ('auto_exact','auto_loose') then
         raise exception 'Bad link op: method must be auto_exact or auto_loose.' using errcode = '22023';
       end if;
+      -- Stale-read guard: the planner's candidate may have changed (or gone)
+      -- since it read patients. A vanished patient counts as stale too.
+      if v_op ? 'expected_row_version' then
+        select p.row_version into v_link_ver from public.patients p where p.id = (v_op->>'patient_id')::uuid;
+        if v_link_ver is distinct from (v_op->>'expected_row_version')::bigint then
+          n_stale := n_stale + 1;
+          continue;
+        end if;
+      end if;
       insert into public.sheet_patient_links (link_key, patient_id, decision, method, run_id)
       values (v_op->>'link_key', (v_op->>'patient_id')::uuid, 'link', v_op->>'method', v_run)
       on conflict (link_key) do update
@@ -752,6 +843,12 @@ begin
        where p.id = (v_op->>'patient_id')::uuid and p.merged_into_id is null
        for update;
       if not found then n_skipped := n_skipped + 1; continue; end if;
+      -- Stale-read guard: staff may have changed the patient since the
+      -- planner read it (a conflicting DOB, say) — re-plan next run instead.
+      if v_op ? 'expected_row_version' and v_old.row_version <> (v_op->>'expected_row_version')::bigint then
+        n_stale := n_stale + 1;
+        continue;
+      end if;
       v_src := case
         when not (v_f ? 'referral_source') then v_old.referral_source
         when v_old.referral_source is null or v_old.referral_source_origin = 'sheet'
@@ -818,7 +915,7 @@ begin
 
   return jsonb_build_object('created', v_created, 'counts', jsonb_build_object(
     'created', n_created, 'linked', n_linked, 'filled', n_filled, 'facts', n_facts,
-    'held', n_held, 'skipped', n_skipped));
+    'held', n_held, 'skipped', n_skipped, 'stale', n_stale, 'skipped_existing', n_skipped_existing));
 end $$;
 
 -- Review items for one tab. The three IDENTITY kinds (ambiguous_patient,
@@ -1023,6 +1120,7 @@ begin
        and p.legacy_intake->>'source' = 'google_sheet_CUSTOMER_LIST2'
        and p.referral_source is not distinct from p_expected_old
        and p.referral_source_origin is distinct from 'patient'
+       and p.referral_source_origin is distinct from 'sheet'
      for update;
     if not found then continue; end if;
     perform set_config('app.referral_origin', 'sheet', true);
@@ -1041,8 +1139,19 @@ end $$;
 -- (registered_on, undated last, then source_key; a blank answer is no
 -- answer). Moving a patient on any other row would be moved back by the
 -- next nightly fill, bumping row_version every night.
+--
+-- p_item_id (map-answer race, Codex P2): the caller's OWN read of "is this
+-- review item still open" happens before it acquires the sync lease, so two
+-- admins racing to map the same answer could both pass that read and then
+-- each apply a (possibly different) channel in turn. Passing the item id
+-- lets this function re-check "still open" itself, atomically with the
+-- lease/write it already holds, and resolve that exact item — the second
+-- caller now gets P0064 instead of silently overwriting the first's choice.
+-- Default null keeps every existing caller (this migration's own proof
+-- script) working unchanged; the app always passes it.
+drop function if exists public.sheet_alias_apply(uuid, text, text, uuid);
 create or replace function public.sheet_alias_apply(
-  p_lease_token uuid, p_raw_normalized text, p_source_id text, p_actor uuid
+  p_lease_token uuid, p_raw_normalized text, p_source_id text, p_actor uuid, p_item_id uuid default null
 ) returns integer language plpgsql security definer set search_path = '' as $$
 declare
   v_run uuid := public._sheet_sync_fence(p_lease_token, true);
@@ -1055,6 +1164,13 @@ declare
 begin
   if coalesce(p_raw_normalized, '') = '' or not exists (select 1 from public.referral_sources rs where rs.id = p_source_id) then
     raise exception 'Unknown channel.' using errcode = '22023';
+  end if;
+  if p_item_id is not null and not exists (
+       select 1 from public.sheet_sync_review_items i
+        where i.id = p_item_id and i.status = 'open' and i.kind = 'unmapped_source' and i.item_key = p_raw_normalized
+      for update
+     ) then
+    raise exception 'This review item was already handled.' using errcode = 'P0064';
   end if;
   select * into v_prev from public.referral_source_aliases a where a.raw_normalized = p_raw_normalized for update;
   v_replaced := case
@@ -1238,6 +1354,29 @@ begin
         n_kept := n_kept + 1;
         continue;
       end if;
+      -- patient_consents.patient_id is the ONE column that references
+      -- patients ON DELETE CASCADE (confirmed against pg_constraint —
+      -- appointments/audit_log/critical_alerts/patient_merges/visits are all
+      -- NO ACTION and are caught by the foreign_key_violation handler below;
+      -- appointment_attachments is ON DELETE SET NULL, not a blocker).
+      -- Deleting straight through would silently take a consent record with
+      -- it instead of raising, so check for one first and treat it exactly
+      -- like the foreign_key_violation case: keep the patient, hold nothing.
+      -- audit_log.patient_id (NO ACTION) is the other de-facto gate on this
+      -- delete, already covered by the exception handler. In today's app,
+      -- trg_patient_consents_sync (an AFTER INSERT trigger on
+      -- patient_consents) already UPDATEs the patient row on every consent
+      -- write, which the ownership trigger above turns into a row_version
+      -- bump — so v_ver <> 0 already catches this case in practice. This
+      -- check stays as the direct, self-documenting guarantee: it does not
+      -- depend on that other trigger continuing to exist or to always touch
+      -- patients.
+      if exists (select 1 from public.patient_consents c where c.patient_id = v_pid) then
+        update public.sheet_sync_changes set undo_outcome = 'kept', undo_run_id = v_run
+         where run_id = p_target_run and patient_id = v_pid and change_kind = 'create';
+        n_kept := n_kept + 1;
+        continue;
+      end if;
       begin
         -- Hold (not cascade-delete) every key that pointed at this patient.
         update public.sheet_patient_links
@@ -1319,12 +1458,19 @@ end $$;
 -- for when the admin has fixed whatever made the undone run wrong. p_undo_run
 -- is an undo run (trigger 'revert'); every undo run that worked on the same
 -- target run counts as the same undo (a paged undo may span several when a
--- worker died). Only holds that undo placed and nothing has replaced since
--- (still decision 'review', hold_reason 'undone by an admin', run_id = one of
--- those undo runs) are deleted; the review items of those keys (kept undone,
--- or re-opened) are resolved as released. PAGED like the undo: p_limit caps
--- the holds released per call (NULL = all); the call that finds none left
--- marks every one of those undo runs released and returns done = true.
+-- worker died). Only NON-ADMIN holds that undo placed and nothing has
+-- replaced since (still decision 'review', hold_reason 'undone by an admin',
+-- method <> 'admin', run_id = one of those undo runs) are deleted; the review
+-- items of those keys (kept undone, or re-opened) are resolved as released.
+-- An ADMIN-method hold (the admin's own link, or the admin link of a created
+-- patient the undo held rather than cascade-deleted) is never handed back to
+-- auto-decide — it stays a hold until an admin Link / Create / Dismiss
+-- resolves it, or the next sync would create a duplicate or silently drop the
+-- admin's decision. Refused (22023) unless the target run's undo has FINISHED
+-- (reverted_by_run_id set) — a paged undo not yet done may not have placed
+-- every hold. PAGED like the undo: p_limit caps the holds released per call
+-- (NULL = all); the call that finds none left (ignoring admin holds) marks
+-- every one of those undo runs released and returns done = true.
 -- Runs as its own fenced run (trigger 'release'), which cannot be undone.
 create or replace function public.sheet_sync_release_undo(p_lease_token uuid, p_undo_run uuid, p_limit integer default null)
 returns jsonb language plpgsql security definer set search_path = '' as $$
@@ -1355,6 +1501,14 @@ begin
   select r.actor_id into v_actor from public.sheet_sync_runs r where r.id = v_run;
   v_target := coalesce((select r.id from public.sheet_sync_runs r where r.reverted_by_run_id = p_undo_run limit 1),
                        (select c.run_id from public.sheet_sync_changes c where c.undo_run_id = p_undo_run limit 1));
+  -- The target run's undo may be PAGED (sheet_sync_revert_run): only the call
+  -- that finished it stamps reverted_by_run_id. Releasing while that is still
+  -- null would act on a half-undone run (some of its holds not placed yet).
+  if v_target is null or not exists (
+       select 1 from public.sheet_sync_runs r where r.id = v_target and r.reverted_by_run_id is not null
+     ) then
+    raise exception 'This undo has not finished yet.' using errcode = '22023';
+  end if;
   v_undo_runs := array(
     select p_undo_run
     union select c.undo_run_id from public.sheet_sync_changes c
@@ -1362,9 +1516,15 @@ begin
     union select r.reverted_by_run_id from public.sheet_sync_runs r
            where r.id = v_target and r.reverted_by_run_id is not null);
 
+  -- ADMIN-method holds never go back to the sync: an admin's own link (or the
+  -- admin link of a created patient the undo could not cascade-delete, held
+  -- instead) is only ever replaced by another admin decision (Link / Create /
+  -- Dismiss on the review item), never quietly handed back to auto-decide —
+  -- that would create a duplicate or silently drop the admin's choice.
   with picked as (
     select l.link_key from public.sheet_patient_links l
      where l.decision = 'review' and l.hold_reason = 'undone by an admin' and l.run_id = any (v_undo_runs)
+       and l.method <> 'admin'
      order by l.link_key
      limit coalesce(p_limit, 2147483647)
      for update),
@@ -1383,7 +1543,7 @@ begin
 
   v_done := not exists (select 1 from public.sheet_patient_links l
                          where l.decision = 'review' and l.hold_reason = 'undone by an admin'
-                           and l.run_id = any (v_undo_runs));
+                           and l.run_id = any (v_undo_runs) and l.method <> 'admin');
   if v_done then
     update public.sheet_sync_runs set released_by_run_id = v_run where id = any (v_undo_runs);
   end if;
@@ -1515,6 +1675,9 @@ begin
     'public._sheet_sync_lease_live(timestamptz)',
     'public._sheet_sync_fence(uuid, boolean)',
     'public._sheet_sync_record_changes(uuid, jsonb, jsonb)',
+    -- patients_name_norm is deliberately NOT here: its own revoke/grant pair
+    -- above gives it a different ACL (authenticated + service_role), see the
+    -- comment on its definition.
     'public.sheet_sync_acquire(text, uuid, boolean)',
     'public.sheet_sync_heartbeat(uuid)',
     'public.sheet_sync_finish(uuid, text, jsonb, jsonb, text)',
@@ -1524,7 +1687,7 @@ begin
     'public.sheet_sync_upsert_review(uuid, text, jsonb, boolean)',
     'public.sheet_sync_clear_absent_review(uuid, text, jsonb)',
     'public.sheet_resort_apply(uuid, uuid[], text, text)',
-    'public.sheet_alias_apply(uuid, text, text, uuid)',
+    'public.sheet_alias_apply(uuid, text, text, uuid, uuid)',
     'public.sheet_sync_revert_run(uuid, uuid, integer)',
     'public.sheet_sync_release_undo(uuid, uuid, integer)',
     'public.sheet_review_resolve(uuid, uuid, text, uuid)',
@@ -1545,7 +1708,7 @@ grant execute on function public.sheet_sync_apply_customer_ops(uuid, jsonb) to s
 grant execute on function public.sheet_sync_upsert_review(uuid, text, jsonb, boolean) to service_role;
 grant execute on function public.sheet_sync_clear_absent_review(uuid, text, jsonb) to service_role;
 grant execute on function public.sheet_resort_apply(uuid, uuid[], text, text) to service_role;
-grant execute on function public.sheet_alias_apply(uuid, text, text, uuid) to service_role;
+grant execute on function public.sheet_alias_apply(uuid, text, text, uuid, uuid) to service_role;
 grant execute on function public.sheet_sync_revert_run(uuid, uuid, integer) to service_role;
 grant execute on function public.sheet_sync_release_undo(uuid, uuid, integer) to service_role;
 grant execute on function public.sheet_review_resolve(uuid, uuid, text, uuid) to service_role;
@@ -1557,8 +1720,15 @@ declare
   v_fn regprocedure;
   v_t text;
 begin
-  if (select count(*) from public.referral_sources) <> 18 then
-    raise exception '0170: expected 18 referral sources';
+  if (select count(*) from public.referral_sources) < 18 then
+    raise exception '0170: expected at least 18 referral sources';
+  end if;
+  if exists (
+    select 1 from unnest(array['family_friends','walk_in_signage','phone_text_viber',
+      'partner_corporate','flyers','prefer_not_to_say']) want(id)
+     where not exists (select 1 from public.referral_sources rs where rs.id = want.id)
+  ) then
+    raise exception '0170: one of the six new referral source channels is missing';
   end if;
   if exists (select 1 from public.patients
               where referral_source is not null and referral_source_origin is distinct from 'staff'
@@ -1593,6 +1763,19 @@ begin
   if (select count(*) from pg_proc p join pg_namespace n on n.oid = p.pronamespace
        where n.nspname = 'public' and (p.proname like 'sheet\_%' or p.proname like '\_sheet\_sync\_%')) <> 17 then
     raise exception '0170: expected exactly 17 sheet sync routines (a stale overload survived?)';
+  end if;
+
+  -- patients_name_norm is the one exception to "every sheet-sync routine is
+  -- closed to both JWT roles": the functional index makes it run on every
+  -- patients name write app-wide, most under `authenticated` (staff RLS
+  -- edits) — so it must stay open to authenticated + service_role, closed
+  -- only to anon.
+  if has_function_privilege('anon', 'public.patients_name_norm(text,text,text)', 'execute') then
+    raise exception '0170: patients_name_norm must not be executable by anon';
+  end if;
+  if not has_function_privilege('authenticated', 'public.patients_name_norm(text,text,text)', 'execute')
+     or not has_function_privilege('service_role', 'public.patients_name_norm(text,text,text)', 'execute') then
+    raise exception '0170: patients_name_norm must be executable by authenticated and service_role';
   end if;
 
   -- Tables: anon gets nothing; authenticated may only read, and never the staging table.

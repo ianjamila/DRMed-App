@@ -122,8 +122,12 @@
 //   ## Round C ##
 //   # M8 — an undo holds the links of patients it did not undo (kept or
 //   # blocked). Expect: FAIL Undo holds the auto links of a restored patient;
-//   # a kept patient keeps its links (… expected kept=1 deleted=0 held=0 …)
-//   # and FAIL Paged undo … (… the blocked patient's link left …).
+//   # a kept patient keeps its links (… expected kept=1 deleted=0 held=0 …),
+//   # FAIL Paged undo … (… the blocked patient's link left …), and (the
+//   # consent-cascade guard's undo_outcome is 'kept' too, the same bucket
+//   # this mutation stops excluding) FAIL Undo of a create keeps a patient
+//   # that carries a consent record (… the create's link is left alone
+//   # (kept, not held) …).
 //   mutate sheet_sync_revert_run "and c.undo_outcome in ('kept','blocked')" "and false"
 //   # M14 — identity kinds no longer share one review item per key. Expect:
 //   # FAIL Identity kinds share one review item per key … (the second report
@@ -135,7 +139,12 @@
 //   # that undo's. Expect: FAIL Undo-held items are raised kept undone …
 //   # (… release page 1/2 counts, or the other undo's hold is gone).
 //   mutate sheet_sync_release_undo "and l.hold_reason = 'undone by an admin' and l.run_id = any (v_undo_runs)" "and l.hold_reason = 'undone by an admin'"
-//   npm run sheet-sync:db-proof          # expect exactly those five FAILs
+//   # M22 — map answer no longer checks the review item is still open before
+//   # writing (map-answer race, Codex P2). Expect: FAIL Map answer refuses a
+//   # second call against an already-handled review item (… second admin
+//   # races the same item: expected code P0064, but the call succeeded …).
+//   mutate sheet_alias_apply "if p_item_id is not null and not exists (" "if false and not exists ("
+//   npm run sheet-sync:db-proof          # expect exactly those seven FAILs
 //   /opt/homebrew/bin/supabase db reset  # undo round C
 //
 //   ## Round D ##
@@ -153,8 +162,36 @@
 //   # error — [P0064] …).
 //   mutate sheet_review_resolve "or (i.status = 'dismissed' and coalesce(" "or (false and i.status = 'dismissed' and coalesce("
 //   (M17 runs here, not in round B: M15 would stop that check at its setup.)
-//   npm run sheet-sync:db-proof          # expect exactly those three FAILs
+//   # M18 — release hands an ADMIN-method hold back to the sync too. Expect:
+//   # FAIL Undo-held items are raised kept undone; Let the sync decide again
+//   # releases that undo's holds (paged) (… the admin hold must survive
+//   # release …, or release page 1/2 counts differ).
+//   mutate sheet_sync_release_undo "and l.method <> 'admin'" ""
+//   npm run sheet-sync:db-proof          # expect exactly those four FAILs
 //   /opt/homebrew/bin/supabase db reset  # undo round D, then re-run: all PASS
+//
+//   ## Round E ##
+//   # M19 — undo cascade-deletes a patient's consent record instead of
+//   # keeping the patient. Expect: FAIL Undo of a create keeps a patient
+//   # that carries a consent record (… expected kept=1 deleted=0 …).
+//   mutate sheet_sync_revert_run "if exists (select 1 from public.patient_consents c where c.patient_id = v_pid) then" "if false then"
+//   # M20 — fill applies to a patient even after it changed since the
+//   # planner read it. Expect: FAIL Create skips an existing live patient;
+//   # fill and link skip a stale row_version (… stale fill: expected
+//   # stale=1 filled=0 …).
+//   mutate sheet_sync_apply_customer_ops "if v_op ? 'expected_row_version' and v_old.row_version <> (v_op->>'expected_row_version')::bigint then" "if false then"
+//   npm run sheet-sync:db-proof          # expect exactly those two FAILs
+//   /opt/homebrew/bin/supabase db reset  # undo round E
+//
+//   ## Round F ##
+//   # M21 — create no longer skips a concurrent registration (front desk
+//   # registered the same person after the planner read patients). Expect:
+//   # FAIL Create skips an existing live patient; fill and link skip a stale
+//   # row_version (… concurrent dup (name+DOB): expected created=0
+//   # skipped_existing=1 …).
+//   mutate sheet_sync_apply_customer_ops "if v_dupe_id is not null then" "if false then"
+//   npm run sheet-sync:db-proof          # expect exactly that one FAIL
+//   /opt/homebrew/bin/supabase db reset  # undo round F, then re-run: all PASS
 import "./lib/load-env";
 import { requireLocalOrExplicitProd } from "./lib/env-guard";
 import { Client, type QueryResult, type QueryResultRow } from "pg";
@@ -569,6 +606,17 @@ async function main() {
           q(rpc.sql),
         );
       }
+      // patients_name_norm is the one deliberate exception (see 0170's
+      // comment on its definition): the staff RLS-scoped client edits a
+      // patient's name as `authenticated`, and the functional index needs it.
+      await expectOk("patients_name_norm as authenticated (must stay open — the functional index needs it)", () =>
+        q(`select public.patients_name_norm('Cruz', 'Juan', 'Santos')`),
+      );
+
+      await setRole("anon", null);
+      await expectPgError("patients_name_norm as anon", "42501", () =>
+        q(`select public.patients_name_norm('Cruz', 'Juan', 'Santos')`),
+      );
 
       await setRole("service_role", null);
       const a = await expectOk("service_role acquire", () => acquire("manual", true));
@@ -1117,6 +1165,125 @@ async function main() {
       );
 
       await finish(lease.token);
+    });
+
+    // 9b. Create skips a concurrent registration; fill/link skip a stale read
+    //     (Codex P1/P2) ------------------------------------------------------
+    await check("Create skips an existing live patient; fill and link skip a stale row_version", async () => {
+      await setRole("service_role", null);
+      const apply = (token: string, ops: unknown[]) =>
+        q<{ j: Json }>(`select public.sheet_sync_apply_customer_ops($1::uuid, $2::jsonb) as j`, [token, JSON.stringify(ops)]);
+      const create = (key: string, over: Record<string, unknown> = {}) => ({
+        op: "create", create_key: key, method: "auto_exact",
+        fields: { first_name: "Wilfredo", last_name: "Concurrent", middle_name: null, birthdate: "1988-03-03", ...over },
+        link_keys: [key], admin_link_keys: [], legacy_intake: {},
+        facts: { registered_on: null, new_repeat: null, source_ref: key },
+      });
+
+      // (a) Front desk registered this exact person (same name, same DOB)
+      // after the planner read patients: the create must be skipped, not
+      // duplicated, and no link written for its key.
+      await setRole("postgres", null);
+      const dup = await q<{ id: string }>(
+        `insert into public.patients (first_name, last_name, birthdate) values ('Wilfredo', 'Concurrent', '1988-03-03') returning id`,
+      );
+      await setRole("service_role", null);
+      const r1 = await acquire("manual", false);
+      const c1 = await apply(r1.token, [create("dupe:1")]);
+      assert(
+        c1.rows[0].j.counts.created === 0 && c1.rows[0].j.counts.skipped_existing === 1,
+        `concurrent dup (name+DOB): expected created=0 skipped_existing=1, got ${JSON.stringify(c1.rows[0].j.counts)}`,
+      );
+      assert(Object.keys(c1.rows[0].j.created).length === 0, `concurrent dup: expected no created id, got ${JSON.stringify(c1.rows[0].j.created)}`);
+      await finish(r1.token);
+      const patCount = await q<{ n: string }>(`select count(*)::text as n from public.patients where last_name = 'Concurrent'`);
+      assert(patCount.rows[0].n === "1", `concurrent dup: expected exactly 1 patient named Concurrent, got ${patCount.rows[0].n}`);
+      const linkRow = await q<{ n: string }>(`select count(*)::text as n from public.sheet_patient_links where link_key = 'dupe:1'`);
+      assert(linkRow.rows[0].n === "0", `concurrent dup: expected no link written for the skipped create, got ${linkRow.rows[0].n}`);
+
+      // (b) same name, no DOB on the op, same normalized phone -> also skipped.
+      await setRole("postgres", null);
+      await q(`update public.patients set phone = '+639171234567' where id = $1`, [dup.rows[0].id]);
+      await setRole("service_role", null);
+      const r2 = await acquire("manual", false);
+      const c2 = await apply(r2.token, [
+        create("dupe:2", { birthdate: null, phone: "09171234567" }),
+      ]);
+      assert(
+        c2.rows[0].j.counts.skipped_existing === 1,
+        `concurrent dup (name+phone, no DOB): expected skipped_existing=1, got ${JSON.stringify(c2.rows[0].j.counts)}`,
+      );
+      await finish(r2.token);
+
+      // (c) negative control: a genuinely different person (different DOB,
+      // different phone) with the same name must still be created normally.
+      const r3 = await acquire("manual", false);
+      const c3 = await apply(r3.token, [
+        create("dupe:3", { birthdate: "1999-09-09", phone: "09179998888" }),
+      ]);
+      assert(
+        c3.rows[0].j.counts.created === 1 && (c3.rows[0].j.counts.skipped_existing ?? 0) === 0,
+        `not a duplicate: expected created=1 skipped_existing=0, got ${JSON.stringify(c3.rows[0].j.counts)}`,
+      );
+      await finish(r3.token);
+
+      // (c2) an ADMIN create is exempt: never second-guessed by this
+      // heuristic, even against the exact same duplicate as (a).
+      const r3b = await acquire("manual", false);
+      const c3b = await apply(r3b.token, [
+        { ...create("dupe:4"), method: "admin", admin_link_keys: ["dupe:4"] },
+      ]);
+      assert(
+        c3b.rows[0].j.counts.created === 1 && (c3b.rows[0].j.counts.skipped_existing ?? 0) === 0,
+        `admin create: expected created=1 skipped_existing=0 (an admin decision is never second-guessed), got ${JSON.stringify(c3b.rows[0].j.counts)}`,
+      );
+      await finish(r3b.token);
+
+      // (d) stale row_version: a fill and a link against a patient the
+      // planner read at row_version 0, changed to 1 since (staff edited it) —
+      // both must be skipped as stale, not applied against a live target.
+      await setRole("postgres", null);
+      const sp = await q<{ id: string; rv: string }>(
+        `insert into public.patients (first_name, last_name, birthdate) values ('Stale', 'Target', '1975-05-05')
+         returning id, row_version::text as rv`,
+      );
+      assert(sp.rows[0].rv === "0", `fixture: expected row_version 0 on insert, got ${sp.rows[0].rv}`);
+      const spId = sp.rows[0].id;
+      await q(`update public.patients set address = 'changed by staff after the planner read it' where id = $1`, [spId]);
+      const spAfter = await q<{ rv: string; email: string | null }>(`select row_version::text as rv, email from public.patients where id = $1`, [spId]);
+      assert(spAfter.rows[0].rv === "1", `fixture: expected row_version 1 after the staff edit, got ${spAfter.rows[0].rv}`);
+      await setRole("service_role", null);
+      const r4 = await acquire("manual", false);
+      const f = await apply(r4.token, [
+        { op: "fill", patient_id: spId, fields: { email: "stale@example.test" }, expected_row_version: 0 },
+      ]);
+      assert(
+        f.rows[0].j.counts.stale === 1 && (f.rows[0].j.counts.filled ?? 0) === 0,
+        `stale fill: expected stale=1 filled=0, got ${JSON.stringify(f.rows[0].j.counts)}`,
+      );
+      await finish(r4.token);
+      const untouched = await q<{ email: string | null }>(`select email from public.patients where id = $1`, [spId]);
+      assert(untouched.rows[0].email === null, `stale fill: patient must be untouched, got email=${untouched.rows[0].email}`);
+
+      const r5 = await acquire("manual", false);
+      const l = await apply(r5.token, [
+        { op: "link", link_key: "stale:1", patient_id: spId, method: "auto_exact", expected_row_version: 0 },
+      ]);
+      assert(
+        l.rows[0].j.counts.stale === 1 && (l.rows[0].j.counts.linked ?? 0) === 0,
+        `stale link: expected stale=1 linked=0, got ${JSON.stringify(l.rows[0].j.counts)}`,
+      );
+      await finish(r5.token);
+      const noLink = await q<{ n: string }>(`select count(*)::text as n from public.sheet_patient_links where link_key = 'stale:1'`);
+      assert(noLink.rows[0].n === "0", `stale link: no link row should have been written, got ${noLink.rows[0].n}`);
+
+      // (e) positive control: the correct expected_row_version applies normally.
+      const r6 = await acquire("manual", false);
+      const f2 = await apply(r6.token, [
+        { op: "fill", patient_id: spId, fields: { email: "fresh@example.test" }, expected_row_version: 1 },
+      ]);
+      assert(f2.rows[0].j.counts.filled === 1, `matching row_version: expected filled=1, got ${JSON.stringify(f2.rows[0].j.counts)}`);
+      await finish(r6.token);
     });
 
     // 10. Revert --------------------------------------------------------
@@ -2028,6 +2195,56 @@ async function main() {
       );
     });
 
+    // 23b. Undo must never cascade-delete a consent (patient_consents.patient_id
+    //      is ON DELETE CASCADE — the only such child of patients) -----------
+    await check("Undo of a create keeps a patient that carries a consent record", async () => {
+      await setRole("service_role", null);
+      const apply = (token: string, ops: unknown[]) =>
+        q<{ j: Json }>(`select public.sheet_sync_apply_customer_ops($1::uuid, $2::jsonb) as j`, [token, JSON.stringify(ops)]);
+      const r = await acquire("manual", false);
+      const c = await apply(r.token, [{
+        op: "create", create_key: "cst1", method: "auto_exact",
+        fields: { first_name: "Nora", last_name: "Consented", middle_name: null },
+        link_keys: ["cst:1"], admin_link_keys: [], legacy_intake: {},
+        facts: { registered_on: null, new_repeat: null, source_ref: "cst1" },
+      }]);
+      const cId = c.rows[0].j.created.cst1;
+      await finish(r.token);
+      await setRole("postgres", null);
+      await q(
+        `insert into public.patient_consents (patient_id, event_type, actor_kind, method, notice_version, signatory)
+         values ($1, 'granted', 'staff', 'paper_wet_signature', 'v1', 'self')`,
+        [cId],
+      );
+      // trg_patient_consents_sync (AFTER INSERT on patient_consents) already
+      // UPDATEs patients (consent_current etc.), which on its own bumps
+      // row_version past 0 and would trip the EARLIER "changed since" kept
+      // branch — this guard would never be reached in the app's normal flow.
+      // Force row_version back to 0 (bypassing the ownership trigger, which
+      // would otherwise just bump whatever this UPDATE sets it to) so this
+      // check proves the NEW guard itself holds, independent of that other
+      // trigger continuing to exist.
+      await q(`alter table public.patients disable trigger trg_patients_referral_origin`);
+      await q(`update public.patients set row_version = 0 where id = $1`, [cId]);
+      await q(`alter table public.patients enable trigger trg_patients_referral_origin`);
+      const forced = await q<{ rv: string }>(`select row_version::text as rv from public.patients where id = $1`, [cId]);
+      assert(forced.rows[0].rv === "0", `setup: expected row_version forced back to 0, got ${forced.rows[0].rv}`);
+      await setRole("service_role", null);
+      const rv = await acquire("revert", false);
+      const u = await q<{ j: Json }>(`select public.sheet_sync_revert_run($1::uuid, $2::uuid) as j`, [rv.token, r.runId]);
+      assert(
+        u.rows[0].j.kept === 1 && u.rows[0].j.deleted === 0,
+        `undo of a create with a consent: expected kept=1 deleted=0 (not cascade-deleted), got ${JSON.stringify(u.rows[0].j)}`,
+      );
+      await finish(rv.token);
+      const stillThere = await q<{ n: string }>(`select count(*)::text as n from public.patients where id = $1`, [cId]);
+      assert(stillThere.rows[0].n === "1", `the patient must survive the undo, got ${stillThere.rows[0].n} rows`);
+      const consentStillThere = await q<{ n: string }>(`select count(*)::text as n from public.patient_consents where patient_id = $1`, [cId]);
+      assert(consentStillThere.rows[0].n === "1", `the consent record must survive, got ${consentStillThere.rows[0].n} rows`);
+      const link = await q<{ decision: string }>(`select decision from public.sheet_patient_links where link_key = 'cst:1'`);
+      assert(link.rows[0].decision === "link", `the create's link is left alone (kept, not held), got ${JSON.stringify(link.rows[0])}`);
+    });
+
     // 24. Undoing a map-answer run takes back its alias (review round 3, 1) ----
     await check("Undo of a map-answer run removes the alias it added and restores one it replaced", async () => {
       await setRole("service_role", null);
@@ -2150,6 +2367,54 @@ async function main() {
         JSON.stringify(got.rows.map((r) => r.src)) === JSON.stringify([null, "flyers", "flyers", "flyers", null]),
         `map answer: expected [null, flyers, flyers, flyers, null], got ${JSON.stringify(got.rows)}`,
       );
+    });
+
+    // 25b. Map answer is fenced to its review item (Codex P2: two admins
+    //      racing to map the same answer) -----------------------------------
+    await check("Map answer refuses a second call against an already-handled review item", async () => {
+      await setRole("postgres", null);
+      const item = await q<{ id: string }>(
+        `insert into public.sheet_sync_review_items (tab, item_key, kind, status)
+         values ('customers', 'race answer', 'unmapped_source', 'open') returning id::text`,
+      );
+      const itemId = item.rows[0].id;
+      await setRole("service_role", null);
+      const a1 = await acquire("alias", false);
+      await expectOk("first admin maps the answer", () =>
+        q(`select public.sheet_alias_apply($1::uuid, 'race answer', 'flyers', null, $2::uuid)`, [a1.token, itemId]));
+      await finish(a1.token);
+      const resolved = await q<{ status: string }>(`select status from public.sheet_sync_review_items where id = $1`, [itemId]);
+      assert(resolved.rows[0].status === "resolved", `first call: expected the item resolved, got ${resolved.rows[0].status}`);
+
+      // A second admin's call raced in with the SAME (now stale) item id —
+      // the RPC itself refuses, atomically with its own lease/write, instead
+      // of silently overwriting the first admin's channel choice.
+      const a2 = await acquire("alias", false);
+      await expectPgError("second admin races the same item", "P0064", () =>
+        q(`select public.sheet_alias_apply($1::uuid, 'race answer', 'walk_in', null, $2::uuid)`, [a2.token, itemId]));
+      await finish(a2.token);
+      const still = await q<{ resolution: Json }>(`select resolution from public.sheet_sync_review_items where id = $1`, [itemId]);
+      assert(
+        still.rows[0].resolution?.referral_source_id === "flyers",
+        `after the race: the first admin's channel must stand, got ${JSON.stringify(still.rows[0].resolution)}`,
+      );
+
+      // A mismatched item (wrong item_key) is refused the same way.
+      const other = await q<{ id: string }>(
+        `insert into public.sheet_sync_review_items (tab, item_key, kind, status)
+         values ('customers', 'a different answer', 'unmapped_source', 'open') returning id::text`,
+      );
+      const a3 = await acquire("alias", false);
+      await expectPgError("item_key does not match the answer", "P0064", () =>
+        q(`select public.sheet_alias_apply($1::uuid, 'race answer', 'walk_in', null, $2::uuid)`, [a3.token, other.rows[0].id]));
+      await finish(a3.token);
+
+      // p_item_id null keeps the old (no-fencing) behaviour, e.g. for a
+      // caller with no review item in hand.
+      const a4 = await acquire("alias", false);
+      await expectOk("no item id: unfenced, as before", () =>
+        q(`select public.sheet_alias_apply($1::uuid, 'no item id answer', 'flyers', null)`, [a4.token]));
+      await finish(a4.token);
     });
 
     // 26. An undo run cannot itself be undone (review round 3, minor b) --------
@@ -2606,13 +2871,31 @@ async function main() {
       };
       // Run R creates three rows; run S creates one. Both are undone.
       const r = await acquire("manual", false);
-      await apply(r.token, ["rl:0", "rl:1", "rl:2"].map(create));
+      const rCreated = await apply(r.token, ["rl:0", "rl:1", "rl:2"].map(create));
       await finish(r.token);
+      // An admin separately linked another sheet row to the SAME patient run
+      // R created for "rl:0" (a real shape: two Customers rows, one an auto
+      // create, one an admin link to it). The undo holds it too (it holds
+      // EVERY key pointing at the patient it deletes) — but release must
+      // never hand an admin-method hold back to auto-decide.
+      await setRole("postgres", null);
+      await q(
+        `insert into public.sheet_patient_links (link_key, patient_id, decision, method) values ('rl:0admin', $1, 'link', 'admin')`,
+        [rCreated.rows[0].j.created["rl:0"]],
+      );
+      await setRole("service_role", null);
       const s = await acquire("manual", false);
       await apply(s.token, [create("rl:other")]);
       await finish(s.token);
       const undoR = await undo(r.runId);
       await undo(s.runId);
+      const adminHeld = await q<{ decision: string; method: string; hold_reason: string | null }>(
+        `select decision, method, hold_reason from public.sheet_patient_links where link_key = 'rl:0admin'`,
+      );
+      assert(
+        adminHeld.rows[0].decision === "review" && adminHeld.rows[0].method === "admin" && adminHeld.rows[0].hold_reason === "undone by an admin",
+        `undo: the admin link of a deleted create must be HELD (not deleted, not left as-is), got ${JSON.stringify(adminHeld.rows[0])}`,
+      );
 
       // The next sync reports those rows: raised kept undone, not open.
       const report = (keys: string[]) => JSON.stringify(keys.map((k) => ({ kind: "ambiguous_patient", item_key: k,
@@ -2637,9 +2920,15 @@ async function main() {
       const p2 = await page();
       assert(p2.done === true && p2.released === 1 && p2.items_resolved === 1, `release page 2: got ${JSON.stringify(p2)}`);
       await finish(rel.token);
-      const links = await q<{ link_key: string }>(`select link_key from public.sheet_patient_links where link_key like 'rl:%' order by 1`);
-      assert(JSON.stringify(links.rows.map((x) => x.link_key)) === JSON.stringify(["rl:other"]),
-        `release: only run R's undo holds go (the other undo's hold stays), got ${JSON.stringify(links.rows)}`);
+      const links = await q<{ link_key: string; decision: string; method: string }>(
+        `select link_key, decision, method from public.sheet_patient_links where link_key like 'rl:%' order by 1`);
+      assert(JSON.stringify(links.rows.map((x) => x.link_key)) === JSON.stringify(["rl:0admin", "rl:other"]),
+        `release: only run R's non-admin undo holds go — the admin hold and the other undo's hold both stay, got ${JSON.stringify(links.rows)}`);
+      const survivorAdmin = links.rows.find((x) => x.link_key === "rl:0admin")!;
+      assert(
+        survivorAdmin.decision === "review" && survivorAdmin.method === "admin",
+        `release: the admin hold must survive untouched (still a review hold, not deleted), got ${JSON.stringify(survivorAdmin)}`,
+      );
       const items = await q<{ status: string; action: string | null; n: string }>(
         `select status, resolution->>'action' as action, count(*)::text as n from public.sheet_sync_review_items
           where item_key like 'rl:%' group by 1, 2 order by 1, 2`);
@@ -2666,6 +2955,28 @@ async function main() {
         l2.token, report(["rl:0"])])).rows[0].j;
       await finish(l2.token);
       assert(up2.opened === 1 && up2.kept_undone === 0, `after release: expected a normal open item, got ${JSON.stringify(up2)}`);
+
+      // Release refuses a PAGED undo that has not finished yet (reverted_by_run_id
+      // still null on the target) — releasing early could act on holds a later
+      // page has not placed.
+      const t = await acquire("manual", false);
+      await apply(t.token, ["rl:t0", "rl:t1"].map(create));
+      await finish(t.token);
+      const tRev1 = await acquire("revert", false);
+      const page1 = (await q<{ j: Json }>(`select public.sheet_sync_revert_run($1::uuid, $2::uuid, 1) as j`, [tRev1.token, t.runId])).rows[0].j;
+      assert(page1.done === false, `paged undo setup: expected the first page to be unfinished, got ${JSON.stringify(page1)}`);
+      await finish(tRev1.token);
+      const relEarly = await acquire("release", false);
+      await expectPgError("release a paged undo that has not finished", "22023", () =>
+        q(`select public.sheet_sync_release_undo($1::uuid, $2::uuid)`, [relEarly.token, tRev1.runId]));
+      await finish(relEarly.token);
+      const tRev2 = await acquire("revert", false);
+      const page2 = (await q<{ j: Json }>(`select public.sheet_sync_revert_run($1::uuid, $2::uuid) as j`, [tRev2.token, t.runId])).rows[0].j;
+      assert(page2.done === true, `paged undo setup: expected the second call to finish it, got ${JSON.stringify(page2)}`);
+      await finish(tRev2.token);
+      const relLate = await acquire("release", false);
+      await expectOk("release a finished undo", () => q(`select public.sheet_sync_release_undo($1::uuid, $2::uuid)`, [relLate.token, tRev1.runId]));
+      await finish(relLate.token);
     });
 
     // 34. A row kept undone can still be linked or created (round 9) ---------
