@@ -62,9 +62,10 @@ import { fetchClaimEvents } from "@/lib/queue/fetch-claim-events";
 import { HandedBackBadge } from "@/components/staff/claim-remarks-list";
 import { PrintResultButton } from "@/components/staff/print-result-button";
 import { printAllFiles, resultPdfStates } from "@/lib/results/pdf-availability";
-import { fetchPrintSummaries } from "@/lib/results/print-history";
-import type { PrintSummary } from "@/lib/results/print-summary";
+import { fetchPrintState } from "@/lib/results/print-history";
+import type { PrintSummary, StalePrint } from "@/lib/results/print-summary";
 import { PrintedNote } from "@/components/staff/printed-note";
+import { StalePrintWarning } from "@/components/staff/stale-print-warning";
 import { outdatedCopyChip } from "@/lib/results/copy-followups";
 import { fetchCopyStates } from "@/lib/results/copy-followups.server";
 
@@ -232,14 +233,19 @@ export default async function VisitDetailPage({ params, searchParams }: Props) {
   };
   // "Printed … by …" under each Print button — per FILE (a shared chemistry
   // PDF printed from any member counts for all of them), read off the audit
-  // log as a derived fact only.
-  const printSummaries = await fetchPrintSummaries(
+  // log as a derived fact only. Same read also flags a file whose newest
+  // print is an older version than the one on file now (`stale`).
+  const printState = await fetchPrintState(
     [...pdfStates.values()].map((s) => ({ resultId: s.resultId, version: s.version })),
     { patientId: patient.id },
   );
   const printedFor = (testId: string) => {
     const state = pdfStates.get(testId);
-    return state ? printSummaries.get(state.resultId) : undefined;
+    return state ? printState.summaries.get(state.resultId) : undefined;
+  };
+  const staleFor = (testId: string) => {
+    const state = pdfStates.get(testId);
+    return state ? printState.stale.get(state.resultId) : undefined;
   };
   // "Print all released results": the distinct released reports this role
   // may print, combined by visits/[id]/results-pdf. Offered from two up —
@@ -1129,6 +1135,7 @@ export default async function VisitDetailPage({ params, searchParams }: Props) {
                                       gateRequired={gateRequired}
                                       hasPdf={pdfStates.has(c.id)}
                                       printed={printedFor(c.id)}
+                                      stale={staleFor(c.id)}
                                       canViewPdf={canViewResultPdf(session.role, {
                                         section: rowSection(c),
                                         status: c.status,
@@ -1354,6 +1361,7 @@ export default async function VisitDetailPage({ params, searchParams }: Props) {
                         gateRequired={gateRequired}
                         hasPdf={pdfStates.has(t.id)}
                         printed={printedFor(t.id)}
+                        stale={staleFor(t.id)}
                         canViewPdf={canViewResultPdf(session.role, {
                           section: rowSection(t),
                           status: t.status,
@@ -1741,6 +1749,9 @@ interface TestActionProps {
   // Staff prints of this line's file (result.printed_staff), for the
   // "Printed …" note.
   printed?: PrintSummary;
+  // Set when the newest print of this line's file is an OLDER version than
+  // the one on file now — the "reprint before handing over" warning.
+  stale?: StalePrint;
   // May this role open the result PDF (canViewResultPdf)? True wherever
   // canAct is, and ALSO for reception on a released lab line — the one door
   // into a result reception has, so the counter can print the patient's copy.
@@ -1777,6 +1788,7 @@ function TestAction({
   gateRequired,
   hasPdf,
   printed,
+  stale,
   canViewPdf,
   kind,
   viewedCount,
@@ -1817,6 +1829,7 @@ function TestAction({
           sizeCls={sizeCls}
           size={size}
           printed={printed}
+          stale={stale}
         />
       );
     }
@@ -1948,6 +1961,7 @@ function TestAction({
             sizeCls={sizeCls}
             size={size}
             printed={printed}
+            stale={stale}
           />
         ) : (
           <span className={`${sizeCls} font-semibold text-emerald-700`}>
@@ -1994,11 +2008,13 @@ function ReleasedPdfActions({
   sizeCls,
   size,
   printed,
+  stale,
 }: {
   testRequestId: string;
   sizeCls: string;
   size: "default" | "compact";
   printed: PrintSummary | undefined;
+  stale?: StalePrint;
 }) {
   return (
     <div className="flex flex-col items-end gap-1">
@@ -2015,6 +2031,7 @@ function ReleasedPdfActions({
         View PDF →
       </a>
       <PrintedNote summary={printed} size={size} />
+      <StalePrintWarning stale={stale} />
     </div>
   );
 }

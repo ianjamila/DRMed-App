@@ -47,6 +47,7 @@ import {
 import { codeDuplicatesName } from "@/lib/results/consolidated-reports";
 import { ListPagination, PAGE_SIZES } from "@/components/staff/list-pagination";
 import { fetchCompleteRowsByIds } from "@/lib/reports/paging";
+import { fetchPrintState } from "@/lib/results/print-history";
 
 export const metadata = { title: "Results" };
 export const dynamic = "force-dynamic";
@@ -333,6 +334,21 @@ export default async function AllResultsPage({ searchParams }: SearchProps) {
       if (!lastEditReason.has(am.result_id)) lastEditReason.set(am.result_id, am.reason);
     }
   }
+
+  // Whether the latest print of a corrected result's file is an older
+  // version than the one on file now — "Printed copy out of date" in the
+  // Updated column. This archive has no Print button of its own, but the
+  // counter may have printed the earlier version from the visit page.
+  const printableFiles = Array.from(
+    new Map(
+      Array.from(linkByTrId.values())
+        .filter((l) => l.hasPdf)
+        .map((l) => [l.resultId, l]),
+    ).values(),
+  );
+  const { stale: staleByResultId } = await fetchPrintState(
+    printableFiles.map((l) => ({ resultId: l.resultId, version: l.amendmentCount })),
+  );
 
   // Remarks column: each test's claim history, same reader and wording as the
   // lab queue. Called through the signed-in staff client, NOT `admin` above —
@@ -691,6 +707,11 @@ export default async function AllResultsPage({ searchParams }: SearchProps) {
                                 {lastEditReason.get(item.resultId!) ? (
                                   <span className="text-[color:var(--color-brand-text-mid)]">
                                     {" "}— {lastEditReason.get(item.resultId!)}
+                                  </span>
+                                ) : null}
+                                {staleByResultId.has(item.resultId!) ? (
+                                  <span className="block text-amber-800" role="note">
+                                    Printed copy out of date
                                   </span>
                                 ) : null}
                               </div>

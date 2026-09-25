@@ -51,8 +51,9 @@ import { DOCTOR_KINDS_PG_LIST } from "@/lib/visits/classification";
 import { QueueDeleteDialog } from "@/components/staff/queue-delete-dialog";
 import { PrintResultButton } from "@/components/staff/print-result-button";
 import { PrintedNote } from "@/components/staff/printed-note";
-import { fetchPrintSummaries } from "@/lib/results/print-history";
-import type { PrintSummary } from "@/lib/results/print-summary";
+import { StalePrintWarning } from "@/components/staff/stale-print-warning";
+import { fetchPrintState } from "@/lib/results/print-history";
+import type { PrintSummary, StalePrint } from "@/lib/results/print-summary";
 import {
   reportCardKey,
   resultPdfStates,
@@ -390,13 +391,18 @@ export default async function QueuePage({ searchParams }: SearchProps) {
     : new Map<string, PdfState>();
   // "Printed … by …" under each Print button, so the counter can see a copy
   // already went out — per FILE, which is what a card prints (on this tab a
-  // card never spans two files: reportCardKey).
-  const printSummaries = releasedTab
-    ? await fetchPrintSummaries([...pdfStates.values()].map((s) => ({ resultId: s.resultId, version: s.version })))
-    : new Map<string, PrintSummary>();
+  // card never spans two files: reportCardKey). Same read also flags a file
+  // whose newest print is an older version than the one on file now.
+  const printState = releasedTab
+    ? await fetchPrintState([...pdfStates.values()].map((s) => ({ resultId: s.resultId, version: s.version })))
+    : { summaries: new Map<string, PrintSummary>(), stale: new Map<string, StalePrint>() };
   const printedFor = (testId: string | null) => {
     const state = testId ? pdfStates.get(testId) : undefined;
-    return state ? printSummaries.get(state.resultId) : undefined;
+    return state ? printState.summaries.get(state.resultId) : undefined;
+  };
+  const staleFor = (testId: string | null) => {
+    const state = testId ? pdfStates.get(testId) : undefined;
+    return state ? printState.stale.get(state.resultId) : undefined;
   };
 
   // Which of this page's rows sit on a FINISHED combined report (0172,
@@ -963,6 +969,7 @@ export default async function QueuePage({ searchParams }: SearchProps) {
                             hasFile={card.hasFile}
                             explain={receptionView}
                             printed={printedFor(card.testRequestId)}
+                            stale={staleFor(card.testRequestId)}
                           />
                         ) : null}
                         {receptionView ? null : card.status === "requested" &&
@@ -1070,6 +1077,7 @@ export default async function QueuePage({ searchParams }: SearchProps) {
                           hasFile={card.hasFile}
                           explain={receptionView}
                           printed={printedFor(card.printTestId)}
+                          stale={staleFor(card.printTestId)}
                         />
                       ) : null}
                       {receptionView ? null : (
@@ -1197,11 +1205,13 @@ function ReleasedPrintActions({
   hasFile,
   explain,
   printed,
+  stale,
 }: {
   printTestId: string | null;
   hasFile: boolean;
   explain: boolean;
   printed: PrintSummary | undefined;
+  stale?: StalePrint;
 }) {
   if (!printTestId) {
     if (!explain) return null;
@@ -1227,6 +1237,7 @@ function ReleasedPrintActions({
         View PDF →
       </a>
       <PrintedNote summary={printed} />
+      <StalePrintWarning stale={stale} />
     </div>
   );
 }

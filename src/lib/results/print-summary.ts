@@ -69,3 +69,34 @@ export function servedAmendmentCount(
 ): number {
   return (requestedVersion ?? currentVersion) - 1;
 }
+
+export interface StalePrint {
+  printedVersion: number;
+  currentVersion: number;
+}
+
+/**
+ * Results whose newest print is an OLDER file than the current one (and no
+ * print of the current file) — the "reprint before handing over" warning.
+ * Versions are 1-based (`amendment_count + 1`), matching what staff see
+ * ("v1", "v2", …).
+ */
+export function foldStalePrints(
+  rows: readonly PrintEventRow[],
+  currentVersions: ReadonlyMap<string, number>,
+): Map<string, StalePrint> {
+  const newest = new Map<string, number>();
+  for (const r of rows) {
+    if (!r.result_id) continue;
+    const cur = currentVersions.get(r.result_id);
+    if (cur === undefined || r.amendment_count == null || !/^\d+$/.test(r.amendment_count)) continue;
+    const n = Number(r.amendment_count);
+    newest.set(r.result_id, Math.max(newest.get(r.result_id) ?? -1, n));
+  }
+  const out = new Map<string, StalePrint>();
+  for (const [id, n] of newest) {
+    const cur = currentVersions.get(id)!;
+    if (n < cur) out.set(id, { printedVersion: n + 1, currentVersion: cur + 1 });
+  }
+  return out;
+}
