@@ -10,7 +10,13 @@ import type { StaffSession } from "@/lib/auth/require-staff";
 
 type StaffRole = StaffSession["role"];
 
-export const STAFF_ALERT_KEYS = ["website_message", "online_booking", "template_health", "dedup_digest"] as const;
+export const STAFF_ALERT_KEYS = [
+  "website_message",
+  "online_booking",
+  "released_payment_removed",
+  "template_health",
+  "dedup_digest",
+] as const;
 export type StaffAlertKey = (typeof STAFF_ALERT_KEYS)[number];
 
 export interface StaffAlertDef {
@@ -40,6 +46,14 @@ export const STAFF_ALERTS: Record<StaffAlertKey, StaffAlertDef> = {
       "Sent when a patient books through the website's Schedule page or the patient portal. It shows the patient's first name, the booking type, the requested time or that they need a call back, and how many services — never contact details or which tests. Nothing is sent while online booking is paused.",
     defaultRoles: ["reception", "admin"],
     sentAction: "appointment.booked.staff_alert_sent",
+  },
+  released_payment_removed: {
+    key: "released_payment_removed",
+    label: "Payment removed after results went out",
+    description:
+      "Sent when a payment is deleted or moved and the visit it leaves then owes money, although results on it were already released. Released results stay released — the email is so someone follows up the balance. It shows the visit number, the amount, what happened and the reason picked, who did it, and what the visit now owes — never the patient's name or which tests. HMO visits never send it.",
+    defaultRoles: ["admin"],
+    sentAction: "payment.released_removed_alert_sent",
   },
   template_health: {
     key: "template_health",

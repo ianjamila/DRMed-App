@@ -14,6 +14,7 @@ import { fetchStatement } from "@/lib/visits/statement-data";
 import { StatementSheet } from "@/components/statement/statement-sheet";
 import { StatementPrintButton } from "./print-button";
 import { EmailStatementButton } from "@/components/staff/email-statement-button";
+import { isActivePatient } from "@/lib/patients/active";
 
 // One load per request, shared by metadata and the page (and, outside this
 // request, by the emailed copy — see statement-data.ts).
@@ -52,6 +53,8 @@ export default async function StatementPage({ params }: Props) {
   const data = await loadStatement(id);
   if (!data) notFound();
   const { visit, patient, lines, payments, summary } = data;
+  // 0167: a deleted/merged record has no email to send to — Open/Print stay.
+  const patientActive = isActivePatient(patient);
 
   // Viewing the statement discloses name, DRM-ID, bill lines and payments
   // (RA 10173). Deduped like `receipt.viewed`: force-dynamic re-renders on
@@ -94,11 +97,13 @@ export default async function StatementPage({ params }: Props) {
           ← Visit
         </Link>
         <div className="flex flex-wrap items-start justify-end gap-2">
-          <EmailStatementButton
-            visitId={visit.id}
-            patientEmail={patient.email}
-            patientId={patient.id}
-          />
+          {patientActive ? (
+            <EmailStatementButton
+              visitId={visit.id}
+              patientEmail={patient.email}
+              patientId={patient.id}
+            />
+          ) : null}
           <StatementPrintButton visitId={visit.id} />
         </div>
       </div>

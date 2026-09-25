@@ -15,6 +15,7 @@ import { mopToMethod } from "./lib/mop-method";
 import { buildVisitNumber } from "./lib/visit-number";
 import { buildServiceIndex, mapService, type CatalogService } from "./lib/service-map";
 import { buildPatientIndex, matchPatient, type PatientRow } from "./lib/patient-match";
+import { activePatients } from "../../src/lib/patients/active";
 import { parseTransactionName, matchKey } from "./lib/names";
 import { resolveSurname } from "../clinical-enrich/lib/physician-map";
 import { ensureSystemUser } from "./system-user";
@@ -83,8 +84,9 @@ export async function run(cfg: TabConfig): Promise<void> {
 
   // catalogs
   const patientsRaw = await fetchAll<PatientRow & { drm_id: string }>(async (lo, hi) => {
-    const { data, error } = await admin.from("patients")
-      .select("id,drm_id,last_name,first_name,sex").is("merged_into_id", null).range(lo, hi);
+    const { data, error } = await activePatients(
+      admin.from("patients").select("id,drm_id,last_name,first_name,sex"),
+    ).range(lo, hi);
     if (error) throw new Error(error.message); return (data ?? []) as (PatientRow & { drm_id: string })[];
   });
   const patientIndex = buildPatientIndex(patientsRaw);
@@ -295,8 +297,9 @@ async function commit(
   // first_name=last_name and would not re-match on a blank first token).
   const priorClinicalPatients = await fetchAll<{ id: string; legacy_intake: { clinical_name_token?: string } | null }>(
     async (lo, hi) => {
-      const { data, error } = await admin.from("patients")
-        .select("id,legacy_intake").not("legacy_import_run_id", "is", null).range(lo, hi);
+      const { data, error } = await activePatients(
+        admin.from("patients").select("id,legacy_intake"),
+      ).not("legacy_import_run_id", "is", null).range(lo, hi);
       if (error) throw new Error(error.message);
       return (data ?? []) as { id: string; legacy_intake: { clinical_name_token?: string } | null }[];
     },

@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { formatPhp } from "@/lib/marketing/format";
 import { manilaDateTime } from "@/lib/dates/manila";
-import { paymentMethodLabel, type PaymentLinks } from "@/lib/visits/payment-history";
+import { DELETE_CATEGORY_LABEL, paymentMethodLabel, type PaymentLinks } from "@/lib/visits/payment-history";
 import { visitOf, voidedByName, type LoadedPayment } from "@/lib/visits/payment-history-load";
 
 const LINK = "font-semibold text-[color:var(--color-brand-cyan)] hover:underline";
@@ -64,6 +64,8 @@ export function PaymentChangeEntry({
   const here = visitOf(p);
   const by = voidedByName(p);
   const reason = links.reason(p);
+  const category = links.deleteCategory(p);
+  const why = [category ? DELETE_CATEGORY_LABEL[category] : null, reason].filter(Boolean).join(" — ");
   const verb = fate === "edited" ? "edited" : fate === "moved" ? "moved" : "deleted";
   return (
     <li className="rounded-md bg-white px-3 py-2">
@@ -110,8 +112,8 @@ export function PaymentChangeEntry({
           {rep?.voided_at ? " (since changed again)" : ""}
         </div>
       ) : null}
-      {reason ? (
-        <div className="mt-1 text-[color:var(--color-brand-text-soft)]">Reason: {reason}</div>
+      {why ? (
+        <div className="mt-1 text-[color:var(--color-brand-text-soft)]">Reason: {why}</div>
       ) : null}
     </li>
   );

@@ -24,6 +24,8 @@ import { audit } from "@/lib/audit/log";
 import { ipAndAgent } from "@/lib/server/action-helpers";
 import { translatePgError } from "@/lib/accounting/pg-errors";
 import { VisitAttendingSchema } from "@/lib/validations/accounting";
+import { createAdminClient } from "@/lib/supabase/admin";
+import { assertVisitPatientActive } from "@/lib/patients/require-active";
 
 type ActionResult<T = unknown> = { ok: true; data: T } | { ok: false; error: string };
 
@@ -57,6 +59,9 @@ export async function setVisitAttendingPhysician(input: {
       error: "This visit was deleted from the queue. Restore it before changing its physician.",
     };
   }
+
+  const active = await assertVisitPatientActive(createAdminClient(), parsed.data.visit_id);
+  if (!active.ok) return { ok: false, error: active.error };
 
   const { data: updated, error } = await supabase
     .from("visits")

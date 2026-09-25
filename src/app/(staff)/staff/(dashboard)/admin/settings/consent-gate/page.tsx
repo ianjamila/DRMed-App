@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { requireAdminStaff } from "@/lib/auth/require-admin";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { activePatients } from "@/lib/patients/active";
 import { ConsentGateToggle } from "./client";
 import { ROUTE_NAME } from "@/lib/staff/route-names";
 
@@ -19,13 +20,11 @@ export default async function ConsentGateSettingsPage() {
   const enabled = !!settings?.gate_required;
 
   // How many active patients would be blocked right now (no current consent on
-  // file). Exclude merged tombstones so the number matches the pre-flight
+  // file). Exclude deleted/merged records so the number matches the pre-flight
   // report the admin is being pointed at.
-  const { count } = await admin
-    .from("patients")
-    .select("id", { count: "exact", head: true })
-    .eq("consent_current", false)
-    .is("merged_into_id", null);
+  const { count } = await activePatients(
+    admin.from("patients").select("id", { count: "exact", head: true }),
+  ).eq("consent_current", false);
   const blockedCount = count ?? 0;
 
   return (

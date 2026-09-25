@@ -7,6 +7,7 @@ import { paginatedFetch } from "@/lib/supabase/paginated-fetch";
 import { shiftISODate, todayManilaISODate } from "@/lib/dates/manila";
 import { PeriodPresets } from "../_components/period-presets";
 import { LEDGER_TOTAL_STATUSES } from "@/lib/accounting/ledger-status";
+import { bucketCashMovements } from "@/lib/accounting/cash-flow-buckets";
 
 export const metadata = { title: ROUTE_NAME["/staff/admin/accounting/financial-statements/cash-flow"] };
 export const dynamic = "force-dynamic";
@@ -40,16 +41,16 @@ interface LineRow {
   debit_php: number;
   credit_php: number;
   journal_entries:
-    | { posting_date: string; status: string; source_kind: string; description: string | null }
+    | {
+        posting_date: string;
+        status: string;
+        source_kind: string;
+        description: string | null;
+        /** Only on a reversal mirror: the entry it reverses. */
+        original: { source_kind: string; posting_date: string } | null;
+      }
     | null;
   chart_of_accounts: { id: string; code: string; name: string } | null;
-}
-
-interface MovementBucket {
-  label: string;
-  inflow: number;
-  outflow: number;
-  count: number;
 }
 
 const SOURCE_KIND_LABEL: Record<string, string> = {
@@ -158,7 +159,10 @@ export default async function CashFlowPage({ searchParams }: SearchProps) {
       .select(
         `
         debit_php, credit_php,
-        journal_entries!inner ( posting_date, status, source_kind, description ),
+        journal_entries!inner (
+          posting_date, status, source_kind, description,
+          original:reverses ( source_kind, posting_date )
+        ),
         chart_of_accounts!inner ( id, code, name )
       `,
       )
@@ -170,30 +174,21 @@ export default async function CashFlowPage({ searchParams }: SearchProps) {
       .returns<LineRow[]>(),
   );
 
-  // Aggregate by source_kind for the waterfall.
-  const buckets = new Map<string, MovementBucket>();
+  // Aggregate by source_kind for the waterfall. A reversal mirror is filed
+  // under the category of the entry it reverses (see bucketCashMovements),
+  // so an undo inside the period cancels there instead of inflating both that
+  // category and a separate "JE reversals" row.
   const closingByAccount = new Map<string, number>(beginningByAccount);
-
   for (const row of periodLines) {
-    const sk = row.journal_entries?.source_kind ?? "manual";
     const acct = row.chart_of_accounts;
     if (!acct) continue;
-    const d = Number(row.debit_php ?? 0);
-    const c = Number(row.credit_php ?? 0);
-
-    closingByAccount.set(acct.id, (closingByAccount.get(acct.id) ?? 0) + d - c);
-
-    const bucket = buckets.get(sk) ?? {
-      label: SOURCE_KIND_LABEL[sk] ?? sk,
-      inflow: 0,
-      outflow: 0,
-      count: 0,
-    };
-    if (d > 0) bucket.inflow += d;
-    if (c > 0) bucket.outflow += c;
-    bucket.count += 1;
-    buckets.set(sk, bucket);
+    const delta = Number(row.debit_php ?? 0) - Number(row.credit_php ?? 0);
+    closingByAccount.set(acct.id, (closingByAccount.get(acct.id) ?? 0) + delta);
   }
+  const buckets = bucketCashMovements(
+    periodLines.filter((row) => row.chart_of_accounts),
+    { start, end },
+  );
 
   const closingTotal = Array.from(closingByAccount.values()).reduce(
     (s, v) => s + v,
@@ -202,7 +197,12 @@ export default async function CashFlowPage({ searchParams }: SearchProps) {
 
   // Sort buckets by absolute movement so big ones float to the top.
   const orderedBuckets = Array.from(buckets.entries())
-    .map(([key, b]) => ({ key, ...b, net: b.inflow - b.outflow }))
+    .map(([key, b]) => ({
+      key,
+      label: SOURCE_KIND_LABEL[key] ?? key,
+      ...b,
+      net: b.inflow - b.outflow,
+    }))
     .sort((a, b) => Math.abs(b.net) - Math.abs(a.net));
 
   const totalInflow = orderedBuckets.reduce((s, b) => s + b.inflow, 0);
@@ -425,12 +425,21 @@ export default async function CashFlowPage({ searchParams }: SearchProps) {
             Cash flow uses the <strong>direct method</strong>: for each posted
             or reversed journal line touching a cash account (codes 1010, 1020,
             1021, 1030 by convention), debits are inflows and credits are
-            outflows — both halves of a reversed pair count, so they net to
-            zero rather than subtracting the amount twice.
+            outflows — both halves of a reversed pair count toward the
+            balances, so they net to zero rather than subtracting the amount
+            twice.
             Lines are grouped by their source journal entry&apos;s{" "}
             <code>source_kind</code> (e.g. <code>payment</code>,{" "}
             <code>bill_payment</code>, <code>payroll_run</code>) so each
             category is one row of the waterfall.
+          </p>
+          <p>
+            In the category rows, an undo (a <code>reversal</code> entry) is
+            filed under the category of the entry it undoes. If that entry is
+            also in this period, the two cancel inside the category — neither
+            adds to its inflow, outflow or line count; if it was
+            posted earlier, the undo shows as a movement in that category (an
+            undone August payment is a September outflow under payments).
           </p>
           <p>
             Beginning balance is the cumulative net of cash-account JE lines

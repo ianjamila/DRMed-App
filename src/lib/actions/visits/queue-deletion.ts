@@ -23,6 +23,7 @@ import { QueueDeleteReasonSchema } from "@/lib/validations/accounting";
 import { translatePgError } from "@/lib/accounting/pg-errors";
 import { QUEUE_DELETE_ROLES } from "@/lib/visits/deletion";
 import { MAX_BULK_SELECTION } from "@/lib/visits/bulk-selection";
+import { assertVisitPatientActive } from "@/lib/patients/require-active";
 
 export type QueueDeletionResult =
   | { ok: true; count: number }
@@ -127,6 +128,10 @@ export async function restoreVisitAction(
 ): Promise<QueueDeletionResult> {
   const { session, error: roleError } = await requireQueueDeleteStaff();
   if (!session) return { ok: false, error: roleError };
+  // 0167: a queue restore puts a deleted visit's work back on the board —
+  // refuse it on an inactive patient (restore the patient first).
+  const active = await assertVisitPatientActive(createAdminClient(), visitId);
+  if (!active.ok) return { ok: false, error: active.error };
   const parsed = parseReason(reason);
   if (!parsed.ok) return { ok: false, error: parsed.error };
 
@@ -270,6 +275,10 @@ export async function restoreTestRequestsAction(
 ): Promise<QueueDeletionResult> {
   const { session, error: roleError } = await requireQueueDeleteStaff();
   if (!session) return { ok: false, error: roleError };
+  // 0167: same as restoreVisitAction — a test-level restore puts work back
+  // on the board.
+  const active = await assertVisitPatientActive(createAdminClient(), visitId);
+  if (!active.ok) return { ok: false, error: active.error };
   const parsed = parseReason(reason);
   if (!parsed.ok) return { ok: false, error: parsed.error };
   if (testRequestIds.length === 0) {

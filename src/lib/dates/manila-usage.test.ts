@@ -271,13 +271,6 @@ const ALLOWED: Record<string, Allowance> = {
       "preserved, not undone. The result is used as an instant, never sliced " +
       "back to a date.",
   },
-  "app/(staff)/staff/(dashboard)/admin/closures/actions.ts": {
-    methods: ["getUTCDate", "setUTCDate"],
-    why:
-      "The same half-open Manila day bound as the closures page: Manila " +
-      "midnight plus one UTC day, consumed as a `toISOString()` instant for " +
-      "a `scheduled_at` filter. The value never becomes a calendar date.",
-  },
   "lib/operations/daily-report.ts": {
     methods: [ISO_TRUNCATION],
     why:

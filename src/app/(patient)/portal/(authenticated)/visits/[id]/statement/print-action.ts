@@ -15,10 +15,15 @@ import { auditPatientStatement } from "@/lib/portal/statement-audit";
  * reason: the page 404s on a deleted visit, so arriving here with one means
  * staff deleted it after the patient opened the statement — and the print
  * (a disclosure) still happened.
+ *
+ * No consent check, for the same reason: this only RECORDS a print that
+ * already happened in the browser. Refusing it would lose the audit row, not
+ * the disclosure — the page itself is what the consent guard stops.
  */
 export async function logPatientStatementPrintAction(visitId: string): Promise<void> {
-  // requirePatientProfile, like the page: it follows a merged record to the
-  // surviving patient, whose id now owns the visit.
+  // requirePatientProfile, like the page: it re-reads getActivePatientSession
+  // on every call, so a deleted or merged record is refused here regardless
+  // of the cookie's remaining lifetime — no merge-chain following (0167).
   const session = await requirePatientProfile();
   const db = await createPatientClient(session.patient_id);
   const { data: visit } = await db

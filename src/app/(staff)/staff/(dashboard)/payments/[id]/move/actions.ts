@@ -1,6 +1,12 @@
 "use server";
 
 import { headers } from "next/headers";
+import { after } from "next/server";
+import { moneySettled } from "@/lib/visits/money-settled";
+import { loadReleasedResultCounts } from "@/lib/visits/released-results";
+import { paymentMethodLabel } from "@/lib/visits/payment-history";
+import { shouldAlertReleasedPaymentRemoved } from "@/lib/visits/released-payment-alert-content";
+import { sendReleasedPaymentRemovedAlert } from "@/lib/visits/released-payment-alert";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { createClient } from "@/lib/supabase/server";
@@ -9,6 +15,7 @@ import { audit } from "@/lib/audit/log";
 import { requireActiveStaff } from "@/lib/auth/require-staff";
 import { translatePgError } from "@/lib/accounting/pg-errors";
 import { CLOSED_MONTH_MESSAGE, paymentEditability, paymentSnapshot } from "@/lib/visits/payment-edit";
+import { assertVisitPatientActive } from "@/lib/patients/require-active";
 
 // Same role pair as Edit and Delete (payments/[id]/{edit,void}/actions.ts).
 function canMovePayment(role: string): boolean {
@@ -49,6 +56,12 @@ export async function findVisitForMoveAction(visitNumber: string): Promise<FindV
     .maybeSingle();
   if (error) return { ok: false, error: translatePgError(error) };
   if (!data) return { ok: false, error: `No open visit #${n}. Check the number, or restore the visit first.` };
+
+  // 0167: an inactive patient's visit is never offered as a move target.
+  const admin = createAdminClient();
+  const active = await assertVisitPatientActive(admin, data.id);
+  if (!active.ok) return { ok: false, error: active.error };
+
   const pt = Array.isArray(data.patients) ? data.patients[0] : data.patients;
   return {
     ok: true,
@@ -108,12 +121,19 @@ export async function movePaymentAction(input: {
 
   const { data: target } = await admin
     .from("visits")
-    .select("id, patient_id")
+    .select("id, patient_id, visit_number")
     .eq("id", d.target_visit_id)
     // A deleted target is refused by correct_payment; this read only feeds
     // the audit row and revalidation.
     .is("deleted_at", null)
     .maybeSingle();
+
+  // 0167: no financial reversal on an inactive record — restore it first.
+  // Both ends: the visit the payment LEAVES and the visit it LANDS ON.
+  const activeSource = await assertVisitPatientActive(admin, before.visit_id);
+  if (!activeSource.ok) return { ok: false, error: activeSource.error };
+  const activeTarget = await assertVisitPatientActive(admin, d.target_visit_id);
+  if (!activeTarget.ok) return { ok: false, error: activeTarget.error };
 
   // Same amount, method, reference and notes — only the visit changes.
   const { data: newPaymentId, error: rpcErr } = await admin.rpc("correct_payment", {
@@ -137,6 +157,22 @@ export async function movePaymentAction(input: {
   }
 
   const fromVisit = Array.isArray(before.visits) ? before.visits[0] : before.visits;
+
+  // What the visit the payment LEFT is now in — re-read after the move, the
+  // same fields the Delete audit carries. Best-effort: a failed read leaves
+  // them null and sends no alert, never drops the audit row.
+  const [{ data: sourceAfter }, sourceReleased] = await Promise.all([
+    admin
+      .from("visits")
+      .select("payment_status, hmo_provider_id")
+      .eq("id", before.visit_id)
+      .is("deleted_at", null)
+      .maybeSingle(),
+    loadReleasedResultCounts(admin, [before.visit_id]).catch(() => null),
+  ]);
+  const settledAfter = sourceAfter ? moneySettled(sourceAfter) : null;
+  const releasedCount = sourceReleased ? (sourceReleased.get(before.visit_id) ?? 0) : null;
+
   const h = await headers();
   await audit({
     actor_id: session.user_id,
@@ -152,10 +188,30 @@ export async function movePaymentAction(input: {
       amount_php: Number(before.amount_php),
       method: before.method,
       cross_patient: fromVisit?.patient_id !== target?.patient_id,
+      source_released_count: releasedCount,
+      source_settled_after: settledAfter,
     },
     ip_address: h.get("x-forwarded-for")?.split(",")[0]?.trim() ?? null,
     user_agent: h.get("user-agent"),
   });
+
+  // Email Alerts (0178): the source visit owes again after its results went
+  // out. after() — once the response is sent, so it never slows the move.
+  if (shouldAlertReleasedPaymentRemoved({ settledAfter, releasedResults: releasedCount })) {
+    after(() =>
+      sendReleasedPaymentRemovedAlert({
+        paymentId: d.payment_id,
+        change: "moved",
+        visitId: before.visit_id,
+        amountPhp: Number(before.amount_php),
+        methodLabel: paymentMethodLabel(before.method),
+        reasonLabel: null,
+        movedToVisitNumber: target?.visit_number ?? null,
+        actorId: session.user_id,
+        releasedResults: releasedCount ?? 0,
+      }),
+    );
+  }
 
   revalidatePath(`/staff/visits/${before.visit_id}`);
   revalidatePath(`/staff/visits/${d.target_visit_id}`);

@@ -33,6 +33,9 @@ import {
 import { loadTemplateParams } from "@/lib/results/loaders";
 import { labQueueGate } from "@/lib/visits/lab-gate";
 import { manilaDateTime } from "@/lib/dates/manila";
+import { isActivePatient } from "@/lib/patients/active";
+import { loadPatientLifecycle, type PatientLifecycleDisplay } from "@/lib/patients/lifecycle-display";
+import { PatientLifecycleBanner } from "@/components/staff/patient-lifecycle-banner";
 
 const loadTestDetail = cache(async (id: string) => {
   const session = await requireActiveStaff();
@@ -51,7 +54,7 @@ const loadTestDetail = cache(async (id: string) => {
         services!inner ( id, code, name, kind, section, turnaround_hours, requires_signoff, is_send_out ),
         visits!inner (
           id, visit_number, deleted_at, payment_status, hmo_provider_id,
-          patients!inner ( id, drm_id, first_name, last_name, phone, sex, birthdate )
+          patients!inner ( id, drm_id, first_name, last_name, phone, sex, birthdate, deleted_at, merged_into_id )
         ),
         results ( id, uploaded_at, file_size_bytes, notes, generation_kind, finalised_at, control_no, amended_at, amendment_count, image_filename )
       `,
@@ -153,6 +156,10 @@ export default async function QueueTestDetailPage({ params }: Props) {
   const { id } = await params;
   const { session, supabase, user, test, svc, visit, patient, visiblePackageComponents } = await loadTestDetail(id);
 
+  const isAdmin = session.role === "admin";
+  const patientActive = isActivePatient(patient);
+  const lifecycle = patientActive ? null : await loadPatientLifecycle(supabase, patient.id);
+
   // Soft-deleted (0125): no work happens on this entry. Point at the visit
   // page, which owns the deleted-entries panel and the Restore action.
   if (test.deleted_at !== null || visit.deleted_at !== null) {
@@ -222,6 +229,8 @@ export default async function QueueTestDetailPage({ params }: Props) {
         patientFirstName={patient.first_name}
         patientLastName={patient.last_name}
         components={components}
+        lifecycle={lifecycle}
+        isAdmin={isAdmin}
       />
     );
   }
@@ -399,6 +408,8 @@ export default async function QueueTestDetailPage({ params }: Props) {
         </span>
       </header>
 
+      {lifecycle ? <PatientLifecycleBanner lifecycle={lifecycle} isAdmin={isAdmin} className="mt-4" /> : null}
+
       <section className="mt-6 grid gap-3 rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white p-5 sm:grid-cols-2">
         <div>
           <p className="text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
@@ -433,14 +444,14 @@ export default async function QueueTestDetailPage({ params }: Props) {
               Typical turnaround: {svc.turnaround_hours}h
             </p>
           ) : null}
-          {showReassignPanel ? (
+          {showReassignPanel && patientActive ? (
             <ReassignPanel
               testRequestId={test.id}
               assigneeName={assigneeName}
               labStaff={labStaff}
             />
           ) : null}
-          {showSelfUnclaim ? (
+          {showSelfUnclaim && patientActive ? (
             <UnclaimOwnButton testRequestId={test.id} />
           ) : null}
         </div>
@@ -456,7 +467,7 @@ export default async function QueueTestDetailPage({ params }: Props) {
               ? `This test can only be claimed by an ${claimOwnerLabel(claimOwner)}. It stays in the queue until one of them picks it up.`
               : "This test is outside the sections you can claim."}
           </p>
-        ) : claimable ? (
+        ) : claimable && !patientActive ? null : claimable ? (
           claimGate.ok ? (
             <div>
               <p className="text-sm text-[color:var(--color-brand-text-mid)]">
@@ -476,7 +487,7 @@ export default async function QueueTestDetailPage({ params }: Props) {
           )
         ) : null}
 
-        {canStructured ? (
+        {canStructured && patientActive ? (
           <div>
             <h2 className="font-heading text-lg font-extrabold text-[color:var(--color-brand-navy)]">
               Enter result values
@@ -500,7 +511,7 @@ export default async function QueueTestDetailPage({ params }: Props) {
           </div>
         ) : null}
 
-        {canUpload ? (
+        {canUpload && patientActive ? (
           <div>
             <h2 className="font-heading text-lg font-extrabold text-[color:var(--color-brand-navy)]">
               Upload result
@@ -550,7 +561,7 @@ export default async function QueueTestDetailPage({ params }: Props) {
             ) : null}
             <div className="mt-4 flex flex-wrap items-center gap-3">
               <ViewResultButton testRequestId={test.id} />
-              {amendable ? (
+              {amendable && patientActive ? (
                 <AmendResultForm
                   testRequestId={test.id}
                   expectedAmendmentCount={result.amendment_count}
@@ -667,6 +678,8 @@ function PackageHeaderSummary({
   patientFirstName,
   patientLastName,
   components,
+  lifecycle,
+  isAdmin,
 }: {
   headerStatus: string;
   finalPricePhp: number | null;
@@ -677,6 +690,8 @@ function PackageHeaderSummary({
   patientFirstName: string;
   patientLastName: string;
   components: PackageComponentSummary[];
+  lifecycle: PatientLifecycleDisplay | null;
+  isAdmin: boolean;
 }) {
   return (
     <div className="px-4 py-8 sm:px-6 lg:px-8">
@@ -707,6 +722,8 @@ function PackageHeaderSummary({
           {headerStatus.replace(/_/g, " ")}
         </span>
       </header>
+
+      {lifecycle ? <PatientLifecycleBanner lifecycle={lifecycle} isAdmin={isAdmin} className="mt-4" /> : null}
 
       <section className="mt-6 grid gap-3 rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white p-5 sm:grid-cols-2">
         <div>

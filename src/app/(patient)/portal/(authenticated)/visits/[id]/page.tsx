@@ -2,6 +2,8 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { createPatientClient } from "@/lib/supabase/patient";
 import { requirePatientProfile } from "@/lib/auth/require-patient";
+import { portalConsentCurrent } from "@/lib/portal/consent-guard";
+import { PortalConsentGate } from "../../consent/consent-gate";
 import { DownloadButton } from "../../download-button";
 import { ResultUpdatedBadge } from "../../result-updated-badge";
 import { isUpdatedSinceDownload } from "@/lib/results/patient-update-marker";
@@ -23,6 +25,7 @@ const PENDING_STATUS_STYLE = "bg-[color:var(--color-brand-bg-mid)] text-[color:v
 export default async function PatientVisitDetailPage({ params }: Props) {
   const { id } = await params;
   const patient = await requirePatientProfile();
+  if (!(await portalConsentCurrent(patient.patient_id))) return <PortalConsentGate />;
   // Patient-scoped client — visits/test_requests/results RLS enforces ownership
   // and released-only visibility; the .eq("patient_id", …) filter stays as
   // defense-in-depth. A visit id that isn't the patient's now returns no row

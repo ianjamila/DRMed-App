@@ -53,7 +53,8 @@ export async function recomputeClinicFeeForUnreleased(): Promise<
 
   // See spec §3.5 — admin-triggered scrub. Only touches unreleased tests (those
   // without a posted JE). Sets clinic_fee_php=0 + doctor_pf_php=final for
-  // rent_paying / shareholder physicians.
+  // rent_paying / shareholder physicians. Posted-only on purpose: a reversed JE
+  // means the line is unreleased again (see the function's 0180 comment).
   //
   // The RPC type is generated after migration 0065; until `npm run db:types`
   // is re-run the function name is unknown to the typed client. We call the

@@ -28,7 +28,12 @@ import { AttendingPhysicianDialog } from "./attending-physician-dialog";
 import { VoidPaymentDialog } from "../../payments/[id]/void/void-payment-dialog";
 import { EditPaymentDialog } from "../../payments/[id]/edit/edit-payment-dialog";
 import { MovePaymentDialog } from "../../payments/[id]/move/move-payment-dialog";
-import { paymentEditability } from "@/lib/visits/payment-edit";
+import {
+  countReleasedLines,
+  paymentEditability,
+  releasedWhileUnpaidMessage,
+  type VisitMoney,
+} from "@/lib/visits/payment-edit";
 import { linkPayments, paymentMethodLabel as methodLabel } from "@/lib/visits/payment-history";
 import {
   PAYMENT_HISTORY_SELECT,
@@ -54,6 +59,7 @@ import {
 } from "@/lib/visits/receipt-policy";
 import { isDoctorKind } from "@/lib/visits/order-lines";
 import { moneySettled } from "@/lib/visits/money-settled";
+import { waivedAmount } from "@/lib/visits/statement";
 import { canManuallyReleasePackageHeader } from "@/lib/visits/package-header-release";
 import { QueueDeleteDialog } from "@/components/staff/queue-delete-dialog";
 import { ReissuePinButton } from "@/components/staff/reissue-pin-button";
@@ -65,6 +71,9 @@ import { printAllFiles, resultPdfStates } from "@/lib/results/pdf-availability";
 import { fetchPrintSummaries } from "@/lib/results/print-history";
 import type { PrintSummary } from "@/lib/results/print-summary";
 import { PrintedNote } from "@/components/staff/printed-note";
+import { isActivePatient } from "@/lib/patients/active";
+import { loadPatientLifecycle } from "@/lib/patients/lifecycle-display";
+import { PatientLifecycleBanner } from "@/components/staff/patient-lifecycle-banner";
 
 // Share the existing header lookup with metadata within this request.
 const loadDetail = cache(async (id: string) => {
@@ -79,7 +88,7 @@ const loadDetail = cache(async (id: string) => {
         visit_group_id,
         hmo_provider_id, hmo_approval_date, hmo_authorization_no,
         attending_physician_id,
-        patients!inner ( id, drm_id, first_name, last_name, preferred_release_medium ),
+        patients!inner ( id, drm_id, first_name, last_name, preferred_release_medium, deleted_at, merged_into_id ),
         hmo_providers ( id, name ),
         physicians ( id, full_name )
       `,
@@ -152,6 +161,8 @@ export default async function VisitDetailPage({ params, searchParams }: Props) {
 
   const patient = Array.isArray(visit.patients) ? visit.patients[0] : visit.patients;
   if (!patient) notFound();
+  const patientActive = isActivePatient(patient);
+  const lifecycle = patientActive ? null : await loadPatientLifecycle(supabase, patient.id);
   const hmo = Array.isArray(visit.hmo_providers)
     ? visit.hmo_providers[0]
     : visit.hmo_providers;
@@ -400,7 +411,7 @@ export default async function VisitDetailPage({ params, searchParams }: Props) {
   const balance = Number(visit.total_php) - Number(visit.paid_php);
   // Waiving writes no payment row, so paid_php stays short of the total: the
   // remainder is waived, not owed (same rule as the statement of account).
-  const waivedBalance = visit.payment_status === "waived" && balance > 0 ? balance : 0;
+  const waivedBalance = waivedAmount(visit);
   const activePayments = (payments ?? []).filter((p) => !p.voided_at);
   const voidedPayments = (payments ?? []).filter((p) => p.voided_at);
   // Edit / Move (0161) link a corrected row to the original it voided. A move
@@ -477,6 +488,27 @@ export default async function VisitDetailPage({ params, searchParams }: Props) {
     .filter((t) => t.deleted_at !== null)
     .filter((t) => canSeeRow(t));
   const rawRows = (tests ?? []).filter((t) => t.deleted_at === null);
+  // What this visit has already released, counted the way the Delete / Move
+  // dialogs and the note under the tests table say it: results apart from
+  // doctor lines, never a package header (payment-edit.ts). Every live line,
+  // not just the ones this role may see — it is a fact about the visit.
+  const releasedCounts = countReleasedLines(
+    rawRows.map((r) => {
+      const svc = Array.isArray(r.services) ? r.services[0] : r.services;
+      return { status: r.status, is_package_header: r.is_package_header, kind: svc?.kind };
+    }),
+  );
+  const visitMoney: VisitMoney = {
+    totalPhp: Number(visit.total_php),
+    paidPhp: Number(visit.paid_php),
+    paymentStatus: visit.payment_status,
+    hmoProviderId: visit.hmo_provider_id,
+  };
+  // Money on this page is reception/admin-only (the billing block is behind
+  // canSeePayments), so the lab roles keep the generic note below.
+  const releasedWhileUnpaid = canSeePayments
+    ? releasedWhileUnpaidMessage(visitMoney, releasedCounts, formatPhp)
+    : null;
   // First pass: mark which parent_ids have at least one visible component.
   const visibleParents = new Set<string>();
   // …and which have at least one component this role may ACT on. A package
@@ -668,7 +700,7 @@ export default async function VisitDetailPage({ params, searchParams }: Props) {
               >
                 Receipt
               </Link>
-            ) : canIssuePin ? (
+            ) : canIssuePin && patientActive ? (
               // No receipt to carry the PIN (item 1) — this is the deliberate
               // path for a consultation patient who wants portal access.
               <ReissuePinButton
@@ -701,16 +733,16 @@ export default async function VisitDetailPage({ params, searchParams }: Props) {
                 <p className="text-xs text-[color:var(--color-brand-text-soft)]">
                   Billed to {hmo?.name ?? "HMO"} — settled through HMO claims
                 </p>
-              ) : (
+              ) : patientActive ? (
                 <Link
                   href={`/staff/payments/new?visit_id=${visit.id}`}
                   className="rounded-md bg-[color:var(--color-brand-navy)] px-4 py-2 text-sm font-bold text-white hover:bg-[color:var(--color-brand-cyan)]"
                 >
                   Record payment
                 </Link>
-              )
+              ) : null
             ) : null}
-            {canDeleteVisit ? (
+            {canDeleteVisit && patientActive ? (
               <QueueDeleteDialog
                 visitId={visit.id}
                 mode="delete"
@@ -720,6 +752,8 @@ export default async function VisitDetailPage({ params, searchParams }: Props) {
           </div>
         )}
       </header>
+
+      {lifecycle ? <PatientLifecycleBanner lifecycle={lifecycle} isAdmin={isAdmin} className="mt-4" /> : null}
 
       {created === "consult" && !visitDeleted ? (
         <section className="mt-4 rounded-xl border border-[color:var(--color-brand-cyan)] bg-[color:var(--color-brand-bg)] p-4">
@@ -759,7 +793,7 @@ export default async function VisitDetailPage({ params, searchParams }: Props) {
                 </p>
               ) : null}
             </div>
-            {canManageDeletion ? (
+            {canManageDeletion && patientActive ? (
               <QueueDeleteDialog
                 visitId={visit.id}
                 mode="restore"
@@ -796,7 +830,7 @@ export default async function VisitDetailPage({ params, searchParams }: Props) {
                 {paymentStatusLabel(visit.payment_status)}
               </span>
             </p>
-            {isAdmin && !isPaid && !visitDeleted && !visit.hmo_provider_id ? (
+            {isAdmin && !isPaid && !visitDeleted && patientActive && !visit.hmo_provider_id ? (
               <WaiveBalanceDialog
                 visitId={visit.id}
                 balanceLabel={formatPhp(balance > 0 ? balance : 0)}
@@ -817,7 +851,7 @@ export default async function VisitDetailPage({ params, searchParams }: Props) {
                 {attendingPhysician?.full_name ?? "— None set —"}
               </p>
             </div>
-            {canAssignPhysician && !visitDeleted ? (
+            {canAssignPhysician && !visitDeleted && patientActive ? (
               <AttendingPhysicianDialog
                 visitId={visit.id}
                 currentPhysicianId={visit.attending_physician_id}
@@ -939,6 +973,7 @@ export default async function VisitDetailPage({ params, searchParams }: Props) {
                         </span>
                         {readyCount >= 2 &&
                         !visitDeleted &&
+                        patientActive &&
                         actionableParents.has(h.id) ? (
                           <ReleaseAllButton
                             headerId={h.id}
@@ -964,6 +999,7 @@ export default async function VisitDetailPage({ params, searchParams }: Props) {
                             normally auto-releases it and didn't. */}
                         {isAdmin &&
                         !visitDeleted &&
+                        patientActive &&
                         canManuallyReleasePackageHeader(h, components) ? (
                           <ReleasePackageHeaderButton
                             headerId={h.id}
@@ -992,7 +1028,7 @@ export default async function VisitDetailPage({ params, searchParams }: Props) {
                           has_shared_report:
                             sharedReportIds.has(h.id) ||
                             components.some((c) => sharedReportIds.has(c.id)),
-                        }).ok ? (
+                        }).ok && patientActive ? (
                           <QueueDeleteDialog
                             visitId={visit.id}
                             testRequestIds={[h.id]}
@@ -1048,7 +1084,7 @@ export default async function VisitDetailPage({ params, searchParams }: Props) {
                                   className="hover:bg-[color:var(--color-brand-bg)]"
                                 >
                                   <td className="px-4 py-3">
-                                    {visitDeleted || !canActOnRow(c) ? null : c.status ===
+                                    {visitDeleted || !patientActive || !canActOnRow(c) ? null : c.status ===
                                       "ready_for_release" ? (
                                       <RowSelectCheckbox
                                         testRequestId={c.id}
@@ -1108,6 +1144,7 @@ export default async function VisitDetailPage({ params, searchParams }: Props) {
                                     <TestAction
                                       size="compact"
                                       visitDeleted={visitDeleted}
+                                      patientActive={patientActive}
                                       canAct={canActOnRow(c)}
                                       status={c.status}
                                       testRequestId={c.id}
@@ -1212,7 +1249,7 @@ export default async function VisitDetailPage({ params, searchParams }: Props) {
                     className="hover:bg-[color:var(--color-brand-bg)]"
                   >
                     <td className="px-2 py-3">
-                      {visitDeleted || !canActOnRow(t) ? null : t.status ===
+                      {visitDeleted || !patientActive || !canActOnRow(t) ? null : t.status ===
                         "ready_for_release" ? (
                         <RowSelectCheckbox
                           testRequestId={t.id}
@@ -1332,6 +1369,7 @@ export default async function VisitDetailPage({ params, searchParams }: Props) {
                     <td className="px-4 py-3 text-right">
                       <TestAction
                         visitDeleted={visitDeleted}
+                        patientActive={patientActive}
                         canAct={canActOnRow(t)}
                         status={t.status}
                         testRequestId={t.id}
@@ -1370,7 +1408,7 @@ export default async function VisitDetailPage({ params, searchParams }: Props) {
                         visit_deleted_at: visit.deleted_at,
                         has_open_hmo_claim: hasOpenHmoClaim(t.hmo_claim_items),
                         has_shared_report: sharedReportIds.has(t.id),
-                      }).ok ? (
+                      }).ok && patientActive ? (
                         <div className="mt-1.5 flex justify-end">
                           <QueueDeleteDialog
                             visitId={visit.id}
@@ -1399,7 +1437,19 @@ export default async function VisitDetailPage({ params, searchParams }: Props) {
             </tbody>
           </table>
         </Panel>
-        {!canRelease ? (
+        {/* Released results stay released (owner rule): a visit that owes
+            money again after its results went out — a payment deleted or
+            moved, or a line added later — says so instead of the generic
+            "blocked" note, which would read as if nothing had gone out. */}
+        {releasedWhileUnpaid ? (
+          <p
+            className="mt-3 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm font-semibold text-amber-900"
+            data-testid="released-while-unpaid"
+          >
+            {releasedWhileUnpaid} Released results stay released — collect the
+            balance at the counter. New releases wait until it is paid or waived.
+          </p>
+        ) : !canRelease ? (
           <p className="mt-3 text-xs text-[color:var(--color-brand-text-soft)]">
             ℹ️ Releases are blocked until the visit is paid or waived. HMO
             visits release straight away — the claim is booked as a
@@ -1408,7 +1458,7 @@ export default async function VisitDetailPage({ params, searchParams }: Props) {
           </p>
         ) : null}
       </section>
-      {visitDeleted || !roleCanActOnResults(session.role) ? null : (
+      {visitDeleted || !patientActive || !roleCanActOnResults(session.role) ? null : (
         <BulkActionBar
           visitId={visit.id}
           moneySettled={canRelease}
@@ -1475,7 +1525,7 @@ export default async function VisitDetailPage({ params, searchParams }: Props) {
                   </div>
                   {/* Components ride their header's restore; a deleted visit
                       must be restored first (its own banner has the button). */}
-                  {canManageDeletion && !visitDeleted && t.parent_id === null ? (
+                  {canManageDeletion && !visitDeleted && patientActive && t.parent_id === null ? (
                     <QueueDeleteDialog
                       visitId={visit.id}
                       testRequestIds={[t.id]}
@@ -1528,7 +1578,7 @@ export default async function VisitDetailPage({ params, searchParams }: Props) {
                         payments/[id]/void/actions.ts, which gates the actual
                         write. RLS already keeps activePayments empty for
                         every other role, so this is defense-in-depth. */}
-                    {canSeePayments ? (
+                    {canSeePayments && patientActive ? (
                       <div className="flex items-center justify-end gap-4">
                         {/* Edit is offered only where correct_payment (0161)
                             would accept it — gift-code, HMO and imported
@@ -1542,9 +1592,8 @@ export default async function VisitDetailPage({ params, searchParams }: Props) {
                             patientName={`${patient.last_name}, ${patient.first_name}`}
                             patientDrmId={patient.drm_id}
                             otherVisits={otherVisits}
-                            currentVisitTotal={Number(visit.total_php)}
-                            currentVisitPaid={Number(visit.paid_php)}
-                            currentVisitReleasedCount={releasedRowIds.length}
+                            currentVisit={visitMoney}
+                            currentVisitReleased={releasedCounts}
                           />
                         ) : null}
                         {paymentEditability(p).editable ? (
@@ -1567,9 +1616,14 @@ export default async function VisitDetailPage({ params, searchParams }: Props) {
                         ) : null}
                         <VoidPaymentDialog
                           paymentId={p.id}
+                          amount={Number(p.amount_php)}
                           amountLabel={formatPhp(p.amount_php)}
                           methodLabel={methodLabel(p.method)}
                           isGiftCode={p.method === "gift_code"}
+                          visitNumber={visit.visit_number}
+                          visit={visitMoney}
+                          released={releasedCounts}
+                          canMoveOrEdit={paymentEditability(p).editable}
                         />
                       </div>
                     ) : null}
@@ -1702,6 +1756,10 @@ interface TestActionProps {
   // A soft-deleted visit keeps live lines (0125's delete does not cascade to
   // test_requests), so the table still renders them — but none may be actioned.
   visitDeleted: boolean;
+  // 0167: false when the visit's patient is deleted/merged. Read-only
+  // elements (status hints, "View PDF", "Open in queue") stay; MarkDoneButton,
+  // ReleaseButton and UndoReleaseDialog are hidden.
+  patientActive: boolean;
   // See-vs-act split (2026-09-15): may this role act on the RESULT behind
   // this line (canActOnRow in the caller, built on canActOnResult in
   // line-visibility.ts)? Reception can see every row but this is always
@@ -1746,6 +1804,7 @@ interface TestActionProps {
 function TestAction({
   status,
   visitDeleted,
+  patientActive,
   canAct,
   testRequestId,
   visitId,
@@ -1860,6 +1919,17 @@ function TestAction({
       status === "requested" ||
       status === "in_progress"
     ) {
+      if (!patientActive) {
+        const hint =
+          status === "requested"
+            ? "Awaiting claim"
+            : status === "in_progress"
+              ? "Awaiting result"
+              : "Ready for release";
+        return (
+          <span className={`${sizeCls} text-[color:var(--color-brand-text-soft)]`}>{hint}</span>
+        );
+      }
       return (
         <MarkDoneButton
           testRequestId={testRequestId}
@@ -1872,6 +1942,13 @@ function TestAction({
   }
 
   if (status === "ready_for_release") {
+    if (!patientActive) {
+      return (
+        <span className={`${sizeCls} text-[color:var(--color-brand-text-soft)]`}>
+          Ready for release
+        </span>
+      );
+    }
     return (
       <div className="flex flex-col items-end gap-0.5">
         <ReleaseButton
@@ -1894,6 +1971,11 @@ function TestAction({
 
   if (status === "requested" || status === "in_progress") {
     const hint = status === "requested" ? "Awaiting claim" : "Awaiting result";
+    if (!patientActive) {
+      return (
+        <span className={`${sizeCls} text-[color:var(--color-brand-text-soft)]`}>{hint}</span>
+      );
+    }
     return (
       <div className="flex flex-col items-end gap-0.5">
         <span className={`${sizeCls} text-[color:var(--color-brand-text-soft)]`}>
@@ -1939,14 +2021,17 @@ function TestAction({
         ) : null}
         {/* Headers never reach TestAction (only components + standalones
             render it), so every released row here may offer Undo — the 0110
-            cascade flips the header when its last component is undone. */}
-        <UndoReleaseDialog
-          testRequestId={testRequestId}
-          visitId={visitId}
-          viewedCount={viewedCount}
-          reportScope={reportScope}
-          size={size}
-        />
+            cascade flips the header when its last component is undone.
+            0167: hidden for a deleted/merged patient — the PDF stays viewable. */}
+        {patientActive ? (
+          <UndoReleaseDialog
+            testRequestId={testRequestId}
+            visitId={visitId}
+            viewedCount={viewedCount}
+            reportScope={reportScope}
+            size={size}
+          />
+        ) : null}
       </div>
     );
   }

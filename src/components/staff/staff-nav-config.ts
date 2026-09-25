@@ -600,6 +600,13 @@ export const STAFF_NAV: StaffNavSection[] = [
             description: "Keep patients and patient-source numbers current from the reception Google Sheet.",
             roles: ["admin"],
           },
+          {
+            href: "/staff/admin/deleted-patients",
+            label: ROUTE_NAME["/staff/admin/deleted-patients"],
+            description:
+              "Patient records an admin deleted (duplicates, test records, patient requests). Their history stays on file; restore a record here to put it back in the patient list.",
+            roles: ["admin"],
+          },
         ],
       },
     ],

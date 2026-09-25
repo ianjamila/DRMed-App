@@ -11,6 +11,7 @@ import { createClient } from "@supabase/supabase-js";
 import { PDFDocument, StandardFonts, rgb } from "pdf-lib";
 import type { Database } from "../src/types/database";
 import { requireLocalOrExplicitProd } from "./lib/env-guard";
+import { isActivePatient, PATIENT_LIFECYCLE_COLUMNS } from "../src/lib/patients/active";
 
 requireLocalOrExplicitProd("seed-sample-results", {
   writes: "creates sample `results` rows and links them to test requests",
@@ -83,7 +84,16 @@ async function ensureService(s: typeof SERVICES[number]) {
 }
 
 async function ensurePatient(p: typeof PATIENTS[number], adminId: string) {
-  const existing = await admin.from("patients").select("id").eq("drm_id", p.drm_id).maybeSingle();
+  const existing = await admin
+    .from("patients")
+    .select(`id, ${PATIENT_LIFECYCLE_COLUMNS}`)
+    .eq("drm_id", p.drm_id)
+    .maybeSingle();
+  if (existing.data && !isActivePatient(existing.data)) {
+    throw new Error(
+      `${p.drm_id} is held by a deleted or merged record — refusing to reuse or overwrite it. Restore it or pick another fixture DRM-ID.`,
+    );
+  }
   if (existing.data?.id) return existing.data.id as string;
   const { data, error } = await admin
     .from("patients")
@@ -197,10 +207,13 @@ async function createVisitAndTests(
     .single();
   if (vErr) throw new Error(`visit (${seedMarker}): ${vErr.message}`);
 
-  // Patient name for placeholder PDFs.
+  // Patient name for placeholder PDFs. This patient was just resolved by
+  // ensurePatient above (which already refuses an inactive record), but the
+  // lifecycle columns still ride along so this file's fixture-lookup rule
+  // (query-surfaces.test.ts) stays uniform across every read here.
   const { data: pat } = await admin
     .from("patients")
-    .select("first_name, last_name, drm_id")
+    .select(`first_name, last_name, ${PATIENT_LIFECYCLE_COLUMNS}`)
     .eq("id", patientId)
     .maybeSingle();
   const patName = pat ? `${pat.first_name} ${pat.last_name}` : "Sample Patient";

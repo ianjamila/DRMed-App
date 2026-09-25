@@ -2,6 +2,8 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { createPatientClient } from "@/lib/supabase/patient";
 import { requirePatientProfile } from "@/lib/auth/require-patient";
+import { portalConsentCurrent } from "@/lib/portal/consent-guard";
+import { PortalConsentGate } from "../../../consent/consent-gate";
 import { fetchStatement } from "@/lib/visits/statement-data";
 import { auditPatientStatement } from "@/lib/portal/statement-audit";
 import { StatementSheet } from "@/components/statement/statement-sheet";
@@ -30,6 +32,7 @@ interface Props {
 export default async function PatientStatementPage({ params }: Props) {
   const { id } = await params;
   const patient = await requirePatientProfile();
+  if (!(await portalConsentCurrent(patient.patient_id))) return <PortalConsentGate />;
   const db = await createPatientClient(patient.patient_id);
 
   const data = await fetchStatement(db, id);

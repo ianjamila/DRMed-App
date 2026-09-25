@@ -1,6 +1,8 @@
+import { redirect } from "next/navigation";
 import { headers } from "next/headers";
 import JSZip from "jszip";
 import { requirePatientProfile } from "@/lib/auth/require-patient";
+import { portalConsentCurrent } from "@/lib/portal/consent-guard";
 import { createPatientClient } from "@/lib/supabase/patient";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { audit } from "@/lib/audit/log";
@@ -83,6 +85,9 @@ type JRow = {
 
 export async function GET() {
   const patient = await requirePatientProfile();
+  // A route handler never runs the layout's consent gate. The export is a
+  // plain link, so send the patient to the notice instead of an error body.
+  if (!(await portalConsentCurrent(patient.patient_id))) redirect("/portal");
   // Patient-scoped client for every data read (RLS-enforced ownership). The
   // service-role client stays only for what RLS can't serve: the audit_log read
   // (compliance ledger, deliberately not patient-RLS-readable) and the Storage

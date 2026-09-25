@@ -10,6 +10,8 @@ import { StaffBookingSchema, type StaffBookingInput } from "@/lib/validations/st
 import { createAppointmentGroup, type PatientResolution } from "@/lib/appointments/create";
 import type { BookingConflict } from "@/lib/appointments/timing";
 import { resolvePatient } from "@/lib/patients/resolve";
+import { activePatients } from "@/lib/patients/active";
+import { assertPatientActive } from "@/lib/patients/require-active";
 import { findCandidatesForInput } from "@/lib/patients/find-duplicates";
 import { patientSearchOrClauses } from "@/lib/patients/search";
 import { notifyAppointmentBooked } from "@/lib/notifications/notify-appointment-booked";
@@ -80,7 +82,15 @@ export async function createStaffAppointmentAction(input: StaffBookingInput): Pr
 
   const resolveThunk = async (): Promise<{ ok: true; patient: PatientResolution } | { ok: false; error: string }> => {
     if (data.patient.mode === "existing") {
-      const { data: row } = await admin.from("patients").select("id, drm_id, email").eq("id", data.patient.patient_id).maybeSingle();
+      // A stale tab (picker loaded before the record was deleted/merged)
+      // should see the standard inactive-patient message, not "not found" —
+      // check explicitly before the active-only picker lookup below.
+      const active = await assertPatientActive(admin, data.patient.patient_id);
+      if (!active.ok) return { ok: false, error: active.error };
+
+      const { data: row } = await activePatients(admin.from("patients").select("id, drm_id, email"))
+        .eq("id", data.patient.patient_id)
+        .maybeSingle();
       if (!row) return { ok: false, error: "We couldn't find that patient. Search again." };
       return { ok: true, patient: { patientId: row.id, drmId: row.drm_id, email: row.email, resolution: "existing" } };
     }
@@ -250,9 +260,11 @@ export async function searchPatientsAction(q: string): Promise<{ ok: true; data:
   const supabase = await createClient();
   // Token-based: every word must match some field (any order), so "Jamila, Ian"
   // finds a patient stored as first_name="Ian", last_name="Jamila".
-  let query = supabase
-    .from("patients")
-    .select("id, drm_id, first_name, last_name, phone, email, birthdate, pre_registered")
+  let query = activePatients(
+    supabase
+      .from("patients")
+      .select("id, drm_id, first_name, last_name, phone, email, birthdate, pre_registered"),
+  )
     .order("created_at", { ascending: false })
     .limit(25);
   for (const clause of patientSearchOrClauses(term)) {

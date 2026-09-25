@@ -26,7 +26,7 @@ export async function GET(request: Request) {
 
     const { data: due, error } = await admin
       .from("appointments")
-      .select("id, patient_id")
+      .select("id, patient_id, patients ( deleted_at, merged_into_id )")
       .eq("status", "confirmed")
       .gte("scheduled_at", startIso)
       .lt("scheduled_at", endIso)
@@ -39,9 +39,18 @@ export async function GET(request: Request) {
 
     let emailed = 0;
     let skippedNoEmail = 0;
+    let skippedInactive = 0;
     const failures: Array<{ appointment_id: string; error: string }> = [];
 
     for (const a of due ?? []) {
+      // Not stamped: a restored record still gets its reminder next run. The
+      // sender re-checks anyway (fresh read) — this only keeps the batch from
+      // doing work it already knows will be skipped.
+      const p = Array.isArray(a.patients) ? a.patients[0] : a.patients;
+      if (a.patient_id && p && (p.deleted_at || p.merged_into_id)) {
+        skippedInactive += 1;
+        continue;
+      }
       try {
         const r = await notifyAppointmentReminder({
           appointmentId: a.id,
@@ -81,7 +90,13 @@ export async function GET(request: Request) {
       actor_id: null,
       actor_type: "system",
       action: "appointment.reminders.completed",
-      metadata: { processed: due?.length ?? 0, emailed, skipped_no_email: skippedNoEmail, failures: failures.length },
+      metadata: {
+        processed: due?.length ?? 0,
+        emailed,
+        skipped_no_email: skippedNoEmail,
+        skipped_inactive: skippedInactive,
+        failures: failures.length,
+      },
     });
 
     if (failures.length > 0) markFailed();
@@ -90,6 +105,7 @@ export async function GET(request: Request) {
       processed: due?.length ?? 0,
       emailed,
       skipped_no_email: skippedNoEmail,
+      skipped_inactive: skippedInactive,
       failures,
     });
   });

@@ -15,6 +15,7 @@ import {
 import { deriveEnabledParamIds } from "@/lib/results/enabled-params";
 import { sectionsForRole } from "@/lib/auth/role-sections";
 import { scopeToAllowedSections } from "@/lib/visits/bulk-selection";
+import { assertVisitPatientActive } from "@/lib/patients/require-active";
 import { calculateAgeMonths, normalisePatientSex } from "@/lib/results/types";
 import {
   buildValueRows,
@@ -89,6 +90,11 @@ export async function finaliseConsolidatedReport(
       error: "These tests don't all belong to the stated visit.",
     };
   }
+
+  // 0167: no finalise-and-release on an inactive record.
+  const active = await assertVisitPatientActive(admin, input.visitId);
+  if (!active.ok) return { ok: false, error: active.error };
+
   const flatService = (
     svc: { id: string; section: string | null; name: string; report_group_id: string | null } | { id: string; section: string | null; name: string; report_group_id: string | null }[] | null,
   ) => (Array.isArray(svc) ? (svc[0] ?? null) : svc);

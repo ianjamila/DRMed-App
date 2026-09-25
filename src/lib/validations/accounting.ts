@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { isISODate, isOnOrBeforeTodayManila, shiftISODate, todayManilaISODate } from "@/lib/dates/manila";
 import { DENOMINATION_KEYS, type DenominationKey } from "@/lib/accounting/cash-denominations";
+import { DELETE_CATEGORY_VALUES } from "@/lib/visits/payment-history";
 
 const accountCodeSchema = z
   .string()
@@ -49,9 +50,18 @@ export const ReopenQuarterSchema = QuarterIdentifierSchema.extend({
   reason: z.string().trim().min(1, "Reason is required to reopen a closed quarter.").max(1000),
 });
 
-export const VoidPaymentSchema = z.object({
-  reason: z.string().trim().min(1, "Reason is required to void a payment.").max(500),
-});
+// Delete payment: a category (stored as the void_reason prefix — see
+// formatDeleteReason) plus a note. The note is optional unless the category
+// is "Other", which says nothing on its own.
+export const VoidPaymentSchema = z
+  .object({
+    category: z.enum(DELETE_CATEGORY_VALUES, { message: "Choose why you are deleting it." }),
+    reason: z.string().trim().max(500),
+  })
+  .refine((d) => d.category !== "other" || d.reason.length > 0, {
+    message: "Say why you are deleting it.",
+    path: ["reason"],
+  });
 
 export const WaiveBalanceSchema = z.object({
   reason: z.string().trim().min(1, "Reason is required.").max(500),

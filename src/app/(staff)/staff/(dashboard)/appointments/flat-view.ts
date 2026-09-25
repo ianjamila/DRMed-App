@@ -37,7 +37,7 @@ export const BUCKET_LABEL: Record<BucketKey, string> = {
   pending: "Pending callback",
   walkin: "Walk-in waiting",
   today: "Today",
-  upcoming: "Next 30 days",
+  upcoming: "Upcoming",
 };
 
 export const BUCKET_STYLE: Record<BucketKey, string> = {
@@ -92,6 +92,40 @@ export interface FlatSortSpec {
 }
 
 export const FLAT_DEFAULT_SORT: FlatSortSpec = { key: "created_at", dir: "desc" };
+
+/**
+ * The "upcoming" loader's default upper bound is 31 days out — enough for
+ * the default grouped "what's coming up" view. But a `q` search is a lookup
+ * for one specific person (e.g. the 0167 patient-delete blocker's
+ * `/staff/appointments?q=<DRM-ID>` link), and a confirmed appointment
+ * further out than that still blocks the delete and must be findable
+ * through the same link. `null` means "no upper bound" — the caller omits
+ * the `.lt("scheduled_at", …)` filter entirely instead of passing this
+ * value. The non-search default view is unaffected: `hasQuery` is false
+ * only when `q` is absent, never merely because sort/source narrowed the
+ * flat view.
+ */
+export function upcomingRangeToIso(hasQuery: boolean, cappedToIso: string): string | null {
+  return hasQuery ? null : cappedToIso;
+}
+
+/**
+ * Mirrors the `.gte("scheduled_at", fromIso).lt("scheduled_at", toIso)`
+ * predicate `loadScheduledRange` (page.tsx) builds from `fromIso`/`toIso` —
+ * pure, so the "unbounded on search" behaviour can be proven directly
+ * against a `scheduled_at` value, not only against the ISO string
+ * `upcomingRangeToIso` returns. ISO 8601 UTC timestamps of the same fixed
+ * width (`Date#toISOString()`'s format) compare correctly as strings.
+ */
+export function withinScheduledRange(
+  scheduledAt: string,
+  fromIso: string,
+  toIso: string | null,
+): boolean {
+  if (scheduledAt < fromIso) return false;
+  if (toIso !== null && scheduledAt >= toIso) return false;
+  return true;
+}
 
 /**
  * Comparator for the flat view. Always ends in an `id` tie-break — per

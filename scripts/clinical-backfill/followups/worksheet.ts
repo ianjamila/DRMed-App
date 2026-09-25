@@ -32,6 +32,7 @@ import { parseTransactionName, matchKey } from "../lib/names";
 import { planCluster, completeness } from "../../patient-dedup/lib/plan";
 import type { PatientRow } from "../../patient-dedup/lib/types";
 import { writeCsv } from "../report";
+import { activePatients } from "../../../src/lib/patients/active";
 
 const LAB_CFG: TabConfig = {
   tab: "LAB SERVICE", sheetName: "LAB SERVICE", isConsult: false,
@@ -130,9 +131,11 @@ async function main(): Promise<void> {
   // 3. patient details for every candidate ----------------------------------
   const ids = [...new Set(held.flatMap((h) => h.candidates))];
   const pats = await fetchAll<Omit<PatientRow, "visit_count">>(async (lo, hi) => {
-    const { data, error } = await admin.from("patients")
-      .select("id, drm_id, first_name, last_name, middle_name, sex, phone, email, birthdate, address, created_at")
-      .in("id", ids.slice(lo, Math.min(hi + 1, ids.length)));
+    const { data, error } = await activePatients(
+      admin
+        .from("patients")
+        .select("id, drm_id, first_name, last_name, middle_name, sex, phone, email, birthdate, address, created_at"),
+    ).in("id", ids.slice(lo, Math.min(hi + 1, ids.length)));
     if (error) throw new Error(error.message);
     return (data ?? []) as Omit<PatientRow, "visit_count">[];
   });
