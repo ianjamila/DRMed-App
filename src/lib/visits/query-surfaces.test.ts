@@ -429,6 +429,12 @@ const LIFECYCLES: Record<string, LifecycleSurface> = {
     why: "A transient client-side toast for realtime INSERTs, capped at 10 and cleared on reload — never a worklist. The only inserter is visit creation, so the visit is new; and /staff/queue/[id] shows the deletion properly if one is ever clicked stale.",
   },
 
+  // --- Live: moving a payment onto another visit (0161) ---------------------
+  "app/(staff)/staff/(dashboard)/payments/[id]/move/actions.ts": {
+    lifecycle: "live",
+    why: "Finds the visit a payment is moved onto. A deleted visit cannot take a payment (P0045), so it must not be offered as a target.",
+  },
+
   // --- Live: the lab bench and its result artefacts ------------------------
   "app/(staff)/staff/(dashboard)/queue/page.tsx": {
     lifecycle: "live",

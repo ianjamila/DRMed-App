@@ -1,14 +1,31 @@
 "use client";
 
 import { useState, useTransition } from "react";
+import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import { voidPaymentAction } from "./actions";
 
+// Staff-facing name is "Delete"; underneath it is still the soft void
+// (voidPaymentAction) — the row stays, marked deleted, and the reversal
+// journal entry posts automatically.
 export function VoidPaymentDialog({
   paymentId,
   amountLabel,
+  methodLabel,
+  isGiftCode = false,
 }: {
   paymentId: string;
   amountLabel: string;
+  methodLabel: string;
+  isGiftCode?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const [reason, setReason] = useState("");
@@ -32,53 +49,74 @@ export function VoidPaymentDialog({
     });
   }
 
-  if (!open) {
-    return (
+  return (
+    <>
       <button
         type="button"
-        onClick={() => setOpen(true)}
-        className="min-h-[44px] text-xs font-semibold text-[color:var(--color-brand-text-soft)] hover:underline"
+        onClick={() => {
+          setReason("");
+          setErr(null);
+          setOpen(true);
+        }}
+        className="min-h-[44px] text-xs font-semibold text-red-700 hover:underline"
       >
-        Void
+        Delete
       </button>
-    );
-  }
-
-  return (
-    <div className="space-y-2 rounded-md border border-[color:var(--color-brand-bg-mid)] bg-[color:var(--color-brand-bg)] p-2 text-xs">
-      <p className="text-[color:var(--color-brand-text-mid)]">
-        Voiding {amountLabel}. A reversal journal entry will post automatically.
-        Reason is audit-logged.
-      </p>
-      <textarea
-        rows={2}
-        value={reason}
-        onChange={(e) => setReason(e.target.value)}
-        placeholder="Reason (required)…"
-        className="w-full rounded-md border border-[color:var(--color-brand-bg-mid)] bg-white p-2 text-xs"
-      />
-      {err ? <p className="text-red-600">{err}</p> : null}
-      <div className="flex gap-2">
-        <button
-          type="button"
-          onClick={onConfirm}
-          disabled={pending}
-          className="min-h-[44px] rounded-md bg-[color:var(--color-brand-navy)] px-3 text-xs font-bold uppercase tracking-wider text-white disabled:opacity-50"
-        >
-          {pending ? "Voiding…" : "Confirm void"}
-        </button>
-        <button
-          type="button"
-          onClick={() => {
-            setOpen(false);
-            setReason("");
-            setErr(null);
-          }}
-          className="min-h-[44px] rounded-md border border-[color:var(--color-brand-bg-mid)] bg-white px-3 text-xs font-semibold"
-        >
-          Cancel
-        </button>
-      </div>
-    </div>
+      <Dialog
+        open={open}
+        onOpenChange={(o) => {
+          if (!o && !pending) setOpen(false);
+        }}
+      >
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>
+              Delete this {amountLabel} {methodLabel} payment?
+            </DialogTitle>
+            <DialogDescription>
+              It stays in the payment history below, marked deleted, and the
+              visit balance opens up again. The books reverse automatically.
+              {isGiftCode ? " The gift code becomes usable again." : null}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-1.5">
+            <Label htmlFor={`delete-reason-${paymentId}`}>Reason *</Label>
+            <Textarea
+              id={`delete-reason-${paymentId}`}
+              rows={2}
+              maxLength={500}
+              value={reason}
+              onChange={(e) => setReason(e.target.value)}
+              placeholder="e.g. Recorded twice by mistake"
+            />
+          </div>
+          {err ? (
+            <p className="text-sm text-red-600" role="alert">
+              {err}
+            </p>
+          ) : null}
+          <div className="flex flex-wrap justify-end gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              size="touch"
+              disabled={pending}
+              onClick={() => setOpen(false)}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              size="touch"
+              onClick={onConfirm}
+              disabled={pending || !reason.trim()}
+              className="bg-red-700 text-white hover:bg-red-800"
+            >
+              {pending ? "Deleting…" : "Delete payment"}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+    </>
   );
 }

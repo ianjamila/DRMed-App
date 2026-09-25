@@ -43,7 +43,7 @@ export async function voidPaymentAction(
   // 1. Read payment to check state.
   const { data: payment, error: readErr } = await admin
     .from("payments")
-    .select("id, visit_id, voided_at, amount_php")
+    .select("id, visit_id, voided_at, amount_php, visits ( patient_id )")
     .eq("id", paymentId)
     .maybeSingle();
   if (readErr) return { ok: false, error: translatePgError(readErr) };
@@ -144,5 +144,8 @@ export async function voidPaymentAction(
   if (payment.visit_id) {
     revalidatePath(`/staff/visits/${payment.visit_id}`);
   }
+  // The patient page lists every payment too (0161).
+  const visit = Array.isArray(payment.visits) ? payment.visits[0] : payment.visits;
+  if (visit?.patient_id) revalidatePath(`/staff/patients/${visit.patient_id}`);
   return { ok: true };
 }

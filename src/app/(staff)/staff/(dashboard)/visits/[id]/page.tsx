@@ -24,6 +24,16 @@ import { UndoReleaseDialog } from "./undo-release-dialog";
 import { WaiveBalanceDialog } from "./waive-balance-dialog";
 import { AttendingPhysicianDialog } from "./attending-physician-dialog";
 import { VoidPaymentDialog } from "../../payments/[id]/void/void-payment-dialog";
+import { EditPaymentDialog } from "../../payments/[id]/edit/edit-payment-dialog";
+import { MovePaymentDialog } from "../../payments/[id]/move/move-payment-dialog";
+import { paymentEditability } from "@/lib/visits/payment-edit";
+import { linkPayments, paymentMethodLabel as methodLabel } from "@/lib/visits/payment-history";
+import {
+  PAYMENT_HISTORY_SELECT,
+  loadLinkedPayments,
+  type LoadedPayment,
+} from "@/lib/visits/payment-history-load";
+import { PaymentArrivalNote, PaymentChangeEntry } from "@/components/staff/payment-change-note";
 import { countResultViews } from "@/lib/results/viewed-count";
 import { isConsentGateRequired, getPatientConsentState } from "@/lib/consent/gate";
 import { paymentStatusLabel } from "@/lib/ui/payment-status";
@@ -101,22 +111,6 @@ const TEST_STATUS_STYLE: Record<string, string> = {
   cancelled: "bg-red-100 text-red-900",
 };
 
-// Mirrors the payment form's METHODS list (payments/new/payment-form.tsx) —
-// every method the form offers must have an entry here, or the raw enum
-// value shows on this page's payment tables (M6). `hmo` / `bpi` / `maybank`
-// aren't offered by the counter form but can exist on legacy/imported rows.
-const PAYMENT_METHOD_LABEL: Record<string, string> = {
-  cash: "Cash",
-  gcash: "GCash",
-  maya: "Maya",
-  card: "Card",
-  bank_transfer: "Bank transfer",
-  gift_code: "Gift code",
-  hmo: "HMO",
-  bpi: "BPI",
-  maybank: "Maybank",
-};
-
 export default async function VisitDetailPage({ params, searchParams }: Props) {
   const { id } = await params;
   const { created } = await searchParams;
@@ -186,9 +180,11 @@ export default async function VisitDetailPage({ params, searchParams }: Props) {
         .order("requested_at", { ascending: true }),
       supabase
         .from("payments")
-        .select("id, amount_php, method, reference_number, received_at, notes, voided_at, voided_by, void_reason")
+        .select(PAYMENT_HISTORY_SELECT)
         .eq("visit_id", id)
-        .order("received_at", { ascending: false }),
+        .order("received_at", { ascending: false })
+        .order("id", { ascending: true })
+        .returns<LoadedPayment[]>(),
       // Labels for recorded discount codes — includes retired (inactive) rows
       // so historical lines still render their name.
       supabase.from("discount_types").select("code, label"),
@@ -304,6 +300,32 @@ export default async function VisitDetailPage({ params, searchParams }: Props) {
   const balance = Number(visit.total_php) - Number(visit.paid_php);
   const activePayments = (payments ?? []).filter((p) => !p.voided_at);
   const voidedPayments = (payments ?? []).filter((p) => p.voided_at);
+  // Edit / Move (0161) link a corrected row to the original it voided. A move
+  // puts the other half on ANOTHER visit, so load those rows too, or the
+  // history here would call a moved payment "deleted".
+  const [linkedPayments, otherVisitsRes] = canSeePayments
+    ? await Promise.all([
+        loadLinkedPayments(supabase, payments ?? []),
+        // Quick picks for Move: this patient's other live visits. Uncapped on
+        // purpose — the most any patient has on prod is 72.
+        supabase
+          .from("visits")
+          .select("id, visit_number, visit_date, total_php, paid_php")
+          .eq("patient_id", patient.id)
+          .is("deleted_at", null)
+          .neq("id", visit.id)
+          .order("visit_date", { ascending: false })
+          .order("id", { ascending: true }),
+      ])
+    : [[] as LoadedPayment[], { data: [] as { id: string; visit_number: string; visit_date: string; total_php: number; paid_php: number }[] }];
+  const paymentLinks = linkPayments([...(payments ?? []), ...linkedPayments]);
+  const otherVisits = (otherVisitsRes.data ?? []).map((v) => ({
+    id: v.id,
+    visitNumber: v.visit_number,
+    visitDate: v.visit_date,
+    totalPhp: Number(v.total_php),
+    paidPhp: Number(v.paid_php),
+  }));
 
   const visitDeleted = visit.deleted_at !== null;
   const canManageDeletion = QUEUE_DELETE_ROLES.has(session.role);
@@ -1273,9 +1295,10 @@ export default async function VisitDetailPage({ params, searchParams }: Props) {
                   </td>
                   <td className="px-4 py-3 font-semibold">
                     {formatPhp(p.amount_php)}
+                    <PaymentArrivalNote p={p} links={paymentLinks} />
                   </td>
                   <td className="px-4 py-3">
-                    {p.method ? PAYMENT_METHOD_LABEL[p.method] ?? p.method : "—"}
+                    {methodLabel(p.method)}
                   </td>
                   <td className="px-4 py-3 font-mono text-xs">
                     {p.reference_number ?? "—"}
@@ -1287,10 +1310,41 @@ export default async function VisitDetailPage({ params, searchParams }: Props) {
                         write. RLS already keeps activePayments empty for
                         every other role, so this is defense-in-depth. */}
                     {canSeePayments ? (
-                      <VoidPaymentDialog
-                        paymentId={p.id}
-                        amountLabel={formatPhp(p.amount_php)}
-                      />
+                      <div className="flex items-center justify-end gap-4">
+                        {/* Edit is offered only where correct_payment (0161)
+                            would accept it — gift-code, HMO and imported
+                            payments can still be deleted and re-recorded. */}
+                        {paymentEditability(p).editable ? (
+                          <MovePaymentDialog
+                            paymentId={p.id}
+                            amount={Number(p.amount_php)}
+                            methodLabel={methodLabel(p.method)}
+                            currentVisitNumber={visit.visit_number}
+                            patientName={`${patient.last_name}, ${patient.first_name}`}
+                            patientDrmId={patient.drm_id}
+                            otherVisits={otherVisits}
+                          />
+                        ) : null}
+                        {paymentEditability(p).editable ? (
+                          <EditPaymentDialog
+                            paymentId={p.id}
+                            amount={Number(p.amount_php)}
+                            method={p.method}
+                            methodLabel={methodLabel(p.method)}
+                            referenceNumber={p.reference_number}
+                            notes={p.notes}
+                            receivedLabel={manilaDateTime(p.received_at)}
+                            visitTotal={Number(visit.total_php)}
+                            visitPaid={Number(visit.paid_php)}
+                          />
+                        ) : null}
+                        <VoidPaymentDialog
+                          paymentId={p.id}
+                          amountLabel={formatPhp(p.amount_php)}
+                          methodLabel={methodLabel(p.method)}
+                          isGiftCode={p.method === "gift_code"}
+                        />
+                      </div>
                     ) : null}
                   </td>
                 </tr>
@@ -1312,25 +1366,21 @@ export default async function VisitDetailPage({ params, searchParams }: Props) {
         {voidedPayments.length > 0 ? (
           <details className="mt-4 rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-[color:var(--color-brand-bg)] px-4 py-3">
             <summary className="cursor-pointer text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
-              Voided payments ({voidedPayments.length})
+              Deleted, edited &amp; moved payments ({voidedPayments.length})
             </summary>
             <ul className="mt-2 space-y-2 text-xs">
               {voidedPayments.map((p) => (
-                <li key={p.id} className="rounded-md bg-white px-3 py-2">
-                  <div className="font-semibold text-[color:var(--color-brand-text-mid)]">
-                    {formatPhp(p.amount_php)} · {p.method ? PAYMENT_METHOD_LABEL[p.method] ?? p.method : "—"}
-                    <span className="ml-2 text-[color:var(--color-brand-text-soft)]">
-                      voided {p.voided_at ? manilaDateTime(p.voided_at) : ""}
-                    </span>
-                  </div>
-                  {p.void_reason ? (
-                    <div className="mt-1 text-[color:var(--color-brand-text-soft)]">
-                      Reason: {p.void_reason}
-                    </div>
-                  ) : null}
-                </li>
+                <PaymentChangeEntry key={p.id} p={p} links={paymentLinks} />
               ))}
             </ul>
+            {isAdmin ? (
+              <Link
+                href="/staff/admin/reports/payment-changes"
+                className="mt-2 inline-block text-xs font-semibold text-[color:var(--color-brand-cyan)] hover:underline"
+              >
+                All payment changes →
+              </Link>
+            ) : null}
           </details>
         ) : null}
       </section>
