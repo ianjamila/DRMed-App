@@ -59,6 +59,7 @@ supabase/migrations/
 0177_statement_email_claim.sql          ← `claim_statement_email(visit, recipient, window)`: advisory-locked claim in `rate_limit_attempts` (bucket `statement_email`) admitting exactly one sender per visit + recipient per window; returns the claim id (null = refused, nothing written); the caller deletes its own id when the send fails. Invoker rights, EXECUTE service_role only (restated by name). No P-code.
 0160_queue_claim_remarks.sql            ← `queue_claim_remarks(uuid[])`: SECURITY DEFINER reader of the three claim audit actions for the lab queue Remarks column (audit_log SELECT stays admin-only). Gated inside by `has_role(medtech,xray_technician,pathologist,admin)` (others get an empty set), ≤200 ids, returns staff names + reason only. EXECUTE authenticated + service_role, anon revoked by name. Partial index `idx_audit_log_test_request_claims`. (0159 = `retire_send_out_accrual`, #211.)
 0174_correct_payment_stale_guard.sql     ← `correct_payment` re-created with a 9th arg `p_expected jsonb default null` (old 8-arg dropped; the 8 named args still resolve through the defaults): under the row lock, any snapshot key that no longer matches → P0054 "changed by someone else". Also refuses any payment `gift_codes.redeemed_payment_id` points at, and amounts > 99,999,999.99. AND drops `trg_bridge_payment_void_pf_cascade` + `bridge_payment_void_pf_cascade()` — owner decision: a payment void never takes a doctor fee back (it was voiding HMO fees on every HMO co-pay void). Smoke: supabase/tests/0174_*.sql (A–H)
+0167_patient_soft_delete.sql            ← Patient delete/restore (PR 2 of the patient-delete rollout). `delete_patient` / `restore_patient` / `patient_delete_blockers` / `patient_kept_counts`, all owned by the private NOLOGIN role `patient_lifecycle_writer` (see "Private-role write pattern" below). Blockers: appointment, clinical, empty_visit, balance, hmo_patient_share, hmo_reconciliation, hmo_claim, hmo_unbilled — the balance/HMO predicates were amended after a prod-count review (see `drmed-payments`). P-codes P0057–P0061 (below). **Must be applied AFTER 0162** (`v_patients_directory` gets `consent_current`/`consent_signed_at`) — 0167 re-creates that view and depends on 0162's column list + active predicate.
 
 supabase/seed.sql                        ← post-`db reset` grants (tables + sequences ONLY, never routines) + named re-revokes (0134, 0135, 0136, 0148, 0150, 0154 — `seed-grant-parity.test.ts` fails when a migration revoke is not mirrored)
 scripts/lib/                             ← load-env.ts, env-guard.ts (+ guard-coverage.test.ts) — every runner is guarded
@@ -113,7 +114,55 @@ DRMed prod project ref: `qhptbmafrosgibooelpp` (the org's other project `zzcbzei
 - **`revoke … from public` alone is NOT enough on hosted Supabase** — it also grants EXECUTE to anon/authenticated directly; revoke those by name too. Local lacks those default grants, so local tests MASK the gap.
 - **Revoking EXECUTE on a trigger function does not break the trigger** (privilege is checked at `create trigger` time). A SECURITY INVOKER function that nest-calls a SECURITY DEFINER helper DOES need the caller to hold EXECUTE — that's why `eod_lock_check` / `employee_leave_balance` keep `authenticated`. **Same trap for helpers like `coa_uuid_for_code()`: service_role-only, so an invoker report RPC that calls it raises `permission denied for function coa_uuid_for_code` for every signed-in admin** (0164's first draft; only a real browser session caught it — psql as postgres and vitest both pass). Join `chart_of_accounts` by `code` instead.
 - **`has_role` / `is_staff` / `staff_role` / `current_patient_id` MUST stay anon-executable** — 123 RLS policies reference `has_role`; revoking makes them RAISE instead of filter.
-- **Custom error codes** — every `raise exception … using errcode = 'P00NN'` needs a translation in `src/lib/accounting/pg-errors.ts`. Codes in use: P0001–P0035, P0040–P0054, P0065–P0067. **Claim codes with `npm run claim -- pcode <n>`** — do not take "the next free code" by hand (open branches already hold P0055+). (P0054 = `correct_payment` refusing an edit — 0161.) (P0065 = stale result edit — someone else's edit committed since the form opened its version; P0066 = a finished result is not editable right now (several raise messages, passed through); P0067 = a test on a finished combined report (e.g. Chemistry) can't be deleted on its own — all 0172.) (P0053 = what a website message’s sender wrote cannot be edited — 0154’s `contact_messages_guard_immutable`, re-created by 0156 to cover `form_location`; P0050 = an HMO-claimed visit line cannot be soft-deleted — 0147, PR #174; P0051 = an AP cash bill payment cannot reach the drawer, no active shift or no recording staff; P0052 = that drawer row is owned by its AP payment and can only be voided/edited there — both 0149.) **Claim your code against the OPEN BRANCHES, not just `main`** — #174 and this PR both took P0050 on the same afternoon, and the loser only found out because a local `db reset` from another worktree renumbered the shared stack underneath it. `src/lib/accounting/pg-error-coverage.test.ts` fails the build on a code raised in SQL with no `pg-errors.ts` case, so the registry can no longer drift; its `DEAD_CODES` allowlist is for raise sites a later migration DROPPED (P0037–P0039, killed with `reverse_petty_cash_entry` in 0145) and may only shrink. A BEFORE trigger runs before column CHECK constraints, so if your guard could blow up on malformed input (e.g. `jsonb_each` on a scalar), claim that case yourself and raise a P-code — a raw 22023 has no translation.
+- **Custom error codes** — every `raise exception … using errcode = 'P00NN'` needs a translation in `src/lib/accounting/pg-errors.ts`. Codes in use: P0001–P0035, P0040–P0061, P0065–P0067. **Claim codes with `npm run claim -- pcode <n>`** — do not take "the next free code" by hand (open branches already hold codes past P0061). (P0054 = `correct_payment` refusing an edit — 0161.) (P0065 = stale result edit — someone else’s edit committed since the form opened its version; P0066 = a finished result is not editable right now (several raise messages, passed through); P0067 = a test on a finished combined report (e.g. Chemistry) can’t be deleted on its own — all 0172.) (P0053 = what a website message’s sender wrote cannot be edited — 0154’s `contact_messages_guard_immutable`, re-created by 0156 to cover `form_location`; P0050 = an HMO-claimed visit line cannot be soft-deleted — 0147, PR #174; P0051 = an AP cash bill payment cannot reach the drawer, no active shift or no recording staff; P0052 = that drawer row is owned by its AP payment and can only be voided/edited there — both 0149; **P0057–P0061 = patient delete/restore (0167): P0057 only an admin can delete/restore; P0058 the record is already deleted or merged (wording says "already deleted or merged" even on a retried delete that actually succeeded) — only a restore is allowed on a deleted row, re-setting deletion metadata is refused; P0059 the patient still has open items — its DETAIL carries the blocker list as JSON, parsed by `src/lib/patients/deletion.ts`; P0060 reason/note validation (a reason is required, a note is required when the reason is Other, max 500 chars); P0061 the record is not deleted, nothing to restore.**) **Claim your code against the OPEN BRANCHES, not just `main`** — #174 and this PR both took P0050 on the same afternoon, and the loser only found out because a local `db reset` from another worktree renumbered the shared stack underneath it. `src/lib/accounting/pg-error-coverage.test.ts` fails the build on a code raised in SQL with no `pg-errors.ts` case, so the registry can no longer drift; its `DEAD_CODES` allowlist is for raise sites a later migration DROPPED (P0037–P0039, killed with `reverse_petty_cash_entry` in 0145) and may only shrink. A BEFORE trigger runs before column CHECK constraints, so if your guard could blow up on malformed input (e.g. `jsonb_each` on a scalar), claim that case yourself and raise a P-code — a raw 22023 has no translation.
+
+## Private-role write pattern (0167): a table only one function may write
+
+When a table (here, `patients` lifecycle columns) must be writable ONLY through one
+guarded function — never directly by `service_role`, never by any JWT role — grant
+table access and function ownership to a dedicated **private NOLOGIN role**, not to
+`postgres` or `service_role`:
+
+```sql
+create role patient_lifecycle_writer nologin noinherit nobypassrls;
+alter role patient_lifecycle_writer nologin noinherit nobypassrls; -- re-state every migration; ALTER ROLE elsewhere must never leave it loginable/inheriting
+grant patient_lifecycle_writer to postgres with inherit true, set true; -- postgres can SET ROLE to it; nothing else can
+revoke patient_lifecycle_writer from anon, authenticated, service_role, authenticator;
+```
+The function that must run as this role is then made SECURITY DEFINER and **owned by
+the private role**, not by `postgres`. On PG17, `alter function … owner to <role>` fails
+with `permission denied for schema public` unless the new owner momentarily holds CREATE
+on the schema — grant it, transfer ownership, then revoke it again so the role is left
+with no standing CREATE privilege:
+```sql
+grant create on schema public to patient_lifecycle_writer;
+alter function public.delete_patient(...) owner to patient_lifecycle_writer;
+revoke create on schema public from patient_lifecycle_writer;
+```
+After the revoke, ownership persists and `create or replace function` (run as `postgres`,
+which has INHERIT membership) still works.
+
+**Proving "no runtime role can assume this role" needs a login test, not `SET ROLE`
+inside a `postgres` session.** `SET ROLE` is checked against the SESSION user
+(`session_user`), not `current_user` — so a psql/smoke session that connected as
+`postgres` (a member of the private role) can `set local role service_role; set role
+patient_lifecycle_writer` and it will SUCCEED, because postgres itself has the grant.
+Real PostgREST/API traffic connects as `authenticator`, which does not. Assert
+non-membership with `pg_has_role`, e.g. `not pg_has_role('authenticator',
+'patient_lifecycle_writer', 'MEMBER')` (and the same for `service_role`, `authenticated`,
+`anon`) inside a smoke file, and separately verify out-of-band by actually logging in as
+`authenticator`:
+```
+docker exec -e PGPASSWORD=postgres supabase_db_DRMed psql -h 127.0.0.1 -U authenticator -d postgres \
+  -c "set role service_role; set role patient_lifecycle_writer;"
+```
+expect `permission denied to set role`.
+
+## `format('%s', <boolean>)` renders `t`/`f`
+
+Postgres's default boolean-to-text cast (what `format('%s', ...)` uses for a `boolean`
+argument) prints `t`/`f`, not `true`/`false` — do not build a label or a comparison
+string assuming the English words come out.
 
 ## RLS policy templates the skill carries
 

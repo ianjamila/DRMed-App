@@ -5,7 +5,7 @@ import { revalidatePath } from "next/cache";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { audit } from "@/lib/audit/log";
 import { ipAndAgent, firstIssue } from "@/lib/server/action-helpers";
-import { getPatientSession } from "@/lib/auth/patient-session-cookies";
+import { getActivePatientSession } from "@/lib/auth/require-patient";
 import { CURRENT_CONSENT_NOTICE_VERSION } from "@/lib/consent/notice";
 
 const Schema = z.object({
@@ -19,7 +19,7 @@ export type ConsentActionResult = { ok: true } | { ok: false; error: string };
 export async function acceptConsentPortalAction(
   raw: z.input<typeof Schema>,
 ): Promise<ConsentActionResult> {
-  const session = await getPatientSession();
+  const session = await getActivePatientSession();
   if (!session) return { ok: false, error: "Session expired. Sign in again." };
   const parsed = Schema.safeParse(raw);
   if (!parsed.success) return { ok: false, error: firstIssue(parsed.error) };

@@ -2,6 +2,10 @@
 
 import { createPatientClient } from "@/lib/supabase/patient";
 import { requirePatientProfile } from "@/lib/auth/require-patient";
+import {
+  PORTAL_CONSENT_REQUIRED_ERROR,
+  portalConsentCurrent,
+} from "@/lib/portal/consent-guard";
 import { reportError } from "@/lib/observability/report-error";
 import { fetchStatement } from "@/lib/visits/statement-data";
 import { sendStatementEmail, type SendStatementResult } from "@/lib/visits/send-statement-email";
@@ -16,6 +20,9 @@ import { sendStatementEmail, type SendStatementResult } from "@/lib/visits/send-
  */
 export async function emailMyStatementAction(visitId: string): Promise<SendStatementResult> {
   const patient = await requirePatientProfile();
+  if (!(await portalConsentCurrent(patient.patient_id))) {
+    return { ok: false, error: PORTAL_CONSENT_REQUIRED_ERROR };
+  }
 
   let data;
   try {

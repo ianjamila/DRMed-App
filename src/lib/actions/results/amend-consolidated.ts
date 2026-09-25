@@ -23,6 +23,7 @@ import { REPORT_VALUES_LOAD_FAILED, reportEditLoadState } from "@/lib/results/co
 import { shouldOfferNotify } from "@/lib/results/copy-followups";
 import { fetchCopyStateAdmin } from "@/lib/results/copy-followups.server";
 import { notifyResultCorrected, type NotifyOutcome } from "@/lib/notifications/notify-corrected";
+import { assertPatientActive } from "@/lib/patients/require-active";
 
 // Editing a FINISHED combined report (chemistry): one results row + one PDF
 // shared by every member test. Owner decisions 2026-09-24: any medtech in the
@@ -128,6 +129,10 @@ export async function amendConsolidatedReport(
   }
   const anchor = live[0];
   const patientId = one(anchor.visits)!.patient_id;
+
+  // 0167: no amendment on an inactive record — restore it first.
+  const active = await assertPatientActive(admin, patientId);
+  if (!active.ok) return { ok: false, error: active.error };
 
   // The same rule, asked of the database as the signed-in user — the page
   // shows no Edit button when this is false, so a form is never submitted

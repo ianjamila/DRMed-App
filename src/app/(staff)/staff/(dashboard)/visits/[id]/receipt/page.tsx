@@ -25,6 +25,9 @@ import { NoReceiptNotice } from "@/components/staff/no-receipt-notice";
 import { ReceiptLinesTable } from "@/components/staff/receipt-lines-table";
 import { PrintButton } from "./print-button";
 import { logReceiptPrintAction } from "./log-print-action";
+import { isActivePatient } from "@/lib/patients/active";
+import { loadPatientLifecycle } from "@/lib/patients/lifecycle-display";
+import { PatientLifecycleBanner } from "@/components/staff/patient-lifecycle-banner";
 
 // Share the existing header lookup with metadata within this request.
 const loadDetail = cache(async (id: string) => {
@@ -36,7 +39,7 @@ const loadDetail = cache(async (id: string) => {
         id, visit_number, visit_date, total_php, visit_group_id,
         patients!inner (
           id, drm_id, first_name, middle_name, last_name,
-          senior_pwd_id_kind, senior_pwd_id_number
+          senior_pwd_id_kind, senior_pwd_id_number, deleted_at, merged_into_id
         ),
         test_requests (
           id, deleted_at, parent_id, is_package_header,
@@ -168,6 +171,9 @@ export default async function ReceiptPage({ params }: Props) {
   if (!visit) notFound();
   const patient = Array.isArray(visit.patients) ? visit.patients[0] : visit.patients;
   if (!patient) notFound();
+  const isAdmin = session.role === "admin";
+  const patientActive = isActivePatient(patient);
+  const lifecycle = patientActive ? null : await loadPatientLifecycle(supabase, patient.id);
 
   const consent = await getPatientConsentState(patient.id);
 
@@ -247,25 +253,43 @@ export default async function ReceiptPage({ params }: Props) {
     if (plainPin) {
       await logReceiptViewed("portal_access_slip");
       return (
-        <PortalAccessSlip
-          visitId={visit.id}
-          patientName={formatPatientName(patient)}
-          drmId={patient.drm_id}
-          plainPin={plainPin}
-        />
+        <>
+          {lifecycle ? (
+            <PatientLifecycleBanner
+              lifecycle={lifecycle}
+              isAdmin={isAdmin}
+              className="mx-auto mt-4 max-w-2xl px-4 sm:px-6 lg:px-8"
+            />
+          ) : null}
+          <PortalAccessSlip
+            visitId={visit.id}
+            patientName={formatPatientName(patient)}
+            drmId={patient.drm_id}
+            plainPin={plainPin}
+          />
+        </>
       );
     }
     return (
-      <NoReceiptNotice
-        title={`No receipt for visit #${visit.visit_number}`}
-        backHref={`/staff/visits/${visit.id}`}
-        secondaryHref={
-          visit.visit_group_id
-            ? `/staff/visits/group/${visit.visit_group_id}/receipt`
-            : undefined
-        }
-        secondaryLabel="Print the lab slip for this patient visit →"
-      />
+      <>
+        {lifecycle ? (
+          <PatientLifecycleBanner
+            lifecycle={lifecycle}
+            isAdmin={isAdmin}
+            className="mx-auto mt-4 max-w-2xl px-4 sm:px-6 lg:px-8"
+          />
+        ) : null}
+        <NoReceiptNotice
+          title={`No receipt for visit #${visit.visit_number}`}
+          backHref={`/staff/visits/${visit.id}`}
+          secondaryHref={
+            visit.visit_group_id
+              ? `/staff/visits/group/${visit.visit_group_id}/receipt`
+              : undefined
+          }
+          secondaryLabel="Print the lab slip for this patient visit →"
+        />
+      </>
     );
   }
 
@@ -274,6 +298,14 @@ export default async function ReceiptPage({ params }: Props) {
   await logReceiptViewed("full");
 
   return (
+    <>
+      {lifecycle ? (
+        <PatientLifecycleBanner
+          lifecycle={lifecycle}
+          isAdmin={isAdmin}
+          className="mx-auto mt-4 max-w-2xl px-4 sm:px-6 lg:px-8"
+        />
+      ) : null}
     <div className="receipt-print mx-auto max-w-2xl px-4 py-8 sm:px-6 lg:px-8 print:p-0">
       <div className="mb-4 flex items-center justify-between gap-2 print:hidden">
         <Link
@@ -391,5 +423,6 @@ export default async function ReceiptPage({ params }: Props) {
         </div>
       </article>
     </div>
+    </>
   );
 }

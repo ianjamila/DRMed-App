@@ -2,6 +2,7 @@
 import "../lib/load-env";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "../../src/types/database";
+import { activePatients } from "../../src/lib/patients/active";
 import {
   CONFIRM_FLAG,
   expectedConfirmToken,
@@ -34,10 +35,11 @@ async function fetchAll<T>(q: (from: number, to: number) => Promise<T[]>): Promi
 
 export async function loadRows(admin: SupabaseClient<Database>): Promise<PatientRow[]> {
   const patients = await fetchAll(async (from, to) => {
-    const { data, error } = await admin
-      .from("patients")
-      .select("id, drm_id, first_name, last_name, middle_name, sex, phone, email, birthdate, address, created_at")
-      .is("merged_into_id", null)
+    const { data, error } = await activePatients(
+      admin
+        .from("patients")
+        .select("id, drm_id, first_name, last_name, middle_name, sex, phone, email, birthdate, address, created_at"),
+    )
       .order("id")
       .range(from, to);
     if (error) throw new Error(`load patients: ${error.message}`);
@@ -129,9 +131,12 @@ export async function run(): Promise<void> {
   await commitMerges(admin, plans); // implemented in Task 5
 }
 
-// Tables that carry patients(id) FKs — ALL of them. The admin merge Server Action
-// currently misses critical_alerts + patient_consents; this pass must not.
-const FK_TABLES = ["visits", "appointments", "audit_log", "critical_alerts", "patient_consents"] as const;
+// Tables that carry patients(id) FKs — ALL of them, kept in lockstep with the
+// admin merge Server Action's explicit per-table list
+// (src/app/(staff)/staff/(dashboard)/admin/patient-merge/actions.ts), pinned
+// by actions.tables.test.ts so a new FK table can't be added to one and
+// forgotten on the other.
+const FK_TABLES = ["visits", "appointments", "audit_log", "critical_alerts", "patient_consents", "appointment_attachments"] as const;
 const FILL_FIELDS = ["middle_name", "sex", "phone", "email", "address", "birthdate"] as const;
 
 export async function mergeOne(
@@ -140,11 +145,25 @@ export async function mergeOne(
   source: PatientRow,
   tier: string,
 ): Promise<void> {
-  // Idempotent: skip a source already tombstoned (re-run safe).
+  // Idempotent: skip a source already tombstoned (re-run safe), and skip
+  // either side that's since been soft-deleted (0167) — the plan/CSV can be
+  // minutes or days stale by the time --commit runs.
   const { data: cur, error: curErr } = await admin
-    .from("patients").select("merged_into_id").eq("id", source.id).maybeSingle();
+    .from("patients")
+    .select("id, drm_id, merged_into_id, deleted_at")
+    .in("id", [canonical.id, source.id]);
   if (curErr) throw new Error(`recheck ${source.id}: ${curErr.message}`);
-  if (!cur || cur.merged_into_id) return;
+  const curSource = cur?.find((r) => r.id === source.id);
+  const curCanonical = cur?.find((r) => r.id === canonical.id);
+  if (!curSource || curSource.merged_into_id) return;
+  if (curSource.deleted_at) {
+    console.log(`skip: ${source.drm_id} is deleted`);
+    return;
+  }
+  if (curCanonical?.deleted_at) {
+    console.log(`skip: ${canonical.drm_id} is deleted`);
+    return;
+  }
 
   // 1. Reassign every patient_id FK. `as never` because the payload type differs
   //    per table in the generated union; patient_id is uuid on all of them.

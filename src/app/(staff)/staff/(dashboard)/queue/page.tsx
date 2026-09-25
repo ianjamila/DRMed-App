@@ -44,6 +44,7 @@ import {
 } from "@/lib/dates/manila";
 import { matchesAllTokens } from "@/lib/patients/search";
 import { visitNumberFilter } from "@/lib/visits/visit-number-filter";
+import { SampleBadge } from "@/components/staff/sample-badge";
 import { testDeletability, hasOpenHmoClaim } from "@/lib/visits/deletion";
 import { fetchSharedReportTestIds } from "@/lib/visits/shared-report-links";
 import { LAB_QUEUE_GATE_VISITS_OR } from "@/lib/visits/lab-gate";
@@ -80,6 +81,7 @@ type QueueCardSingle = {
   // Decides whether the list offers Claim — x-ray is x-ray-technician only.
   section: string | null;
   visitNumber: string;
+  isSample: boolean;
   patientName: string;
   patientDrmId: string;
   status: string;
@@ -107,6 +109,7 @@ type QueueCardGrouped = {
   requestedAt: string;
   releasedAt: string | null;
   visitNumber: string;
+  isSample: boolean;
   patientName: string;
   patientDrmId: string;
   status: string;
@@ -264,7 +267,7 @@ export default async function QueuePage({ searchParams }: SearchProps) {
         services!inner ( id, code, name, kind, turnaround_hours, section, report_group_id,
           report_groups ( code, name ) ),
         visits!inner (
-          id, visit_number, payment_status,
+          id, visit_number, payment_status, is_sample,
           patients!inner ( id, drm_id, first_name, last_name )
         )
       `,
@@ -505,6 +508,7 @@ export default async function QueuePage({ searchParams }: SearchProps) {
           requestedAt: r.requested_at,
           releasedAt: r.released_at,
           visitNumber: visit.visit_number,
+          isSample: visit.is_sample,
           patientName,
           patientDrmId: patient.drm_id,
           status: r.status,
@@ -531,6 +535,7 @@ export default async function QueuePage({ searchParams }: SearchProps) {
         code: svc.code,
         section: svc.section,
         visitNumber: visit.visit_number,
+        isSample: visit.is_sample,
         patientName,
         patientDrmId: patient.drm_id,
         status: r.status,
@@ -775,6 +780,7 @@ export default async function QueuePage({ searchParams }: SearchProps) {
             name="start"
             defaultValue={start}
             max={todayISO}
+            aria-describedby="queue-date-hint"
             className="mt-1 rounded-md border border-[color:var(--color-brand-bg-mid)] px-2 py-1.5 text-sm"
           />
         </div>
@@ -791,6 +797,7 @@ export default async function QueuePage({ searchParams }: SearchProps) {
             name="end"
             defaultValue={end}
             max={todayISO}
+            aria-describedby="queue-date-hint"
             className="mt-1 rounded-md border border-[color:var(--color-brand-bg-mid)] px-2 py-1.5 text-sm"
           />
         </div>
@@ -827,6 +834,17 @@ export default async function QueuePage({ searchParams }: SearchProps) {
             className="mt-1 rounded-md border border-[color:var(--color-brand-bg-mid)] px-2 py-1.5 text-sm"
           />
         </div>
+        {/* Empty date boxes read as "fill me in", so say what blank means. Only
+            "Released today" has an implicit window; every other tab is the
+            whole backlog, however old, until a range is picked. */}
+        <p
+          id="queue-date-hint"
+          className="col-span-full -mt-1 text-xs text-[color:var(--color-brand-text-soft)]"
+        >
+          {releasedTab
+            ? "Leave the dates blank to show today's releases, or pick dates to look back."
+            : "Leave the dates blank to show tests from every date, not just today."}
+        </p>
         <div className="col-span-full flex flex-wrap gap-2">
           <button
             type="submit"
@@ -939,6 +957,11 @@ export default async function QueuePage({ searchParams }: SearchProps) {
                         >
                           #{card.visitNumber}
                         </Link>
+                        {card.isSample ? (
+                          <span className="ml-2">
+                            <SampleBadge size="compact" />
+                          </span>
+                        ) : null}
                       </td>
                       <td className="px-4 py-3">
                         <p className="font-semibold text-[color:var(--color-brand-navy)]">
@@ -1044,6 +1067,11 @@ export default async function QueuePage({ searchParams }: SearchProps) {
                       >
                         #{card.visitNumber}
                       </Link>
+                      {card.isSample ? (
+                        <span className="ml-2">
+                          <SampleBadge size="compact" />
+                        </span>
+                      ) : null}
                     </td>
                     <td className="px-4 py-3">
                       <p className="font-semibold text-[color:var(--color-brand-navy)]">

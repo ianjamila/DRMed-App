@@ -3,6 +3,7 @@ import "server-only";
 import type { createAdminClient } from "@/lib/supabase/admin";
 import { reportError } from "@/lib/observability/report-error";
 import { fetchAllRows, REPORT_EXPORT_MAX_ROWS } from "@/lib/reports/paging";
+import { activePatients } from "./active";
 import { scorePair, type CandidateFields, type DupScore, type DupTier } from "./duplicates";
 
 type AdminClient = ReturnType<typeof createAdminClient>;
@@ -150,12 +151,13 @@ export async function findCandidatesForInput(
   }
   if (clauses.length === 0) return [];
 
-  const { data, error } = await admin
-    .from("patients")
-    .select(
-      "id, drm_id, first_name, last_name, middle_name, birthdate, email, phone_normalized, address, sex, legacy_import_run_id, created_at",
-    )
-    .is("merged_into_id", null)
+  const { data, error } = await activePatients(
+    admin
+      .from("patients")
+      .select(
+        "id, drm_id, first_name, last_name, middle_name, birthdate, email, phone_normalized, address, sex, legacy_import_run_id, created_at",
+      ),
+  )
     .or(clauses.join(","))
     .limit(50);
   if (error) {

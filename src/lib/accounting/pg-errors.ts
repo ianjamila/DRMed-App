@@ -177,6 +177,19 @@ export function translatePgError(err: PgError): string {
     // DB message names which one and is written for reception.
     case "P0054":
       return err.message ?? "This payment cannot be edited. Delete it and record it again.";
+    // Patient delete/restore (0167). The SQL messages are written for staff;
+    // P0059's DETAIL carries the blocker list, which the delete action parses
+    // separately (src/lib/patients/deletion.ts).
+    case "P0057":
+      return "Only an admin can delete or restore a patient record.";
+    case "P0058":
+      return err.message ?? "This patient record is already deleted or merged. Restore it first.";
+    case "P0059":
+      return "This patient still has open items. Close them first, then delete.";
+    case "P0060":
+      return err.message ?? "Choose a reason, and add a note (up to 500 characters) when the reason is Other.";
+    case "P0061":
+      return "This patient record is not deleted, so there is nothing to restore.";
     // 0172 — editing a FINISHED result (result_edit_commit / result_finalise_commit / result_save_draft)
     case "P0065":
       // Someone else's edit landed first under the row lock; the version this

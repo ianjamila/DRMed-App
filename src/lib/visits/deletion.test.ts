@@ -5,7 +5,10 @@ import {
   hasOpenHmoClaim,
   sharedReportTestIds,
   testDeletability,
+  RELEASED_ASK_ADMIN_HINT,
+  visitDeleteAffordance,
   visitDeletability,
+  withoutReleased,
   type ResultLinkRow,
   type TestDeleteShape,
   type VisitDeleteShape,
@@ -408,5 +411,52 @@ describe("migration 0147 — the DB delete guard encodes the same rule", () => {
       "utf8",
     );
     expect(pgErrors).toMatch(/case "P0050":/);
+  });
+});
+
+describe("visitDeleteAffordance", () => {
+  const released = visit({ test_statuses: ["released", "ready_for_release"] });
+
+  it("offers the ordinary Delete when the rules allow it", () => {
+    expect(visitDeleteAffordance("reception", visit())).toEqual({ kind: "delete" });
+    expect(visitDeleteAffordance("admin", visit())).toEqual({ kind: "delete" });
+  });
+
+  it("renders nothing for a role that never deletes visits", () => {
+    expect(visitDeleteAffordance("medtech", released)).toEqual({ kind: "none" });
+  });
+
+  it("offers Delete sample visit to admin when released results are the only blocker", () => {
+    expect(visitDeleteAffordance("admin", released)).toEqual({ kind: "sample" });
+  });
+
+  it("tells reception to ask an admin instead of 'undo the release', which it cannot do", () => {
+    expect(visitDeleteAffordance("reception", released)).toEqual({
+      kind: "blocked",
+      hint: RELEASED_ASK_ADMIN_HINT,
+    });
+  });
+
+  it("surfaces an open HMO claim hiding behind 'released' instead of offering the sample delete", () => {
+    const d = visitDeleteAffordance("admin", { ...released, has_open_hmo_claim: true });
+    expect(d).toMatchObject({ kind: "blocked", hint: expect.stringMatching(/HMO/) });
+  });
+
+  it("never offers the sample delete on a visit with payments or a waiver — money comes first", () => {
+    for (const payment_status of ["paid", "partial", "waived"]) {
+      expect(
+        visitDeleteAffordance("admin", { ...released, payment_status }),
+      ).toMatchObject({ kind: "blocked" });
+    }
+  });
+
+  it("shows the reason for an already-deleted visit rather than a sample delete", () => {
+    expect(
+      visitDeleteAffordance("admin", { ...released, deleted_at: "2026-09-25T00:00:00Z" }),
+    ).toMatchObject({ kind: "blocked", hint: "Already deleted." });
+  });
+
+  it("withoutReleased drops only released statuses", () => {
+    expect(withoutReleased(released).test_statuses).toEqual(["ready_for_release"]);
   });
 });

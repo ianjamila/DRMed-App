@@ -188,6 +188,34 @@ explicit `"en-US"` call in this repo already passes a named `month`/`weekday`
 and was always fine. The rule is therefore *always go through the helper*,
 never *"use en-PH"*.
 
+## 4b · Patient delete/restore UI pieces (0167)
+
+- **`ConfirmDialog`** (`src/components/staff/confirm-dialog.tsx`) is shared across
+  payroll run review, the patient delete confirm and Admin Tools › Deleted Patients'
+  Restore confirm. It's deliberately dumb: backdrop/ESC → `onCancel`, focus trap, body
+  scroll lock; `reasonRequired` disables confirm until the caller's `reasonValue` has
+  non-whitespace text, and the caller's own `confirmDisabled` OR's in on top for
+  anything else (an unpicked delete reason, an open blocker list). Reuse it rather than
+  a bespoke modal for any new destructive/gated confirmation.
+- **`canConfirmDelete()`** (`src/components/staff/patient-delete-button.tsx`) is the pure
+  gate extracted so it's unit-testable without DOM: false while loading, before the
+  preview loads, while any blocker remains, before a reason is picked, or (reason =
+  `"other"`) before a non-empty note is typed.
+- **`PatientLifecycleBanner`** (`src/components/staff/patient-lifecycle-banner.tsx`) is
+  shown on every history page of a deleted or merged record (`print:hidden` — never on a
+  printout). A merged record's banner links to the surviving record; a deleted record's
+  banner reads "This patient record was deleted on … by … (…)" — **the parenthetical
+  delete note is shown to admins only** (`isAdmin` prop; non-admins see date, deleter and
+  reason label, no note — privacy minimisation, owner may revisit) — and carries the
+  `RestorePatientButton` for admins.
+- **`InactivePatientBadge`** (`src/components/staff/inactive-patient-badge.tsx`) is the
+  small inline tag ("Deleted record" / "Merged record") for list rows (results archive,
+  appointments) whose patient is gone from the directory but the row itself is history
+  and stays.
+- **"Deleted Patients" nav item** sits in Admin › Admin Tools (admin-only), `href:
+  /staff/admin/deleted-patients`, label from `ROUTE_NAME["/staff/admin/deleted-patients"]`
+  — follow the Title Case rule above when adding sibling admin-tools items.
+
 ## 5 · Printable slips
 
 Every print surface follows the same shape (receipts, visit statement of account, portal-access slip, EOD count sheet, PF payout slip, consent forms):

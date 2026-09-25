@@ -26,7 +26,10 @@ import {
 } from "@/lib/visits/queue-stage";
 import { visitDeletability, hasOpenHmoClaim } from "@/lib/visits/deletion";
 import { shouldPrintReceipt } from "@/lib/visits/receipt-policy";
+import { waivedAmount } from "@/lib/visits/statement";
+import { completedWorkCount } from "@/lib/visits/payment-edit";
 import { QueueDeleteDialog } from "@/components/staff/queue-delete-dialog";
+import { SampleBadge } from "@/components/staff/sample-badge";
 
 const QUEUE_SUBSCRIPTIONS = [
   { table: "visits", event: "UPDATE" },
@@ -128,6 +131,7 @@ type QueueVisitRow = {
   paid_php: number;
   created_at: string;
   hmo_provider_id: string | null;
+  is_sample: boolean;
   patients: {
     id: string;
     drm_id: string;
@@ -205,7 +209,7 @@ export default async function VisitsQueuePage({ searchParams }: SearchProps) {
     .select(
       `
         id, visit_number, visit_date, payment_status, total_php, paid_php, created_at,
-        hmo_provider_id,
+        hmo_provider_id, is_sample,
         patients!inner ( id, drm_id, first_name, middle_name, last_name ),
         hmo_providers ( name ),
         test_requests ( id, status, deleted_at, is_package_header, hmo_claim_items ( batch_voided ), services ( section, kind, name ) )
@@ -557,6 +561,49 @@ function PaymentBadge({ visit }: { visit: QueueVisitRow }) {
   );
 }
 
+// Waiving writes no payment, so a waived visit reads "Paid ₱200" on a ₱1,500
+// bill — which looks like money still owed, and on the Processing tab nothing
+// else in the row says otherwise (the status column shows tests there). Name
+// the remainder, same rule as the visit page and the statement.
+function WaivedNote({ visit, inline = false }: { visit: QueueVisitRow; inline?: boolean }) {
+  const waived = waivedAmount(visit);
+  if (waived <= 0) return null;
+  const className = "font-sans text-xs text-[color:var(--color-brand-text-soft)]";
+  return inline ? (
+    <span className={className}> · {PHP.format(waived)} waived</span>
+  ) : (
+    <div className={className}>{PHP.format(waived)} waived</div>
+  );
+}
+
+// A Waiting row with completed work on it — results that went out, or a
+// doctor consult / procedure marked done — while it was paid: a payment was
+// deleted, edited down or moved since. Released results stay released (owner
+// rule); the badge only says so, so the counter collects the balance instead
+// of telling the patient to wait for results they already have. An HMO visit
+// never waits here, and releases unpaid by design anyway (0133). Counted like
+// Patient AR's badge: released results + done doctor lines (completedWorkCount).
+function CompletedWorkBadge({ visit }: { visit: QueueVisitRow }) {
+  if (visit.hmo_provider_id != null) return null;
+  const completed = completedWorkCount(
+    (visit.test_requests ?? [])
+      .filter((t) => t.deleted_at === null)
+      .map((t) => {
+        const svc = Array.isArray(t.services) ? t.services[0] : t.services;
+        return { status: t.status, is_package_header: t.is_package_header, kind: svc?.kind };
+      }),
+  );
+  if (completed === 0) return null;
+  return (
+    <span
+      className="ml-1.5 inline-block rounded-md border border-amber-300 bg-amber-50 px-2 py-0.5 text-xs font-semibold text-amber-800"
+      title="Work on this visit was completed (results released, or a doctor consult done) while it was paid; it owes money again. Released results stay released."
+    >
+      Completed work · {completed}
+    </span>
+  );
+}
+
 function QueueRow({
   entry,
   stage,
@@ -576,6 +623,11 @@ function QueueRow({
         >
           #{String(visit.visit_number).padStart(4, "0")}
         </Link>
+        {visit.is_sample ? (
+          <div className="mt-1">
+            <SampleBadge size="compact" />
+          </div>
+        ) : null}
       </td>
       <td className="px-4 py-3">
         <PatientCell visit={visit} />
@@ -584,7 +636,10 @@ function QueueRow({
         {stage === "processing" ? (
           <ProcessingTestsSummary tests={entry.tests} />
         ) : (
-          <PaymentBadge visit={visit} />
+          <>
+            <PaymentBadge visit={visit} />
+            {stage === "waiting" ? <CompletedWorkBadge visit={visit} /> : null}
+          </>
         )}
       </td>
       <td className="px-4 py-3 text-right font-mono">
@@ -596,7 +651,10 @@ function QueueRow({
             {PHP.format(balanceOf(visit))}
           </span>
         ) : (
-          PHP.format(Number(visit.paid_php))
+          <>
+            {PHP.format(Number(visit.paid_php))}
+            <WaivedNote visit={visit} />
+          </>
         )}
       </td>
       <td className="px-4 py-3 text-right">
@@ -633,8 +691,16 @@ function QueueCard({
           className="font-mono text-xs text-[color:var(--color-brand-cyan)] hover:underline"
         >
           #{String(visit.visit_number).padStart(4, "0")}
+          {visit.is_sample ? (
+            <span className="ml-2">
+              <SampleBadge size="compact" />
+            </span>
+          ) : null}
         </Link>
-        <PaymentBadge visit={visit} />
+        <span>
+          <PaymentBadge visit={visit} />
+          {stage === "waiting" ? <CompletedWorkBadge visit={visit} /> : null}
+        </span>
       </div>
       <div className="mt-1">
         <PatientCell visit={visit} />
@@ -667,6 +733,7 @@ function QueueCard({
               <span className="font-mono">
                 {PHP.format(Number(visit.paid_php))}
               </span>
+              <WaivedNote visit={visit} inline />
             </span>
           )}
         </div>

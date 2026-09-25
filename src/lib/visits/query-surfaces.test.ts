@@ -150,6 +150,10 @@ const SURFACES: Record<string, Surface> = {
     meaning: "lab",
     why: "Lab turnaround time. A consult goes requested → released at the counter with no bench step, so every one is a ~0-hour 'turnaround' that isn't one (#162).",
   },
+  "lib/visits/released-results.ts": {
+    meaning: "all",
+    why: "Counts COMPLETED WORK on a visit that now owes money (Delete / Edit / Move audit rows and alert, Patient AR filter and badge): released results AND doctor consults / procedures marked done — the patient has had either. The results-vs-doctor split is countReleasedLines, in memory; a consult-only visit that owes again after its consult was done is exactly the exception these surfaces exist to flag.",
+  },
   "lib/reports/stuck-tests.ts": {
     meaning: "lab",
     why: "Work ageing on the bench. A consult has no queue step that could clear it, so it ages forever and this list is the one place that reads that as a problem to chase (#162).",
@@ -259,6 +263,12 @@ const SURFACES: Record<string, Surface> = {
   "lib/actions/visits/queue-deletion.ts": {
     meaning: "all",
     why: "Soft-delete/restore of whatever line reception selected. A mis-keyed consultation is exactly the sort of line that gets deleted.",
+  },
+
+  // --- Patient lifecycle (0167) --------------------------------------------
+  "lib/patients/require-active.ts": {
+    meaning: "all",
+    why: "Resolves bill lines to their patient; every kind of line counts.",
   },
 
   // --- Notifications -------------------------------------------------------
@@ -408,6 +418,10 @@ interface LifecycleSurface {
  */
 const LIFECYCLES: Record<string, LifecycleSurface> = {
   // --- Deliberately spans deleted rows -------------------------------------
+  "app/(staff)/staff/(dashboard)/payments/[id]/void/actions.ts": {
+    lifecycle: "any",
+    why: "Re-reads the deleted payment's OWN visit by id, after the void, for the payment.voided audit row. It shows nothing to anyone, and an audit row records the visit's state whatever it is.",
+  },
   "lib/reports/deleted-entries.ts": {
     lifecycle: "any",
     why: "The deletion ledger. Reading only live rows would leave it permanently empty — the deleted rows ARE the report.",
@@ -432,11 +446,20 @@ const LIFECYCLES: Record<string, LifecycleSurface> = {
     lifecycle: "any",
     why: "A transient client-side toast for realtime INSERTs, capped at 10 and cleared on reload — never a worklist. The only inserter is visit creation, so the visit is new; and /staff/queue/[id] shows the deletion properly if one is ever clicked stale.",
   },
+  "lib/patients/require-active.ts": {
+    lifecycle: "any",
+    why: "Resolves a visit/line to its patient to refuse writes on an inactive patient; a deleted visit's patient must still be found.",
+  },
 
   // --- Live: moving a payment onto another visit (0161) ---------------------
   "app/(staff)/staff/(dashboard)/payments/[id]/move/actions.ts": {
     lifecycle: "live",
     why: "Finds the visit a payment is moved onto. A deleted visit cannot take a payment (P0045), so it must not be offered as a target.",
+  },
+  // --- Live: editing a payment (0161) --------------------------------------
+  "app/(staff)/staff/(dashboard)/payments/[id]/edit/actions.ts": {
+    lifecycle: "live",
+    why: "Re-reads the edited payment's visit after a money change, for the audit row and the released-and-owing alert. A deleted visit owes nothing and gets no alert; an edit on one is refused upstream anyway (P0045).",
   },
 
   // --- Live: the lab bench and its result artefacts ------------------------
@@ -603,6 +626,14 @@ const LIFECYCLES: Record<string, LifecycleSurface> = {
   "lib/reports/lab-tat.ts": {
     lifecycle: "live",
     why: "Turnaround time. This is one of the two surfaces that had reasoned P0043 made the filter a no-op; see the note at the top of this section for why that did not hold.",
+  },
+  "lib/visits/released-payment-alert.ts": {
+    lifecycle: "live",
+    why: "Emails staff that a live visit owes money after its results went out. A deleted visit owes nothing and needs no follow-up.",
+  },
+  "lib/visits/released-results.ts": {
+    lifecycle: "live",
+    why: "Completed work on a visit that still exists. A deleted line or a line on a deleted visit is not something the clinic still has to collect for.",
   },
   "lib/reports/stuck-tests.ts": {
     lifecycle: "live",

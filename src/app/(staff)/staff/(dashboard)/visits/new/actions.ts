@@ -15,6 +15,7 @@ import { isDoctorKind, partitionByCategory } from "@/lib/visits/order-lines";
 import { isConsultOnlyOrder } from "@/lib/visits/receipt-policy";
 import { isSeniorPwdEligible } from "@/lib/pricing/senior";
 import { lineDiscount } from "@/lib/pricing/discounts";
+import { assertPatientActive } from "@/lib/patients/require-active";
 import {
   completeAppointmentFromVisitAction,
   completeArrivedAppointmentsForPatientAction,
@@ -65,6 +66,10 @@ const Schema = z.object({
   receptionist_remarks: optionalText(40),
   notes: z.string().trim().max(2000).optional(),
   attending_physician_id: optionalUuid,
+  // "Sample / training visit" tick (0181). A checkbox posts "on" or nothing.
+  is_sample: z
+    .union([z.literal("on"), z.null(), z.undefined()])
+    .transform((v) => v === "on"),
 });
 
 export type CreateVisitResult =
@@ -97,6 +102,7 @@ export async function createVisitAction(
     receptionist_remarks: formData.get("receptionist_remarks"),
     notes: formData.get("notes") ?? "",
     attending_physician_id: formData.get("attending_physician_id"),
+    is_sample: formData.get("is_sample"),
   });
 
   if (!parsed.success) {
@@ -107,6 +113,13 @@ export async function createVisitAction(
   }
 
   const supabase = await createClient();
+
+  // 0167 / PR 3 note: the DB guard only fires when maintain_repeat_patient_flag
+  // flips is_repeat_patient (a patient's SECOND visit), so a deleted patient's
+  // first new visit is otherwise accepted — this app guard is the enforcement
+  // until PR 3's transactional visit-creation RPC.
+  const active = await assertPatientActive(createAdminClient(), parsed.data.patient_id);
+  if (!active.ok) return { ok: false, error: active.error };
 
   const { data: services, error: svcErr } = await supabase
     .from("services")
@@ -346,6 +359,7 @@ export async function createVisitAction(
           receptionistRemarks: parsed.data.receptionist_remarks,
           notes: parsed.data.notes ?? null,
           visitGroupId: groupId,
+          isSample: parsed.data.is_sample,
         }),
       );
       created.push(
@@ -359,6 +373,7 @@ export async function createVisitAction(
           receptionistRemarks: parsed.data.receptionist_remarks,
           notes: parsed.data.notes ?? null,
           visitGroupId: groupId,
+          isSample: parsed.data.is_sample,
         }),
       );
     } else {
@@ -376,6 +391,7 @@ export async function createVisitAction(
           receptionistRemarks: parsed.data.receptionist_remarks,
           notes: parsed.data.notes ?? null,
           visitGroupId: null,
+          isSample: parsed.data.is_sample,
         }),
       );
     }
@@ -446,6 +462,7 @@ export async function createVisitAction(
         visit_group_id: groupId,
         hmo_provider_id: c.hmo.hmo_provider_id,
         discounted_lines: visitLines.filter((l) => l.discount_amount_php > 0).length,
+        is_sample: parsed.data.is_sample,
       },
       ip_address: ip,
       user_agent: ua,
@@ -598,6 +615,7 @@ interface OneVisitInput {
   receptionistRemarks: string | null;
   notes: string | null;
   visitGroupId: string | null;
+  isSample: boolean;
 }
 
 interface OneVisitResult {
@@ -679,6 +697,7 @@ async function createOneVisit(
       hmo_authorization_no: input.hmo.hmo_authorization_no,
       attending_physician_id: input.attendingPhysicianId,
       visit_group_id: input.visitGroupId,
+      is_sample: input.isSample,
     })
     .select("id, visit_number")
     .single();

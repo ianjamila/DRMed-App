@@ -23,6 +23,7 @@ import { audit } from "@/lib/audit/log";
 import { requireActiveStaff } from "@/lib/auth/require-staff";
 import { generatePin, hashPin } from "@/lib/auth/pin";
 import { setVisitPinFlash } from "@/lib/auth/visit-pin-flash";
+import { assertPatientActive } from "@/lib/patients/require-active";
 
 export type ReissueResult = { ok: false; error: string };
 
@@ -37,6 +38,9 @@ export async function reissuePatientPinAction(
   }
 
   const admin = createAdminClient();
+
+  const active = await assertPatientActive(admin, patientId);
+  if (!active.ok) return { ok: false, error: active.error };
 
   // The patient_id filter stands even when a visit is named — it stops a
   // caller re-pointing the action at another patient's visit.

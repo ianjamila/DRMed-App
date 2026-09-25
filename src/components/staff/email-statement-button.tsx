@@ -13,12 +13,15 @@ export function EmailStatementButton({
   visitId,
   patientId,
   patientEmail,
+  isSample = false,
   size = "default",
   accessibleName,
 }: {
   visitId: string;
   patientId: string;
   patientEmail: string | null;
+  /** A sample visit (0181) never emails the patient — say so instead. */
+  isSample?: boolean;
   size?: "default" | "compact";
   /** Tells one row's compact "Email" apart from the next for screen readers. */
   accessibleName?: string;
@@ -28,6 +31,21 @@ export function EmailStatementButton({
   const [pending, startTransition] = useTransition();
 
   const email = patientEmail?.trim() || null;
+
+  if (isSample) {
+    return size === "compact" ? (
+      <span
+        className="text-xs text-[color:var(--color-brand-text-soft)]"
+        title="Sample visit — nothing is emailed to the patient."
+      >
+        Sample
+      </span>
+    ) : (
+      <p className="max-w-56 text-right text-xs text-[color:var(--color-brand-text-soft)]">
+        Sample visit — nothing is emailed to the patient.
+      </p>
+    );
+  }
 
   if (!email) {
     if (size === "compact") {

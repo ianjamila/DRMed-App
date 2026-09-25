@@ -11,6 +11,7 @@ import { ipAndAgent } from "@/lib/server/action-helpers";
 import { translatePgError } from "@/lib/accounting/pg-errors";
 import { postSimpleJournalEntry } from "@/lib/accounting/journal-entry";
 import { todayManilaISODate } from "@/lib/dates/manila";
+import { assertVisitPatientActive } from "@/lib/patients/require-active";
 
 export type PaymentResult = { ok: true } | { ok: false; error: string };
 
@@ -95,6 +96,9 @@ export async function recordPaymentAction(
     };
   }
 
+  const active = await assertVisitPatientActive(createAdminClient(), parsed.data.visit_id);
+  if (!active.ok) return { ok: false, error: active.error };
+
   const supabase = await createClient();
   const { data, error } = await supabase
     .from("payments")
@@ -154,6 +158,9 @@ async function redeemGiftCode(
   }
 
   const admin = createAdminClient();
+
+  const active = await assertVisitPatientActive(admin, parsed.data.visit_id);
+  if (!active.ok) return { ok: false, error: active.error };
 
   const [{ data: code }, { data: visit }] = await Promise.all([
     admin

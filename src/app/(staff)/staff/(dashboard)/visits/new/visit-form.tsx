@@ -15,6 +15,7 @@ import { Label } from "@/components/ui/label";
 import {
   ResetSafeCheckbox,
   ResetSafeSelect,
+  StableCheckbox,
   StableInput,
   StableTextarea,
 } from "@/components/forms/stable-fields";
@@ -1035,6 +1036,19 @@ export function VisitForm({
           />
         </div>
       </div>
+
+      <label className="flex items-start gap-2 rounded-md border border-dashed border-[color:var(--color-brand-bg-mid)] p-3 text-sm text-[color:var(--color-brand-text-mid)]">
+        <StableCheckbox name="is_sample" className="mt-0.5" />
+        <span>
+          <span className="font-semibold text-[color:var(--color-brand-navy)]">
+            Sample visit (training or testing)
+          </span>
+          <span className="block text-xs text-[color:var(--color-brand-text-soft)]">
+            Marked “Sample” everywhere and the patient is never emailed or
+            texted about it. It still counts like any visit until you delete it.
+          </span>
+        </span>
+      </label>
 
       <div className="flex items-center justify-between rounded-xl bg-[color:var(--color-brand-navy)] p-4 text-white">
         <span className="text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-cyan)]">

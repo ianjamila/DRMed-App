@@ -4,6 +4,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { audit } from "@/lib/audit/log";
 import { ipAndAgent } from "@/lib/server/action-helpers";
 import { requireActiveStaff } from "@/lib/auth/require-staff";
+import { assertPatientActive } from "@/lib/patients/require-active";
 
 // PIN re-issue moved to src/lib/actions/visits/reissue-pin.ts — the visit page
 // calls it too (consultation-only visits print no receipt to carry the PIN).
@@ -19,6 +20,9 @@ export async function verifyPatientIdentityAction(
   const session = await requireActiveStaff();
 
   const admin = createAdminClient();
+  const active = await assertPatientActive(admin, patientId);
+  if (!active.ok) return { ok: false, error: active.error };
+
   const { data: cleared, error } = await admin
     .from("patients")
     .update({ pre_registered: false })

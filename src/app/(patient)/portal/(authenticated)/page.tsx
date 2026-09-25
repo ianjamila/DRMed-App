@@ -2,6 +2,8 @@ import Link from "next/link";
 import { createPatientClient } from "@/lib/supabase/patient";
 import { createStorageSignedUrl } from "@/lib/storage/signed-url";
 import { requirePatientProfile } from "@/lib/auth/require-patient";
+import { portalConsentCurrent } from "@/lib/portal/consent-guard";
+import { PortalConsentGate } from "./consent/consent-gate";
 import { DownloadButton } from "./download-button";
 import { ResultUpdatedBadge } from "./result-updated-badge";
 import { isUpdatedSinceDownload } from "@/lib/results/patient-update-marker";
@@ -10,6 +12,8 @@ import { LabRequestUploads, type UploadRow } from "./lab-request-uploads";
 import { Panel } from "@/components/ui/panel";
 import { classifyKind } from "@/lib/visits/classification";
 import { manilaDate } from "@/lib/dates/manila";
+import { formatPhp } from "@/lib/marketing/format";
+import { visitMoneySummary, type StatementSummary } from "@/lib/visits/statement";
 
 /**
  * Normalise an embedded relation — Supabase types these as single-or-array
@@ -110,11 +114,22 @@ interface ConsultationRow {
   physician_specialty: string | null;
 }
 
+// One row per visit for "Your visits" — the one place every visit shows up,
+// consultation-only and not-yet-released ones included, with its statement.
+interface PortalVisit {
+  id: string;
+  visit_number: string;
+  visit_date: string;
+  hmoBilled: boolean;
+  money: StatementSummary;
+}
+
 interface PortalData {
   packages: PackageGroup[];
   standalones: ReleasedRow[];
   consultations: ConsultationRow[];
   visitsWithPending: VisitWithPending[];
+  visitList: PortalVisit[];
 }
 
 async function loadResults(patientId: string): Promise<PortalData> {
@@ -132,7 +147,8 @@ async function loadResults(patientId: string): Promise<PortalData> {
     .from("visits")
     .select(
       `
-        id, visit_number, visit_date,
+        id, visit_number, visit_date, payment_status, total_php, paid_php,
+        hmo_provider_id,
         test_requests (
           id, status, is_package_header, deleted_at,
           services!test_requests_service_id_fkey ( kind )
@@ -142,7 +158,17 @@ async function loadResults(patientId: string): Promise<PortalData> {
     .eq("patient_id", patientId)
     // Queue-deleted visits (0125) never had work done — nothing is pending.
     .is("deleted_at", null)
-    .order("visit_date", { ascending: false });
+    .order("visit_date", { ascending: false })
+    .order("id", { ascending: true });
+
+  const visitList: PortalVisit[] = (visits ?? []).map((v) => ({
+    id: v.id,
+    visit_number: v.visit_number,
+    visit_date: v.visit_date,
+    hmoBilled: v.hmo_provider_id != null,
+    // Same rules as the statement the row links to (waived → "Nothing due").
+    money: visitMoneySummary(v),
+  }));
 
   const visitsWithPending: VisitWithPending[] = [];
   for (const v of visits ?? []) {
@@ -474,7 +500,7 @@ async function loadResults(patientId: string): Promise<PortalData> {
     return br.localeCompare(ar);
   });
 
-  return { packages, standalones, consultations, visitsWithPending };
+  return { packages, standalones, consultations, visitsWithPending, visitList };
 }
 
 async function loadUploads(patientId: string): Promise<UploadRow[]> {
@@ -534,9 +560,38 @@ async function loadUploads(patientId: string): Promise<UploadRow[]> {
   return rows;
 }
 
+// The statement's own balance words, so the list and the paper agree. An HMO
+// visit's open share is the insurer's to settle, so it reads as billed rather
+// than as money the patient owes.
+function VisitMoneyStatus({
+  money,
+  hmoBilled,
+}: {
+  money: StatementSummary;
+  hmoBilled: boolean;
+}) {
+  if (hmoBilled && money.balance > 0) return <span>Billed to your HMO</span>;
+  if (money.balance > 0) {
+    return (
+      <span className="font-semibold text-amber-700">
+        {money.balanceLabel} {formatPhp(money.balance)}
+      </span>
+    );
+  }
+  if (money.balance < 0) {
+    return (
+      <span>
+        {money.balanceLabel} {formatPhp(-money.balance)}
+      </span>
+    );
+  }
+  return <span>{money.balanceLabel}</span>;
+}
+
 export default async function PatientPortalPage() {
   const patient = await requirePatientProfile();
-  const { packages, standalones, consultations, visitsWithPending } =
+  if (!(await portalConsentCurrent(patient.patient_id))) return <PortalConsentGate />;
+  const { packages, standalones, consultations, visitsWithPending, visitList } =
     await loadResults(patient.patient_id);
   const uploads = await loadUploads(patient.patient_id);
 
@@ -825,6 +880,52 @@ export default async function PatientPortalPage() {
                   {manilaDate(v.visit_date)} ·{" "}
                   {v.pending} test{v.pending === 1 ? "" : "s"} pending
                 </span>
+              </li>
+            ))}
+          </ul>
+        </section>
+      ) : null}
+
+      {visitList.length > 0 ? (
+        <section className="mt-8 rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white p-5">
+          <h2 className="font-heading text-lg font-extrabold text-[color:var(--color-brand-navy)]">
+            Your visits
+          </h2>
+          <p className="mt-1 text-xs text-[color:var(--color-brand-text-soft)]">
+            Every visit and what you paid. Open a statement to print it or email
+            it to yourself for your HMO, employer or records.
+          </p>
+          <ul className="mt-3 divide-y divide-[color:var(--color-brand-bg-mid)] text-sm">
+            {visitList.map((v) => (
+              <li
+                key={v.id}
+                className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1 py-2"
+              >
+                <div className="min-w-0">
+                  <p className="font-mono font-semibold text-[color:var(--color-brand-navy)]">
+                    Visit #{v.visit_number}
+                  </p>
+                  <p className="text-xs text-[color:var(--color-brand-text-soft)]">
+                    {manilaDate(v.visit_date)} · {formatPhp(v.money.charges)} ·{" "}
+                    <VisitMoneyStatus money={v.money} hmoBilled={v.hmoBilled} />
+                  </p>
+                </div>
+                <div className="flex shrink-0 items-baseline gap-4 text-xs font-semibold">
+                  <Link
+                    href={`/portal/visits/${v.id}/statement`}
+                    aria-label={`Statement for visit ${v.visit_number}`}
+                    className="text-[color:var(--color-brand-cyan)] hover:underline"
+                  >
+                    Statement
+                  </Link>
+                  <Link
+                    href={`/portal/visits/${v.id}`}
+                    aria-label={`Details of visit ${v.visit_number}`}
+                    className="text-[color:var(--color-brand-cyan)] hover:underline"
+                  >
+                    Details
+                  </Link>
+                </div>
               </li>
             ))}
           </ul>

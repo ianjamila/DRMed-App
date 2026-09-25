@@ -22,6 +22,8 @@ import { REPORT_EXPORT_MAX_ROWS } from "@/lib/reports/paging";
 import { paymentMethodLabel, PAYMENT_FATE_LABEL } from "@/lib/visits/payment-history";
 import {
   comparePaymentChanges,
+  deleteReasonLabel,
+  DELETE_REASON_OPTIONS,
   loadPaymentChanges,
   parsePaymentChangesParams,
   PAYMENT_CHANGES_DEFAULT_SORT,
@@ -55,6 +57,7 @@ interface SearchProps {
     start?: string;
     end?: string;
     kind?: string;
+    why?: string;
     sort?: string;
     dir?: string;
     page?: string;
@@ -68,7 +71,7 @@ export default async function PaymentChangesPage({ searchParams }: SearchProps) 
 
   const todayISO = todayManilaISODate();
   const params = parsePaymentChangesParams(sp, todayISO);
-  const { start, end, kind } = params;
+  const { start, end, kind, why } = params;
   const sort = parseSort(sp.sort, sp.dir, PAYMENT_CHANGES_SORTABLE_COLUMNS, PAYMENT_CHANGES_DEFAULT_SORT);
   const size = parsePageSize(sp.size);
   const page = parsePage(sp.page);
@@ -89,6 +92,7 @@ export default async function PaymentChangesPage({ searchParams }: SearchProps) 
     start,
     end,
     kind: kind === "all" ? null : kind,
+    why: why === "all" ? null : why,
     sort: isDefaultSort ? null : sort.key,
     dir: isDefaultSort ? null : sort.dir,
     size: size === DEFAULT_PAGE_SIZE ? null : String(size),
@@ -183,6 +187,26 @@ export default async function PaymentChangesPage({ searchParams }: SearchProps) 
             ))}
           </select>
         </div>
+        <div className="flex flex-col">
+          <label
+            htmlFor="why"
+            className="text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]"
+          >
+            Delete reason
+          </label>
+          <select
+            id="why"
+            name="why"
+            defaultValue={why}
+            className="mt-1 rounded-md border border-[color:var(--color-brand-bg-mid)] bg-white px-2 py-1.5 text-sm"
+          >
+            {DELETE_REASON_OPTIONS.map((o) => (
+              <option key={o.value} value={o.value}>
+                {o.label}
+              </option>
+            ))}
+          </select>
+        </div>
         {/* A plain-GET form submits only what it carries: keep sort + size. */}
         {isDefaultSort ? null : (
           <>
@@ -206,7 +230,23 @@ export default async function PaymentChangesPage({ searchParams }: SearchProps) 
           value={String(summary.deleted)}
           hint={`${formatPhp(summary.deletedPhp)} taken off visits — ${start} → ${end}`}
           tone={summary.deleted > 0 ? "warn" : "ok"}
-        />
+        >
+          {summary.deletedByReason.length > 0 ? (
+            <p className="mt-1 text-xs text-[color:var(--color-brand-text-soft)]">
+              {summary.deletedByReason.map((r, i) => (
+                <span key={r.why}>
+                  {i > 0 ? " · " : ""}
+                  <Link
+                    href={href({ kind: "deleted", why: r.why })}
+                    className="font-semibold text-[color:var(--color-brand-cyan)] hover:underline"
+                  >
+                    {r.count} {r.label.toLowerCase()}
+                  </Link>
+                </span>
+              ))}
+            </p>
+          ) : null}
+        </SummaryTile>
         <SummaryTile label="Edited" value={String(summary.edited)} hint="Wrong method, amount or reference fixed" />
         <SummaryTile label="Moved" value={String(summary.moved)} hint="Filed against the wrong visit" />
         <SummaryTile
@@ -229,15 +269,18 @@ export default async function PaymentChangesPage({ searchParams }: SearchProps) 
       <Panel className="overflow-hidden">
         {rows.length === 0 ? (
           <p className="px-4 py-8 text-center text-sm text-[color:var(--color-brand-text-soft)]">
-            No payments were {kind === "all" ? "changed" : kind} in this window.
+            {why !== "all"
+              ? "No deleted payments match this reason in this window."
+              : `No payments were ${kind === "all" ? "changed" : kind} in this window.`}
           </p>
         ) : (
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[960px] text-sm">
+            <table className="w-full min-w-[1080px] text-sm">
               <thead className="bg-[color:var(--color-brand-bg)] text-left text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
                 <tr>
                   {th("when", "When")}
                   {th("change", "Change")}
+                  <PlainTh label="Delete reason" />
                   {th("patient", "Patient · Visit")}
                   {th("amount", "Payment", "right")}
                   <PlainTh label="Now" />
@@ -255,6 +298,15 @@ export default async function PaymentChangesPage({ searchParams }: SearchProps) 
                       <span className={`rounded-md px-2 py-0.5 text-xs font-semibold ${FATE_STYLE[e.fate] ?? ""}`}>
                         {PAYMENT_FATE_LABEL[e.fate]}
                       </span>
+                    </td>
+                    <td className="px-4 py-3 text-xs">
+                      {e.fate === "deleted" ? (
+                        <span className={e.category ? "font-semibold" : "text-[color:var(--color-brand-text-soft)]"}>
+                          {deleteReasonLabel(e)}
+                        </span>
+                      ) : (
+                        <span className="text-[color:var(--color-brand-text-soft)]">—</span>
+                      )}
                     </td>
                     <td className="px-4 py-3">
                       {e.patient ? (
@@ -333,11 +385,14 @@ function SummaryTile({
   value,
   hint,
   tone = "ok",
+  children,
 }: {
   label: string;
   value: string;
   hint?: string;
   tone?: "ok" | "warn";
+  /** Extra lines under the hint (the Deleted tile's reason breakdown). */
+  children?: React.ReactNode;
 }) {
   const accent = tone === "warn" ? "before:bg-amber-400" : "before:bg-[color:var(--color-brand-cyan)]";
   return (
@@ -347,6 +402,7 @@ function SummaryTile({
       <p className="text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">{label}</p>
       <p className="mt-2 font-heading text-2xl font-extrabold text-[color:var(--color-brand-navy)]">{value}</p>
       {hint ? <p className="mt-1 text-xs text-[color:var(--color-brand-text-soft)]">{hint}</p> : null}
+      {children}
     </article>
   );
 }

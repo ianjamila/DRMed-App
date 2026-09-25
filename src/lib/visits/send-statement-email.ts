@@ -6,6 +6,9 @@ import { reportError } from "@/lib/observability/report-error";
 import { sendEmail } from "@/lib/notifications/email";
 import type { StatementData } from "@/lib/visits/statement-data";
 import { renderStatementEmail } from "@/lib/visits/statement-email";
+import { checkPatientRecipient } from "@/lib/notifications/active-patient-recipient";
+import { auditSkippedInactiveRecipient } from "@/lib/notifications/inactive-recipient-audit";
+import { SAMPLE_NO_CONTACT_MESSAGE } from "@/lib/visits/sample";
 
 export type SendStatementResult = { ok: true; data: { to: string } } | { ok: false; error: string };
 
@@ -41,7 +44,42 @@ export async function sendStatementEmail(
   actor: StatementEmailActor,
 ): Promise<SendStatementResult> {
   const visitId = data.visit.id;
-  const to = data.patient.email?.trim();
+  // A sample visit (0181) never contacts the patient — checked first, before
+  // any lookup or claim, so nothing is reserved, sent or rate-limited.
+  if (data.visit.is_sample) {
+    return {
+      ok: false,
+      error:
+        actor.type === "staff"
+          ? SAMPLE_NO_CONTACT_MESSAGE
+          : "This statement can't be emailed. Ask reception for a printed copy.",
+    };
+  }
+
+  const admin = createAdminClient();
+
+  // 0167: re-check fresh, right before the send — data.patient.email was
+  // read whenever the caller loaded the statement, which can be stale if the
+  // record was deleted or merged in the meantime.
+  const recipient = await checkPatientRecipient(admin, data.patient.id);
+  if (recipient.kind !== "active") {
+    await auditSkippedInactiveRecipient({
+      sender: "send-statement-email",
+      patientId: data.patient.id,
+      reason: recipient.kind === "inactive" ? recipient.reason : "walk_in",
+      resourceType: "visit",
+      resourceId: visitId,
+    });
+    return {
+      ok: false,
+      error:
+        actor.type === "staff"
+          ? "This patient's record has been deleted or merged. Restore it from Admin Tools › Deleted Patients before emailing a statement."
+          : "We can't email this statement right now. Please contact reception.",
+    };
+  }
+
+  const to = recipient.patient.email?.trim();
   if (!to) {
     return {
       ok: false,
@@ -52,7 +90,6 @@ export async function sendStatementEmail(
     };
   }
 
-  const admin = createAdminClient();
   const { data: claimId, error: claimErr } = await admin.rpc("claim_statement_email", {
     p_visit_id: visitId,
     p_recipient: to,

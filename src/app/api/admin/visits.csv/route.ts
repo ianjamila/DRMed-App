@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { requireAdminStaff } from "@/lib/auth/require-admin";
+import { parseSampleFilter } from "@/lib/visits/sample";
 import { audit } from "@/lib/audit/log";
 import { ipAndAgent } from "@/lib/server/action-helpers";
 import { csvDocument } from "@/lib/csv/escape";
@@ -46,6 +47,7 @@ export async function GET(req: NextRequest) {
   const classes = parseVisitClasses(sp.get("kind") ?? undefined);
   const viewParam = sp.get("view");
   const view = isVisitView(viewParam) ? viewParam : "active";
+  const sampleOnly = parseSampleFilter(sp.get("sample") ?? undefined);
   // Same allow-list and fallback as the table, so the CSV rows come out in
   // exactly the order the exporting staffer was looking at.
   const sort = parseSort(
@@ -58,7 +60,7 @@ export async function GET(req: NextRequest) {
   const supabase = await createClient();
   const { rows, count, truncated } = await fetchArchiveAll(
     supabase,
-    { start, end, classes, view, q: query },
+    { start, end, classes, view, q: query, sampleOnly },
     sort,
     MAX_ROWS,
   );
@@ -73,10 +75,12 @@ export async function GET(req: NextRequest) {
     "Billed lines",
     "Total PHP",
     "Paid PHP",
+    "Waived PHP",
     "Payment method",
     "Payment status",
     "Deleted",
     "Delete reason",
+    "Sample visit",
   ];
 
   const body = rows.map((r) => [
@@ -89,10 +93,12 @@ export async function GET(req: NextRequest) {
     r.testCount,
     r.total.toFixed(2),
     r.paid.toFixed(2),
+    r.waived.toFixed(2),
     r.methods === "—" ? "" : r.methods,
     paymentStatusLabel(r.status),
     r.deleted ? "yes" : "no",
     r.deleteReason ?? "",
+    r.sample ? "yes" : "no",
   ]);
 
   // A silently truncated export reads as "that's everything". Say so in-band —
@@ -115,6 +121,7 @@ export async function GET(req: NextRequest) {
       end: end || null,
       kind: serialiseVisitClasses(classes) || "all",
       view,
+      sample_only: sampleOnly,
       sort: sort.key,
       dir: sort.dir,
       rows_exported: rows.length,

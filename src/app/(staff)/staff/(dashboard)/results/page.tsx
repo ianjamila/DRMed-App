@@ -55,6 +55,8 @@ import {
   type UpdatedFilter,
 } from "@/lib/results/updated-filter";
 import { resultsMemberSections, membersWithinSections } from "@/lib/results/report-section-gate";
+import { InactivePatientBadge } from "@/components/staff/inactive-patient-badge";
+import { isActivePatient } from "@/lib/patients/active";
 
 export const metadata = { title: "Results" };
 export const dynamic = "force-dynamic";
@@ -122,7 +124,7 @@ const STATUS_BADGE: Record<string, string> = {
 const ARCHIVE_SELECT_BASE = `
   id, status, released_at, completed_at, requested_at,
   visits!inner ( id, visit_number, payment_status, hmo_provider_id,
-    patients!inner ( first_name, last_name, drm_id ) ),
+    patients!inner ( first_name, last_name, drm_id, deleted_at, merged_into_id ) ),
   services!inner ( code, name, kind, section, report_group_id, report_groups ( name ) )
 `;
 
@@ -135,7 +137,7 @@ const ARCHIVE_SELECT_BASE = `
 const ARCHIVE_SELECT_UPDATED_7D = `
   id, status, released_at, completed_at, requested_at,
   visits!inner ( id, visit_number, payment_status, hmo_provider_id,
-    patients!inner ( first_name, last_name, drm_id ) ),
+    patients!inner ( first_name, last_name, drm_id, deleted_at, merged_into_id ) ),
   services!inner ( code, name, kind, section, report_group_id, report_groups ( name ) ),
   result_test_requests!inner ( results!inner ( amended_at ) )
 `;
@@ -149,7 +151,7 @@ const ARCHIVE_SELECT_UPDATED_7D = `
 const ARCHIVE_SELECT_UPDATED_MINE = `
   id, status, released_at, completed_at, requested_at,
   visits!inner ( id, visit_number, payment_status, hmo_provider_id,
-    patients!inner ( first_name, last_name, drm_id ) ),
+    patients!inner ( first_name, last_name, drm_id, deleted_at, merged_into_id ) ),
   services!inner ( code, name, kind, section, report_group_id, report_groups ( name ) ),
   result_test_requests!inner ( results!inner ( result_amendments!inner ( amended_by ) ) )
 `;
@@ -179,7 +181,13 @@ interface ResultRow {
     visit_number: string;
     payment_status: string;
     hmo_provider_id: string | null;
-    patients: { first_name: string; last_name: string; drm_id: string } | null;
+    patients: {
+      first_name: string;
+      last_name: string;
+      drm_id: string;
+      deleted_at: string | null;
+      merged_into_id: string | null;
+    } | null;
   } | null;
   services: {
     code: string;
@@ -789,6 +797,10 @@ export default async function AllResultsPage({ searchParams }: SearchProps) {
                         {pat ? (
                           <div className="font-mono text-xs text-[color:var(--color-brand-text-soft)]">
                             {pat.drm_id}
+                            <InactivePatientBadge
+                              deletedAt={pat.deleted_at}
+                              mergedIntoId={pat.merged_into_id}
+                            />
                           </div>
                         ) : null}
                       </td>
@@ -881,6 +893,7 @@ export default async function AllResultsPage({ searchParams }: SearchProps) {
                               item={item}
                               visitId={g.visitId}
                               pdfAllowed={canViewItemPdf(item)}
+                              patientActive={pat === null || isActivePatient(pat)}
                             />
                           ))}
                         </div>
@@ -1031,6 +1044,7 @@ function ArchiveItemActions({
   item,
   visitId,
   pdfAllowed,
+  patientActive,
 }: {
   item: ArchiveItem;
   visitId: string;
@@ -1038,9 +1052,14 @@ function ArchiveItemActions({
    *  deleted member's values, so a lab role must cover every linked test,
    *  not just the live ones this row shows. */
   pdfAllowed: boolean;
+  /** 0167: a deleted/merged patient's result stays viewable but not editable. */
+  patientActive: boolean;
 }) {
   const editable =
-    item.kind === "test" && item.resultId !== null && EDITABLE_STATUSES.has(item.tests[0].status);
+    patientActive &&
+    item.kind === "test" &&
+    item.resultId !== null &&
+    EDITABLE_STATUSES.has(item.tests[0].status);
   return (
     <div className="flex flex-wrap items-baseline gap-x-2">
       {item.pdfTestRequestId && pdfAllowed ? (

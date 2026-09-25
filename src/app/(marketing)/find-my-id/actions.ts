@@ -1,9 +1,12 @@
 "use server";
 import { headers } from "next/headers";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { activePatients } from "@/lib/patients/active";
 import { audit } from "@/lib/audit/log";
 import { checkRateLimit, RATE_LIMITS } from "@/lib/rate-limit/check";
 import { sendEmail } from "@/lib/notifications/email";
+import { checkPatientRecipient } from "@/lib/notifications/active-patient-recipient";
+import { auditSkippedInactiveRecipient } from "@/lib/notifications/inactive-recipient-audit";
 import { renderEmailShell, emailParagraph, emailHighlight, escapeHtml } from "@/lib/notifications/branded-email";
 import { RecoverIdSchema } from "./schema";
 
@@ -36,31 +39,40 @@ export async function recoverDrmIdAction(_prev: RecoverResult | null, formData: 
   const { last_name, email, birthdate } = parsed.data;
 
   const admin = createAdminClient();
-  const { data: match } = await admin
-    .from("patients")
-    .select("id, drm_id, first_name")
+  const { data: match } = await activePatients(admin.from("patients").select("id, drm_id, first_name"))
     .eq("email", email)
     .eq("last_name", last_name)
     .eq("birthdate", birthdate)
-    .is("merged_into_id", null)
     .limit(1)
     .maybeSingle();
 
   if (match) {
-    const send = await sendEmail({
-      to: email,
-      subject: "Your DRMed DRM-ID",
-      text: `Hi ${match.first_name},\n\nYour DRMed DRM-ID is ${match.drm_id}. Use it with your receipt PIN to view your results at drmed.ph/portal.\n\nIf you didn't request this, you can ignore this email.`,
-      html: renderEmailShell({
-        heading: "Your DRMed patient ID",
-        contentHtml:
-          emailParagraph(`Hi <b>${escapeHtml(match.first_name)}</b>,`) +
-          emailParagraph("Here is the DRM-ID linked to your details:") +
-          emailHighlight("Your DRM-ID", match.drm_id) +
-          emailParagraph("Use it with your receipt PIN to view your results at drmed.ph/portal. If you didn't request this, you can ignore this email."),
-        receivedNote: "You received this because someone requested a DRM-ID for this email at drmed.ph.",
-      }),
-    });
+    const recipient = await checkPatientRecipient(admin, match.id);
+    if (recipient.kind !== "active") {
+      await auditSkippedInactiveRecipient({
+        sender: "find-my-id",
+        patientId: match.id,
+        reason: recipient.kind === "inactive" ? recipient.reason : "walk_in",
+        resourceType: "patient",
+        resourceId: match.id,
+      });
+    }
+    const send = recipient.kind === "active"
+      ? await sendEmail({
+          to: email,
+          subject: "Your DRMed DRM-ID",
+          text: `Hi ${match.first_name},\n\nYour DRMed DRM-ID is ${match.drm_id}. Use it with your receipt PIN to view your results at drmed.ph/portal.\n\nIf you didn't request this, you can ignore this email.`,
+          html: renderEmailShell({
+            heading: "Your DRMed patient ID",
+            contentHtml:
+              emailParagraph(`Hi <b>${escapeHtml(match.first_name)}</b>,`) +
+              emailParagraph("Here is the DRM-ID linked to your details:") +
+              emailHighlight("Your DRM-ID", match.drm_id) +
+              emailParagraph("Use it with your receipt PIN to view your results at drmed.ph/portal. If you didn't request this, you can ignore this email."),
+            receivedNote: "You received this because someone requested a DRM-ID for this email at drmed.ph.",
+          }),
+        })
+      : ({ ok: false as const, kind: "skipped" as const, reason: "patient inactive" });
     await audit({
       actor_id: null, actor_type: "anonymous", patient_id: match.id,
       action: "patient.id_recovery.matched", resource_type: "patient", resource_id: match.id,

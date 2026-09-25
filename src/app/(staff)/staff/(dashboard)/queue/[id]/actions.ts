@@ -45,6 +45,7 @@ import { shouldOfferNotify } from "@/lib/results/copy-followups";
 import { fetchCopyStateAdmin } from "@/lib/results/copy-followups.server";
 import { notifyResultCorrected, type NotifyOutcome } from "@/lib/notifications/notify-corrected";
 import type { Json } from "@/types/database";
+import { assertPatientActive } from "@/lib/patients/require-active";
 
 /** The edit forms' notify outcome — a real send outcome, or the server's own
  * "no" when the client asked but the server-side re-check refused. */
@@ -166,6 +167,11 @@ async function prepareStructured(
   const svc = Array.isArray(tr.services) ? tr.services[0] : tr.services;
   const visit = Array.isArray(tr.visits) ? tr.visits[0] : tr.visits;
   if (!svc || !visit) return { ok: false, error: "Missing service or visit." };
+
+  // 0167: no structured entry (draft or final) on an inactive record.
+  const active = await assertPatientActive(admin, visit.patient_id);
+  if (!active.ok) return { ok: false, error: active.error };
+
   if (svc.is_send_out) {
     return {
       ok: false,
@@ -713,8 +719,11 @@ export async function uploadResultAction(
     : testRequest.visits;
   if (!visit) return { ok: false, error: "Visit not found." };
 
-  const path = `${visit.patient_id}/${visit.id}/${testRequest.id}.pdf`;
   const admin = createAdminClient();
+  const active = await assertPatientActive(admin, visit.patient_id);
+  if (!active.ok) return { ok: false, error: active.error };
+
+  const path = `${visit.patient_id}/${visit.id}/${testRequest.id}.pdf`;
 
   // If a junction already exists (e.g. the first upload's status-flip trigger
   // failed pre-0059 and left the test stuck at in_progress), replace the
@@ -964,6 +973,10 @@ export async function amendResultAction(
   const visit = Array.isArray(testRow.visits) ? testRow.visits[0] : testRow.visits;
   if (!visit) return { ok: false, error: "Visit not found." };
 
+  // 0167: no amendment on an inactive record — restore it first.
+  const active = await assertPatientActive(admin, visit.patient_id);
+  if (!active.ok) return { ok: false, error: active.error };
+
   // Allowed amendment statuses: anything past the medtech editing stage
   // — including released. Tests still in progress should be edited via
   // the normal workflow, not amended. result_edit_commit re-checks (P0066).
@@ -1147,6 +1160,10 @@ export async function amendStructuredResultAction(
   if (await isSharedReport(admin, result.id, svc.report_group_id, result.report_group_id)) {
     return { ok: false, error: SHARED_REPORT_AMEND_ERROR };
   }
+
+  // 0167: no amendment on an inactive record — restore it first.
+  const active = await assertPatientActive(admin, visit.patient_id);
+  if (!active.ok) return { ok: false, error: active.error };
 
   if (!isEditableStatus(testRow.status)) {
     return {

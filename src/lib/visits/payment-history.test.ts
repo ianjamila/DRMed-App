@@ -3,7 +3,12 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   crossVisitLinkIds,
+  DELETE_CATEGORIES,
+  deleteCategoryHint,
+  deleteCategoryOf,
+  formatDeleteReason,
   linkPayments,
+  parseVoidReason,
   stripCorrectionPrefix,
   type HistoryPayment,
 } from "./payment-history";
@@ -91,5 +96,59 @@ describe("crossVisitLinkIds", () => {
       pay({ id: "c", corrects_payment_id: "elsewhere" }),
     ];
     expect(crossVisitLinkIds(rows)).toEqual({ replacementsOf: ["a"], originals: ["elsewhere"] });
+  });
+});
+
+describe("Delete reason categories (void_reason prefix)", () => {
+  it("round-trips a category with and without a note", () => {
+    expect(formatDeleteReason("recorded_twice", "  keyed by both shifts ")).toBe("Recorded twice: keyed by both shifts");
+    expect(formatDeleteReason("refunded", "")).toBe("Patient refunded");
+    expect(parseVoidReason("Recorded twice: keyed by both shifts")).toEqual({
+      prefix: "recorded_twice",
+      note: "keyed by both shifts",
+    });
+    expect(parseVoidReason("Patient refunded")).toEqual({ prefix: "refunded", note: null });
+  });
+
+  it("strips every prefix, leaving only what staff typed", () => {
+    expect(stripCorrectionPrefix("Edited: keyed as cash")).toBe("keyed as cash");
+    expect(stripCorrectionPrefix("Moved: wrong visit")).toBe("wrong visit");
+    expect(stripCorrectionPrefix("Wrong visit: meant #0044")).toBe("meant #0044");
+    expect(stripCorrectionPrefix("Other")).toBeNull();
+  });
+
+  it("does not read free text that merely starts with a label as a category", () => {
+    expect(parseVoidReason("Recorded twice by mistake")).toEqual({ prefix: null, note: "Recorded twice by mistake" });
+    expect(deleteCategoryOf("Otherwise fine")).toBeNull();
+  });
+
+  it("never reads an edit or a move as a delete category", () => {
+    expect(deleteCategoryOf("Edited: Other: typo")).toBeNull();
+    expect(deleteCategoryOf("Moved: Wrong visit")).toBeNull();
+  });
+
+  it("gives a deleted payment its category, and nothing else one", () => {
+    const del = pay({ id: "d", voided_at: "t", void_reason: "Wrong amount: 500 not 5000" });
+    const live = pay({ id: "l" });
+    const l = linkPayments([del, live]);
+    expect(l.deleteCategory(del)).toBe("wrong_amount");
+    expect(l.reason(del)).toBe("500 not 5000");
+    expect(l.deleteCategory(live)).toBeNull();
+  });
+
+  it("points Wrong visit / Wrong amount at Move / Edit when those accept the payment", () => {
+    expect(deleteCategoryHint("wrong_visit", true)).toMatch(/^Use Move instead/);
+    expect(deleteCategoryHint("wrong_amount", true)).toMatch(/^Use Edit instead/);
+    expect(deleteCategoryHint("wrong_visit", false)).toMatch(/cannot be moved/);
+    expect(deleteCategoryHint("wrong_amount", false)).toMatch(/cannot be edited/);
+    expect(deleteCategoryHint("recorded_twice", true)).toBeNull();
+    expect(deleteCategoryHint("", true)).toBeNull();
+  });
+
+  it("keeps every label distinct from correct_payment's prefixes", () => {
+    const labels = DELETE_CATEGORIES.map((c) => c.label);
+    expect(new Set(labels).size).toBe(labels.length);
+    expect(labels).not.toContain("Edited");
+    expect(labels).not.toContain("Moved");
   });
 });
