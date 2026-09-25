@@ -116,11 +116,13 @@ export function AmendResultForm({
     <form
       onSubmit={(e) => {
         e.preventDefault();
-        const formData = new FormData(e.currentTarget);
+        const form = e.currentTarget;
+        const formData = new FormData(form);
         start(async () => {
           const result = await amendResultAction(testRequestId, formData);
           setState(result);
           if (result.ok) {
+            form.reset();
             router.refresh();
           }
         });
