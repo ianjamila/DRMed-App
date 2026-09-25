@@ -41,7 +41,7 @@ const countKinds = (items: { kind: string }[]) => items.reduce<Record<string, nu
  * per_tab.error / sheet_sync_runs.error, both of which end up in run history and
  * Sentry breadcrumbs. Redact those to the bare code and log the real message
  * server-side only. */
-const OUR_CODE = /^(P00\d\d|22023)$/i;
+const OUR_CODE = /^(P006[2-4]|22023)$/i;
 function errText(e: unknown): string {
   if (e instanceof Error) {
     const code = (e as Error & { code?: string }).code;
@@ -144,18 +144,21 @@ export async function runSheetSync(opts: {
           if (touchedLinks) for (const l of await store.loadLinks()) links.set(l.link_key, l);
           if (Object.keys(created).length) index = buildPatientIndex(await store.loadPatients());
 
+          // Every pending_create_key must come from a create op this run just
+          // applied. A missing id means the store's response silently dropped a
+          // key — writing patient_id: null would stage a mirror row pointing at
+          // nobody, so fail the tab loudly instead. The message carries a count
+          // only: a link key holds a patient's name and DOB.
+          let missingIds = 0;
           const mirror = plan.mirror.map(({ pending_create_key, ...row }: CustomerMirrorRow) => {
             if (!pending_create_key) return { ...row, patient_id: row.patient_id };
             const patientId = created[pending_create_key];
-            if (!patientId) {
-              // Every pending_create_key must come from a create op this run just
-              // applied. A missing id here means the store's response silently
-              // dropped a key — writing patient_id: null would stage a mirror row
-              // pointing at nobody, so fail the tab loudly instead.
-              throw new Error(`sheet sync: no created patient id for pending_create_key "${pending_create_key}"`);
-            }
-            return { ...row, patient_id: patientId };
+            if (!patientId) missingIds++;
+            return { ...row, patient_id: patientId ?? null };
           });
+          if (missingIds) {
+            throw new Error(`sheet sync: no created patient id for ${missingIds} mirror row(s) — the store response is missing created ids`);
+          }
           for (const batch of chunks(mirror, STAGE_CHUNK)) await store.stage(lease, "customers", batch as unknown as Json[]);
           out.mirror_rows = await store.commit(lease, "customers", mirror.length);
           await store.upsertReview(lease, "customers", review, true);

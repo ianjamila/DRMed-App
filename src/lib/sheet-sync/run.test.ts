@@ -211,6 +211,7 @@ describe("runSheetSync — identity reload after customer ops (review fix #1)", 
 
     expect(result.perTab.customers?.status).toBe("failed");
     expect(result.perTab.customers?.error).toMatch(/no created patient id/);
+    expect(result.perTab.customers?.error?.toLowerCase()).not.toContain("dela cruz");
     expect(store.stagedRows.customers).toHaveLength(0); // never staged the broken mirror
   });
 });
