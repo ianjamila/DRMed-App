@@ -18,6 +18,7 @@ import {
   runSyncAction,
   type AccountingActionResult,
 } from "./actions";
+import { StableSelect } from "@/components/forms/stable-fields";
 
 // `target` names the scope inside the rewind confirm sentence.
 const SCOPE_OPTIONS = [
@@ -54,7 +55,7 @@ function RunNowSection() {
       <form action={formAction} className="mt-4 grid gap-4 sm:grid-cols-[1fr_auto] sm:items-end">
         <div className="grid gap-1.5">
           <Label htmlFor="run-scope">Scope</Label>
-          <select
+          <StableSelect
             id="run-scope"
             name="scope"
             defaultValue="all"
@@ -65,7 +66,7 @@ function RunNowSection() {
                 {o.label}
               </option>
             ))}
-          </select>
+          </StableSelect>
         </div>
         <Button
           type="submit"
@@ -144,7 +145,7 @@ function RewindSection() {
         <input type="hidden" name="reason" value={reason} />
         <div className="grid gap-1.5">
           <Label htmlFor="rewind-scope">Scope</Label>
-          <select
+          <StableSelect
             id="rewind-scope"
             name="scope"
             defaultValue="all"
@@ -155,7 +156,7 @@ function RewindSection() {
                 {o.label}
               </option>
             ))}
-          </select>
+          </StableSelect>
         </div>
         <div className="grid gap-1.5">
           <Label htmlFor="rewind-from">From (Manila local time)</Label>

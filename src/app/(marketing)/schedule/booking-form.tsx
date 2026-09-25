@@ -51,6 +51,7 @@ import {
   PUBLIC_REFERRAL_QUESTION,
   PUBLIC_REFERRAL_REQUIRED_ERROR,
 } from "@/lib/patients/referral-sources";
+import { ResetSafeCheckbox, ResetSafeSelect } from "@/components/forms/stable-fields";
 
 export type ServiceKind = "lab_test" | "lab_package" | "doctor_consultation";
 
@@ -763,7 +764,7 @@ export function BookingForm({
                           >
                             Sex
                           </label>
-                          <select
+                          <ResetSafeSelect
                             id="wiz-sex"
                             value={sex}
                             onChange={(e) => setSex(e.target.value)}
@@ -772,7 +773,7 @@ export function BookingForm({
                             <option value="">—</option>
                             <option value="female">Female</option>
                             <option value="male">Male</option>
-                          </select>
+                          </ResetSafeSelect>
                         </div>
                       </div>
                       <div className="grid gap-4 sm:grid-cols-2">
@@ -815,7 +816,7 @@ export function BookingForm({
                           {PUBLIC_REFERRAL_QUESTION}{" "}
                           <span className="text-[color:var(--color-danger)]">*</span>
                         </label>
-                        <select
+                        <ResetSafeSelect
                           id="wiz-referral"
                           aria-invalid={currentErrors.referral_source ? true : undefined}
                           value={referralSource}
@@ -832,7 +833,7 @@ export function BookingForm({
                               {o.label}
                             </option>
                           ))}
-                        </select>
+                        </ResetSafeSelect>
                         {currentErrors.referral_source ? (
                           <p className="text-[12.5px] text-[color:var(--color-danger)]" role="alert">
                             {currentErrors.referral_source}
@@ -1167,7 +1168,7 @@ function DetailsStep(props: {
             <label htmlFor="wiz-specialty" className="text-[13.5px] font-semibold text-[color:var(--color-ink)]">
               Specialty <span className="text-[color:var(--color-danger)]">*</span>
             </label>
-            <select
+            <ResetSafeSelect
               id="wiz-specialty"
               value={specialtyCode}
               onChange={(e) => onSpecialty(e.target.value)}
@@ -1184,7 +1185,7 @@ function DetailsStep(props: {
                   {s.label}
                 </option>
               ))}
-            </select>
+            </ResetSafeSelect>
             {errors.specialty ? (
               <p className="text-[12.5px] text-[color:var(--color-danger)]">{errors.specialty}</p>
             ) : null}
@@ -1195,7 +1196,7 @@ function DetailsStep(props: {
               <label htmlFor="wiz-physician" className="text-[13.5px] font-semibold text-[color:var(--color-ink)]">
                 Physician <span className="text-[color:var(--color-danger)]">*</span>
               </label>
-              <select
+              <ResetSafeSelect
                 id="wiz-physician"
                 value={physicianId}
                 onChange={(e) => onPhysician(e.target.value)}
@@ -1224,7 +1225,7 @@ function DetailsStep(props: {
                     ))}
                   </optgroup>
                 ) : null}
-              </select>
+              </ResetSafeSelect>
               {errors.physician ? (
                 <p className="text-[12.5px] text-[color:var(--color-danger)]">{errors.physician}</p>
               ) : null}
@@ -1252,7 +1253,7 @@ function DetailsStep(props: {
                 <label htmlFor="wiz-consult" className="text-[13.5px] font-semibold text-[color:var(--color-ink)]">
                   Consultation type <span className="text-[color:var(--color-danger)]">*</span>
                 </label>
-                <select
+                <ResetSafeSelect
                   id="wiz-consult"
                   value={singleServiceId}
                   onChange={(e) => onSingleService(e.target.value)}
@@ -1268,7 +1269,7 @@ function DetailsStep(props: {
                       {s.name}
                     </option>
                   ))}
-                </select>
+                </ResetSafeSelect>
                 {errors.service ? (
                   <p className="text-[12.5px] text-[color:var(--color-danger)]">{errors.service}</p>
                 ) : null}
@@ -1472,8 +1473,7 @@ function ReviewStep(props: {
       <div className="mt-5 grid gap-3 rounded-[18px] bg-[color:var(--color-warm-sand)] p-5 text-sm">
         {!isPortalContext ? (
           <label className="flex items-start gap-2.5">
-            <input
-              type="checkbox"
+            <ResetSafeCheckbox
               checked={serviceAgreement}
               onChange={(e) => onServiceAgreement(e.target.checked)}
               className="mt-0.5 h-5 w-5 accent-[color:var(--color-brand-cyan)]"
@@ -1496,8 +1496,7 @@ function ReviewStep(props: {
           </p>
         ) : null}
         <label className="flex items-start gap-2.5">
-          <input
-            type="checkbox"
+          <ResetSafeCheckbox
             checked={marketingConsent}
             onChange={(e) => onMarketingConsent(e.target.checked)}
             className="mt-0.5 h-5 w-5 accent-[color:var(--color-brand-cyan)]"
@@ -1630,8 +1629,7 @@ function ServiceMultiPicker({
                   : "border-[color:var(--color-warm-line-soft)] hover:bg-[color:var(--color-warm-sand)]"
               }`}
             >
-              <input
-                type="checkbox"
+              <ResetSafeCheckbox
                 checked={isPicked}
                 onChange={() => onToggle(s.id)}
                 className="mt-1 h-4 w-4 accent-[color:var(--color-brand-cyan)]"

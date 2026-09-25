@@ -78,7 +78,7 @@ export default async function UnconfiguredPage() {
           href="/staff/admin/accounting/cogs/send-outs"
           className="text-sm text-[color:var(--color-brand-cyan)] hover:underline"
         >
-          ← Back to Send-out COGS
+          ← Back to Outside-Lab Costs
         </Link>
       </div>
     </div>

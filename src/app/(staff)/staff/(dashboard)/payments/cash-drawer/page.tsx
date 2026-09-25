@@ -27,7 +27,11 @@ export default async function CashDrawerPage({
     .select("id, code, label")
     .eq("is_active", true)
     .order("sort_order");
-  const shift_id = params.shift ?? shifts?.[0]?.id;
+  // A stale or hand-edited `?shift=` falls back to the first active shift
+  // instead of reading an inactive/unknown drawer (Petty Cash does the same).
+  const shift_id =
+    (params.shift && shifts?.find((s) => s.id === params.shift)?.id) ??
+    shifts?.[0]?.id;
   if (!shift_id) {
     return <main className="p-6"><p>No active cash shift configured. Ask admin.</p></main>;
   }

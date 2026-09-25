@@ -61,6 +61,14 @@ export async function postTillCashExpense(args: {
   vendor_label: string | null;
   description: string | null;
   actorId: string;
+  /**
+   * Caller-picked shift (e.g. the shift the Cash Drawer / Petty Cash tab is
+   * viewing). When given, it is verified against `cash_shifts` here — never
+   * trusted from the caller — and the expense is booked to it. Omit to fall
+   * back to the first active shift by sort order (today's default, and the
+   * only shape that existed before multi-shift sites).
+   */
+  shift_id?: string;
 }): Promise<PostTillCashResult> {
   const contraCode = CATEGORY_TO_COA[args.category];
   if (!contraCode) {
@@ -78,23 +86,45 @@ export async function postTillCashExpense(args: {
 
   const admin = createAdminClient();
 
-  // Same rule the DB itself uses when it needs a shift for a table that has no
-  // shift column (`payments_block_after_close`): the first active shift by
-  // sort order. The cash drawer page defaults the same way.
-  const { data: shift, error: shiftErr } = await admin
-    .from("cash_shifts")
-    .select("id")
-    .eq("is_active", true)
-    .order("sort_order")
-    .order("code")
-    .limit(1)
-    .maybeSingle();
-  if (shiftErr) return { ok: false, error: translatePgError(shiftErr) };
-  if (!shift) {
-    return {
-      ok: false,
-      error: "No active cash shift is configured. Ask an admin to set one up.",
-    };
+  let shiftId: string;
+  if (args.shift_id) {
+    // Trust nothing the caller sends: re-verify the shift still exists and is
+    // still active. It can go inactive between the page render that offered
+    // it and the submit (admin turns a shift off mid-day), and a stale id
+    // must not silently fall back to a different drawer.
+    const { data: pickedShift, error: pickedShiftErr } = await admin
+      .from("cash_shifts")
+      .select("id, is_active")
+      .eq("id", args.shift_id)
+      .maybeSingle();
+    if (pickedShiftErr) return { ok: false, error: translatePgError(pickedShiftErr) };
+    if (!pickedShift || !pickedShift.is_active) {
+      return {
+        ok: false,
+        error: "That cash shift is not active. Pick another shift.",
+      };
+    }
+    shiftId = pickedShift.id;
+  } else {
+    // Same rule the DB itself uses when it needs a shift for a table that has
+    // no shift column (`payments_block_after_close`): the first active shift
+    // by sort order. The cash drawer page defaults the same way.
+    const { data: shift, error: shiftErr } = await admin
+      .from("cash_shifts")
+      .select("id")
+      .eq("is_active", true)
+      .order("sort_order")
+      .order("code")
+      .limit(1)
+      .maybeSingle();
+    if (shiftErr) return { ok: false, error: translatePgError(shiftErr) };
+    if (!shift) {
+      return {
+        ok: false,
+        error: "No active cash shift is configured. Ask an admin to set one up.",
+      };
+    }
+    shiftId = shift.id;
   }
 
   const { data: contra, error: coaErr } = await admin
@@ -117,7 +147,7 @@ export async function postTillCashExpense(args: {
     .from("eod_cash_adjustments")
     .insert({
       business_date: args.business_date,
-      shift_id: shift.id,
+      shift_id: shiftId,
       kind: "petty_cash",
       amount_php: amount,
       payee: vendor ? vendor.slice(0, 120) : null,
@@ -143,7 +173,7 @@ export async function postTillCashExpense(args: {
     ok: true,
     data: {
       adjustment_id: row.id,
-      shift_id: shift.id,
+      shift_id: shiftId,
       business_date: args.business_date,
       journal_entry_id: je?.id ?? null,
       entry_number: je?.entry_number ?? null,

@@ -13,9 +13,11 @@ interface Props {
   defaultDate: string;
   /** Manila today — a till payout can not be dated into the future. */
   maxDate: string;
+  /** The shift the page is currently viewing — recorded onto the entry. */
+  shiftId: string;
 }
 
-export function PettyCashForm({ defaultDate, maxDate }: Props) {
+export function PettyCashForm({ defaultDate, maxDate, shiftId }: Props) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
   const [err, setErr] = useState<string | null>(null);
@@ -60,6 +62,7 @@ export function PettyCashForm({ defaultDate, maxDate }: Props) {
         amount_php: amount,
         vendor_label: vendor || null,
         description: description || null,
+        shift_id: shiftId,
       });
       if (!r.ok) {
         setErr(r.error);

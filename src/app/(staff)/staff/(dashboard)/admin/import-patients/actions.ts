@@ -1,12 +1,12 @@
 "use server";
 
 import { headers } from "next/headers";
-import Papa from "papaparse";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { audit } from "@/lib/audit/log";
 import { requireAdminStaff } from "@/lib/auth/require-admin";
 import {
-  EXPECTED_COLUMNS,
+  missingRequiredImportColumns,
+  parseImportCsv,
   PatientImportRowSchema,
   type PatientImportRow,
 } from "@/lib/validations/patient-import";
@@ -39,11 +39,7 @@ export async function importPatientsAction(
 
   const preRegistered = (formData.get("pre_registered") ?? "") === "on";
 
-  const parse = Papa.parse<Record<string, string>>(csv, {
-    header: true,
-    skipEmptyLines: "greedy",
-    transformHeader: (h) => h.trim().toLowerCase().replace(/\s+/g, "_"),
-  });
+  const parse = parseImportCsv(csv);
 
   if (parse.errors.length > 0) {
     return {
@@ -53,11 +49,7 @@ export async function importPatientsAction(
   }
 
   const fields = parse.meta.fields ?? [];
-  const missing = EXPECTED_COLUMNS.filter(
-    (c) =>
-      // first_name, last_name, birthdate are required; rest are optional headers
-      ["first_name", "last_name", "birthdate"].includes(c) && !fields.includes(c),
-  );
+  const missing = missingRequiredImportColumns(fields);
   if (missing.length > 0) {
     return {
       ok: false,

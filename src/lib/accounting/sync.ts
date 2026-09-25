@@ -100,14 +100,15 @@ async function writeWatermark(
   watermark: string,
   notes?: string,
 ): Promise<void> {
+  // Only a rewind passes notes. A normal sync leaves the column out of the
+  // upsert so the last rewind note survives — the rewind runs a sync straight
+  // afterwards, which used to blank the note before anyone could read it.
   await admin
     .from("sync_state")
     .upsert(
-      {
-        key,
-        last_synced_at: watermark,
-        notes: notes ?? null,
-      },
+      notes === undefined
+        ? { key, last_synced_at: watermark }
+        : { key, last_synced_at: watermark, notes },
       { onConflict: "key" },
     );
 }

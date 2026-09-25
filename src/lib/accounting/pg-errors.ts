@@ -21,6 +21,9 @@ export function translatePgError(err: PgError): string {
       if (m.includes("vendors_tin_unique")) {
         return "A vendor with this TIN already exists.";
       }
+      if (m.includes("services_code_key")) {
+        return "A service with this code already exists. Pick a different code.";
+      }
       if (m.includes("payments_gift_code_redemption_unique")) {
         // Finding 6 (go-live review): the redemption race guard — someone
         // else's redemption of the same code landed first.

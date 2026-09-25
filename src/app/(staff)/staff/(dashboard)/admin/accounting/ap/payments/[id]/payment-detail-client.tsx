@@ -165,7 +165,7 @@ export function PaymentDetailClient({
             title={payment.payment_number}
             subtitle={<>{vendor?.name ?? "—"} · {billPaymentMethodLabel(payment.method)} · {manilaDate(payment.payment_date)}
             {payment.cheque_number && (
-            <> · Cheque #{payment.cheque_number} dated {payment.cheque_date}</>
+            <> · Cheque #{payment.cheque_number}{payment.cheque_date && <> dated {manilaDate(payment.cheque_date)}</>}</>
             )}
             {payment.reference && !payment.cheque_number && <> · Ref: {payment.reference}</>}</>}
           />
@@ -213,7 +213,7 @@ export function PaymentDetailClient({
             This payment came out of the till on a day whose cash count is
             already closed, so it can&apos;t be voided yet — undoing it would
             change a count that has been signed off. Ask an admin to reopen the
-            end-of-day close for {payment.payment_date} first.
+            end-of-day close for {manilaDate(payment.payment_date)} first.
           </AlertDescription>
         </Alert>
       )}

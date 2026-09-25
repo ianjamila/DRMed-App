@@ -21,8 +21,9 @@ import {
 } from "@/lib/ui/table-params";
 import { SortableTh, PlainTh } from "@/components/staff/sortable-th";
 import { ListPagination, PAGE_SIZES } from "@/components/staff/list-pagination";
+import { ROUTE_NAME } from "@/lib/staff/route-names";
 
-export const metadata = { title: "Patient AR aging" };
+export const metadata = { title: ROUTE_NAME["/staff/admin/accounting/patient-ar"] };
 export const dynamic = "force-dynamic";
 
 const PHP = new Intl.NumberFormat("en-PH", {
@@ -336,7 +337,7 @@ export default async function PatientArPage({ searchParams }: SearchProps) {
           ← Dashboard
         </Link>
         <h1 className="mt-3 font-heading text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
-          Patient AR aging
+          {ROUTE_NAME["/staff/admin/accounting/patient-ar"]}
         </h1>
         <p className="mt-1 text-sm text-[color:var(--color-brand-text-soft)]">
           Outstanding balances on unpaid / partially-paid visits, bucketed by

@@ -32,10 +32,7 @@ export default async function RecurringPage() {
           <PageHeader
             eyebrow={SECTION_NAME["/staff/admin/accounting/ap"]}
             title={ROUTE_NAME["/staff/admin/accounting/ap/recurring"]}
-            subtitle={<>Templates that auto-post draft bills on a monthly cadence. The cron
-            handler picks up templates where{" "}
-            <code className="rounded bg-gray-100 px-1 text-xs">next_run_date</code> is
-            on or before today.</>}
+            subtitle="Templates that post a draft bill every month. Each one runs on its next run date, then moves on to the following month."
           />
         </div>
       </div>
