@@ -27,7 +27,7 @@ import {
   type StaffRole,
 } from "./staff-nav-config";
 import { ROLE_LABEL } from "@/lib/staff/role-labels";
-import type { ActiveViewAs } from "@/lib/auth/view-as";
+import { viewAsStateKey, type ActiveViewAs } from "@/lib/auth/view-as";
 import { ViewAsSelect } from "./view-as-select";
 
 interface Props {
@@ -243,14 +243,21 @@ export function StaffMobileNavTrigger({
   fullName,
   badges,
 }: Props) {
-  const [open, setOpen] = useState(false);
+  // The drawer is open FOR a given View-as state. A successful switch
+  // re-renders the shell with a new viewAs, so `open` turns false by itself —
+  // no effect needed (Codex P2: the drawer used to stay open over the new
+  // role). A failed switch keeps the same state, so the drawer stays open and
+  // the picker's error stays visible.
+  const stateKey = viewAsStateKey(viewAs);
+  const [openFor, setOpenFor] = useState<string | null>(null);
+  const open = openFor === stateKey;
+  const close = () => setOpenFor(null);
   const pathname = usePathname();
-  const close = () => setOpen(false);
 
-  // Drawer closes via the per-link onClick={close} below; relying on those
-  // avoids a setState-in-effect on pathname (lint flags it, and it's
-  // redundant since every navigable surface in the drawer already calls
-  // close()).
+  // Drawer also closes via the per-link onClick={close} below (ordinary
+  // navigation); relying on those avoids a setState-in-effect on pathname
+  // (lint flags it, and it's redundant since every navigable surface in the
+  // drawer already calls close()).
 
   const sections = visibleNavFor(role);
 
@@ -260,7 +267,7 @@ export function StaffMobileNavTrigger({
         type="button"
         aria-label="Open menu"
         aria-expanded={open}
-        onClick={() => setOpen(true)}
+        onClick={() => setOpenFor(stateKey)}
         className="grid h-11 w-11 place-items-center rounded-md border border-[color:var(--color-brand-bg-mid)] bg-white text-[color:var(--color-brand-navy)] transition-colors hover:border-[color:var(--color-brand-cyan)]"
       >
         <HamburgerIcon />
@@ -323,7 +330,12 @@ export function StaffMobileNavTrigger({
             · {email}
           </p>
           {actualRole === "admin" && (
-            <ViewAsSelect current={viewAs?.role ?? null} id="view-as-drawer" className="mt-3" />
+            <ViewAsSelect
+              key={stateKey}
+              current={viewAs?.role ?? null}
+              id="view-as-drawer"
+              className="mt-3"
+            />
           )}
           <form action={signOutStaff} className="mt-3">
             <Button type="submit" variant="outline" className="w-full text-xs">

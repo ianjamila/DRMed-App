@@ -21,8 +21,8 @@ vi.mock("@/app/(staff)/staff/login/actions", () => ({
   signOutStaff: "/noop",
 }));
 vi.mock("@/app/(staff)/staff/(dashboard)/view-as/actions", () => ({
-  startViewAsAction: "/noop-start",
-  exitViewAsAction: "/noop-exit",
+  startViewAsAction: async () => ({ error: null }),
+  exitViewAsAction: async () => ({ error: null }),
 }));
 
 const { StaffMobileNavTrigger } = await import("./staff-mobile-nav-trigger");
@@ -212,5 +212,22 @@ describe("view-as in the drawer", () => {
     );
     expect(html).toContain("Medical Tech (viewing as) · Admin");
     expect(html).not.toContain('href="/staff/users"');
+  });
+});
+
+describe("View-as in the drawer", () => {
+  it("renders the picker preselected with the active role", () => {
+    pathname.current = "/staff";
+    const html = renderToStaticMarkup(
+      <StaffMobileNavTrigger
+        role="reception"
+        actualRole="admin"
+        viewAs={{ role: "reception", until: "2026-09-28T08:00:00.000Z" }}
+        email="a@b.ph"
+        fullName="Ada"
+      />,
+    );
+    expect(html).toContain('id="view-as-drawer"');
+    expect(html).toContain('name="return_to"');
   });
 });
