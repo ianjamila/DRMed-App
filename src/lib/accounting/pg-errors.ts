@@ -238,6 +238,14 @@ export function translatePgError(err: PgError): string {
     // 0187: view_as_transition — the caller is not an active admin.
     case "P0074":
       return "Only an admin can view the app as another role.";
+    // 0190: test_requests_claim_holder_guard — the incoming holder doesn't
+    // work this line's section, or isn't the section's single owner.
+    case "P0075":
+      return "This staff member can't hold this test — only someone who works its section (an X-ray Technician for x-rays) can.";
+    // 0190: view_as_end_for — the caller isn't an admin, or is themselves
+    // mid-simulation.
+    case "P0076":
+      return "Only an admin who isn't viewing the app as another role can end someone's role view.";
     default:
       return err.message ?? "Database error. Please try again.";
   }

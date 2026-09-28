@@ -7633,6 +7633,10 @@ export type Database = {
         Returns: boolean
       }
       staff_role: { Args: never; Returns: string }
+      view_as_end_for: {
+        Args: { p_actor: string; p_ip?: unknown; p_target: string; p_ua?: string }
+        Returns: boolean
+      }
       view_as_expire: {
         Args: { p_actor: string; p_ip?: unknown; p_ua?: string }
         Returns: boolean
