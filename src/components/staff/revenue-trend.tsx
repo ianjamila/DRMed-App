@@ -11,6 +11,7 @@ import {
   type RevenueTrendPoint,
 } from "@/lib/visits/revenue-presets";
 import { ExportCsvLink } from "@/components/staff/export-csv-link";
+import { manilaDate } from "@/lib/dates/manila";
 
 // Validated with the dataviz palette checker (adjacent stack pairs pass CVD and
 // the normal-vision floor on white). The consult violet is under 3:1 against
@@ -82,6 +83,9 @@ export function RevenueTrend({ view = "active" }: { view?: string }) {
   const [state, setState] = useState<State>({ kind: "idle" });
   const [width, setWidth] = useState(0);
   const [active, setActive] = useState<number | null>(null);
+  // Bumped by Retry: re-runs the effect, whose fresh `started` guard lets the
+  // load go again.
+  const [attempt, setAttempt] = useState(0);
 
   useEffect(() => {
     const el = wrapRef.current;
@@ -105,7 +109,10 @@ export function RevenueTrend({ view = "active" }: { view?: string }) {
           setState({ kind: "ready", points: body.points });
         })
         .catch(() => {
-          if (!cancelled) setState({ kind: "error" });
+          if (cancelled) return;
+          // Let a close + reopen of the dropdown try again, too.
+          started = false;
+          setState({ kind: "error" });
         });
     };
     load();
@@ -114,7 +121,7 @@ export function RevenueTrend({ view = "active" }: { view?: string }) {
       cancelled = true;
       details?.removeEventListener("toggle", load);
     };
-  }, [view]);
+  }, [view, attempt]);
 
   useEffect(() => {
     const el = wrapRef.current;
@@ -129,6 +136,12 @@ export function RevenueTrend({ view = "active" }: { view?: string }) {
       <div className="mb-2 flex flex-wrap items-baseline justify-between gap-2">
         <h3 className="text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
           Last 12 months
+          <span className="ml-1 font-normal normal-case tracking-normal">
+            · billed, by visit date
+            {state.kind === "ready" && state.points.length > 0
+              ? ` · through ${manilaDate(state.points[state.points.length - 1].end)}`
+              : null}
+          </span>
         </h3>
         <ul className="flex flex-wrap gap-3 text-xs text-[color:var(--color-brand-text)]" aria-label="Legend">
           {VISIT_CLASSES.map((c) => (
@@ -145,8 +158,15 @@ export function RevenueTrend({ view = "active" }: { view?: string }) {
       </div>
 
       {state.kind === "error" ? (
-        <p role="status" className="text-sm text-red-700">
-          Couldn&apos;t load the 12-month trend. Close and reopen to try again.
+        <p role="status" className="flex flex-wrap items-center gap-2 text-sm text-red-700">
+          Couldn&apos;t load the 12-month trend.
+          <button
+            type="button"
+            onClick={() => setAttempt((a) => a + 1)}
+            className="rounded border border-[color:var(--color-brand-bg-mid)] px-2 py-1 text-xs font-semibold text-[color:var(--color-brand-navy)] hover:border-[color:var(--color-brand-cyan)]"
+          >
+            Retry
+          </button>
         </p>
       ) : state.kind !== "ready" ? (
         <p role="status" className="py-10 text-center text-xs text-[color:var(--color-brand-text-soft)]">

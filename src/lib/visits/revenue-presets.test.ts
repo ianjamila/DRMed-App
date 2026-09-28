@@ -62,7 +62,12 @@ describe("yearOnYearChange", () => {
   it("formats growth, decline and flat", () => {
     expect(yearOnYearChange(112, 100)).toBe("+12%");
     expect(yearOnYearChange(95, 100)).toBe("−5%");
-    expect(yearOnYearChange(100.2, 100)).toBe("0%");
+    expect(yearOnYearChange(100, 100)).toBe("0%");
+    // Rounds to 0% but is not equal: say so, never "0%".
+    expect(yearOnYearChange(1_004_000, 1_000_000)).toBe("+<1%");
+    expect(yearOnYearChange(996_000, 1_000_000)).toBe("−<1%");
+    // Float noise below a centavo is equal.
+    expect(yearOnYearChange(0.1 + 0.2, 0.3)).toBe("0%");
   });
 
   it("has no percentage when last year was zero", () => {
@@ -123,6 +128,10 @@ describe("trendDirection", () => {
     expect(trendDirection(point())).toEqual({ dir: "up", change: "+10%" });
     expect(trendDirection(point({ lab: 500 }))).toEqual({ dir: "down", change: "−40%" });
     expect(trendDirection(point({ lab: 900 }))).toEqual({ dir: "flat", change: "0%" });
+    // ₱4,000 on ₱1M is up, not flat.
+    expect(
+      trendDirection(point({ lab: 1_004_000, consult: 0, prior: { lab: 1_000_000, consult: 0, procedure: 0 } })),
+    ).toEqual({ dir: "up", change: "+<1%" });
   });
 
   it("has no direction when last year had nothing", () => {
@@ -141,6 +150,7 @@ describe("revenueTrendCsvRows", () => {
     ]);
     expect(rows[0][0]).toBe("Month");
     expect(rows[0].at(-1)).toBe("Change vs last year %");
+    expect(rows[0][2]).toBe("Lab Tests billed PHP (by visit date)");
     expect(rows[1]).toEqual(["2026-08", "", 1000, 100, 0, 1100, 800, 200, 0, 1000, 10]);
     // Float noise rounded to cents; the partial month says so; no % with no base.
     expect(rows[2]).toEqual(["2026-09", "to 2026-09-28", 0.3, 0, 0, 0.3, 0, 0, 0, 0, ""]);

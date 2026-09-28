@@ -27,7 +27,7 @@ export async function GET(req: NextRequest) {
   return reportCsvResponse({
     staff,
     report: "revenue_trend",
-    filename: `revenue-by-classification-12-months-${today}${view === "active" ? "" : `-${view}`}.csv`,
+    filename: `billed-revenue-by-classification-12-months-${today}${view === "active" ? "" : `-${view}`}.csv`,
     rows: revenueTrendCsvRows(trend.points),
     truncated: false,
     filters: { view, through: today },
