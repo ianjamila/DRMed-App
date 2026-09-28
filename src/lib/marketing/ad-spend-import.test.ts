@@ -107,6 +107,10 @@ describe("parseAdSpendCsv", () => {
     if (!r.ok) throw new Error();
     expect(r.rows).toEqual([expect.objectContaining({ spend_date: "2026-09-01", spend_php: 0 })]);
   });
+  it("refuses a file with no date column at all, instead of one bad_date rejection per row", () => {
+    expect(parseAdSpendCsv([{ Campaign: "C", Cost: "5" }], ["Campaign", "Cost"]))
+      .toEqual({ ok: false, error: expect.stringMatching(/date column/) });
+  });
   it("refuses a file that is neither Meta nor Google", () => {
     expect(parseAdSpendCsv([{ a: "1" }], ["a"])).toEqual({ ok: false, error: expect.stringMatching(/Meta or Google/) });
   });

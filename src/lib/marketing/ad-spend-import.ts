@@ -18,7 +18,7 @@ export const REJECT_REASON_LABEL: Record<AdSpendRejectReason, string> = {
   date_range: "covers more than one day — export with a 1-day breakdown",
   bad_date: "date not readable",
   no_campaign: "no campaign name",
-  bad_spend: "spend missing or not a number of zero or more",
+  bad_spend: "Spend is blank or not a valid amount",
 };
 
 export interface AdSpendRow {
@@ -143,6 +143,9 @@ export function parseAdSpendCsv(records: readonly Record<string, string>[], head
   const dayCol = col("day", "date");
   const startCol = col("reporting starts");
   const endCol = col("reporting ends");
+  if (!dayCol && !(startCol && endCol)) {
+    return { ok: false, error: "No date column found (Day, Date or Reporting starts/ends) — export a daily breakdown." };
+  }
   const campaignCol = col("campaign name", "campaign");
   const adIdCol = col("ad id");
   const adNameCol = col("ad name", "ad");
