@@ -25,9 +25,9 @@ Key reference artifacts:
   every post-1.0 programme (partner revisions, release lifecycle, group templates, EOD
   denomination count…). Read the spec before re-deriving a design decision.
 
-Migration ledger: **prod head = 0186** (`stale_bookings_staff_alert`, #236) as of 2026-09-25, with **0185** (`eod_reminders_start_date`) and **0182** (`staff_view_as_role`, #237 — pushed with `--include-all` ahead of merge, additive; 0183/0184 are claimed by in-flight branches) also applied, after **0181** (`visit_sample_flag`, #230) and **0180** (`posted_lookup_comments`, #231 — comments only);
+Migration ledger: **prod head = 0186** (`stale_bookings_staff_alert`, #236) as of 2026-09-25, with **0179** (`result_copy_followups`, #239 — pushed 2026-09-28 with `--include-all` ahead of merge, verified by object), **0185** (`eod_reminders_start_date`) and **0182** (`staff_view_as_role`, #237 — pushed with `--include-all` ahead of merge, additive; 0183/0184 are claimed by in-flight branches) also applied, after **0181** (`visit_sample_flag`, #230) and **0180** (`posted_lookup_comments`, #231 — comments only);
 **0178** (`released_payment_removed_alert`, #228), **0176** (`result_patient_download_and_remarks`, #226) and **0177** (`statement_email_claim`, #212) are
-applied too. The prod ledger is not contiguous (no 0165, 0167–0170, 0179):
+applied too. The prod ledger is not contiguous (no 0165, 0168–0170, 0183, 0184):
 **0175** (`patient_billed_catalog_read`) and **0177** (#212), **0174** (`correct_payment_stale_guard`,
 #224), **0173** (`ledger_reversal_pairs`, #222), **0172** (`result_edit_commit`, #223 — applied
 after 0173 with `--include-all`), **0171**, **0166** (`drop_send_out_accrual_tables`, #211, pushed
@@ -38,10 +38,6 @@ history: **0160** (`queue_claim_remarks`, #214) and **0151** (`rls_initplan_and_
 
 **0167** (`patient_soft_delete`, PR 2 of the patient-delete rollout) is in flight on
 `feat/patient-delete`; it must be pushed AFTER 0162 and right before its PR merges.
-
-**0179** (`result_copy_followups`, corrected-result follow-ups) is in flight on
-`feat/result-copy-followups`; it lands OUT OF ORDER after 0180/0181 are already on prod, so push it
-with `supabase db push --include-all` (dry-run first) — the same pattern 0172 used landing after 0173.
 
 **Rule — claim a number before you use it: `npm run claim -- migration` / `npm run claim -- pcode <n>`.**
 Several sessions work here at once, each in its own worktree, and picking "the next number" by
