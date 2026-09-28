@@ -83,7 +83,9 @@ export function sectionsForRole(
 // CLAIMING (and reassigning, which hands someone a claim) only.
 //
 // Ultrasound and ECG are deliberately absent: the rule was asked for x-ray.
-const CLAIM_OWNER_BY_SECTION: Partial<
+// Exported (read-only use) so claim-holder-guard-migration.test.ts can pin
+// the SQL owner map in migration 0190 to this table without re-deriving it.
+export const CLAIM_OWNER_BY_SECTION: Partial<
   Record<ServiceSection, StaffSession["role"]>
 > = {
   imaging_xray: "xray_technician",

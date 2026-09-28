@@ -165,10 +165,10 @@ stopped applying. Three cases:
   `actualRole` and `viewAs` so an admin can start from a phone.
 - **Banner** (`src/components/staff/view-as-banner.tsx`): rendered by the
   shell above the page content on every width, `print:hidden`, amber,
-  `role="status"`. Text: "Viewing as Reception. Anything you save is recorded
-  under your name. Ends in 3h 40m." Contains an **Exit** button
-  (`exitViewAsAction`) and the same role select for hopping between roles
-  without exiting first.
+  `role="status"`. Text: "Viewing as Reception until 6:12 PM · 3h 40m left.
+  Anything you save is recorded under your name." (updated by the
+  2026-09-28 follow-ups) Contains an **Exit** button (`exitViewAsAction`)
+  and the same role select for hopping between roles without exiting first.
 - **Footer role line** while simulating (desktop and mobile): "Reception
   (viewing as) · Admin".
 - `ROLE_LABEL` is duplicated today in `staff-shell.tsx` and
@@ -185,9 +185,14 @@ Two new actions, actor = the admin's real id, `actor_type: "staff"`, with
 - `staff.view_as.ended` — `metadata: { role, reason: "manual" | "switched" }`
 
 Switching from one role to another writes `ended(switched)` then `started`.
-Writes made while simulating are **not** individually tagged (that would
-touch every `audit()` call site); the start/end events bracket them.
-Expiry writes no event; `started` already carries `until`.
+The start/end events bracket a simulation, but the ordinary writes *inside*
+it are also tagged now: a BEFORE INSERT trigger (0187,
+`audit_log_stamp_view_as`) stamps `metadata.acting_as` onto any staff audit
+row inserted while its actor has an active view-as override, without
+touching every `audit()` call site.
+Expiry writes `staff.view_as.ended` with `reason: "expired"` lazily — on
+the first request after the expiry, or on the next start/exit, whichever
+comes first (0187, follow-ups spec 2026-09-28). `started` carries `until`.
 
 ## 6. Edge cases
 

@@ -4,7 +4,8 @@ import { headers } from "next/headers";
 import { createClient } from "@/lib/supabase/server";
 import { audit } from "@/lib/audit/log";
 import { needsMfaChallenge } from "@/lib/auth/mfa-gate";
-import { activeViewAs, type ActiveViewAs } from "@/lib/auth/view-as";
+import { activeViewAs, hasStaleViewAs, type ActiveViewAs } from "@/lib/auth/view-as";
+import { expireStaleViewAs } from "@/lib/auth/view-as-switch";
 
 export interface StaffSession {
   user_id: string;
@@ -69,6 +70,18 @@ export async function requireSignedInStaff(): Promise<StaffSession> {
   // Admin "View as role": the columns are inert unless role = 'admin' and the
   // expiry is in the future — activeViewAs() is the TS mirror of the SQL CASE
   // in 0182 that RLS uses, so both layers agree on every request.
+  // An override that has run out but is still stored: clear it and write the
+  // one "ended / expired" audit row (0187 view_as_expire — idempotent, so
+  // concurrent requests log it once). Rare: only the first request after an
+  // expiry gets here.
+  if (hasStaleViewAs(profile)) {
+    const h = await headers();
+    await expireStaleViewAs(user.id, {
+      ip: h.get("x-forwarded-for")?.split(",")[0]?.trim() ?? null,
+      ua: h.get("user-agent"),
+    });
+  }
+
   const view_as = activeViewAs(profile);
   return {
     user_id: user.id,
