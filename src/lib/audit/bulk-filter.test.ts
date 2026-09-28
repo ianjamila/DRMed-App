@@ -22,4 +22,12 @@ describe("audit bulk filters", () => {
     expect(batchIdOf({ bulk_batch_id: 3 })).toBeNull();
     expect(batchIdOf(null)).toBeNull();
   });
+  it("prefers a valid undo_of_batch over bulk_batch_id, so an Undo row's link opens the original action too", () => {
+    const UNDO_BATCH = "55555555-5555-4555-8555-555555555555";
+    expect(batchIdOf({ bulk_batch_id: UNDO_BATCH, undo_of_batch: B })).toBe(B);
+    // A malformed undo_of_batch (never reaches a PostgREST filter) falls back
+    // to bulk_batch_id rather than producing no link at all.
+    expect(batchIdOf({ bulk_batch_id: B, undo_of_batch: "not-a-uuid" })).toBe(B);
+    expect(batchIdOf({ bulk_batch_id: B, undo_of_batch: null })).toBe(B);
+  });
 });

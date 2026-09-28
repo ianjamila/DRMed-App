@@ -1206,6 +1206,11 @@ export default async function QueuePage({ searchParams }: SearchProps) {
                           <RowSelectCheckbox
                             rowKey={cardPanelKey}
                             kinds={panelKinds.get(cardPanelKey) ?? []}
+                            // The true bench-member count, same value select-all
+                            // uses (panelTotals) — otherwise this defaults to 1
+                            // and a panel selection can slip past the 500-record
+                            // cap and the membership-change pruning (P2).
+                            weight={panelTotals.get(cardPanelKey) ?? 1}
                             label={`${card.label.replace(/ \(\d+ tests?\)$/, "")} panel, ${card.patientName}`}
                           />
                         ) : null}

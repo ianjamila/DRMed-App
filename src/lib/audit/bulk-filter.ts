@@ -14,8 +14,15 @@ export function batchAuditOr(batchId: string): string {
   return `metadata->>bulk_batch_id.eq.${batchId},metadata->>undo_of_batch.eq.${batchId}`;
 }
 
+// An Undo row carries its OWN new bulk_batch_id plus undo_of_batch pointing
+// at the action it reversed. Preferring undo_of_batch means clicking "Whole
+// batch" on either row opens the same view — the original action AND its
+// Undo — instead of the Undo row alone excluding the action it reversed.
 export function batchIdOf(metadata: unknown): string | null {
   if (!metadata || typeof metadata !== "object") return null;
-  const v = (metadata as Record<string, unknown>).bulk_batch_id;
+  const m = metadata as Record<string, unknown>;
+  const undoOf = m.undo_of_batch;
+  if (typeof undoOf === "string" && UUID_RE.test(undoOf)) return undoOf;
+  const v = m.bulk_batch_id;
   return typeof v === "string" && UUID_RE.test(v) ? v : null;
 }

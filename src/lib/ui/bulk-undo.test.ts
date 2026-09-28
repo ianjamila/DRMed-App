@@ -5,6 +5,7 @@ import {
   groupUndoSteps,
   planAppointmentUndo,
   planQueueUndo,
+  sameInstant,
   undoOutcomeMessage,
   undoWindowStartIso,
 } from "./bulk-undo";
@@ -13,6 +14,26 @@ describe("undo window", () => {
   it("is ten minutes", () => {
     expect(UNDO_WINDOW_MS).toBe(600_000);
     expect(undoWindowStartIso(Date.parse("2026-09-28T10:10:00Z"))).toBe("2026-09-28T10:00:00.000Z");
+  });
+});
+
+describe("sameInstant", () => {
+  it("matches a 'Z' suffix against the '+00:00' PostgREST normalizes it to on read-back", () => {
+    expect(sameInstant("2026-09-28T08:13:40.467Z", "2026-09-28T08:13:40.467+00:00")).toBe(true);
+  });
+  it("matches identical strings", () => {
+    expect(sameInstant("2026-09-28T08:13:40.467Z", "2026-09-28T08:13:40.467Z")).toBe(true);
+  });
+  it("rejects a genuinely different instant", () => {
+    expect(sameInstant("2026-09-28T08:13:40.467Z", "2026-09-28T08:13:41.467Z")).toBe(false);
+  });
+  it("rejects null/undefined either side", () => {
+    expect(sameInstant(null, "2026-09-28T08:13:40.467Z")).toBe(false);
+    expect(sameInstant("2026-09-28T08:13:40.467Z", undefined)).toBe(false);
+    expect(sameInstant(null, null)).toBe(false);
+  });
+  it("rejects an unparsable string", () => {
+    expect(sameInstant("not-a-date", "2026-09-28T08:13:40.467Z")).toBe(false);
   });
 });
 
@@ -69,18 +90,37 @@ describe("planQueueUndo", () => {
   it("maps claim → unclaim, unclaim → reclaim, delete → restore", () => {
     expect(
       planQueueUndo([
-        { resource_id: "t1", action: "test_request.claimed", metadata: { visit_id: "v1" } },
+        {
+          resource_id: "t1",
+          action: "test_request.claimed",
+          metadata: { visit_id: "v1", started_at: "2026-09-28T00:30:00Z" },
+        },
         {
           resource_id: "t2",
           action: "test_request.unclaimed",
           metadata: { visit_id: "v1", previous_assignee: "u2", previous_started_at: "2026-09-28T01:00:00Z", panel_key: P },
         },
+        {
+          resource_id: "t3",
+          action: "test_request.deleted",
+          metadata: { visit_id: "v3", deleted_at: "2026-09-28T02:00:00Z" },
+        },
+      ]),
+    ).toEqual([
+      { kind: "unclaim", id: "t1", visitId: "v1", panelKey: null, startedAt: "2026-09-28T00:30:00Z" },
+      { kind: "reclaim", id: "t2", visitId: "v1", holder: "u2", startedAt: "2026-09-28T01:00:00Z", panelKey: P },
+      { kind: "restore", id: "t3", visitId: "v3", panelKey: null, deletedAt: "2026-09-28T02:00:00Z" },
+    ]);
+  });
+  it("carries null startedAt/deletedAt when the audit row predates the fix", () => {
+    expect(
+      planQueueUndo([
+        { resource_id: "t1", action: "test_request.claimed", metadata: { visit_id: "v1" } },
         { resource_id: "t3", action: "test_request.deleted", metadata: { visit_id: "v3" } },
       ]),
     ).toEqual([
-      { kind: "unclaim", id: "t1", visitId: "v1", panelKey: null },
-      { kind: "reclaim", id: "t2", visitId: "v1", holder: "u2", startedAt: "2026-09-28T01:00:00Z", panelKey: P },
-      { kind: "restore", id: "t3", visitId: "v3", panelKey: null },
+      { kind: "unclaim", id: "t1", visitId: "v1", panelKey: null, startedAt: null },
+      { kind: "restore", id: "t3", visitId: "v3", panelKey: null, deletedAt: null },
     ]);
   });
   it("skips rows it cannot reverse", () => {
