@@ -19,15 +19,7 @@ import { NOTIFY_OUTCOME_TEXT, type NotifyOffer } from "@/lib/results/copy-follow
  * and the Server Action re-checks everything, including that nobody else saved
  * an edit since the page was opened (the hidden version below).
  */
-export function ReportEditForm({
-  resultId,
-  expectedAmendmentCount,
-  params,
-  editableParamIds,
-  initial,
-  notifyOffer,
-  doneHref,
-}: {
+type ReportEditFormProps = {
   resultId: string;
   expectedAmendmentCount: number;
   params: ConsolidatedParam[];
@@ -37,13 +29,66 @@ export function ReportEditForm({
   notifyOffer: NotifyOffer;
   /** Where Save / Cancel go (the page without ?edit). */
   doneHref: string;
-}) {
+};
+
+type SavedOutcome = { notify?: string };
+
+export function ReportEditForm(props: ReportEditFormProps) {
+  const router = useRouter();
+  // X2: the Saved outcome lives HERE, above the version-keyed form below.
+  // amendConsolidatedReport revalidates this page, and a Server Action that
+  // revalidates ships the re-rendered route with its response — so the new
+  // amendment_count arrives whether or not the client refreshes. The form is
+  // keyed by that count (a form seeded from old values must never save over
+  // a newer version), so it remounts; this wrapper does not (the page keys it
+  // by resultId only), and the panel and its patient-notice outcome stay on
+  // screen until Done.
+  const [saved, setSaved] = useState<SavedOutcome | null>(null);
+
+  if (saved) {
+    return (
+      <div className="mt-4 rounded-lg border border-emerald-200 bg-emerald-50 p-4">
+        <p role="status" className="text-sm font-semibold text-emerald-800">
+          Saved.{NOTIFY_OUTCOME_TEXT[saved.notify ?? ""] ?? ""}
+        </p>
+        <button
+          type="button"
+          onClick={() => {
+            router.replace(props.doneHref);
+            router.refresh();
+          }}
+          className="mt-3 min-h-[44px] rounded-lg bg-[color:var(--color-brand-navy)] px-4 py-2 text-sm font-semibold text-white hover:opacity-90"
+        >
+          Done
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <ReportEditFields
+      key={`${props.resultId}:${props.expectedAmendmentCount}`}
+      {...props}
+      onSaved={setSaved}
+    />
+  );
+}
+
+function ReportEditFields({
+  resultId,
+  expectedAmendmentCount,
+  params,
+  editableParamIds,
+  initial,
+  notifyOffer,
+  doneHref,
+  onSaved,
+}: ReportEditFormProps & { onSaved: (outcome: SavedOutcome) => void }) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState<{ message: string; stale: boolean } | null>(null);
   const [reason, setReason] = useState("");
   const [notify, setNotify] = useState(false);
-  const [saved, setSaved] = useState<{ notify?: string } | null>(null);
   const enabled = new Set(editableParamIds);
   const { values, updateSi, updateConv, payload } = useConsolidatedValues(initial);
 
@@ -65,35 +110,10 @@ export function ReportEditForm({
         setError({ message: res.error, stale: Boolean(res.stale) });
         return;
       }
-      // X2: do NOT router.refresh() here. The page keys this form by
-      // `${resultId}:${amendment_count}` (page.tsx) precisely so a fresh
-      // edit starts from the new version — but a save bumps
-      // amendment_count, so a refresh right now would remount this
-      // component and wipe the Saved panel (and its patient-notice
-      // outcome) before anyone reads it. Fresh server data is instead
-      // fetched when "Done" navigates away.
-      setSaved({ notify: res.notify });
+      // Handed up to ReportEditForm: this component is about to remount
+      // (see there), so state kept here would be lost.
+      onSaved({ notify: res.notify });
     });
-  }
-
-  if (saved) {
-    return (
-      <div className="mt-4 rounded-lg border border-emerald-200 bg-emerald-50 p-4">
-        <p role="status" className="text-sm font-semibold text-emerald-800">
-          Saved.{NOTIFY_OUTCOME_TEXT[saved.notify ?? ""] ?? ""}
-        </p>
-        <button
-          type="button"
-          onClick={() => {
-            router.replace(doneHref);
-            router.refresh();
-          }}
-          className="mt-3 min-h-[44px] rounded-lg bg-[color:var(--color-brand-navy)] px-4 py-2 text-sm font-semibold text-white hover:opacity-90"
-        >
-          Done
-        </button>
-      </div>
-    );
   }
 
   return (
