@@ -1823,13 +1823,21 @@ revoke all on function public.appointments_insert_slot_guarded(jsonb, uuid, time
 grant execute on function public.appointments_insert_slot_guarded(jsonb, uuid, timestamptz, boolean)
   to service_role;
 
--- (4f) recompute_clinic_fee_for_unreleased — copied VERBATIM from
+-- (4f) recompute_clinic_fee_for_unreleased — body copied from
 -- 0136_physician_compensation_table.sql lines 136-175 (confirmed the latest
 -- DEFINER by `grep -ln "function public.recompute_clinic_fee_for_unreleased"
 -- supabase/migrations/*.sql`: 0180_posted_lookup_comments.sql also names it,
 -- but only for a `comment on function` — it does not re-create the body, so
--- 0136 still owns the definition). The only change is the active-patient
--- join/filter marked "-- 0184:" below.
+-- 0136 still owns the definition). Two changes from 0136's body: the
+-- active-patient join/filter marked "-- 0184:" below, and (fix round 6)
+-- `search_path` repinned from 0136's `'public'` to the 0184 convention
+-- (`pg_catalog, public, pg_temp`) — every 0184-recreated function follows
+-- that convention except resolve_patient_guarded's deliberate `''`; this one
+-- had no deliberate reason to diverge, since every reference in the body is
+-- already schema-qualified with `public.` and `pg_catalog` was already
+-- implicitly searched under 0136's setting, so the pin changes nothing the
+-- function actually resolves (s7.13–s7.16 confirm it still behaves
+-- identically after the change).
 --
 -- This is a bulk, ALL-PATIENTS scrub (`admin/accounting/physicians-compensation.ts:62`
 -- calls it with no patient argument at all), unlike every other function in
@@ -1853,7 +1861,7 @@ create or replace function public.recompute_clinic_fee_for_unreleased()
 returns jsonb
 language plpgsql
 security definer
-set search_path to 'public'
+set search_path = pg_catalog, public, pg_temp
 as $function$
 declare
   v_affected int;
@@ -2464,6 +2472,23 @@ begin
     raise exception 'a claim item''s patient changed while the settlement was being saved — try again'
       using errcode = 'P0072';
   end if;
+  -- 0184 review (fix round 6): v_visits above was derived BEFORE the items
+  -- were row-locked, only to decide the visit-lock order ahead of the
+  -- batch/item locks — it was never re-checked. The payment loop below
+  -- re-derives visit_id fresh from the (now-locked) rows, so if a claim
+  -- item's test_request were re-pointed to a different visit while we
+  -- waited for the item lock, that payment would land against a visit this
+  -- function never actually locked. Re-derive with the identical query and
+  -- compare, same shape as the patient re-check just above.
+  if public.lifecycle_norm(array_remove((
+        select coalesce(array_agg(tr.visit_id), '{}'::uuid[])
+          from unnest(v_items) x
+          left join public.hmo_claim_items i on i.id = x
+          left join public.test_requests tr on tr.id = i.test_request_id
+      ), null)) is distinct from v_visits then
+    raise exception 'a claim item''s visit changed while the settlement was being saved — try again'
+      using errcode = 'P0072';
+  end if;
 
   for r in
     select tr.visit_id,
@@ -2697,6 +2722,17 @@ begin
     from public.appointments a
    where a.scheduled_at >= v_from and a.scheduled_at < v_to
      and a.status in ('confirmed', 'arrived');
+  -- 0184 review (fix round 6): each patient lock is its own advisory-lock
+  -- entry, sharing the transaction's lock table with every row lock it also
+  -- takes — prod's max_locks_per_transaction is 64. An unusually large
+  -- closed day would otherwise walk this cardinality up until the lock
+  -- table filled, which fails unpredictably and can starve OTHER sessions'
+  -- transactions too, not just this one. Refuse cleanly instead of risking
+  -- that theoretical exhaustion.
+  if cardinality(v_patients) > 2000 then
+    raise exception 'too many patients on that day to reschedule in one go — contact support'
+      using errcode = '22023';
+  end if;
   perform public.lifecycle_lock(coalesce(v_patients, '{}'::uuid[]), false);
 
   -- Fresh read under the locks; a patient not in the locked set (booked after

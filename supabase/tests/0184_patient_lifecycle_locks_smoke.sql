@@ -1656,7 +1656,7 @@ declare
   idr uuid; ivo uuid;
   bat uuid; bat_other uuid; bat_c uuid; bat_draft uuid; bat_voided uuid;
   res jsonb; n int; ctx text;
-  def text; lp int; vp int; bp int; ip int;
+  def text; lp int; vp int; bp int; ip int; ppp int; vrp int; pyp int;
 begin
   va := pg_temp.mk_visit(a, true); vb := pg_temp.mk_visit(b, true); vd := pg_temp.mk_visit(d, true);
   insert into public.hmo_claim_batches (provider_id, status) values ('b0000000-0000-4000-8000-000000000184', 'submitted') returning id into bat;
@@ -1754,6 +1754,16 @@ begin
   ip := position('order by i.id for update' in def);
   perform pg_temp.expect('s11.12b settlement: patient locks → visit rows → batch row → item rows',
     (lp > 0 and vp > 0 and bp > 0 and ip > 0 and lp < vp and vp < bp and bp < ip)::text, 'true');
+  -- 0184 review (fix round 6): v_visits was derived before the item lock and
+  -- never re-checked — hard to construct a single-connection race for this,
+  -- so a text-order/presence assertion stands in: the item-lock, the
+  -- existing P0072 patient re-check, the NEW P0072 visit re-check, and the
+  -- payment-insert loop must all be present, in that order.
+  ppp := position('a claim item''''s patient changed while the settlement was being saved' in def);
+  vrp := position('a claim item''''s visit changed while the settlement was being saved' in def);
+  pyp := position('insert into public.payments (visit_id, amount_php, method, reference_number, received_at, received_by)' in def);
+  perform pg_temp.expect('s11.12e item lock → patient re-check → visit re-check → payment insert',
+    (ip > 0 and ppp > 0 and vrp > 0 and pyp > 0 and ip < ppp and ppp < vrp and vrp < pyp)::text, 'true');
   def := lower(pg_get_functiondef('public.recompute_hmo_batch_status(uuid)'::regprocedure));
   bp := position('for no key update' in def);
   ip := position('from public.hmo_claim_items' in def);
@@ -1829,6 +1839,17 @@ begin
        and resource_id in (ap_conf, ap_arr, ap_walk, ap_late))
       || '|' || (select (metadata ->> 'affected') || '/' || (metadata ->> 'skipped_inactive') from public.audit_log
                   where action = 'closure.bulk_rescheduled' and metadata ->> 'closed_on' = day::text), '4|4/1');
+  -- 0184 review (fix round 6): the one behaviour that changed vs the old
+  -- action is that each row's PRIOR status is recorded, not assumed — prove
+  -- the audit actually carries the row's own previous_status rather than a
+  -- constant.
+  perform pg_temp.expect('s12.7b previous_status is the row''s own prior status, not a constant',
+    (select metadata ->> 'previous_status' from public.audit_log
+      where action = 'appointment.bulk_rescheduled_for_closure' and resource_id = ap_conf)
+      || '|' ||
+    (select metadata ->> 'previous_status' from public.audit_log
+      where action = 'appointment.bulk_rescheduled_for_closure' and resource_id = ap_arr),
+    'confirmed|arrived');
   res := public.reschedule_closure_appointments(day, k_admin, false, null);
   perform pg_temp.expect('s12.8 re-running finds nothing', res ->> 'affected', '0');
 
@@ -1939,22 +1960,18 @@ begin
           'lifecycle_via', 'lifecycle_result_ids_of_row', 'recompute_hmo_batch_status', 'lock_hmo_batch_before_items',
           'lifecycle_patients_of_row', 'enforce_patient_activity',
           'create_visit_encounter', 'result_create_linked', 'record_hmo_settlement',
-          'reschedule_closure_appointments', 'current_patient_id')
+          'reschedule_closure_appointments', 'current_patient_id', 'recompute_clinic_fee_for_unreleased')
         and (r.rolname <> 'postgres' or not p.prosecdef
              or not (p.proconfig::text like '%search_path=pg_catalog, public, pg_temp%'))), 'none');
-  -- recompute_clinic_fee_for_unreleased is NOT in the list above: it is a
-  -- VERBATIM copy of 0136's body (section (4f)) and keeps 0136's own
-  -- `set search_path to 'public'` rather than the 0184 convention — the same
-  -- kind of documented exception as resolve_patient_guarded's `''` (Task 15
-  -- controller correction). It still must be postgres-owned, SECURITY
-  -- DEFINER, and service_role-only, so that much is checked on its own.
-  perform pg_temp.expect('s14.3b recompute_clinic_fee_for_unreleased is postgres-owned, DEFINER, service_role-only',
-    (select (r.rolname = 'postgres' and p.prosecdef
-             and not has_function_privilege('anon', p.oid, 'execute')
-             and not has_function_privilege('authenticated', p.oid, 'execute')
-             and has_function_privilege('service_role', p.oid, 'execute'))::text
-       from pg_proc p join pg_roles r on r.oid = p.proowner
-      where p.pronamespace = 'public'::regnamespace and p.proname = 'recompute_clinic_fee_for_unreleased'),
+  -- recompute_clinic_fee_for_unreleased's search_path was repinned to the
+  -- standard convention (fix round 6; it used to keep 0136's own
+  -- `search_path to 'public'`), so s14.3 above now covers owner/DEFINER/
+  -- search_path for it too. s14.3 doesn't check the ACL beyond that, and
+  -- s14.4 below only checks anon — so the authenticated/service_role halves
+  -- still need their own assertion.
+  perform pg_temp.expect('s14.3b recompute_clinic_fee_for_unreleased is not authenticated-callable, is service_role-callable',
+    (not has_function_privilege('authenticated', 'public.recompute_clinic_fee_for_unreleased()', 'execute')
+     and has_function_privilege('service_role', 'public.recompute_clinic_fee_for_unreleased()', 'execute'))::text,
     'true');
   perform pg_temp.expect('s14.4 nothing new is callable by anon',
     (select coalesce(string_agg(p.proname, ','), 'none') from pg_proc p

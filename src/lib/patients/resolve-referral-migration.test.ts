@@ -44,8 +44,23 @@ describe("resolve_patient_guarded (latest definition)", () => {
 
   it("never writes onto a MATCHED patient", () => {
     expect(latest.body).not.toMatch(/\bupdate\s+public\.patients\b/i);
-    // The matched branch still returns before any insert.
-    expect(latest.body).toMatch(/if found then\s+return query select v\.id, v\.drm_id, true;\s+return;/);
+    // The matched branch still returns before any insert. 0184 (patient
+    // lifecycle locks) inserts a lock + fresh re-read (P0072 on a mid-flight
+    // change) between "if found then" and the early return, so this no
+    // longer pins the two as immediately adjacent text — but the invariant
+    // it protects (a matched patient is read and locked, never written, and
+    // the function returns before reaching the NEW-patient insert) still
+    // has to hold, checked by position order plus a scan of everything in
+    // between for a write.
+    const foundIdx = latest.body.search(/\bif found then\b/i);
+    const returnIdx = latest.body.search(/return query select v\.id, v\.drm_id, true;\s*return;/i);
+    const insertIdx = latest.body.search(/\binsert into public\.patients\b/i);
+    expect(foundIdx, "no 'if found then' branch").toBeGreaterThan(-1);
+    expect(returnIdx, "matched branch never reaches its early return").toBeGreaterThan(foundIdx);
+    expect(insertIdx, "the new-patient insert must come after the matched branch's return").toBeGreaterThan(returnIdx);
+    const matchedBranch = latest.body.slice(foundIdx, returnIdx);
+    expect(matchedBranch).not.toMatch(/insert into public\.patients/i);
+    expect(matchedBranch).not.toMatch(/update public\.patients/i);
   });
 
   it("keeps the dedup advisory lock", () => {
