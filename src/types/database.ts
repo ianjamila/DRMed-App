@@ -7466,6 +7466,7 @@ export type Database = {
           notified_at: string
           notified_channels: string[]
           notify_failed: boolean
+          notify_problem: string
           patient_id: string
           patient_name: string
           phone: string

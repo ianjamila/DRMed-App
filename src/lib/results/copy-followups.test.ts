@@ -3,6 +3,7 @@ import {
   cappedCountLabel,
   copyKindLabel,
   followUpStatusLabel,
+  notifyProblemHint,
   isOutdatedCopiesCapped,
   outdatedCopyChip,
   shouldOfferNotify,
@@ -66,6 +67,21 @@ describe("followUpStatusLabel", () => {
   it("nothing yet", () => {
     expect(followUpStatusLabel({ contacted_at: null, notified_at: null, notify_failed: false, notified_channels: null }))
       .toBe("Not contacted");
+  });
+});
+
+describe("notifyProblemHint", () => {
+  it("names each cause in plain words while the patient is still to be contacted", () => {
+    expect(notifyProblemHint({ contacted_at: null, notify_problem: "not_set_up" })).toBe(
+      "Email and text notices aren't set up — tell an admin.",
+    );
+    expect(notifyProblemHint({ contacted_at: null, notify_problem: "no_contact" })).toBe("No phone or email on file.");
+    expect(notifyProblemHint({ contacted_at: null, notify_problem: "send_error" })).toBe("The email or text didn't go through.");
+  });
+  it("says nothing once contacted, for no problem, or for an unknown category", () => {
+    expect(notifyProblemHint({ contacted_at: "2026-09-28T00:00:00Z", notify_problem: "send_error" })).toBeNull();
+    expect(notifyProblemHint({ contacted_at: null, notify_problem: null })).toBeNull();
+    expect(notifyProblemHint({ contacted_at: null, notify_problem: "RESEND_API_KEY / RESEND_FROM_EMAIL not configured" })).toBeNull();
   });
 });
 

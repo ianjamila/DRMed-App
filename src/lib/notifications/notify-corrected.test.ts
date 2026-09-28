@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 /**
@@ -426,6 +428,22 @@ describe("describeSendFailure", () => {
       error: "timeout; patient has no email on file",
       notSetUp: false,
     });
+  });
+});
+
+// 0188 turns these stored reasons into result_outdated_copies.notify_problem
+// by matching their exact wording, so the writer and the SQL must not drift.
+describe("0188 notify_problem mapping matches what describeSendFailure writes", () => {
+  const sql = readFileSync(join(process.cwd(), "supabase/migrations/0188_result_followups_notify_problem.sql"), "utf8");
+  const skipped = (reason: string) => ({ ok: false as const, kind: "skipped" as const, reason });
+  it("not set up → the SQL prefix", () => {
+    const { error } = describeSendFailure(skipped("NOTIFICATIONS_LIVE not enabled in this environment"), skipped("patient has no email on file"));
+    expect(sql).toContain("like 'notices not set up%' then 'not_set_up'");
+    expect(error.startsWith("notices not set up")).toBe(true);
+  });
+  it("no contact → the SQL literal", () => {
+    const { error } = describeSendFailure(skipped("patient has no phone on file"), skipped("patient has no email on file"));
+    expect(sql).toContain(`= '${error}' then 'no_contact'`);
   });
 });
 

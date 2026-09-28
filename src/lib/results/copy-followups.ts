@@ -52,6 +52,23 @@ export function followUpStatusLabel(s: {
   return `Notified by ${words.join(" and ")}`;
 }
 
+/** 0188: why a failed patient notice reached nobody (result_outdated_copies
+ * .notify_problem), in reception's words. Shown under "Send failed" while the
+ * patient is still to be contacted; null = nothing to add. */
+export function notifyProblemHint(s: { contacted_at: string | null; notify_problem: string | null }): string | null {
+  if (s.contacted_at) return null;
+  switch (s.notify_problem) {
+    case "not_set_up":
+      return "Email and text notices aren't set up — tell an admin.";
+    case "no_contact":
+      return "No phone or email on file.";
+    case "send_error":
+      return "The email or text didn't go through.";
+    default:
+      return null;
+  }
+}
+
 /** Visit-page chip text, or null when there is nothing to chase. */
 export function outdatedCopyChip(s: CopyState | undefined): string | null {
   if (!s || s.followed_up || !(s.portal_outdated || s.printed_outdated)) return null;

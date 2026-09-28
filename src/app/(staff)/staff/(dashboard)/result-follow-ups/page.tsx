@@ -3,7 +3,7 @@ import { notFound } from "next/navigation";
 import { requireActiveStaff } from "@/lib/auth/require-staff";
 import { createClient } from "@/lib/supabase/server";
 import { fetchOutdatedCopies, type OutdatedCopyRow } from "@/lib/results/copy-followups.server";
-import { copyKindLabel, followUpStatusLabel } from "@/lib/results/copy-followups";
+import { copyKindLabel, followUpStatusLabel, notifyProblemHint } from "@/lib/results/copy-followups";
 import { manilaDateTime } from "@/lib/dates/manila";
 import { PageHeader } from "@/components/staff/page-header";
 import { Panel } from "@/components/ui/panel";
@@ -124,6 +124,11 @@ export default async function ResultFollowUpsPage({ searchParams }: SearchProps)
                     </td>
                     <td className="px-4 py-3 text-[color:var(--color-brand-text-mid)]">
                       {statusText(row)}
+                      {notifyProblemHint(row) ? (
+                        <p className="text-xs text-[color:var(--color-brand-text-soft)]">
+                          {notifyProblemHint(row)}
+                        </p>
+                      ) : null}
                     </td>
                     <td className="px-4 py-3 text-right">
                       {!row.followed_up && row.latest_amendment_id ? (
