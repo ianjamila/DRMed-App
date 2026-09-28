@@ -7496,7 +7496,7 @@ export type Database = {
         Returns: undefined
       }
       eod_unclosed_days: {
-        Args: { p_from: string; p_shift_id: string; p_to: string }
+        Args: { p_from: string | null; p_shift_id: string; p_to: string | null }
         Returns: string[]
       }
       generate_drm_id: { Args: never; Returns: string }
