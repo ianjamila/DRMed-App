@@ -55,8 +55,35 @@ export function AmendResultForm({
 }: Props) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
-  const [pending, start] = useTransition();
-  const [state, setState] = useState<AmendResult | null>(null);
+  // The success message lives HERE, above the version-keyed forms below.
+  // Each save revalidates this page, and the new amendment_count remounts the
+  // form (a form seeded from old values must never save over a newer
+  // version — and a refresh from elsewhere on the page, e.g. reassign, now
+  // resets an open form instead of quietly sending the newer count with the
+  // older values). The saved form is replaced by this panel, so it can't be
+  // submitted twice with the same reason and notice box by accident.
+  const [saved, setSaved] = useState<string | null>(null);
+
+  if (saved) {
+    return (
+      <div className="rounded-md border border-emerald-200 bg-emerald-50 p-4">
+        <p role="status" className="text-sm font-semibold text-emerald-800">
+          {saved}
+        </p>
+        <button
+          type="button"
+          onClick={() => {
+            setSaved(null);
+            setOpen(false);
+            router.refresh();
+          }}
+          className="mt-3 min-h-[44px] rounded-lg bg-[color:var(--color-brand-navy)] px-4 py-2 text-sm font-semibold text-white hover:opacity-90"
+        >
+          Done
+        </button>
+      </div>
+    );
+  }
 
   if (!open) {
     return (
@@ -96,6 +123,7 @@ export function AmendResultForm({
           </Button>
         </div>
         <StructuredResultForm
+          key={expectedAmendmentCount}
           testRequestId={testRequestId}
           layout={structured.layout}
           params={structured.params}
@@ -107,24 +135,60 @@ export function AmendResultForm({
           expectedAmendmentCount={expectedAmendmentCount}
           currentImageFilename={structured.currentImageFilename}
           notifyOffer={notifyOffer}
+          onAmended={(r) =>
+            setSaved(
+              `✓ Saved.${r.controlNo != null ? ` Control No. ${r.controlNo.toString().padStart(6, "0")} — amended.` : ""}${
+                NOTIFY_OUTCOME_TEXT[r.notify ?? ""] ?? ""
+              }`,
+            )
+          }
         />
       </div>
     );
   }
 
   return (
+    <ReplacePdfForm
+      key={expectedAmendmentCount}
+      testRequestId={testRequestId}
+      expectedAmendmentCount={expectedAmendmentCount}
+      notifyOffer={notifyOffer}
+      onReplaced={(notify) => setSaved(`Result replaced.${NOTIFY_OUTCOME_TEXT[notify ?? ""] ?? ""}`)}
+      onCancel={() => setOpen(false)}
+    />
+  );
+}
+
+// The PDF-replace form for an uploaded result, keyed by version in
+// AmendResultForm (see there).
+function ReplacePdfForm({
+  testRequestId,
+  expectedAmendmentCount,
+  notifyOffer,
+  onReplaced,
+  onCancel,
+}: {
+  testRequestId: string;
+  expectedAmendmentCount: number;
+  notifyOffer: NotifyOffer;
+  onReplaced: (notify: Extract<AmendResult, { ok: true }>["notify"]) => void;
+  onCancel: () => void;
+}) {
+  const [pending, start] = useTransition();
+  const [state, setState] = useState<AmendResult | null>(null);
+
+  return (
     <form
       onSubmit={(e) => {
         e.preventDefault();
-        const form = e.currentTarget;
-        const formData = new FormData(form);
+        const formData = new FormData(e.currentTarget);
         start(async () => {
           const result = await amendResultAction(testRequestId, formData);
-          setState(result);
           if (result.ok) {
-            form.reset();
-            router.refresh();
+            onReplaced(result.notify);
+            return;
           }
+          setState(result);
         });
       }}
       className="grid gap-3 rounded-md border border-amber-300 bg-amber-50/60 p-4"
@@ -180,11 +244,6 @@ export function AmendResultForm({
           {state.error}
         </p>
       ) : null}
-      {state?.ok ? (
-        <p className="text-sm text-emerald-700" role="status">
-          Result replaced.{NOTIFY_OUTCOME_TEXT[state.notify ?? ""] ?? ""}
-        </p>
-      ) : null}
 
       <div className="flex gap-2">
         <Button
@@ -197,10 +256,7 @@ export function AmendResultForm({
         <Button
           type="button"
           variant="outline"
-          onClick={() => {
-            setOpen(false);
-            setState(null);
-          }}
+          onClick={onCancel}
           disabled={pending}
         >
           Cancel
