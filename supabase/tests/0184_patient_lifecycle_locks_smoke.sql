@@ -762,4 +762,182 @@ begin
 end
 $s4$;
 
+-- --- s5: guards on the results family ---------------------------------------------
+do $s5$
+declare
+  k_admin constant uuid := 'a0000000-0000-4000-8000-000000000184';
+  k_med   constant uuid := 'a2000000-0000-4000-8000-000000000184';
+  a  uuid := pg_temp.mk_patient('S5A');
+  b  uuid := pg_temp.mk_patient('S5B');
+  d  uuid := pg_temp.mk_patient('S5D');
+  va uuid; vb uuid; vd uuid;
+  ta uuid; ta2 uuid; ta3 uuid; ta4 uuid; tb uuid; td uuid; td2 uuid;
+  ra uuid; rd uuid; r_new uuid; r_un uuid; r_b uuid;
+  tpl uuid; prm uuid;
+  al uuid; am_d uuid; am_a uuid; am_b uuid; am_w uuid; al_w uuid; rw uuid; ta5 uuid; am_rw uuid; al_rw uuid;
+  s0 int; x0 int;
+begin
+  insert into public.result_templates (service_id, layout) values ('c1000000-0000-4000-8000-000000000184', 'simple')
+    returning id into tpl;
+  insert into public.result_template_params (template_id, sort_order, parameter_name, input_type)
+    values (tpl, 1, 'LK param', 'numeric') returning id into prm;
+  va := pg_temp.mk_visit(a);
+  vb := pg_temp.mk_visit(b);
+  vd := pg_temp.mk_visit(d);
+  ta  := pg_temp.mk_line(va, 'in_progress', 100, null, false, 'c1000000-0000-4000-8000-000000000184');
+  ta2 := pg_temp.mk_line(va, 'in_progress', 100, null, false, 'c1000000-0000-4000-8000-000000000184');  -- never linked
+  ta3 := pg_temp.mk_line(va, 'in_progress', 100, null, false, 'c1000000-0000-4000-8000-000000000184');  -- never linked
+  ta4 := pg_temp.mk_line(va, 'in_progress', 100, null, false, 'c1000000-0000-4000-8000-000000000184');  -- never linked
+  tb  := pg_temp.mk_line(vb, 'in_progress', 100, null, false, 'c1000000-0000-4000-8000-000000000184');
+  td  := pg_temp.mk_line(vd, 'in_progress', 100, null, false, 'c1000000-0000-4000-8000-000000000184');
+  td2 := pg_temp.mk_line(vd, 'in_progress', 100, null, false, 'c1000000-0000-4000-8000-000000000184');
+  insert into public.results (generation_kind, uploaded_by) values ('structured', k_med) returning id into ra;
+  insert into public.results (generation_kind, uploaded_by) values ('structured', k_med) returning id into rd;
+  insert into public.results (generation_kind, uploaded_by) values ('structured', k_med) returning id into r_b;
+  insert into public.result_test_requests (result_id, test_request_id) values (ra, ta), (rd, td), (r_b, tb);
+  insert into public.result_values (result_id, parameter_id, numeric_value_si) values (rd, prm, 1);
+  insert into public.critical_alerts (result_id, test_request_id, parameter_id, direction, parameter_name, patient_id)
+    values (rd, td, prm, 'high', 'LK param', d) returning id into al;
+  insert into public.result_amendments (result_id, test_request_id, prior_storage_path, prior_uploaded_by,
+                                        prior_uploaded_at, reason, amended_by, amendment_seq)
+    values (rd, td, 'x', k_med, now(), 'smoke', k_med, 1) returning id into am_d;
+  insert into public.result_amendments (result_id, test_request_id, prior_storage_path, prior_uploaded_by,
+                                        prior_uploaded_at, reason, amended_by, amendment_seq)
+    values (ra, ta, 'x', k_med, now(), 'smoke', k_med, 1) returning id into am_a;
+  insert into public.result_amendments (result_id, test_request_id, prior_storage_path, prior_uploaded_by,
+                                        prior_uploaded_at, reason, amended_by, amendment_seq)
+    values (r_b, tb, 'x', k_med, now(), 'smoke', k_med, 1) returning id into am_b;
+  perform pg_temp.kill(d);
+
+  perform pg_temp.expect('s5.1 an UNLINKED result row can always be inserted (inert)',
+    pg_temp.state_of(format($q$insert into public.results (generation_kind, uploaded_by) values ('structured', %L)$q$, k_med)), 'ok');
+  insert into public.results (generation_kind, uploaded_by) values ('structured', k_med) returning id into r_new;
+  -- ta2 was never linked (uq_result_test_requests_test_request allows one result per test).
+  perform pg_temp.expect('s5.2 CONTROL link a result to an active patient''s unlinked test',
+    pg_temp.state_of(format($q$insert into public.result_test_requests (result_id, test_request_id) values (%L, %L)$q$, r_new, ta2)), 'ok');
+  perform pg_temp.expect('s5.3 linking a result to a deleted patient''s test is refused',
+    pg_temp.state_of(format($q$insert into public.result_test_requests (result_id, test_request_id) values (%L, %L)$q$, r_new, td2)), 'P0058');
+  perform pg_temp.expect('s5.4 editing a deleted patient''s result row is refused',
+    pg_temp.state_of(format($q$update public.results set notes = 'x' where id = %L$q$, rd)), 'P0058');
+  perform pg_temp.expect('s5.5 CONTROL editing an active patient''s result row',
+    pg_temp.state_of(format($q$update public.results set notes = 'x' where id = %L$q$, ra)), 'ok');
+  perform pg_temp.expect('s5.6 saving a value on a deleted patient''s result is refused',
+    pg_temp.state_of(format($q$update public.result_values set numeric_value_si = 2 where result_id = %L$q$, rd)), 'P0058');
+  perform pg_temp.expect('s5.7 inserting an amendment row is refused',
+    pg_temp.state_of(format($q$insert into public.result_amendments (result_id, test_request_id, prior_storage_path, prior_uploaded_by, prior_uploaded_at, reason, amended_by, amendment_seq) values (%L, %L, 'x', %L, now(), 'x', %L, 2)$q$, rd, td, k_med, k_med)), 'P0058');
+  perform pg_temp.expect('s5.8 acknowledging a deleted patient''s critical alert is allowed',
+    pg_temp.state_of(format($q$update public.critical_alerts set acknowledged_at = now(), acknowledged_by = %L where id = %L$q$, k_med, al)), 'ok');
+  perform pg_temp.expect('s5.9 changing anything else on the alert is refused',
+    pg_temp.state_of(format($q$update public.critical_alerts set observed_value_si = 9 where id = %L$q$, al)), 'P0058');
+  perform pg_temp.expect('s5.10 new critical alert for a deleted patient is refused',
+    pg_temp.state_of(format($q$insert into public.critical_alerts (result_id, test_request_id, parameter_id, direction, parameter_name, patient_id) values (%L, %L, %L, 'low', 'LK param', %L)$q$, rd, td, prm, d)), 'P0058');
+  perform pg_temp.expect('s5.11 deleting a deleted patient''s result is refused',
+    pg_temp.state_of(format($q$delete from public.results where id = %L$q$, rd)), 'P0058');
+  perform pg_temp.expect('s5.12 unlinking (junction delete) is refused',
+    pg_temp.state_of(format($q$delete from public.result_test_requests where result_id = %L$q$, rd)), 'P0058');
+
+  -- Mismatched references (Codex plan review P1-1): every reference is locked and asserted.
+  perform pg_temp.expect('s5.13 linking an ACTIVE patient''s test to a DELETED patient''s result is refused',
+    pg_temp.state_of(format($q$insert into public.result_test_requests (result_id, test_request_id) values (%L, %L)$q$, rd, ta3)), 'P0058');
+  perform pg_temp.expect('s5.14 an amendment naming an active test but a deleted patient''s result is refused',
+    pg_temp.state_of(format($q$insert into public.result_amendments (result_id, test_request_id, prior_storage_path, prior_uploaded_by, prior_uploaded_at, reason, amended_by, amendment_seq) values (%L, %L, 'x', %L, now(), 'x', %L, 9)$q$, rd, ta, k_med, k_med)), 'P0058');
+  perform pg_temp.expect('s5.15 an alert naming an active test + patient but a deleted patient''s result is refused',
+    pg_temp.state_of(format($q$insert into public.critical_alerts (result_id, test_request_id, parameter_id, direction, parameter_name, patient_id) values (%L, %L, %L, 'low', 'LK param', %L)$q$, rd, ta, prm, a)), 'P0058');
+  perform pg_temp.expect('s5.16 an alert on an active result + test but patient_id = the deleted patient is refused',
+    pg_temp.state_of(format($q$insert into public.critical_alerts (result_id, test_request_id, parameter_id, direction, parameter_name, patient_id) values (%L, %L, %L, 'low', 'LK param', %L)$q$, ra, ta, prm, d)), 'P0058');
+  perform pg_temp.expect('s5.17 an alert on an active result withdrawn by a DELETED patient''s amendment is refused',
+    pg_temp.state_of(format($q$insert into public.critical_alerts (result_id, test_request_id, parameter_id, direction, parameter_name, patient_id, withdrawn_by_amendment) values (%L, %L, %L, 'low', 'LK param', %L, %L)$q$, ra, ta, prm, a, am_d)), 'P0058');
+
+  -- The same Codex case through the real client path: an authenticated admin
+  -- under RLS (0151's admin manage policy on the junction).
+  set local role authenticated;
+  perform set_config('request.jwt.claims', json_build_object('role', 'authenticated', 'sub', k_admin)::text, true);
+  perform set_config('request.jwt.claim.sub', k_admin::text, true);
+  perform pg_temp.expect('s5.18 authenticated admin: active test → deleted patient''s result is refused',
+    pg_temp.state_of(format($q$insert into public.result_test_requests (result_id, test_request_id) values (%L, %L)$q$, rd, ta3)), 'P0058');
+  perform pg_temp.expect('s5.19 authenticated admin CONTROL: active test → an unlinked result',
+    pg_temp.state_of(format($q$insert into public.result_test_requests (result_id, test_request_id) values (%L, %L)$q$, r_new, ta3)), 'ok');
+  reset role;
+  perform set_config('request.jwt.claims', '', true);
+  perform set_config('request.jwt.claim.sub', '', true);
+
+  -- One patient per result.
+  perform pg_temp.expect('s5.20 linking another ACTIVE patient''s test to a result is refused (one patient per result)',
+    pg_temp.state_of(format($q$insert into public.result_test_requests (result_id, test_request_id) values (%L, %L)$q$, r_b, ta4)), '23514');
+  perform pg_temp.expect('s5.21 CONTROL a second test of the SAME patient joins the result',
+    pg_temp.state_of(format($q$insert into public.result_test_requests (result_id, test_request_id) values (%L, %L)$q$, ra, ta4)), 'ok');
+
+  -- 0179 follow-up bookkeeping on a deleted patient's amendment: allowed; anything else refused.
+  perform pg_temp.expect('s5.22 marking a deleted patient contacted about a correction is allowed',
+    pg_temp.state_of(format($q$update public.result_amendments set patient_contacted_at = now(), patient_contacted_by = %L where id = %L$q$, k_med, am_d)), 'ok');
+  perform pg_temp.expect('s5.23 recording a notice outcome is allowed',
+    pg_temp.state_of(format($q$update public.result_amendments set patient_notified_at = now(), patient_notified_channels = '{}', patient_notify_error = 'skipped' where id = %L$q$, am_d)), 'ok');
+  perform pg_temp.expect('s5.24 changing the amendment''s reason is refused',
+    pg_temp.state_of(format($q$update public.result_amendments set reason = 'x', patient_contacted_at = now() where id = %L$q$, am_d)), 'P0058');
+
+  -- Membership lock modes (Codex plan review P1-2).
+  insert into public.results (generation_kind, uploaded_by) values ('structured', k_med) returning id into r_un;
+  s0 := pg_temp.held_results('ShareLock');
+  insert into public.result_values (result_id, parameter_id, numeric_value_si) values (r_un, prm, 5);
+  perform pg_temp.expect('s5.25 a value on an UNLINKED result still takes the SHARED membership lock',
+    (pg_temp.held_results('ShareLock') - s0)::text, '1');
+  x0 := pg_temp.held_results('ExclusiveLock');
+  insert into public.result_test_requests (result_id, test_request_id)
+    values (r_un, pg_temp.mk_line(va, 'in_progress', 100, null, false, 'c1000000-0000-4000-8000-000000000184'));
+  perform pg_temp.expect('s5.26 a link takes the EXCLUSIVE membership lock',
+    (pg_temp.held_results('ExclusiveLock') - x0)::text, '1');
+  perform pg_temp.expect('s5.27 CONTROL an active patient''s amendment reason can still change',
+    pg_temp.state_of(format($q$update public.result_amendments set reason = 'y' where id = %L$q$, am_a)), 'ok');
+
+  -- Indirect references are immutable / consistent (Codex recheck P1).
+  perform pg_temp.expect('s5.28 re-pointing a correction at another result is refused',
+    pg_temp.state_of(format($q$update public.result_amendments set result_id = %L where id = %L$q$, r_new, am_a)), '23514');
+  insert into public.critical_alerts (result_id, test_request_id, parameter_id, direction, parameter_name, patient_id)
+    values (ra, ta, prm, 'high', 'LK param', a) returning id into al_w;
+  perform pg_temp.expect('s5.29 re-pointing an alert at another result is refused',
+    pg_temp.state_of(format($q$update public.critical_alerts set result_id = %L where id = %L$q$, r_new, al_w)), '23514');
+  perform pg_temp.expect('s5.30 an alert withdrawn by a correction of ANOTHER result is refused',
+    pg_temp.state_of(format($q$update public.critical_alerts set withdrawn_at = now(), withdrawn_by = %L, withdrawn_by_amendment = %L where id = %L$q$, k_med, am_b, al_w)), '23514');
+
+  -- 0179's ON DELETE SET NULL through the guard, active patient (Codex recheck P2-3).
+  insert into public.result_amendments (result_id, test_request_id, prior_storage_path, prior_uploaded_by,
+                                        prior_uploaded_at, reason, amended_by, amendment_seq)
+    values (ra, ta, 'x', k_med, now(), 'smoke', k_med, 2) returning id into am_w;
+  update public.critical_alerts set withdrawn_at = now(), withdrawn_by = k_med, withdrawn_by_amendment = am_w where id = al_w;
+  perform pg_temp.expect('s5.31 deleting the correction that withdrew an alert (SET NULL on the alert) is allowed',
+    pg_temp.state_of(format($q$delete from public.result_amendments where id = %L$q$, am_w)), 'ok');
+  perform pg_temp.expect('s5.32 …and the alert survives with the reference cleared',
+    (select (withdrawn_by_amendment is null)::text from public.critical_alerts where id = al_w), 'true');
+  ta5 := pg_temp.mk_line(va, 'in_progress', 100, null, false, 'c1000000-0000-4000-8000-000000000184');
+  insert into public.results (generation_kind, uploaded_by) values ('structured', k_med) returning id into rw;
+  insert into public.result_test_requests (result_id, test_request_id) values (rw, ta5);
+  insert into public.result_amendments (result_id, test_request_id, prior_storage_path, prior_uploaded_by,
+                                        prior_uploaded_at, reason, amended_by, amendment_seq)
+    values (rw, ta5, 'x', k_med, now(), 'smoke', k_med, 1) returning id into am_rw;
+  insert into public.critical_alerts (result_id, test_request_id, parameter_id, direction, parameter_name, patient_id,
+                                      withdrawn_at, withdrawn_by, withdrawn_by_amendment)
+    values (rw, ta5, prm, 'low', 'LK param', a, now(), k_med, am_rw) returning id into al_rw;
+  perform pg_temp.expect('s5.33 deleting an active patient''s result that carries a correction and an alert it withdrew (cascades) is allowed',
+    pg_temp.state_of(format($q$delete from public.results where id = %L$q$, rw)), 'ok');
+  perform pg_temp.expect('s5.34 …and everything under it is gone',
+    (select count(*)::text from public.critical_alerts where id = al_rw)
+      || (select count(*)::text from public.result_amendments where id = am_rw), '00');
+
+  -- a_lifecycle_guard fires FIRST among BEFORE row triggers on all five
+  -- results-family tables too (same catalog check as s3.28, extended here per
+  -- controller instruction — Task 6 must prove the guard sorts first on each
+  -- of the five tables it installs on this task).
+  perform pg_temp.expect('s5.35 a_lifecycle_guard fires first among BEFORE row triggers on all five results-family tables',
+    (select string_agg(first_trigger, ',' order by rel) from (
+       select c.relname as rel,
+              (select t.tgname from pg_trigger t
+                where t.tgrelid = c.oid and not t.tgisinternal and (t.tgtype & 2) = 2 and (t.tgtype & 1) = 1
+                order by t.tgname collate "C" limit 1) as first_trigger
+         from pg_class c
+        where c.relnamespace = 'public'::regnamespace
+          and c.relname in ('results', 'result_test_requests', 'result_values', 'result_amendments', 'critical_alerts')) s),
+    'a_lifecycle_guard,a_lifecycle_guard,a_lifecycle_guard,a_lifecycle_guard,a_lifecycle_guard');
+end
+$s5$;
+
 rollback;

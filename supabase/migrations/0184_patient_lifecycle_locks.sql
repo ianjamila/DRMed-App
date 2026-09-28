@@ -866,3 +866,30 @@ drop trigger if exists a_lifecycle_guard on public.visit_pins;
 create trigger a_lifecycle_guard
   before insert or update or delete on public.visit_pins
   for each row execute function public.enforce_patient_activity();
+
+-- The results family. results has no patient FK (0051): its patients are
+-- whoever its result_test_requests rows point at; an unlinked row is inert.
+drop trigger if exists a_lifecycle_guard on public.results;
+create trigger a_lifecycle_guard
+  before insert or update or delete on public.results
+  for each row execute function public.enforce_patient_activity();
+
+drop trigger if exists a_lifecycle_guard on public.result_test_requests;
+create trigger a_lifecycle_guard
+  before insert or update or delete on public.result_test_requests
+  for each row execute function public.enforce_patient_activity();
+
+drop trigger if exists a_lifecycle_guard on public.result_values;
+create trigger a_lifecycle_guard
+  before insert or update or delete on public.result_values
+  for each row execute function public.enforce_patient_activity();
+
+drop trigger if exists a_lifecycle_guard on public.result_amendments;
+create trigger a_lifecycle_guard
+  before insert or update or delete on public.result_amendments
+  for each row execute function public.enforce_patient_activity();
+
+drop trigger if exists a_lifecycle_guard on public.critical_alerts;
+create trigger a_lifecycle_guard
+  before insert or update or delete on public.critical_alerts
+  for each row execute function public.enforce_patient_activity();
