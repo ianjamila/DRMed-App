@@ -11,6 +11,7 @@ import { requireAdminStaff } from "@/lib/auth/require-admin";
 import { runUndoSteps, undoMergeSteps } from "@/lib/patients/undo-merge-steps";
 import { sendEmail } from "@/lib/notifications/email";
 import { checkPatientRecipient } from "@/lib/notifications/active-patient-recipient";
+import { auditSkippedInactiveRecipient } from "@/lib/notifications/inactive-recipient-audit";
 import {
   renderEmailShell,
   emailParagraph,
@@ -284,6 +285,15 @@ export async function mergePatientsAction(
   // send, and its on-file email (already carrying whatever `fill` copied over
   // above) is the address of record — never the earlier `keep`/`fill` values.
   const recipient = await checkPatientRecipient(admin, keep_id);
+  if (recipient.kind === "inactive") {
+    await auditSkippedInactiveRecipient({
+      sender: "patient-merge",
+      patientId: keep_id,
+      reason: recipient.reason,
+      resourceType: "patient",
+      resourceId: keep_id,
+    });
+  }
   const keptEmail = recipient.kind === "active" ? (recipient.patient.email ?? fill.email ?? null) : null;
   const mergeEmail = keptEmail
     ? await sendEmail({
