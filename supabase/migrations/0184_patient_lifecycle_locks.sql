@@ -2294,3 +2294,253 @@ $$;
 
 revoke all on function public.result_create_linked(uuid, uuid[], text, uuid, text, int, text) from public, anon, authenticated;
 grant execute on function public.result_create_linked(uuid, uuid[], text, uuid, text, int, text) to service_role;
+
+-- ---------------------------------------------------------------------------
+-- (8) record_hmo_settlement — what recordHmoSettlementAction did as N+1
+-- PostgREST inserts with a best-effort compensating delete (whose own errors
+-- were never checked): one hmo payment per visit, then that visit's
+-- allocations, in ONE transaction. The whole patient set is locked (shared,
+-- sorted) first, then the items are row-locked in id order — that row lock
+-- is what serialises competing allocations on one item; patient locks do not
+-- serialise settlements of different patients in one batch. A deleted
+-- patient's item refuses the whole call (restore first); a mixed batch whose
+-- OTHER items belong to deleted patients is fine. p_received_at receives the
+-- same value the action used to write to payments.received_at. Lock order:
+-- patient locks → the BATCH row (two settlements of one batch serialise, so
+-- the rollup never misses the other one's items) → the items in id order.
+-- All money is normalised to integer centavos before any comparison.
+-- ---------------------------------------------------------------------------
+create or replace function public.record_hmo_settlement(
+  p_actor            uuid,
+  p_batch_id         uuid,
+  p_total_amount_php numeric,
+  p_received_at      timestamptz,
+  p_items            jsonb,
+  p_bank_reference   text  default null,
+  p_context          jsonb default null
+)
+returns jsonb
+language plpgsql
+volatile
+security definer
+set search_path = pg_catalog, public, pg_temp
+as $$
+declare
+  v_ip          inet;
+  v_items       uuid[];
+  v_sum_c       bigint;   -- centavos
+  v_patients    uuid[];
+  v_payment     uuid;
+  v_payment_ids uuid[] := '{}';
+  v_alloc       int := 0;
+  v_n           int;
+  v_ref         text := nullif(btrim(coalesce(p_bank_reference, '')), '');
+  r             record;
+begin
+  if p_actor is null or not exists (
+    select 1 from public.staff_profiles s
+     where s.id = p_actor and s.role = 'admin' and s.is_active and s.deleted_at is null
+  ) then
+    raise exception 'only an active admin can record an HMO settlement' using errcode = '42501';
+  end if;
+  if p_context is not null and (
+       jsonb_typeof(p_context) <> 'object'
+       or exists (select 1 from jsonb_object_keys(p_context) k where k not in ('ip', 'user_agent'))) then
+    raise exception 'unexpected audit context' using errcode = '22023';
+  end if;
+  begin
+    v_ip := nullif(p_context ->> 'ip', '')::inet;
+  exception when invalid_text_representation then
+    v_ip := null;
+  end;
+  if jsonb_typeof(p_items) is distinct from 'array' or jsonb_array_length(p_items) = 0 then
+    raise exception 'choose at least one claim item' using errcode = '22023';
+  end if;
+  if exists (select 1 from jsonb_array_elements(p_items) x
+              where nullif(x ->> 'item_id', '') is null
+                 or coalesce((x ->> 'amount_php')::numeric, 0) <= 0) then
+    raise exception 'every claim item needs an amount above zero' using errcode = '22023';
+  end if;
+  -- Money in integer CENTAVOS (the app sends JS numbers).
+  select array_agg((x ->> 'item_id')::uuid), sum(round((x ->> 'amount_php')::numeric * 100))::bigint
+    into v_items, v_sum_c
+    from jsonb_array_elements(p_items) x;
+  if cardinality(public.lifecycle_norm(v_items)) <> cardinality(v_items) then
+    raise exception 'a claim item is listed twice' using errcode = '22023';
+  end if;
+  if p_total_amount_php is null or v_sum_c <> round(p_total_amount_php * 100)::bigint then
+    raise exception 'the item amounts (%) must add up to the total (%)', v_sum_c / 100.0, round(p_total_amount_php, 2)
+      using errcode = '22023';
+  end if;
+
+  v_patients := public.lifecycle_norm(array_remove(public.lifecycle_patients_of_hmo_items(v_items), null));
+  perform public.lifecycle_lock_and_assert(v_patients, false);
+
+  -- The BATCH row next (Codex plan review P2-5): two settlements of one
+  -- batch serialise here, so the second one's rollup sees the first one's
+  -- items paid. Then the items, in id order (competing allocations on one
+  -- item serialise on these).
+  perform 1 from public.hmo_claim_batches b where b.id = p_batch_id for no key update;
+  if not found then
+    raise exception 'this claim batch no longer exists — reload the page' using errcode = '22023';
+  end if;
+  perform 1 from public.hmo_claim_items i where i.id = any(v_items) order by i.id for update;
+  if (select count(*) from public.hmo_claim_items i where i.id = any(v_items)) <> cardinality(v_items) then
+    raise exception 'some claim items were not found — reload the batch' using errcode = '22023';
+  end if;
+  if exists (select 1 from public.hmo_claim_items i where i.id = any(v_items) and i.batch_id is distinct from p_batch_id) then
+    raise exception 'all items must belong to this batch' using errcode = '22023';
+  end if;
+  if public.lifecycle_norm(array_remove(public.lifecycle_patients_of_hmo_items(v_items), null))
+       is distinct from v_patients then
+    raise exception 'a claim item''s patient changed while the settlement was being saved — try again'
+      using errcode = 'P0072';
+  end if;
+
+  for r in
+    select tr.visit_id,
+           sum(round((x ->> 'amount_php')::numeric * 100))::bigint / 100.0 as amount,
+           array_agg(i.id) as item_ids
+      from jsonb_array_elements(p_items) x
+      join public.hmo_claim_items i on i.id = (x ->> 'item_id')::uuid
+      join public.test_requests tr on tr.id = i.test_request_id
+     group by tr.visit_id
+     order by tr.visit_id
+  loop
+    insert into public.payments (visit_id, amount_php, method, reference_number, received_at, received_by)
+    values (r.visit_id, r.amount, 'hmo', v_ref, p_received_at, p_actor)
+    returning id into v_payment;
+    v_payment_ids := v_payment_ids || v_payment;
+
+    insert into public.hmo_payment_allocations (payment_id, item_id, amount_php)
+    select v_payment, (x ->> 'item_id')::uuid, round((x ->> 'amount_php')::numeric, 2)
+      from jsonb_array_elements(p_items) x
+     where (x ->> 'item_id')::uuid = any(r.item_ids);
+    get diagnostics v_n = row_count;
+    v_alloc := v_alloc + v_n;
+  end loop;
+
+  insert into public.audit_log (actor_id, actor_type, action, resource_type, resource_id, metadata,
+                                ip_address, user_agent)
+  values (p_actor, 'staff', 'hmo_settlement.recorded', 'hmo_claim_batch', p_batch_id,
+          jsonb_build_object('total_amount_php', round(p_total_amount_php, 2),
+                             'payment_count', cardinality(v_payment_ids),
+                             'allocation_count', v_alloc,
+                             'payment_ids', to_jsonb(v_payment_ids),
+                             'bank_reference', v_ref),
+          v_ip, left(nullif(p_context ->> 'user_agent', ''), 512));
+
+  return jsonb_build_object('payment_ids', to_jsonb(v_payment_ids), 'allocation_count', v_alloc);
+end;
+$$;
+
+revoke all on function public.record_hmo_settlement(uuid, uuid, numeric, timestamptz, jsonb, text, jsonb) from public, anon, authenticated;
+grant execute on function public.record_hmo_settlement(uuid, uuid, numeric, timestamptz, jsonb, text, jsonb) to service_role;
+
+-- ---------------------------------------------------------------------------
+-- (8b) recompute_hmo_batch_status — 0034's body (lines ~383-430) with ONE
+-- change: the batch row is locked (FOR NO KEY UPDATE) before the items are
+-- read. Before, two transactions resolving the LAST two items of a batch
+-- each saw the other's item still open (uncommitted) and returned — both
+-- committed and the batch stayed 'submitted' for good (Codex plan review
+-- P2-5). Now the second waits for the first's commit and, as a volatile
+-- plpgsql function, reads the items with a fresh snapshot after the wait.
+-- NO KEY UPDATE does not conflict with the KEY SHARE an item insert's FK
+-- check takes on the batch. search_path pinned; SECURITY DEFINER and the
+-- EXECUTE ACL restated exactly as Task 0 Step 6 read them from prod.
+-- ---------------------------------------------------------------------------
+create or replace function public.recompute_hmo_batch_status(p_batch_id uuid)
+returns void
+language plpgsql
+security definer
+set search_path = pg_catalog, public, pg_temp
+as $$
+declare
+  v_current        text;
+  v_total_items    int;
+  v_resolved_items int;
+  v_total_billed   numeric;
+  v_total_paid     numeric;
+begin
+  select status into v_current
+    from public.hmo_claim_batches
+   where id = p_batch_id
+     for no key update;  -- 0184: serialise the rollup per batch
+
+  if v_current in ('draft', 'voided') then
+    return;
+  end if;
+
+  select
+    count(*),
+    count(*) filter (
+      where paid_amount_php + patient_billed_amount_php + written_off_amount_php = billed_amount_php
+    ),
+    coalesce(sum(billed_amount_php), 0),
+    coalesce(sum(paid_amount_php), 0)
+    into v_total_items, v_resolved_items, v_total_billed, v_total_paid
+    from public.hmo_claim_items
+   where batch_id = p_batch_id;
+
+  if v_total_items = 0 or v_resolved_items < v_total_items then
+    return;
+  end if;
+
+  if v_total_paid = v_total_billed then
+    update public.hmo_claim_batches set status = 'paid', updated_at = now() where id = p_batch_id;
+  elsif v_total_paid = 0 then
+    update public.hmo_claim_batches set status = 'rejected', updated_at = now() where id = p_batch_id;
+  else
+    update public.hmo_claim_batches set status = 'partial_paid', updated_at = now() where id = p_batch_id;
+  end if;
+end;
+$$;
+
+revoke all on function public.recompute_hmo_batch_status(p_batch_id uuid) from public, anon, authenticated;
+grant execute on function public.recompute_hmo_batch_status(p_batch_id uuid) to service_role;
+
+-- ---------------------------------------------------------------------------
+-- (8c) One HMO lock order: the BATCH row before any ITEM row (Codex recheck
+-- P2-2). record_hmo_settlement locks batch → items. A plain allocation or
+-- resolution write used to go item-first: its AFTER trigger updates the item
+-- (0034 recompute_hmo_item_paid_amount), and only then does the rollup (8b)
+-- lock the batch — the inverse order, so an allocation holding item I and
+-- waiting for batch B could deadlock with a settlement holding B and waiting
+-- for I, on a single item. This BEFORE trigger locks the batch of the row's
+-- item(s) (old and new, id order) first. It sorts after a_lifecycle_guard
+-- (advisory lock still first) and before every tg_*/trg_* trigger, and the
+-- item update happens in AFTER triggers, so batch → item holds on every
+-- allocation/resolution path. Remaining item-first writers are direct
+-- hmo_claim_items UPDATE/DELETE statements (the tuple is locked before any
+-- trigger runs): admin batch-editing actions, which Task 24 retries once on
+-- 40P01. SECURITY DEFINER (RLS must not hide the batch), EXECUTE revoked.
+-- ---------------------------------------------------------------------------
+create or replace function public.lock_hmo_batch_before_items()
+returns trigger
+language plpgsql
+security definer
+set search_path = pg_catalog, public, pg_temp
+as $$
+begin
+  perform 1
+     from public.hmo_claim_batches b
+    where b.id in (select i.batch_id from public.hmo_claim_items i
+                    where i.id in (nullif(case when tg_op <> 'INSERT' then to_jsonb(old) ->> 'item_id' end, '')::uuid,
+                                   nullif(case when tg_op <> 'DELETE' then to_jsonb(new) ->> 'item_id' end, '')::uuid))
+    order by b.id
+      for no key update of b;
+  return case when tg_op = 'DELETE' then old else new end;
+end;
+$$;
+
+revoke all on function public.lock_hmo_batch_before_items() from public, anon, authenticated, service_role;
+
+drop trigger if exists a_lifecycle_hmo_batch_lock on public.hmo_payment_allocations;
+create trigger a_lifecycle_hmo_batch_lock
+  before insert or update or delete on public.hmo_payment_allocations
+  for each row execute function public.lock_hmo_batch_before_items();
+
+drop trigger if exists a_lifecycle_hmo_batch_lock on public.hmo_claim_resolutions;
+create trigger a_lifecycle_hmo_batch_lock
+  before insert or update or delete on public.hmo_claim_resolutions
+  for each row execute function public.lock_hmo_batch_before_items();

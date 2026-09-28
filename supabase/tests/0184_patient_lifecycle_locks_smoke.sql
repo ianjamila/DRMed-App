@@ -1593,4 +1593,110 @@ begin
 end
 $s10$;
 
+-- --- s11: record_hmo_settlement ------------------------------------------------------------
+do $s11$
+declare
+  k_admin constant uuid := 'a0000000-0000-4000-8000-000000000184';
+  k_rec   constant uuid := 'a1000000-0000-4000-8000-000000000184';
+  a uuid := pg_temp.mk_patient('S11A');
+  b uuid := pg_temp.mk_patient('S11B');
+  d uuid := pg_temp.mk_patient('S11D');
+  va uuid; vb uuid; vd uuid;
+  ia1 uuid; ia2 uuid; ib uuid; id_ uuid; iother uuid; ic1 uuid; ic2 uuid;
+  bat uuid; bat_other uuid; bat_c uuid;
+  res jsonb; n int;
+  def text; lp int; bp int; ip int;
+begin
+  va := pg_temp.mk_visit(a, true); vb := pg_temp.mk_visit(b, true); vd := pg_temp.mk_visit(d, true);
+  insert into public.hmo_claim_batches (provider_id, status) values ('b0000000-0000-4000-8000-000000000184', 'submitted') returning id into bat;
+  insert into public.hmo_claim_batches (provider_id, status) values ('b0000000-0000-4000-8000-000000000184', 'submitted') returning id into bat_other;
+  insert into public.hmo_claim_items (batch_id, test_request_id, billed_amount_php) values
+    (bat, pg_temp.mk_line(va, 'released', 300), 300) returning id into ia1;
+  insert into public.hmo_claim_items (batch_id, test_request_id, billed_amount_php) values
+    (bat, pg_temp.mk_line(va, 'released', 200), 200) returning id into ia2;
+  insert into public.hmo_claim_items (batch_id, test_request_id, billed_amount_php) values
+    (bat, pg_temp.mk_line(vb, 'released', 500), 500) returning id into ib;
+  insert into public.hmo_claim_items (batch_id, test_request_id, billed_amount_php) values
+    (bat, pg_temp.mk_line(vd, 'released', 100), 100) returning id into id_;
+  insert into public.hmo_claim_items (batch_id, test_request_id, billed_amount_php) values
+    (bat_other, pg_temp.mk_line(vb, 'released', 50), 50) returning id into iother;
+  perform pg_temp.kill(d);
+
+  res := public.record_hmo_settlement(k_admin, bat, 1000, now(), jsonb_build_array(
+    jsonb_build_object('item_id', ia1, 'amount_php', 300),
+    jsonb_build_object('item_id', ia2, 'amount_php', 200),
+    jsonb_build_object('item_id', ib,  'amount_php', 500)), ' BANK-1 ', '{"ip":"203.0.113.7"}');
+  perform pg_temp.expect('s11.1 one payment per visit, one allocation per item',
+    jsonb_array_length(res -> 'payment_ids')::text || '|' || (res ->> 'allocation_count'), '2|3');
+  perform pg_temp.expect('s11.2 payment amounts per visit',
+    (select string_agg(amount_php::text, ',' order by amount_php) from public.payments where visit_id in (va, vb) and method = 'hmo'), '500.00,500.00');
+  perform pg_temp.expect('s11.3 items rolled up (paid = billed)',
+    (select string_agg((paid_amount_php = billed_amount_php)::text, ',') from public.hmo_claim_items where id in (ia1, ia2, ib)), 'true,true,true');
+  perform pg_temp.expect('s11.4 reference trimmed, audit written',
+    (select reference_number from public.payments where id = (res -> 'payment_ids' ->> 0)::uuid)
+      || '|' || (select count(*)::text from public.audit_log where action = 'hmo_settlement.recorded' and resource_id = bat), 'BANK-1|1');
+
+  n := (select count(*) from public.payments where method = 'hmo');
+  perform pg_temp.expect('s11.5 an item of a deleted patient refuses the whole settlement',
+    pg_temp.state_of(format($q$select public.record_hmo_settlement(%L, %L, 100, now(), jsonb_build_array(jsonb_build_object('item_id', %L, 'amount_php', 100)))$q$, k_admin, bat, id_)), 'P0058');
+  perform pg_temp.expect('s11.6 an item from another batch',
+    pg_temp.state_of(format($q$select public.record_hmo_settlement(%L, %L, 50, now(), jsonb_build_array(jsonb_build_object('item_id', %L, 'amount_php', 50)))$q$, k_admin, bat, iother)), '22023');
+  perform pg_temp.expect('s11.7 amounts that do not add up to the total',
+    pg_temp.state_of(format($q$select public.record_hmo_settlement(%L, %L, 999, now(), jsonb_build_array(jsonb_build_object('item_id', %L, 'amount_php', 50)))$q$, k_admin, bat_other, iother)), '22023');
+  perform pg_temp.expect('s11.8 the same item twice',
+    pg_temp.state_of(format($q$select public.record_hmo_settlement(%L, %L, 50, now(), jsonb_build_array(jsonb_build_object('item_id', %L, 'amount_php', 25), jsonb_build_object('item_id', %L, 'amount_php', 25)))$q$, k_admin, bat_other, iother, iother)), '22023');
+  perform pg_temp.expect('s11.9 non-admin actor',
+    pg_temp.state_of(format($q$select public.record_hmo_settlement(%L, %L, 50, now(), jsonb_build_array(jsonb_build_object('item_id', %L, 'amount_php', 50)))$q$, k_rec, bat_other, iother)), '42501');
+  -- Over-allocation on the LAST visit (P0012) must roll back the earlier visit's payment too.
+  insert into public.hmo_claim_items (batch_id, test_request_id, billed_amount_php) values
+    (bat_other, pg_temp.mk_line(va, 'released', 10), 10) returning id into ia1;
+  perform pg_temp.expect('s11.10 an over-allocation on a later visit fails the whole call',
+    pg_temp.state_of(format($q$select public.record_hmo_settlement(%L, %L, 90, now(), jsonb_build_array(jsonb_build_object('item_id', %L, 'amount_php', 50), jsonb_build_object('item_id', %L, 'amount_php', 40)))$q$, k_admin, bat_other, iother, ia1)), 'P0012');
+  perform pg_temp.expect('s11.11 …leaving no payment behind (the old compensating loop is gone)',
+    (select count(*) from public.payments where method = 'hmo')::text, n::text);
+  -- Centavos (Codex plan review P2-4): amounts arrive as JS floats.
+  insert into public.hmo_claim_batches (provider_id, status) values ('b0000000-0000-4000-8000-000000000184', 'submitted') returning id into bat_c;
+  insert into public.hmo_claim_items (batch_id, test_request_id, billed_amount_php) values
+    (bat_c, pg_temp.mk_line(va, 'released', 100.10), 100.10) returning id into ic1;
+  insert into public.hmo_claim_items (batch_id, test_request_id, billed_amount_php) values
+    (bat_c, pg_temp.mk_line(va, 'released', 200.20), 200.20) returning id into ic2;
+  res := public.record_hmo_settlement(k_admin, bat_c, 300.29999999999995, now(), jsonb_build_array(
+    jsonb_build_object('item_id', ic1, 'amount_php', 100.10000000000001),
+    jsonb_build_object('item_id', ic2, 'amount_php', 200.2)));
+  perform pg_temp.expect('s11.12a fractional amounts: one payment of 300.30, allocations 100.10 + 200.20, batch paid',
+    (select amount_php::text from public.payments where id = (res -> 'payment_ids' ->> 0)::uuid)
+      || '|' || (select string_agg(amount_php::text, ',' order by amount_php) from public.hmo_payment_allocations where item_id in (ic1, ic2))
+      || '|' || (select status from public.hmo_claim_batches where id = bat_c),
+    '300.30|100.10,200.20|paid');
+
+  -- Batch-level serialisation (Codex plan review P2-5): text order, every position > 0.
+  def := lower(pg_get_functiondef('public.record_hmo_settlement(uuid,uuid,numeric,timestamp with time zone,jsonb,text,jsonb)'::regprocedure));
+  lp := position('lifecycle_lock_and_assert' in def);
+  bp := position('from public.hmo_claim_batches b where b.id = p_batch_id for no key update' in def);
+  ip := position('order by i.id for update' in def);
+  perform pg_temp.expect('s11.12b settlement: patient locks → batch row → item rows',
+    (lp > 0 and bp > 0 and ip > 0 and lp < bp and bp < ip)::text, 'true');
+  def := lower(pg_get_functiondef('public.recompute_hmo_batch_status(uuid)'::regprocedure));
+  bp := position('for no key update' in def);
+  ip := position('from public.hmo_claim_items' in def);
+  perform pg_temp.expect('s11.12c the rollup locks the batch row before it reads the items',
+    (bp > 0 and ip > 0 and bp < ip)::text, 'true');
+
+  perform pg_temp.expect('s11.12d allocations and resolutions: lifecycle guard, then the batch lock, then everything else',
+    (select string_agg(rel || ':' || trg, ',' order by rel) from (
+       select c.relname as rel,
+              (select string_agg(t.tgname, '>' order by t.tgname collate "C") from (
+                 select t2.tgname from pg_trigger t2
+                  where t2.tgrelid = c.oid and not t2.tgisinternal and (t2.tgtype & 2) = 2 and (t2.tgtype & 1) = 1
+                  order by t2.tgname collate "C" limit 2) t) as trg
+         from pg_class c where c.relnamespace = 'public'::regnamespace
+          and c.relname in ('hmo_payment_allocations', 'hmo_claim_resolutions')) s),
+    'hmo_claim_resolutions:a_lifecycle_guard>a_lifecycle_hmo_batch_lock,hmo_payment_allocations:a_lifecycle_guard>a_lifecycle_hmo_batch_lock');
+
+  perform pg_temp.expect('s11.12 EXECUTE service_role only',
+    (has_function_privilege('service_role', 'public.record_hmo_settlement(uuid,uuid,numeric,timestamp with time zone,jsonb,text,jsonb)', 'execute')
+     and not has_function_privilege('authenticated', 'public.record_hmo_settlement(uuid,uuid,numeric,timestamp with time zone,jsonb,text,jsonb)', 'execute'))::text, 'true');
+end
+$s11$;
+
 rollback;
