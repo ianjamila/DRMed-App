@@ -4,6 +4,7 @@ import {
   bucketAppointmentUndo,
   groupUndoSteps,
   planAppointmentUndo,
+  planHistoricHmoUndo,
   planQueueUndo,
   sameInstant,
   undoOutcomeMessage,
@@ -159,5 +160,107 @@ describe("undoOutcomeMessage", () => {
   });
   it("nothing came back", () => {
     expect(undoOutcomeMessage({ one: "test", many: "tests" }, { restored: 0, notRestored: [] })).toBe("Nothing was undone.");
+  });
+});
+
+describe("planHistoricHmoUndo", () => {
+  it("plans a billed-undo from the per-claim audit row", () => {
+    expect(
+      planHistoricHmoUndo([
+        {
+          resource_id: "c1",
+          action: "historic_hmo.claim_marked_billed",
+          metadata: { bulk_batch_id: "b1", billed_recorded_at: "2026-09-28T08:00:00Z" },
+        },
+      ]),
+    ).toEqual([{ kind: "billed", id: "c1", billedRecordedAt: "2026-09-28T08:00:00Z" }]);
+  });
+
+  it("plans a paid-undo carrying the JE id and every prior field", () => {
+    expect(
+      planHistoricHmoUndo([
+        {
+          resource_id: "c2",
+          action: "historic_hmo.claim_marked_paid",
+          metadata: {
+            bulk_batch_id: "b1",
+            journal_entry_id: "je1",
+            paid_recorded_at: "2026-09-28T08:05:00Z",
+            prior: {
+              status: "overdue",
+              date_paid: null,
+              or_number: "OR-1",
+              paid_payment_method: null,
+              paid_recorded_by_staff_id: null,
+              journal_entry_id: null,
+            },
+          },
+        },
+      ]),
+    ).toEqual([
+      {
+        kind: "paid",
+        id: "c2",
+        journalEntryId: "je1",
+        paidRecordedAt: "2026-09-28T08:05:00Z",
+        priorStatus: "overdue",
+        prior: {
+          date_paid: null,
+          or_number: "OR-1",
+          paid_payment_method: null,
+          paid_recorded_by_staff_id: null,
+          journal_entry_id: null,
+        },
+      },
+    ]);
+  });
+
+  it("plans a write-off undo carrying the JE id and the prior reason", () => {
+    expect(
+      planHistoricHmoUndo([
+        {
+          resource_id: "c3",
+          action: "historic_hmo.claim_written_off",
+          metadata: {
+            bulk_batch_id: "b1",
+            journal_entry_id: "je2",
+            wrote_off_at: "2026-09-28T08:10:00Z",
+            prior: { status: "pending", write_off_reason: null },
+          },
+        },
+      ]),
+    ).toEqual([
+      {
+        kind: "writeoff",
+        id: "c3",
+        journalEntryId: "je2",
+        wroteOffAt: "2026-09-28T08:10:00Z",
+        priorStatus: "pending",
+        prior: { write_off_reason: null },
+      },
+    ]);
+  });
+
+  it("ignores the pre-existing summary row (no bulk_batch_id / distinct action), duplicates, and rows missing what it needs to restore", () => {
+    expect(
+      planHistoricHmoUndo([
+        // The summary audit row the actions already wrote — same action name
+        // as before, no per-claim distinct action, must never be planned.
+        { resource_id: "c1", action: "historic_hmo.marked_billed", metadata: { claim_ids: ["c1"] } },
+        // Missing billed_recorded_at.
+        { resource_id: "c4", action: "historic_hmo.claim_marked_billed", metadata: {} },
+        // Missing journal_entry_id.
+        { resource_id: "c5", action: "historic_hmo.claim_marked_paid", metadata: { paid_recorded_at: "x", prior: { status: "pending" } } },
+        // Prior status not pending/overdue (already paid before — shouldn't happen, but don't plan it).
+        {
+          resource_id: "c6",
+          action: "historic_hmo.claim_marked_paid",
+          metadata: { journal_entry_id: "je", paid_recorded_at: "x", prior: { status: "paid" } },
+        },
+        // Duplicate resource_id — first-seen wins.
+        { resource_id: "c1", action: "historic_hmo.claim_marked_billed", metadata: { billed_recorded_at: "a" } },
+        { resource_id: "c1", action: "historic_hmo.claim_marked_billed", metadata: { billed_recorded_at: "b" } },
+      ]),
+    ).toEqual([{ kind: "billed", id: "c1", billedRecordedAt: "a" }]);
   });
 });

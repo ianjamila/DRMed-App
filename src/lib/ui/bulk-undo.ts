@@ -163,3 +163,105 @@ export function undoOutcomeMessage(
   if (r.notRestored.length === 0) return head;
   return [head, `Not undone (${r.notRestored.length}):`, ...r.notRestored.map((l) => `• ${l.label}: ${l.reason}`)].join("\n");
 }
+
+// ---------------------------------------------------------------------------
+// Historic HMO claims (owner 2026-09-28): Undo for the three historic-claim
+// bulk actions (Mark billed, Mark paid, Write off). Mark billed's undo is
+// unmarkHistoricClaimsBilledAction's own semantics — just clear the three
+// billed columns, predicated on the exact `billed_recorded_at` this batch
+// wrote. Paid/write-off undo additionally reverses the posted settlement /
+// write-off journal entry (via reverseJournalEntryBySource, keyed off
+// source_kind='history_import' + source_id=<claim id>) before putting the
+// claim's status back to whatever it was (pending/overdue) — the write
+// itself lives in actions.ts since it touches journal_entries; this only
+// plans which rows need which restore, from the per-claim audit rows the
+// three actions write (action names distinct from the pre-existing summary
+// row so a report counting actions doesn't double-count: "historic_hmo.
+// claim_marked_billed" / "claim_marked_paid" / "claim_written_off").
+const HISTORIC_HMO_PRIOR_STATUSES = new Set(["pending", "overdue"]);
+
+export type HistoricHmoUndoStep =
+  | { kind: "billed"; id: string; billedRecordedAt: string }
+  | {
+      kind: "paid";
+      id: string;
+      journalEntryId: string;
+      paidRecordedAt: string;
+      priorStatus: "pending" | "overdue";
+      prior: {
+        date_paid: string | null;
+        or_number: string | null;
+        paid_payment_method: string | null;
+        paid_recorded_by_staff_id: string | null;
+        journal_entry_id: string | null;
+      };
+    }
+  | {
+      kind: "writeoff";
+      id: string;
+      journalEntryId: string;
+      wroteOffAt: string;
+      priorStatus: "pending" | "overdue";
+      prior: { write_off_reason: string | null };
+    };
+
+function record(v: unknown): Record<string, unknown> {
+  return v && typeof v === "object" ? (v as Record<string, unknown>) : {};
+}
+
+export function planHistoricHmoUndo(rows: readonly AuditRowForUndo[]): HistoricHmoUndoStep[] {
+  const out: HistoricHmoUndoStep[] = [];
+  const seen = new Set<string>();
+  for (const row of rows) {
+    const id = row.resource_id;
+    if (!id || seen.has(id)) continue;
+    const m = row.metadata ?? {};
+    let step: HistoricHmoUndoStep | null = null;
+
+    if (row.action === "historic_hmo.claim_marked_billed") {
+      const billedRecordedAt = str(m.billed_recorded_at);
+      if (billedRecordedAt) step = { kind: "billed", id, billedRecordedAt };
+    } else if (row.action === "historic_hmo.claim_marked_paid") {
+      const journalEntryId = str(m.journal_entry_id);
+      const paidRecordedAt = str(m.paid_recorded_at);
+      const prior = record(m.prior);
+      const priorStatus = str(prior.status);
+      if (journalEntryId && paidRecordedAt && priorStatus && HISTORIC_HMO_PRIOR_STATUSES.has(priorStatus)) {
+        step = {
+          kind: "paid",
+          id,
+          journalEntryId,
+          paidRecordedAt,
+          priorStatus: priorStatus as "pending" | "overdue",
+          prior: {
+            date_paid: str(prior.date_paid),
+            or_number: str(prior.or_number),
+            paid_payment_method: str(prior.paid_payment_method),
+            paid_recorded_by_staff_id: str(prior.paid_recorded_by_staff_id),
+            journal_entry_id: str(prior.journal_entry_id),
+          },
+        };
+      }
+    } else if (row.action === "historic_hmo.claim_written_off") {
+      const journalEntryId = str(m.journal_entry_id);
+      const wroteOffAt = str(m.wrote_off_at);
+      const prior = record(m.prior);
+      const priorStatus = str(prior.status);
+      if (journalEntryId && wroteOffAt && priorStatus && HISTORIC_HMO_PRIOR_STATUSES.has(priorStatus)) {
+        step = {
+          kind: "writeoff",
+          id,
+          journalEntryId,
+          wroteOffAt,
+          priorStatus: priorStatus as "pending" | "overdue",
+          prior: { write_off_reason: str(prior.write_off_reason) },
+        };
+      }
+    }
+
+    if (!step) continue;
+    seen.add(id);
+    out.push(step);
+  }
+  return out;
+}

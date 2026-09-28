@@ -33,6 +33,17 @@ import {
   assertResolutionPatientActive,
   assertPaymentPatientActive,
 } from "@/lib/patients/require-active";
+import { reverseJournalEntryBySource } from "@/lib/accounting/journal-entry";
+import { loadOwnBatchRows } from "@/lib/audit/bulk-batch";
+import {
+  BULK_UNDO_VIA,
+  CHANGED_SINCE_REASON,
+  UNDO_ALREADY,
+  UNDO_EXPIRED,
+  planHistoricHmoUndo,
+  sameInstant,
+  type BulkUndoResult,
+} from "@/lib/ui/bulk-undo";
 
 export type ActionResult<T = void> = { ok: true; data?: T } | { ok: false; error: string };
 
@@ -850,7 +861,7 @@ const MarkHistoricBilledSchema = z.object({
 
 export async function markHistoricClaimsBilledAction(
   input: unknown,
-): Promise<ActionResult<{ updated: number }>> {
+): Promise<ActionResult<{ updated: number; batchId: string }>> {
   const session = await requireAdminStaff();
   const parsed = MarkHistoricBilledSchema.safeParse(input);
   if (!parsed.success) {
@@ -870,6 +881,7 @@ export async function markHistoricClaimsBilledAction(
   }
 
   const recordedAt = new Date().toISOString();
+  const batchId = crypto.randomUUID();
 
   const { data: updated, error } = await admin
     .from("historic_hmo_claims" as never)
@@ -885,7 +897,8 @@ export async function markHistoricClaimsBilledAction(
   if (error) {
     return { ok: false, error: translatePgError(error) };
   }
-  const updatedCount = Array.isArray(updated) ? updated.length : 0;
+  const updatedRows = (updated ?? []) as Array<{ id: string }>;
+  const updatedCount = updatedRows.length;
   if (updatedCount === 0) {
     return {
       ok: false,
@@ -909,9 +922,24 @@ export async function markHistoricClaimsBilledAction(
     },
     ...meta,
   });
+  // 10-minute Undo (owner 2026-09-28): one row per claim ACTUALLY changed
+  // (never the requested set — a claim already billed is silently skipped
+  // above), distinct action name from the summary row above so a report
+  // counting "historic_hmo.marked_billed" doesn't double-count.
+  for (const row of updatedRows) {
+    await audit({
+      actor_id: session.user_id,
+      actor_type: "staff",
+      action: "historic_hmo.claim_marked_billed",
+      resource_type: "historic_hmo_claim",
+      resource_id: row.id,
+      metadata: { bulk_batch_id: batchId, billed_recorded_at: recordedAt },
+      ...meta,
+    });
+  }
 
   revalidatePath(BASE_PATH);
-  return { ok: true, data: { updated: updatedCount } };
+  return { ok: true, data: { updated: updatedCount, batchId } };
 }
 
 // ----------------------------------------------------------------
@@ -973,7 +1001,7 @@ const MarkHistoricPaidSchema = z.object({
 
 export async function markHistoricClaimsPaidAction(
   input: unknown,
-): Promise<ActionResult<{ updated: number }>> {
+): Promise<ActionResult<{ updated: number; batchId: string }>> {
   const session = await requireAdminStaff();
   const parsed = MarkHistoricPaidSchema.safeParse(input);
   if (!parsed.success) {
@@ -1014,7 +1042,9 @@ export async function markHistoricClaimsPaidAction(
     return { ok: false, error: "CoA mapping missing for 1110 AR-HMO." };
   }
 
-  // Fetch the claims so we know amounts + provider info for the JEs.
+  // Fetch the claims so we know amounts + provider info for the JEs, and
+  // (for Undo) the exact prior values of every field this action is about to
+  // overwrite.
   type ClaimRow = {
     id: string;
     final_amount_php: number;
@@ -1022,10 +1052,17 @@ export async function markHistoricClaimsPaidAction(
     hmo_provider: string;
     patient_name: string;
     service_description: string | null;
+    date_paid: string | null;
+    or_number: string | null;
+    paid_payment_method: string | null;
+    paid_recorded_by_staff_id: string | null;
+    journal_entry_id: string | null;
   };
   const { data: claims, error: claimsErr } = await admin
     .from("historic_hmo_claims" as never)
-    .select("id, final_amount_php, status, hmo_provider, patient_name, service_description")
+    .select(
+      "id, final_amount_php, status, hmo_provider, patient_name, service_description, date_paid, or_number, paid_payment_method, paid_recorded_by_staff_id, journal_entry_id",
+    )
     .in("id", parsed.data.claim_ids)
     .returns<ClaimRow[]>();
   if (claimsErr || !claims) {
@@ -1037,6 +1074,8 @@ export async function markHistoricClaimsPaidAction(
   }
 
   const runStamp = new Date().toISOString();
+  const batchId = crypto.randomUUID();
+  const meta = await auditMeta();
   let posted = 0, failed = 0;
   for (const c of eligible) {
     const fy = Number(parsed.data.date_paid.slice(0, 4));
@@ -1056,7 +1095,16 @@ export async function markHistoricClaimsPaidAction(
         notes,
         status: "draft",
         source_kind: "history_import" as never,
-        source_id: null,
+        // The claim's own id, not null (design decision for 10-minute Undo,
+        // 2026-09-28): reverseJournalEntryBySource looks a JE up by
+        // (source_kind, source_id), and multiple claims settling in the same
+        // batch would otherwise all share (history_import, null) — a lookup
+        // by source_id=null could match the WRONG claim's entry. The
+        // journal_entries_one_posted_per_source partial unique index (0037)
+        // excludes rows with source_id is null, so this doesn't collide with
+        // any other row; each claim id is unique, so it can't collide with
+        // itself either.
+        source_id: c.id,
       })
       .select("id")
       .single();
@@ -1091,9 +1139,34 @@ export async function markHistoricClaimsPaidAction(
       .eq("id", c.id);
     if (updErr) { failed++; continue; }
     posted++;
+
+    // 10-minute Undo (owner 2026-09-28): one row per claim actually paid,
+    // carrying the JE id + exactly the prior field values Undo restores —
+    // distinct action name from the summary row below so a report counting
+    // "historic_hmo.marked_paid" doesn't double-count.
+    await audit({
+      actor_id: session.user_id,
+      actor_type: "staff",
+      action: "historic_hmo.claim_marked_paid",
+      resource_type: "historic_hmo_claim",
+      resource_id: c.id,
+      metadata: {
+        bulk_batch_id: batchId,
+        journal_entry_id: je.id,
+        paid_recorded_at: runStamp,
+        prior: {
+          status: c.status,
+          date_paid: c.date_paid,
+          or_number: c.or_number,
+          paid_payment_method: c.paid_payment_method,
+          paid_recorded_by_staff_id: c.paid_recorded_by_staff_id,
+          journal_entry_id: c.journal_entry_id,
+        },
+      },
+      ...meta,
+    });
   }
 
-  const meta = await auditMeta();
   await audit({
     actor_id: session.user_id,
     actor_type: "staff",
@@ -1112,7 +1185,7 @@ export async function markHistoricClaimsPaidAction(
   });
 
   revalidatePath(BASE_PATH);
-  return { ok: true, data: { updated: posted } };
+  return { ok: true, data: { updated: posted, batchId } };
 }
 
 // ----------------------------------------------------------------
@@ -1128,7 +1201,7 @@ const WriteOffHistoricSchema = z.object({
 
 export async function writeOffHistoricClaimsAction(
   input: unknown,
-): Promise<ActionResult<{ updated: number }>> {
+): Promise<ActionResult<{ updated: number; batchId: string }>> {
   const session = await requireAdminStaff();
   const parsed = WriteOffHistoricSchema.safeParse(input);
   if (!parsed.success) {
@@ -1153,10 +1226,11 @@ export async function writeOffHistoricClaimsAction(
     hmo_provider: string;
     patient_name: string;
     service_description: string | null;
+    write_off_reason: string | null;
   };
   const { data: claims, error: cErr } = await admin
     .from("historic_hmo_claims" as never)
-    .select("id, final_amount_php, status, hmo_provider, patient_name, service_description")
+    .select("id, final_amount_php, status, hmo_provider, patient_name, service_description, write_off_reason")
     .in("id", parsed.data.claim_ids)
     .returns<ClaimRow[]>();
   if (cErr || !claims) {
@@ -1176,6 +1250,8 @@ export async function writeOffHistoricClaimsAction(
   }
 
   const runStamp = new Date().toISOString();
+  const batchId = crypto.randomUUID();
+  const meta = await auditMeta();
   let posted = 0, failed = 0;
   for (const c of eligible) {
     const fy = Number(parsed.data.write_off_date.slice(0, 4));
@@ -1195,7 +1271,10 @@ export async function writeOffHistoricClaimsAction(
         notes,
         status: "draft",
         source_kind: "history_import" as never,
-        source_id: null,
+        // The claim's own id — see the matching comment in
+        // markHistoricClaimsPaidAction above; same reasoning, same
+        // partial-unique-index exemption for a non-null source_id.
+        source_id: c.id,
       })
       .select("id")
       .single();
@@ -1228,9 +1307,25 @@ export async function writeOffHistoricClaimsAction(
       .eq("id", c.id);
     if (updErr) { failed++; continue; }
     posted++;
+
+    // 10-minute Undo (owner 2026-09-28): see the matching comment in
+    // markHistoricClaimsPaidAction above.
+    await audit({
+      actor_id: session.user_id,
+      actor_type: "staff",
+      action: "historic_hmo.claim_written_off",
+      resource_type: "historic_hmo_claim",
+      resource_id: c.id,
+      metadata: {
+        bulk_batch_id: batchId,
+        journal_entry_id: je.id,
+        wrote_off_at: runStamp,
+        prior: { status: c.status, write_off_reason: c.write_off_reason },
+      },
+      ...meta,
+    });
   }
 
-  const meta = await auditMeta();
   await audit({
     actor_id: session.user_id,
     actor_type: "staff",
@@ -1247,7 +1342,253 @@ export async function writeOffHistoricClaimsAction(
   });
 
   revalidatePath(BASE_PATH);
-  return { ok: true, data: { updated: posted } };
+  return { ok: true, data: { updated: posted, batchId } };
+}
+
+// ----------------------------------------------------------------
+// Undo: Mark billed / Mark paid / Write off (owner 2026-09-28)
+// ----------------------------------------------------------------
+//
+// 10-minute, server-checked Undo for the three historic-claims bulk actions
+// above, following the same shape as undoBulkAppointmentsAction /
+// undoBulkQueueAction: same role gate as the actions it undoes, read back
+// what the batch actually changed from the audit rows it wrote (never from
+// the browser), refuse anything changed again since by anyone (changedSince,
+// whole claim skipped), and predicate every write on the exact state the
+// action left the row in.
+//
+// Mark-billed undo is unmarkHistoricClaimsBilledAction's own semantics.
+// Mark-paid / write-off undo additionally reverses the posted JE first —
+// checking the claim is still exactly as the action left it, THEN reversing
+// the JE, THEN restoring the claim row, in that order, so a failure never
+// leaves an ambiguous state: if the claim-state check fails nothing is
+// touched; if the JE reversal fails the claim is untouched; only if the
+// final claim-restore fails after a successful reversal is the claim left
+// "reversed in the books but not put back" — reported by name rather than
+// silently swallowed, with its own audit row so it's traceable afterwards.
+
+const UndoHistoricHmoBatchSchema = z.object({ batchId: z.string().uuid() });
+
+type HmoUndoCurrent = {
+  id: string;
+  status: string;
+  paid_recorded_at: string | null;
+  journal_entry_id: string | null;
+  wrote_off_at: string | null;
+  wrote_off_journal_entry_id: string | null;
+};
+
+export async function undoHistoricHmoBatchAction(input: unknown): Promise<BulkUndoResult> {
+  const session = await requireAdminStaff();
+  const parsed = UndoHistoricHmoBatchSchema.safeParse(input);
+  if (!parsed.success) return { ok: false, error: UNDO_EXPIRED };
+
+  const loaded = await loadOwnBatchRows({
+    actorId: session.user_id,
+    batchId: parsed.data.batchId,
+    resourceType: "historic_hmo_claim",
+    nowMs: Date.now(),
+  });
+  if (!loaded.ok) return { ok: false, error: loaded.error };
+  if (loaded.alreadyUndone) return { ok: false, error: UNDO_ALREADY };
+  const { changedSince } = loaded;
+
+  const steps = planHistoricHmoUndo(loaded.rows);
+  if (steps.length === 0) return { ok: false, error: UNDO_EXPIRED };
+
+  const admin = createAdminClient();
+  const undoBatchId = crypto.randomUUID();
+  const meta = await auditMeta();
+  const restoredIds: string[] = [];
+  const notRestored: Array<{ id: string; reason: string }> = [];
+
+  for (const step of steps) {
+    if (changedSince.has(step.id)) {
+      notRestored.push({ id: step.id, reason: CHANGED_SINCE_REASON });
+      continue;
+    }
+
+    if (step.kind === "billed") {
+      const { data, error } = await admin
+        .from("historic_hmo_claims" as never)
+        .update({ date_submitted: null, billed_by_staff_id: null, billed_recorded_at: null } as never)
+        .eq("id", step.id)
+        .eq("billed_recorded_at", step.billedRecordedAt) // exact predicate: only THIS batch's write
+        .select("id");
+      if (error || !data || (data as unknown[]).length === 0) {
+        notRestored.push({
+          id: step.id,
+          reason: error ? "could not be undone just now — try again" : CHANGED_SINCE_REASON,
+        });
+        continue;
+      }
+      restoredIds.push(step.id);
+      await audit({
+        actor_id: session.user_id,
+        actor_type: "staff",
+        action: "historic_hmo.unmarked_billed",
+        resource_type: "historic_hmo_claim",
+        resource_id: step.id,
+        metadata: { via: BULK_UNDO_VIA, undo_of_batch: parsed.data.batchId, bulk_batch_id: undoBatchId },
+        ...meta,
+      });
+      continue;
+    }
+
+    // paid / writeoff: 1) check the claim is still exactly as the action
+    // left it, 2) reverse the JE, 3) restore the claim — in that order.
+    const { data: currentRaw } = await admin
+      .from("historic_hmo_claims" as never)
+      .select("id, status, paid_recorded_at, journal_entry_id, wrote_off_at, wrote_off_journal_entry_id")
+      .eq("id", step.id)
+      .maybeSingle();
+    const current = currentRaw as unknown as HmoUndoCurrent | null;
+    const stillValid =
+      !!current &&
+      (step.kind === "paid"
+        ? current.status === "paid" &&
+          sameInstant(current.paid_recorded_at, step.paidRecordedAt) &&
+          current.journal_entry_id === step.journalEntryId
+        : current.status === "written_off" &&
+          sameInstant(current.wrote_off_at, step.wroteOffAt) &&
+          current.wrote_off_journal_entry_id === step.journalEntryId);
+    if (!stillValid) {
+      notRestored.push({ id: step.id, reason: CHANGED_SINCE_REASON });
+      continue;
+    }
+
+    const reverseErr = await reverseJournalEntryBySource(admin, {
+      sourceKind: "history_import",
+      sourceId: step.id,
+      actorId: session.user_id,
+      reason: "Undone within 10 minutes",
+    });
+    if (reverseErr) {
+      notRestored.push({ id: step.id, reason: "could not reverse the journal entry — try again" });
+      continue;
+    }
+
+    if (step.kind === "paid") {
+      const { data: updated, error: updErr } = await admin
+        .from("historic_hmo_claims" as never)
+        .update({
+          status: step.priorStatus,
+          date_paid: step.prior.date_paid,
+          or_number: step.prior.or_number,
+          paid_payment_method: step.prior.paid_payment_method,
+          paid_recorded_by_staff_id: step.prior.paid_recorded_by_staff_id,
+          paid_recorded_at: null,
+          journal_entry_id: step.prior.journal_entry_id,
+        } as never)
+        .eq("id", step.id)
+        .eq("status", "paid")
+        .eq("paid_recorded_at", step.paidRecordedAt)
+        .select("id");
+      if (updErr || !updated || (updated as unknown[]).length === 0) {
+        console.error("undoHistoricHmoBatchAction: JE reversed but claim restore failed", {
+          claimId: step.id,
+          batchId: parsed.data.batchId,
+          error: updErr,
+        });
+        notRestored.push({
+          id: step.id,
+          reason: "reversed in the books but the claim could not be put back — open it to check",
+        });
+        await audit({
+          actor_id: session.user_id,
+          actor_type: "staff",
+          action: "historic_hmo.undo_partial_failure",
+          resource_type: "historic_hmo_claim",
+          resource_id: step.id,
+          metadata: {
+            via: BULK_UNDO_VIA,
+            undo_of_batch: parsed.data.batchId,
+            bulk_batch_id: undoBatchId,
+            reversed_je: true,
+            claim_restored: false,
+            previous_action: "marked_paid",
+          },
+          ...meta,
+        });
+        continue;
+      }
+      restoredIds.push(step.id);
+      await audit({
+        actor_id: session.user_id,
+        actor_type: "staff",
+        action: "historic_hmo.unmarked_paid",
+        resource_type: "historic_hmo_claim",
+        resource_id: step.id,
+        metadata: {
+          via: BULK_UNDO_VIA,
+          undo_of_batch: parsed.data.batchId,
+          bulk_batch_id: undoBatchId,
+          restored_status: step.priorStatus,
+        },
+        ...meta,
+      });
+    } else {
+      const { data: updated, error: updErr } = await admin
+        .from("historic_hmo_claims" as never)
+        .update({
+          status: step.priorStatus,
+          wrote_off_by_staff_id: null,
+          wrote_off_at: null,
+          wrote_off_journal_entry_id: null,
+          write_off_reason: step.prior.write_off_reason,
+        } as never)
+        .eq("id", step.id)
+        .eq("status", "written_off")
+        .eq("wrote_off_at", step.wroteOffAt)
+        .select("id");
+      if (updErr || !updated || (updated as unknown[]).length === 0) {
+        console.error("undoHistoricHmoBatchAction: JE reversed but claim restore failed", {
+          claimId: step.id,
+          batchId: parsed.data.batchId,
+          error: updErr,
+        });
+        notRestored.push({
+          id: step.id,
+          reason: "reversed in the books but the claim could not be put back — open it to check",
+        });
+        await audit({
+          actor_id: session.user_id,
+          actor_type: "staff",
+          action: "historic_hmo.undo_partial_failure",
+          resource_type: "historic_hmo_claim",
+          resource_id: step.id,
+          metadata: {
+            via: BULK_UNDO_VIA,
+            undo_of_batch: parsed.data.batchId,
+            bulk_batch_id: undoBatchId,
+            reversed_je: true,
+            claim_restored: false,
+            previous_action: "written_off",
+          },
+          ...meta,
+        });
+        continue;
+      }
+      restoredIds.push(step.id);
+      await audit({
+        actor_id: session.user_id,
+        actor_type: "staff",
+        action: "historic_hmo.unmarked_written_off",
+        resource_type: "historic_hmo_claim",
+        resource_id: step.id,
+        metadata: {
+          via: BULK_UNDO_VIA,
+          undo_of_batch: parsed.data.batchId,
+          bulk_batch_id: undoBatchId,
+          restored_status: step.priorStatus,
+        },
+        ...meta,
+      });
+    }
+  }
+
+  if (restoredIds.length > 0) revalidatePath(BASE_PATH);
+  return { ok: true, restoredIds, notRestored };
 }
 
 // ----------------------------------------------------------------
