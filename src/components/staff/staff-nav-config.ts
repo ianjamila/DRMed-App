@@ -186,6 +186,12 @@ export const STAFF_NAV: StaffNavSection[] = [
         description: "Your shift cash workspace, in three tabs. Cash In & Out: start your drawer with a counted amount of starting cash and record cash paid out. Petty Cash: log small cash expenses paid from the till (transport, courier, supplies, minor repairs) so the day's count still ties. End of Day: count the drawer again to see the difference. Anything paid by GCash, bank transfer, or a vendor invoice goes through admin.",
         roles: ["reception", "admin"],
       },
+      {
+        href: "/staff/result-follow-ups",
+        label: ROUTE_NAME["/staff/result-follow-ups"],
+        description: "Patients holding a copy of a result that was corrected afterwards — call them or mark them contacted.",
+        roles: ["reception", "admin"],
+      },
     ],
   },
   {

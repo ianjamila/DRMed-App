@@ -4,6 +4,8 @@ import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { DOCTOR_KINDS_PG_LIST } from "@/lib/visits/classification";
 import { manilaDate, manilaDateTime, manilaRangeUtc, todayManilaISODate } from "@/lib/dates/manila";
+import { fetchOutdatedCopies } from "@/lib/results/copy-followups.server";
+import { cappedCountLabel } from "@/lib/results/copy-followups";
 import { loadHiddenCardIds } from "@/lib/dashboards/card-prefs";
 import { fetchAllRows, REPORT_EXPORT_MAX_ROWS, type PageFetcher } from "@/lib/reports/paging";
 import { reportError } from "@/lib/observability/report-error";
@@ -239,6 +241,10 @@ async function loadReceptionStats(userId: string, show: (id: string) => boolean)
 
   const { data: activeShift, error: activeShiftError } = await activeShiftPromise;
 
+  const resultFollowupsPromise = show("reception.result_followups")
+    ? fetchOutdatedCopies(supabase, false)
+    : Promise.resolve({ ok: true as const, rows: [], capped: false });
+
   const cashDrawerStatePromise =
     show("reception.cash_drawer") && activeShift
       ? admin.rpc("cash_drawer_state", {
@@ -260,6 +266,7 @@ async function loadReceptionStats(userId: string, show: (id: string) => boolean)
     recentMessages,
     cashDrawerState,
     todayOrders,
+    resultFollowups,
     noSetTimeRows,
   ] = await Promise.all([
     show("reception.visits_today")
@@ -412,6 +419,7 @@ async function loadReceptionStats(userId: string, show: (id: string) => boolean)
           .is("visits.deleted_at", null)
           .returns<OrderRow[]>()
       : SKIP_DATA,
+    resultFollowupsPromise,
     show("reception.likely_no_shows")
       ? safeFetchAllRows<NoSetTimeRow>(
           (from, to) =>
@@ -461,6 +469,10 @@ async function loadReceptionStats(userId: string, show: (id: string) => boolean)
   const expectedCash = cashState?.expected_cash_php ?? null;
   const isClosed = cashState?.closed != null;
 
+  const resultFollowupsCount = resultFollowups.ok ? resultFollowups.rows.length : 0;
+  const resultFollowupsCapped = resultFollowups.ok && resultFollowups.capped;
+  const resultFollowupsError = !resultFollowups.ok;
+
   // These queries used to fail silently — `.count ?? 0` / `.data ?? []`
   // swallowed the error and the card rendered a reassuring zero or all-clear,
   // exactly the "unreadable AP total shows as ₱0.00" bug the shared StatCard/
@@ -479,6 +491,7 @@ async function loadReceptionStats(userId: string, show: (id: string) => boolean)
     { scope: "strip_messages", error: recentMessages.error },
     { scope: "cash_drawer", error: activeShiftError ?? cashDrawerState.error },
     { scope: "orders_by_type", error: todayOrders.error },
+    { scope: "result_followups", error: resultFollowups.ok ? null : resultFollowups.error },
     { scope: "likely_no_shows", error: noSetTimeRows.error },
   ];
   await Promise.all(
@@ -543,6 +556,10 @@ async function loadReceptionStats(userId: string, show: (id: string) => boolean)
 
     orderBreakdown,
     orderBreakdownError: !!todayOrders.error,
+
+    resultFollowupsCount,
+    resultFollowupsCapped,
+    resultFollowupsError,
   };
 }
 
@@ -645,11 +662,15 @@ export async function ReceptionDashboard({
     "reception.gift_codes_sold",
     "reception.cash_drawer",
   ].some(show);
-  const hasAttention = [
-    "reception.strip_appointments",
-    "reception.strip_unpaid",
-    "reception.strip_messages",
-  ].some(show);
+  const showResultFollowupsCard =
+    show("reception.result_followups") &&
+    (stats.resultFollowupsError || stats.resultFollowupsCount > 0);
+  const hasAttention =
+    [
+      "reception.strip_appointments",
+      "reception.strip_unpaid",
+      "reception.strip_messages",
+    ].some(show) || showResultFollowupsCard;
   const hasQuicklinks = QUICK_GROUPS.length > 0;
 
   return (
@@ -792,6 +813,16 @@ export async function ReceptionDashboard({
       {hasAttention && (
         <SectionHeading title="What needs attention">
           <div className="grid gap-4 lg:grid-cols-3">
+            {showResultFollowupsCard && (
+              <StatCard
+                label="Patients with an out-of-date copy"
+                value={cappedCountLabel(stats.resultFollowupsCount, stats.resultFollowupsCapped)}
+                hint="Downloaded or handed a result before it was corrected"
+                href="/staff/result-follow-ups"
+                accent="warn"
+                error={stats.resultFollowupsError}
+              />
+            )}
             {/* Deliberately a WIDER set than the "Arrivals awaiting
                 registration" card above, which counts checked-in arrivals
                 only. This strip is the whole front-desk action list: today's

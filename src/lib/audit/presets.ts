@@ -34,4 +34,14 @@ export const AUDIT_PRESETS: readonly AuditPreset[] = [
     action: "result.downloaded",
     hint: "Results patients downloaded from the portal",
   },
+  {
+    label: "Result corrections",
+    action: "result.amended",
+    hint: "Finished results staff corrected, with the reason",
+  },
+  {
+    label: "Result follow-ups",
+    action: "result.patient_contacted",
+    hint: "Patients marked contacted about a corrected result",
+  },
 ];

@@ -33,6 +33,10 @@ import {
 import { loadTemplateParams } from "@/lib/results/loaders";
 import { labQueueGate } from "@/lib/visits/lab-gate";
 import { manilaDateTime } from "@/lib/dates/manila";
+import { shouldOfferNotify, type NotifyOffer } from "@/lib/results/copy-followups";
+import { fetchCopyStates } from "@/lib/results/copy-followups.server";
+import { fetchVersionDiff } from "@/lib/results/version-diff.server";
+import { ResultChanges } from "@/components/staff/result-changes";
 import { isActivePatient } from "@/lib/patients/active";
 import { loadPatientLifecycle, type PatientLifecycleDisplay } from "@/lib/patients/lifecycle-display";
 import { PatientLifecycleBanner } from "@/components/staff/patient-lifecycle-banner";
@@ -259,6 +263,25 @@ export default async function QueueTestDetailPage({ params }: Props) {
       ),
   );
 
+  // 0179: the amend form's opt-in "let the patient know" checkbox. Read
+  // through the signed-in client (RLS-gated); the Server Action re-checks
+  // with the admin client before sending regardless.
+  let notifyOffer: NotifyOffer = { offered: false, reason: "No result on file yet." };
+  if (amendable && result) {
+    const states = await fetchCopyStates(supabase, [result.id]);
+    notifyOffer = shouldOfferNotify(states?.get(result.id));
+    // R1: the portal only serves released results. The Server Action
+    // re-checks with the admin client before it ever sends, but the
+    // checkbox itself already knows this test's status (test.status,
+    // above), so it can hide/disable up front rather than offer and fail.
+    if (notifyOffer.offered && test.status !== "released") {
+      notifyOffer = {
+        offered: false,
+        reason: "The result isn't released — the patient can't open an update yet.",
+      };
+    }
+  }
+
   // Load amendment history for the panel below the result.
   const amendments = result
     ? (
@@ -362,6 +385,13 @@ export default async function QueueTestDetailPage({ params }: Props) {
     (await fetchClaimEvents(supabase, [test.id])).get(test.id) ?? [],
   );
 
+  // 0179: "What changed" between corrected versions — one query per result,
+  // and only when there is something to diff (amendment_count > 0).
+  const versionChanges =
+    result && result.amendment_count > 0
+      ? ((await fetchVersionDiff(supabase, result.id)) ?? [])
+      : [];
+
   // Decide which workflow surface to render in the action card.
   // Order of precedence:
   //   structured-form  → in-house service with a template, editable, no
@@ -426,6 +456,7 @@ export default async function QueueTestDetailPage({ params }: Props) {
             </p>
           ) : null}
           <ClaimHistory remarks={history} className="mt-4" />
+          <ResultChanges amendments={versionChanges} />
         </div>
         <div>
           <p className="text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
@@ -565,6 +596,7 @@ export default async function QueueTestDetailPage({ params }: Props) {
                 <AmendResultForm
                   testRequestId={test.id}
                   expectedAmendmentCount={result.amendment_count}
+                  notifyOffer={notifyOffer}
                   generationKind={
                     result.generation_kind === "structured"
                       ? "structured"

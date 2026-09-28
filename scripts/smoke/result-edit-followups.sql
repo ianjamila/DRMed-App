@@ -14,9 +14,12 @@
 --      and reason; reception sees nothing; a medtech sees nothing for a report
 --      with a member outside their sections, and sees it once the report is
 --      wholly theirs.
---   D. result_edit_commit (redefined in 0176) stores what an edit did to
---      critical alerts and a replay of the same attempt answers it (1 withdrawn),
---      without writing a second version.
+--   D. result_edit_commit (redefined in 0176, then again in 0179) stores what
+--      an edit did to critical alerts and a replay of the same attempt answers
+--      it (1 withdrawn), without writing a second version. Since 0179 a removed
+--      alert is WITHDRAWN (kept as history), never deleted — see result-copy-
+--      followups.sql for the rest of 0179's own behaviour (re-paging, the
+--      acknowledged-alert exemption, copy state, follow-up, notify).
 -- Everything is inside one transaction that ROLLS BACK.
 -- =============================================================================
 \set ON_ERROR_STOP on
@@ -193,7 +196,7 @@ begin
   raise notice 'B backfill OK';
 end $$;
 
--- ----- D. a replayed edit reports the alerts it withdrew ---------------------------
+-- ----- D. a replayed edit reports the alerts it withdrew (0179: withdrawn, not deleted) --
 insert into public.critical_alerts (result_id, test_request_id, parameter_id, direction, parameter_name, observed_value_si)
 values ('00000000-0000-4000-8000-00000000f001', '00000000-0000-4000-8000-00000000e001',
         (select id from public.result_template_params limit 1), 'high', 'Smoke K', 7.1);
@@ -202,6 +205,7 @@ do $$
 declare
   v_first  jsonb;
   v_replay jsonb;
+  v_row    public.critical_alerts%rowtype;
 begin
   -- The correction brings the value back to normal: no alerts desired.
   v_first := public.result_edit_commit(
@@ -210,6 +214,18 @@ begin
     '00000000-0000-4000-8000-00000000e001', 'v/r1.v3.bbbb.pdf', 100, null, null, '[]'::jsonb);
   if (v_first ->> 'replayed')::boolean or (v_first ->> 'alerts_removed')::int <> 1 then
     raise exception 'D1: first commit should withdraw 1 alert, got %', v_first;
+  end if;
+
+  -- 0179: the alert row is WITHDRAWN (kept as history), never deleted.
+  select * into v_row from public.critical_alerts
+   where result_id = '00000000-0000-4000-8000-00000000f001' and parameter_name = 'Smoke K';
+  if not found then
+    raise exception 'D1b: the alert row was deleted instead of withdrawn';
+  end if;
+  if v_row.withdrawn_at is null
+     or v_row.withdrawn_by <> '00000000-0000-4000-8000-00000000a001'::uuid
+     or v_row.withdrawn_by_amendment <> (v_first ->> 'amendment_id')::uuid then
+    raise exception 'D1b: alert should be withdrawn by the editor on this amendment, got %', v_row;
   end if;
   if (select commit_outcome ->> 'alerts_removed' from public.result_amendments
        where attempt_id = '00000000-0000-4000-8000-0000000000aa') <> '1' then

@@ -20,6 +20,7 @@ import { countValueChanges, isEditableStatus, validateEditReason } from "@/lib/r
 import { buildValueRows, detectCrossings, valueRowsToDocValues } from "@/lib/results/value-rows";
 import { auditAlertChanges, commitResultEdit } from "@/lib/actions/results/result-edit-core";
 import { REPORT_VALUES_LOAD_FAILED, reportEditLoadState } from "@/lib/results/consolidated-reports";
+import { resolveCorrectedNotifyOutcome, type CorrectedNotifyOutcome } from "@/lib/notifications/notify-corrected";
 import { assertPatientActive } from "@/lib/patients/require-active";
 
 // Editing a FINISHED combined report (chemistry): one results row + one PDF
@@ -38,10 +39,14 @@ export interface AmendConsolidatedInput {
     numeric_value_si: number | null;
     numeric_value_conv: number | null;
   }>;
+  // 0179: opt-in "let the patient know an updated copy is ready" checkbox.
+  // The server re-checks the offer (resolveCorrectedNotifyOutcome) before
+  // sending — this flag alone never sends.
+  notifyPatient?: boolean;
 }
 
 export type AmendConsolidatedResult =
-  | { ok: true; data: { amendmentSeq: number } }
+  | { ok: true; data: { amendmentSeq: number }; notify?: CorrectedNotifyOutcome }
   | { ok: false; error: string; stale?: boolean };
 
 type One<T> = T | T[] | null;
@@ -318,9 +323,25 @@ export async function amendConsolidatedReport(
     ua,
   });
 
+  // Opt-in patient notice (0179): only after the edit committed, and only
+  // once the server re-checks the offer itself — the client's checkbox is
+  // never trusted on its own. testName is the report group's patient-facing
+  // display name, never the reason.
+  const { data: group } = input.notifyPatient
+    ? await admin.from("report_groups").select("name").eq("id", result.report_group_id!).maybeSingle()
+    : { data: null };
+  const notify = await resolveCorrectedNotifyOutcome({
+    wantsNotify: Boolean(input.notifyPatient),
+    resultId: result.id,
+    amendmentId: committed.data.amendmentId,
+    testName: group?.name ?? "your report",
+    actorId: session.user_id,
+    patientId,
+  });
+
   revalidatePath("/staff/queue");
   revalidatePath(`/staff/queue/consolidated/${anchor.visit_id}/${result.report_group_id}`);
   revalidatePath(`/staff/visits/${anchor.visit_id}`);
   revalidatePath("/staff/results");
-  return { ok: true, data: { amendmentSeq: committed.data.amendmentSeq } };
+  return { ok: true, data: { amendmentSeq: committed.data.amendmentSeq }, notify };
 }

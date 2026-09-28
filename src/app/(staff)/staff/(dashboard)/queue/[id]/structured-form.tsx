@@ -22,6 +22,8 @@ import {
   type StructuredValueInput,
 } from "./actions";
 import { Panel } from "@/components/ui/panel";
+import { NotifyPatientCheckbox } from "@/components/staff/notify-patient-checkbox";
+import { NOTIFY_OUTCOME_TEXT, type NotifyOffer } from "@/lib/results/copy-followups";
 
 interface Props {
   testRequestId: string;
@@ -48,6 +50,10 @@ interface Props {
   currentImageFilename?: string | null;
   // 'amend' mode: results.amendment_count the page was rendered on (P0065).
   expectedAmendmentCount?: number;
+  // 'amend' mode only: whether "let the patient know" can offer anything —
+  // computed server-side (fetchCopyStates + shouldOfferNotify); the Server
+  // Action re-checks before it ever sends.
+  notifyOffer?: NotifyOffer;
 }
 
 // Local form state per parameter.
@@ -107,6 +113,8 @@ export function StructuredResultForm(props: Props) {
   // Amend mode adds a mandatory free-text reason. We mirror the same
   // ≥5 character / ≤2000 character rule the server enforces.
   const [reason, setReason] = useState("");
+  // Amend mode's opt-in "let the patient know" checkbox (0179).
+  const [notify, setNotify] = useState(false);
 
   const visibleParams = useMemo(
     () => filterParamsForPatient(props.params, props.patientSex),
@@ -218,6 +226,7 @@ export function StructuredResultForm(props: Props) {
       if (action === "amend") {
         fd.append("reason", reason.trim());
         fd.append("expected_amendment_count", String(props.expectedAmendmentCount ?? ""));
+        if (notify) fd.append("notify_patient", "on");
         const result = await amendStructuredResultAction(
           props.testRequestId,
           fd,
@@ -300,6 +309,7 @@ export function StructuredResultForm(props: Props) {
               ? ` Control No. ${feedback.controlNo.toString().padStart(6, "0")} — amended.`
               : ` Control No. ${feedback.controlNo.toString().padStart(6, "0")} — finalised.`
             : ""}
+          {mode === "amend" ? NOTIFY_OUTCOME_TEXT[feedback.notify ?? ""] ?? "" : ""}
         </p>
       ) : null}
 
@@ -327,6 +337,15 @@ export function StructuredResultForm(props: Props) {
             accessible from the amendment history below.
           </p>
         </div>
+      ) : null}
+
+      {mode === "amend" && props.notifyOffer ? (
+        <NotifyPatientCheckbox
+          offer={props.notifyOffer}
+          checked={notify}
+          onChange={setNotify}
+          id={`notify-patient-${props.testRequestId}`}
+        />
       ) : null}
 
       <div className="flex flex-wrap items-center justify-end gap-2">

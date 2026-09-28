@@ -162,6 +162,7 @@ describe("Front Desk is ordered by the daily flow", () => {
       "/staff/visits/queue",
       "/staff/visits",
       "/staff/payments/cash-drawer",
+      "/staff/result-follow-ups",
     ]);
     expect(front?.subgroups).toBeUndefined();
   });
@@ -359,6 +360,7 @@ describe("visible hrefs per role", () => {
       "/staff/visits/queue",
       "/staff/visits",
       "/staff/payments/cash-drawer",
+      "/staff/result-follow-ups",
       // Lab & Imaging › Queue, which for reception is only "Released today"
       // — where it prints the patient's copy (owner decision 2026-09-24).
       "/staff/queue",

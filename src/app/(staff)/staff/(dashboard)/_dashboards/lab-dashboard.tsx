@@ -6,6 +6,7 @@ import { DOCTOR_KINDS_PG_LIST } from "@/lib/visits/classification";
 import { todayManilaISODate } from "@/lib/dates/manila";
 import { loadHiddenCardIds } from "@/lib/dashboards/card-prefs";
 import { LAB_QUEUE_GATE_VISITS_OR } from "@/lib/visits/lab-gate";
+import { updatedSinceIso } from "@/lib/results/updated-filter";
 import { reportError } from "@/lib/observability/report-error";
 import { RealtimeRefresher, type Subscription } from "@/components/staff/realtime-refresher";
 import { DashboardHeader } from "./_components/dashboard-header";
@@ -19,6 +20,10 @@ const LAB_SUBSCRIPTIONS = [
   { table: "test_requests", event: "INSERT" },
   { table: "test_requests", event: "UPDATE" },
   { table: "critical_alerts", event: "INSERT" },
+  // UPDATE too (0179): a withdrawal (or acknowledgement) updates the row
+  // rather than inserting one, so without this the dashboard's alert count
+  // and list only caught up on the next poll/navigation.
+  { table: "critical_alerts", event: "UPDATE" },
 ] as const satisfies readonly Subscription[];
 
 type Role = StaffSession["role"];
@@ -188,6 +193,9 @@ async function loadLabStats(
           .from("critical_alerts")
           .select("id", { count: "exact", head: true })
           .is("acknowledged_at", null)
+          // A correction that removed the value withdraws its alert (0179)
+          // instead of deleting it — it's no longer a critical to act on.
+          .is("withdrawn_at", null)
       : SKIP_COUNT;
 
   // Same money-settled gate as myUnclaimedPromise above — a send-out that
@@ -195,6 +203,22 @@ async function loadLabStats(
   // filter + package-header exclusion added to match the queue's own
   // predicate set; the label says "tests" now (not "external labs still
   // processing"), because `requested` rows haven't even left the building.
+  // "Updated (last 7 days)": corrections to results this role can read — RLS
+  // on the signed-in client scopes it the same way the archive/queue already
+  // do, so no explicit section filter is needed here.
+  // R7: same rolling window updatedSinceIso() uses for the archive's
+  // ?updated=7d filter (src/lib/results/updated-filter.ts) — reusing it
+  // means the card's count and the filter it links to can't drift apart.
+  const since7d = updatedSinceIso();
+  const updated7dPromise =
+    show("lab.updated_7d") &&
+    (role === "medtech" || role === "pathologist" || role === "xray_technician")
+      ? supabase
+          .from("result_amendments")
+          .select("id", { count: "exact", head: true })
+          .gte("amended_at", since7d)
+      : SKIP_COUNT;
+
   const sendOutAwaitingPromise =
     show("lab.send_out_awaiting") && role === "medtech"
       ? supabase
@@ -278,6 +302,9 @@ async function loadLabStats(
             "id, direction, created_at, test_request_id, parameter_name, acknowledged_at, acknowledged_by, test_requests!inner ( assigned_to )",
           )
           .eq("test_requests.assigned_to", userId)
+          // A correction that removed the value withdraws its alert (0179)
+          // instead of deleting it — it's not a critical anymore.
+          .is("withdrawn_at", null)
           .order("created_at", { ascending: false })
           .limit(5)
           .returns<CriticalRow[]>()
@@ -294,6 +321,9 @@ async function loadLabStats(
           .from("critical_alerts")
           .select("id, direction, created_at, test_request_id, parameter_name, patient_drm_id")
           .is("acknowledged_at", null)
+          // A correction that removed the value withdraws its alert (0179)
+          // instead of deleting it — it's not a critical anymore.
+          .is("withdrawn_at", null)
           .order("created_at", { ascending: true })
           .limit(5)
           .returns<CriticalRow[]>()
@@ -338,6 +368,7 @@ async function loadLabStats(
     medtechCriticals,
     pathologistCriticals,
     pendingSignoff,
+    updated7d,
   ] = await Promise.all([
     myUnclaimedPromise,
     myClaimedPromise,
@@ -349,6 +380,7 @@ async function loadLabStats(
     medtechCriticalsPromise,
     pathologistCriticalsPromise,
     pendingSignoffPromise,
+    updated7dPromise,
   ]);
 
   const recentCriticals = (
@@ -397,6 +429,7 @@ async function loadLabStats(
     { scope: "oldest_unclaimed", error: oldestUnclaimed.error },
     { scope: "recent_criticals", error: recentCriticalsError },
     { scope: "pending_signoff", error: pendingSignoff.error },
+    { scope: "updated_7d", error: updated7d.error },
   ];
   await Promise.all(
     namedResults
@@ -430,6 +463,8 @@ async function loadLabStats(
     ackerNames,
     pendingSignoff: (pendingSignoff.data ?? []) as SignoffRow[],
     pendingSignoffError: Boolean(pendingSignoff.error),
+    updated7d: updated7d.count ?? 0,
+    updated7dError: Boolean(updated7d.error),
   };
 }
 
@@ -498,13 +533,17 @@ export async function LabDashboard({ session }: { session: StaffSession }) {
   const showCriticalAlertsCard = showSignoff && show("lab.critical_alerts");
   const showSendOutCard = role === "medtech" && show("lab.send_out_awaiting");
   const showReleasedTodayCard = show("lab.released_today");
+  const showUpdated7dCard =
+    (role === "medtech" || role === "pathologist" || role === "xray_technician") &&
+    show("lab.updated_7d");
   const hasMyQueueCards =
     showMyUnclaimedCard ||
     showMyClaimedCard ||
     showReadyForSignoffCard ||
     showCriticalAlertsCard ||
     showSendOutCard ||
-    showReleasedTodayCard;
+    showReleasedTodayCard ||
+    showUpdated7dCard;
 
   const showOldestUnclaimedStrip = showMyQueue && show("lab.strip_oldest_unclaimed");
   const showPendingSignoffStrip = showSignoff && show("lab.strip_pending_signoff");
@@ -588,6 +627,15 @@ export async function LabDashboard({ session }: { session: StaffSession }) {
                 href="/staff/queue?filter=released_today&mine=1"
                 accent="good"
                 error={stats.releasedTodayError}
+              />
+            )}
+            {showUpdated7dCard && (
+              <StatCard
+                label="Updated (last 7 days)"
+                value={stats.updated7d}
+                hint="Corrections to results you can see"
+                href="/staff/results?updated=7d"
+                error={stats.updated7dError}
               />
             )}
           </div>

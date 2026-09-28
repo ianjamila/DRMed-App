@@ -214,6 +214,10 @@ export function translatePgError(err: PgError): string {
       return "This sheet sync stopped because a newer run took over. Check the run history.";
     case "P0064":
       return "Someone already handled this review item. Refresh the page.";
+    // 0179: result_mark_copy_contacted — either the amendment id no longer
+    // exists, or it is not the result's latest correction any more.
+    case "P0068":
+      return "This correction is no longer the latest one (the result was corrected again, or the entry is gone). Refresh the list and follow up the newest correction.";
     default:
       return err.message ?? "Database error. Please try again.";
   }
