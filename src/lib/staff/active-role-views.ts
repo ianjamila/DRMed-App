@@ -16,12 +16,13 @@ interface Row {
   view_as_role: string | null;
   view_as_until: string | null;
   deleted_at: string | null;
+  is_active: boolean;
 }
 
 export function activeRoleViews(rows: Row[], now: Date = new Date()): ActiveRoleView[] {
   const out: ActiveRoleView[] = [];
   for (const r of rows) {
-    if (r.deleted_at !== null) continue;
+    if (r.deleted_at !== null || !r.is_active) continue;
     const v = activeViewAs(r, now);
     if (v) out.push({ id: r.id, full_name: r.full_name, role: v.role, until: v.until });
   }

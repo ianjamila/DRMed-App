@@ -2,8 +2,24 @@ import { describe, expect, it } from "vitest";
 import { activeRoleViews } from "./active-role-views";
 
 const now = new Date("2026-09-28T04:00:00.000Z");
-const row = (id: string, o: Partial<{ role: string; view_as_role: string | null; view_as_until: string | null; deleted_at: string | null }>) => ({
-  id, full_name: `N-${id}`, role: "admin", view_as_role: null, view_as_until: null, deleted_at: null, ...o,
+const row = (
+  id: string,
+  o: Partial<{
+    role: string;
+    view_as_role: string | null;
+    view_as_until: string | null;
+    deleted_at: string | null;
+    is_active: boolean;
+  }>,
+) => ({
+  id,
+  full_name: `N-${id}`,
+  role: "admin",
+  view_as_role: null,
+  view_as_until: null,
+  deleted_at: null,
+  is_active: true,
+  ...o,
 });
 
 describe("activeRoleViews", () => {
@@ -21,5 +37,16 @@ describe("activeRoleViews", () => {
     );
     expect(out.map((v) => [v.id, v.role])).toEqual([["b", "medtech"], ["a", "reception"]]);
     expect(out[0]).toMatchObject({ full_name: "N-b", until: "2026-09-28T05:00:00.000Z" });
+  });
+
+  it("excludes an inactive admin even with a future override", () => {
+    const out = activeRoleViews(
+      [
+        row("g", { view_as_role: "reception", view_as_until: "2026-09-28T07:00:00.000Z", is_active: false }),
+        row("h", { view_as_role: "medtech", view_as_until: "2026-09-28T07:00:00.000Z" }),
+      ],
+      now,
+    );
+    expect(out.map((v) => v.id)).toEqual(["h"]);
   });
 });
