@@ -1,6 +1,6 @@
 # Books Reconciliation — Steps 2–4 Investigation & Decision Memo (2026-06-10)
 
-**Status:** ✅ APPLIED to prod 2026-06-10 (see "Outcome" at the bottom).
+**Status:** ✅ APPLIED to prod 2026-06-10 (see "Outcome" at the bottom). **Current Jan–May 2026 net income is +₱244,637.07, not the +₱272,001.07 verified below** — see "Post-memo change" at the very end.
 **Prereq:** Step 1 done & verified (net Jan–May 2026 = **+₱168,984.07**; bill_post layer = 0).
 **Prod project:** `qhptbmafrosgibooelpp` (writes via Supabase MCP, each step dry-run + sign-off).
 
@@ -55,7 +55,7 @@ of step 1's phantom cash *out*flow.
 - Source of truth file = `~/Downloads/DR MED MASTERSHEET (1).xlsx` (complete; the importer
   default `DR MED MASTERSHEET.xlsx` is the May-incomplete one — must pass `--xlsx=…(1).xlsx`).
 - Cash leg by MOP: GCASH→1030, BPI→1020, BDO→1021, CHEQUE→1020, blank/CASH→1010, HMO→1110.
-- 9999 Suspense Jan–May = 27,364 (OOP rows; balance-sheet, no net-income effect) — out of scope.
+- 9999 Suspense Jan–May = 27,364 (OOP rows; balance-sheet, no net-income effect) — out of scope. *(Superseded later the same day — reclassified to expense; see "Post-memo change" at the bottom.)*
 
 ## Projected Jan–May 2026 net income (decision-dependent)
 
@@ -122,3 +122,33 @@ Re-checked prior years for the same incomplete-import / duplicate patterns. **Al
   a legitimate separate source, not a gap. So 2025 is complete + correct.
 - **Conclusion:** the late-May-2026 incomplete-import situation does **not** recur in 2024–2025;
   those years are fully and correctly booked. No corrective writes required.
+
+## Post-memo change — 9999 suspense reclassified (2026-06-10, after the Outcome above)
+
+Later on 2026-06-10 (audit_log `journal_entry.reclassified`, 14:25 UTC, reason
+"OOP suspense reclassification 2026-06-10"), the 8 out-of-pocket history-import expense rows that
+had been parked in **9999 Suspense** were reclassified to their real expense accounts, with the
+credit side on **2500 Due to Shareholders**. These are expenses the owner paid personally
+(`mop=IAN` in the EXPENSES tab), so the clinic owes the owner that money back. Each JE carries a
+`[9999 reclass 2026-06-10]` tag in its notes.
+
+| Account | JEs | Amount |
+|---|---|--:|
+| 6122 Employer PhilHealth Contribution | JE-2026-0026 … 0029 (4 × ₱4,874) | 19,496.00 |
+| 6220 Telecommunication / Internet | JE-2026-0022 … 0025 (4 × ₱1,967) | 7,868.00 |
+| **Total (Cr 2500 Due to Shareholders)** | 8 | **27,364.00** |
+
+Unlike suspense, these now hit the P&L, so **Jan–May 2026 net income moved from +₱272,001.07 to
++₱244,637.07** (re-read on prod 2026-09-28, posted + reversed, posting_date 2026-01-01…05-31):
+
+| | Outcome above | Current (2026-09-28) |
+|---|--:|--:|
+| Revenue | 3,151,218.40 | 3,151,218.40 |
+| Contra revenue | 131,925.55 | 131,925.55 |
+| Expense | 2,747,291.78 | 2,774,655.78 |
+| **Net income** | **+272,001.07** | **+244,637.07** |
+
+No journal entries with a Jan–May 2026 posting date were created after 2026-06-10, so this
+reclassification is the only difference. Step 2 (rent ₱37,500, JE-2026-4962/4963) and the AP
+unwind from Step 1 are both unchanged. Against the manual monthly summary (+₱262,143), the
+books now sit ~₱17,506 *below* it rather than ~₱9,858 above.
