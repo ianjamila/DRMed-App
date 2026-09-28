@@ -137,9 +137,11 @@ backstop (admin-only pages already `redirect("/staff")` for other roles).
 ### 2e. State endpoint — `GET /staff/view-as/state` (item 5)
 
 `src/app/(staff)/staff/(dashboard)/view-as/state/route.ts`: `requireActiveStaff()`
-(which also runs 2b), returns `{ role: ViewAsRole | null, until: string | null }`
-for the caller's own row, `Cache-Control: no-store`. A non-admin gets `{ role:
-null, until: null }`.
+(which also runs 2b), returns `{ actual_role: string, role: ViewAsRole | null,
+until: string | null }` for the caller's own row, `Cache-Control: no-store` —
+`actual_role` lets the shell-sync check catch a real role demotion even when
+there is no override to compare (Codex P2). A non-admin gets `{ actual_role,
+role: null, until: null }`.
 
 ## 3. Client
 
@@ -178,13 +180,16 @@ Manila clock time (`manilaTime(until)`, e.g. "6:12 PM" — the app’s canonical
 
 ### 3c. Shell sync — `useViewAsShellSync(expected)` (item 5)
 
-Replaces `useRefreshOnVisible`. Used by the banner (`expected = {role, until}`)
-and by `RefreshOnFocus` (renamed `ViewAsShellSync`, `expected = null`) — i.e.
-only for admins. Triggers: `usePathname()` changes (not the first render) and
-`visibilitychange` → visible. On trigger it fetches `/staff/view-as/state`; if
-the answer's `role`/`until` differ from `expected`, or the fetch fails or
-returns non-JSON (e.g. redirected to login), it calls `router.refresh()`.
-In-flight requests are aborted when a newer trigger fires.
+Replaces `useRefreshOnVisible`. Used by the banner (`expected = {actualRole,
+viewAs: {role, until}}`) and by `RefreshOnFocus` (renamed `ViewAsShellSync`,
+`expected = {actualRole, viewAs: null}`) — i.e. only for admins, so
+`actualRole` is always the caller's `session.actual_role` ("admin"), passed
+explicitly rather than hardcoded. Triggers: `usePathname()` changes (not the
+first render) and `visibilitychange` → visible. On trigger it fetches
+`/staff/view-as/state`; if the answer's `actual_role` differs from
+`expected.actualRole`, or its `role`/`until` differ from `expected.viewAs`, or
+the fetch fails or returns non-JSON (e.g. redirected to login), it calls
+`router.refresh()`. In-flight requests are aborted when a newer trigger fires.
 
 ### 3d. Mobile drawer (item 4)
 

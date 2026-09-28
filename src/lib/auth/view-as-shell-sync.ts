@@ -8,24 +8,34 @@ import { isViewAsRole, type ViewAsRole } from "./view-as";
 export const VIEW_AS_STATE_URL = "/staff/view-as/state";
 
 export interface ViewAsShellState {
-  role: ViewAsRole;
-  until: string;
+  /** The role the caller actually rendered with — always "admin" for the
+   *  components that use this (they only render for admins), but passed in
+   *  explicitly by the caller rather than hardcoded, so a real demotion
+   *  (an admin's `staff_profiles.role` changed elsewhere) is caught too:
+   *  without this, an admin demoted to reception with no active override
+   *  looks unchanged ({null,null} before and after) and the shell never
+   *  refreshes (Codex P2). */
+  actualRole: string;
+  viewAs: { role: ViewAsRole; until: string } | null;
 }
 
-export function shellIsStale(expected: ViewAsShellState | null, actual: unknown): boolean {
+export function shellIsStale(expected: ViewAsShellState, actual: unknown): boolean {
   if (!actual || typeof actual !== "object") return true;
   const a = actual as Record<string, unknown>;
+  if (typeof a.actual_role !== "string") return true;
+  if (a.actual_role !== expected.actualRole) return true;
   const role = isViewAsRole(a.role) ? a.role : null;
   const until = typeof a.until === "string" ? Date.parse(a.until) : null;
-  if (!expected) return role !== null;
-  return role !== expected.role || until !== Date.parse(expected.until);
+  const expectedRole = expected.viewAs?.role ?? null;
+  const expectedUntil = expected.viewAs ? Date.parse(expected.viewAs.until) : null;
+  return role !== expectedRole || until !== expectedUntil;
 }
 
 /** true → the caller should router.refresh(). An aborted check is a no-op;
  *  any other failure (network, login redirect, non-JSON) refreshes, which is
  *  the safe direction: a refresh re-renders from the database. */
 export async function checkViewAsShell(
-  expected: ViewAsShellState | null,
+  expected: ViewAsShellState,
   fetchImpl: typeof fetch = fetch,
   signal?: AbortSignal,
 ): Promise<boolean> {

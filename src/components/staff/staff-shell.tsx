@@ -80,14 +80,24 @@ export function StaffShell({ session, children, badges }: Props) {
             until={session.view_as.until}
             untilLabel={manilaTime(session.view_as.until)}
             remainingMs={remainingMsFrom(session.view_as.until)}
+            actualRole={session.actual_role}
           />
         ) : session.actual_role === "admin" ? (
-          <ViewAsShellSync />
+          <ViewAsShellSync actualRole={session.actual_role} />
         ) : null}
         {/* Mobile topbar — sidebar is hidden on small screens */}
         <header className="flex items-center justify-between gap-2 border-b border-[color:var(--color-brand-bg-mid)] bg-white px-4 py-3 md:hidden print:hidden">
           <div className="flex items-center gap-2">
+            {/* Keyed on the View-as state (Codex P3): any start/switch/exit
+                remounts the trigger fresh, closing the mobile drawer even
+                when the state goes back to "none" — a plain `open` boolean
+                otherwise can't tell "never opened" from "reopened by a
+                round trip back to the same key". A failed switch leaves the
+                state (and this key) unchanged, so a failed attempt keeps the
+                drawer open with its error visible. Browser-verified
+                separately; see the comment in staff-mobile-nav-trigger.tsx. */}
             <StaffMobileNavTrigger
+              key={viewAsStateKey(session.view_as)}
               role={session.role}
               actualRole={session.actual_role}
               viewAs={session.view_as}

@@ -11,7 +11,11 @@ export const dynamic = "force-dynamic";
 export async function GET() {
   const session = await requireActiveStaff();
   return NextResponse.json(
-    { role: session.view_as?.role ?? null, until: session.view_as?.until ?? null },
+    {
+      actual_role: session.actual_role,
+      role: session.view_as?.role ?? null,
+      until: session.view_as?.until ?? null,
+    },
     { headers: { "Cache-Control": "no-store" } },
   );
 }

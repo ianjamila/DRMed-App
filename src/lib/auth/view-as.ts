@@ -99,21 +99,13 @@ export function countdownRemainingMs(
 }
 
 /** Identity of a View-as state; changes on every start/switch/exit. Used as a
- *  React key (reset the picker) and to close the mobile drawer. */
+ *  React key: to reset the picker (`ViewAsSelect key={...}`), and — on
+ *  `StaffMobileNavTrigger` itself, in `staff-shell.tsx` — to remount the
+ *  whole mobile drawer closed on any state change, including a round trip
+ *  back to "none" (Codex P3: a plain open-boolean couldn't tell that case
+ *  from "never opened", so exiting View-as could reopen the drawer). */
 export function viewAsStateKey(v: ActiveViewAs | null): string {
   return v ? `${v.role}@${v.until}` : "none";
-}
-
-/** The mobile drawer is open iff it was opened FOR the state key that is
- *  current right now. A successful switch/exit changes `stateKey` (via
- *  `viewAsStateKey`), so the drawer closes itself without an effect; a
- *  failed switch leaves `stateKey` unchanged, so the drawer (and its picker
- *  error) stays open. Never opened (`openFor` is null) is always closed. */
-export function drawerOpenForState(
-  openFor: string | null,
-  stateKey: string,
-): boolean {
-  return openFor !== null && openFor === stateKey;
 }
 
 /** What the View-as Server Actions return to `useActionState`. */

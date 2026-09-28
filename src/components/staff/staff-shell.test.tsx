@@ -54,6 +54,24 @@ describe("StaffShell view-as", () => {
     expect(html).not.toContain("View as");
   });
 
+  // Renders under every session shape below — the mobile drawer's own
+  // open/close/remount-on-key-change lifecycle needs a real DOM (React
+  // effects don't run under renderToStaticMarkup) and is browser-verified
+  // separately, not here.
+  it("renders the mobile nav trigger button for every session shape", () => {
+    for (const s of [
+      session({}),
+      session({ role: "reception", actual_role: "reception" }),
+      session({
+        role: "reception",
+        view_as: { role: "reception", until: new Date(Date.now() + 3_600_000).toISOString() },
+      }),
+    ]) {
+      const html = render(s);
+      expect(html).toContain('aria-label="Open menu"');
+    }
+  });
+
   it("admin viewing as reception: banner, reception nav, footer says viewing as", () => {
     const html = render(
       session({

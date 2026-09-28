@@ -23,6 +23,7 @@ describe("ViewAsBanner", () => {
       until="2026-09-25T08:00:00.000Z"
       untilLabel="4:00 PM"
       remainingMs={3 * 3_600_000 + 40 * 60_000}
+      actualRole="admin"
     />,
   );
   it("names the role, the absolute end time and the time left, and warns about saves", () => {
@@ -43,7 +44,13 @@ describe("ViewAsBanner", () => {
     // effects (and thus the interval) never run under renderToStaticMarkup.
     const skewed = vi.spyOn(Date, "now").mockReturnValue(Date.parse("2030-01-01T00:00:00Z"));
     const h = renderToStaticMarkup(
-      <ViewAsBanner role="medtech" until="2026-09-25T08:00:00.000Z" untilLabel="4:00 PM" remainingMs={12 * 60_000} />,
+      <ViewAsBanner
+        role="medtech"
+        until="2026-09-25T08:00:00.000Z"
+        untilLabel="4:00 PM"
+        remainingMs={12 * 60_000}
+        actualRole="admin"
+      />,
     );
     expect(h).toContain("12m left");
     skewed.mockRestore();

@@ -27,7 +27,7 @@ import {
   type StaffRole,
 } from "./staff-nav-config";
 import { ROLE_LABEL } from "@/lib/staff/role-labels";
-import { drawerOpenForState, viewAsStateKey, type ActiveViewAs } from "@/lib/auth/view-as";
+import type { ActiveViewAs } from "@/lib/auth/view-as";
 import { ViewAsSelect } from "./view-as-select";
 
 interface Props {
@@ -243,15 +243,17 @@ export function StaffMobileNavTrigger({
   fullName,
   badges,
 }: Props) {
-  // The drawer is open FOR a given View-as state. A successful switch
-  // re-renders the shell with a new viewAs, so `open` turns false by itself —
-  // no effect needed (Codex P2: the drawer used to stay open over the new
-  // role). A failed switch keeps the same state, so the drawer stays open and
-  // the picker's error stays visible.
-  const stateKey = viewAsStateKey(viewAs);
-  const [openFor, setOpenFor] = useState<string | null>(null);
-  const open = drawerOpenForState(openFor, stateKey);
-  const close = () => setOpenFor(null);
+  // Plain open/closed state. `staff-shell.tsx` keys this whole component on
+  // `viewAsStateKey(session.view_as)`, so ANY View-as state change (start,
+  // switch, exit) remounts it fresh with `open` back at its initial `false` —
+  // no effect needed, and no risk of the drawer reopening itself the way a
+  // state keyed only by role/until once did (Codex P3: exiting View-as could
+  // reopen the drawer, because "none" before opening and "none" after exiting
+  // were the same key). A FAILED switch leaves the session's `view_as`
+  // unchanged, so the key doesn't change, the parent doesn't remount, and the
+  // drawer stays open with the picker's error still visible.
+  const [open, setOpen] = useState(false);
+  const close = () => setOpen(false);
   const pathname = usePathname();
 
   // Drawer also closes via the per-link onClick={close} below (ordinary
@@ -267,7 +269,7 @@ export function StaffMobileNavTrigger({
         type="button"
         aria-label="Open menu"
         aria-expanded={open}
-        onClick={() => setOpenFor(stateKey)}
+        onClick={() => setOpen(true)}
         className="grid h-11 w-11 place-items-center rounded-md border border-[color:var(--color-brand-bg-mid)] bg-white text-[color:var(--color-brand-navy)] transition-colors hover:border-[color:var(--color-brand-cyan)]"
       >
         <HamburgerIcon />
@@ -330,8 +332,10 @@ export function StaffMobileNavTrigger({
             · {email}
           </p>
           {actualRole === "admin" && (
+            // No key here: staff-shell.tsx keys the whole trigger on the
+            // View-as state, so a state change already remounts this picker
+            // fresh — a second key on the same signal would be redundant.
             <ViewAsSelect
-              key={stateKey}
               current={viewAs?.role ?? null}
               id="view-as-drawer"
               className="mt-3"

@@ -10,7 +10,6 @@ import {
 } from "./view-as";
 import {
   countdownRemainingMs,
-  drawerOpenForState,
   expiryRefreshDelay,
   formatRemainingMs,
   hasStaleViewAs,
@@ -153,25 +152,5 @@ describe("viewAsStateKey", () => {
     expect(viewAsStateKey({ role: "reception", until: "2026-09-28T08:00:01.000Z" })).not.toBe(
       viewAsStateKey({ role: "reception", until: "2026-09-28T08:00:00.000Z" }),
     );
-  });
-});
-
-describe("drawerOpenForState", () => {
-  const stateA = viewAsStateKey({ role: "reception", until: "2026-09-28T08:00:00.000Z" });
-  const stateB = viewAsStateKey({ role: "medtech", until: "2026-09-28T12:00:00.000Z" });
-  const stateNone = viewAsStateKey(null);
-
-  it("opened for state A and still A → true", () => {
-    expect(drawerOpenForState(stateA, stateA)).toBe(true);
-  });
-  it("opened for A, state now B (a successful switch) → false", () => {
-    expect(drawerOpenForState(stateA, stateB)).toBe(false);
-  });
-  it("never opened (null) → false", () => {
-    expect(drawerOpenForState(null, stateA)).toBe(false);
-    expect(drawerOpenForState(null, stateNone)).toBe(false);
-  });
-  it('opened for "none" and a switch lands (key becomes reception@…) → false', () => {
-    expect(drawerOpenForState(stateNone, stateA)).toBe(false);
   });
 });

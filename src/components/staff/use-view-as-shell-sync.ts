@@ -10,7 +10,7 @@ import { useCallback, useEffect, useRef } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { checkViewAsShell, type ViewAsShellState } from "@/lib/auth/view-as-shell-sync";
 
-export function useViewAsShellSync(expected: ViewAsShellState | null) {
+export function useViewAsShellSync(expected: ViewAsShellState) {
   const router = useRouter();
   const pathname = usePathname();
   const expectedRef = useRef(expected);

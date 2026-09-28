@@ -34,6 +34,9 @@ interface Props {
   untilLabel: string;
   /** Server-computed ms until `until` at render time. */
   remainingMs: number;
+  /** The caller's real role — always "admin" here, but passed explicitly
+   *  (never hardcoded) so the shell-sync check also catches a real demotion. */
+  actualRole: string;
 }
 
 function useCountdown(remainingMs: number): number {
@@ -49,9 +52,9 @@ function useCountdown(remainingMs: number): number {
   return countdownRemainingMs(remainingMs, tick);
 }
 
-export function ViewAsBanner({ role, until, untilLabel, remainingMs }: Props) {
+export function ViewAsBanner({ role, until, untilLabel, remainingMs, actualRole }: Props) {
   const router = useRouter();
-  useViewAsShellSync({ role, until });
+  useViewAsShellSync({ actualRole, viewAs: { role, until } });
   const left = useCountdown(remainingMs);
   useEffect(() => {
     const timer = setTimeout(() => router.refresh(), expiryRefreshDelay(remainingMs));
@@ -77,7 +80,7 @@ export function ViewAsBanner({ role, until, untilLabel, remainingMs }: Props) {
 
 /** Headless: rendered for an admin with NO active override so a start made
  *  in another tab/device shows up here on the next navigation or focus. */
-export function ViewAsShellSync() {
-  useViewAsShellSync(null);
+export function ViewAsShellSync({ actualRole }: { actualRole: string }) {
+  useViewAsShellSync({ actualRole, viewAs: null });
   return null;
 }
