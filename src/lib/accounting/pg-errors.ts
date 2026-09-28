@@ -235,6 +235,21 @@ export function translatePgError(err: PgError): string {
       // deadlock_detected — the 0183 serialization protocol accepts one rare
       // cycle (waiver vs. an undo cascade) and lets Postgres abort one side.
       return "Something else changed this visit at the same moment. Try again.";
+    // 0187: view_as_transition — the caller is not an active admin.
+    case "P0074":
+      return "Only an admin can view the app as another role.";
+    // 0190: test_requests_claim_holder_guard — two distinct messages under
+    // one code: the section-scope/inactive-holder refusal, and the
+    // single-owner-role refusal ("Only an X-ray Technician can hold this
+    // test.") — pass either through like P0066.
+    case "P0075":
+      return err.message
+        ? err.message
+        : "This staff member doesn't work this test's section, so they can't hold it.";
+    // 0190: view_as_end_for — the caller isn't an admin, or is themselves
+    // mid-simulation.
+    case "P0076":
+      return "Only an admin who isn't viewing the app as another role can end someone's role view.";
     default:
       return err.message ?? "Database error. Please try again.";
   }

@@ -1,4 +1,5 @@
 import "server-only";
+import { emailStatus } from "./channel-status";
 
 interface SendEmailInput {
   to: string;
@@ -18,29 +19,14 @@ export type SendResult =
 // their Resend account.
 export async function sendEmail(input: SendEmailInput): Promise<SendResult> {
   // M6: real keys in .env.local + `npm run dev` must never message real
-  // patients. Sends require production, or an explicit local opt-in.
-  const live =
-    process.env.VERCEL_ENV === "production" ||
-    process.env.NOTIFICATIONS_LIVE === "true";
-  if (!live) {
-    return {
-      ok: false,
-      kind: "skipped",
-      reason: "NOTIFICATIONS_LIVE not enabled in this environment",
-    };
-  }
+  // patients. Sends require production, or an explicit local opt-in — the
+  // shared check in channel-status.ts, which the Email Alerts page also shows.
+  const status = emailStatus();
+  if (!status.ready) return { ok: false, kind: "skipped", reason: status.reason };
 
-  const apiKey = process.env.RESEND_API_KEY;
-  const from = process.env.RESEND_FROM_EMAIL;
+  const apiKey = process.env.RESEND_API_KEY!;
+  const from = process.env.RESEND_FROM_EMAIL!;
   const replyTo = process.env.RESEND_REPLY_TO_EMAIL;
-
-  if (!apiKey || apiKey.includes("your_resend") || !from) {
-    return {
-      ok: false,
-      kind: "skipped",
-      reason: "RESEND_API_KEY / RESEND_FROM_EMAIL not configured",
-    };
-  }
 
   try {
     const res = await fetch("https://api.resend.com/emails", {

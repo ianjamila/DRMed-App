@@ -1,51 +1,65 @@
 "use client";
 
-// Admin "View as role" banner. The database applies the override on every
-// request, but the shell that renders this banner lives in a layout Next
-// caches across client navigations. So the banner refreshes the route:
-//   - once, just after `until` (the override has expired → banner drops);
-//   - whenever the tab becomes visible again (a switch or exit made in
-//     another tab/device is picked up when the admin comes back).
-// A tab that stays in the foreground while another device switches keeps
-// the stale shell until its next navigation; every server render and action
-// still uses the database's effective role, so a stale shell can mislead,
-// never authorize. `remainingLabel` is computed server-side (formatRemaining)
-// so the SSR markup carries a real countdown.
-import { useEffect } from "react";
+// Admin "View as role" banner.
+//   - "until 4:00 PM" is the server's Manila clock time; "3h 40m left" counts
+//     down from the SERVER's remaining time using performance.now(), so a
+//     wrong device clock can neither end it early nor freeze it (Codex P2).
+//   - Just after the server's expiry the banner refreshes the route; the
+//     refreshed render brings a new remainingMs, which re-arms the timer, so
+//     an override that is still active never leaves a stuck banner.
+//   - useViewAsShellSync picks up switches/exits made in another tab/device.
+// Every server render and action uses the database's effective role, so a
+// momentarily stale shell can mislead, never authorize.
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Button } from "@/components/ui/button";
-import { exitViewAsAction } from "@/app/(staff)/staff/(dashboard)/view-as/actions";
-import type { ViewAsRole } from "@/lib/auth/view-as";
+import {
+  countdownRemainingMs,
+  expiryRefreshDelay,
+  formatRemainingMs,
+  viewAsStateKey,
+  type ViewAsRole,
+} from "@/lib/auth/view-as";
 import { ROLE_LABEL } from "@/lib/staff/role-labels";
 import { ViewAsSelect } from "./view-as-select";
+import { ViewAsExitButton } from "./view-as-exit-button";
+import { useViewAsShellSync } from "./use-view-as-shell-sync";
+
+const TICK_MS = 15_000;
 
 interface Props {
   role: ViewAsRole;
-  /** ISO-8601; the moment the override stops applying. */
+  /** ISO-8601; identity of this override (shell-sync + picker key). */
   until: string;
-  remainingLabel: string;
+  /** Server-formatted Manila clock time of `until`, e.g. "4:00 PM". */
+  untilLabel: string;
+  /** Server-computed ms until `until` at render time. */
+  remainingMs: number;
+  /** The caller's real role — always "admin" here, but passed explicitly
+   *  (never hardcoded) so the shell-sync check also catches a real demotion. */
+  actualRole: string;
 }
 
-function useRefreshOnVisible() {
-  const router = useRouter();
+function useCountdown(remainingMs: number): number {
+  const [tick, setTick] = useState<{ base: number; elapsed: number } | null>(null);
   useEffect(() => {
-    const onVisibility = () => {
-      if (document.visibilityState === "visible") router.refresh();
-    };
-    document.addEventListener("visibilitychange", onVisibility);
-    return () => document.removeEventListener("visibilitychange", onVisibility);
-  }, [router]);
+    const start = performance.now();
+    const id = setInterval(
+      () => setTick({ base: remainingMs, elapsed: performance.now() - start }),
+      TICK_MS,
+    );
+    return () => clearInterval(id);
+  }, [remainingMs]);
+  return countdownRemainingMs(remainingMs, tick);
 }
 
-export function ViewAsBanner({ role, until, remainingLabel }: Props) {
+export function ViewAsBanner({ role, until, untilLabel, remainingMs, actualRole }: Props) {
   const router = useRouter();
-  useRefreshOnVisible();
+  useViewAsShellSync({ actualRole, viewAs: { role, until } });
+  const left = useCountdown(remainingMs);
   useEffect(() => {
-    // +1s so the server's strict `until > now()` is already false.
-    const ms = Math.max(0, Date.parse(until) - Date.now()) + 1_000;
-    const timer = setTimeout(() => router.refresh(), ms);
+    const timer = setTimeout(() => router.refresh(), expiryRefreshDelay(remainingMs));
     return () => clearTimeout(timer);
-  }, [until, router]);
+  }, [remainingMs, router]);
 
   return (
     <div
@@ -53,22 +67,20 @@ export function ViewAsBanner({ role, until, remainingLabel }: Props) {
       className="flex flex-wrap items-center gap-x-4 gap-y-2 border-b border-amber-300 bg-amber-50 px-4 py-2 text-sm text-amber-900 print:hidden"
     >
       <p className="min-w-0 flex-1">
-        <b>Viewing as {ROLE_LABEL[role]}.</b> Anything you save is recorded under
-        your name. Ends in {remainingLabel}.
+        <b>
+          Viewing as {ROLE_LABEL[role]} until {untilLabel}
+        </b>{" "}
+        · {formatRemainingMs(left)} left. Anything you save is recorded under your name.
       </p>
-      <ViewAsSelect current={role} id="view-as-banner" className="w-44" />
-      <form action={exitViewAsAction}>
-        <Button type="submit" size="sm" variant="outline">
-          Exit
-        </Button>
-      </form>
+      <ViewAsSelect key={viewAsStateKey({ role, until })} current={role} id="view-as-banner" className="w-44" />
+      <ViewAsExitButton />
     </div>
   );
 }
 
 /** Headless: rendered for an admin with NO active override so a start made
- *  in another tab/device shows up here when this tab regains focus. */
-export function RefreshOnFocus() {
-  useRefreshOnVisible();
+ *  in another tab/device shows up here on the next navigation or focus. */
+export function ViewAsShellSync({ actualRole }: { actualRole: string }) {
+  useViewAsShellSync({ actualRole, viewAs: null });
   return null;
 }

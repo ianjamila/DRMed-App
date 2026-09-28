@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 /**
@@ -20,6 +22,7 @@ vi.mock("@/lib/results/copy-followups.server", () => ({
 const fx = vi.hoisted(() => ({
   claim: null as null | (() => Promise<{ data: unknown; error: { message: string } | null }>),
   claimCalls: 0,
+  claimFns: [] as string[],
   patient: null as null | {
     id: string;
     first_name: string | null;
@@ -41,8 +44,9 @@ const releasedRow = { test_requests: { status: "released" } };
 vi.mock("@/lib/supabase/admin", () => ({
   createAdminClient: () => ({
     rpc: async (fn: string, args: Record<string, unknown>) => {
-      if (fn === "result_claim_patient_notify") {
+      if (fn === "result_claim_patient_notify" || fn === "result_retry_patient_notify") {
         fx.claimCalls += 1;
+        fx.claimFns.push(fn);
         return fx.claim!();
       }
       if (fn === "result_record_patient_notify") {
@@ -89,6 +93,7 @@ vi.mock("@/lib/observability/report-error", () => ({
 }));
 
 import { sendEmail } from "./email";
+import { reportError } from "@/lib/observability/report-error";
 import { sendSms } from "./sms";
 import { fetchCopyStateAdmin } from "@/lib/results/copy-followups.server";
 import { describeSendFailure, notifyResultCorrected, resolveCorrectedNotifyOutcome } from "./notify-corrected";
@@ -103,6 +108,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   fx.claim = okClaim;
   fx.claimCalls = 0;
+  fx.claimFns = [];
   fx.patient = {
     id: "pt1",
     first_name: "Ana",
@@ -304,6 +310,20 @@ describe("notifyResultCorrected", () => {
     expect(fx.errors.some((e) => e.scope === "notify/result-corrected:send")).toBe(true);
   });
 
+  it("0188: a throw AFTER a delivery keeps that channel, so the row never looks retryable", async () => {
+    vi.mocked(sendSms).mockResolvedValue({ ok: true, id: "sms-1" });
+    vi.mocked(sendEmail).mockResolvedValue({ ok: false, kind: "error", error: "Resend 500" });
+    // Reporting the email failure itself blows up (e.g. Sentry down).
+    vi.mocked(reportError).mockImplementationOnce(async () => {
+      throw new Error("sentry down");
+    });
+
+    const out = await notifyResultCorrected(args);
+
+    expect(out).toBe("sent");
+    expect(fx.recordCalls[0]).toMatchObject({ p_channels: ["sms"], p_error: null });
+  });
+
   it("R4: the record RPC returning an error (not throwing) reports and returns sent_unrecorded (X3)", async () => {
     vi.mocked(sendEmail).mockResolvedValue({ ok: true, id: "em-1" });
     vi.mocked(sendSms).mockResolvedValue({ ok: false, kind: "skipped", reason: "patient has no phone on file" });
@@ -408,6 +428,31 @@ const offeredState = {
   has_phone: false,
 };
 
+describe("0188 retry", () => {
+  it("an edit claims through result_claim_patient_notify, and its audit has no retry flag", async () => {
+    vi.mocked(sendEmail).mockResolvedValue({ ok: true, id: "em-1" });
+    vi.mocked(sendSms).mockResolvedValue({ ok: true, id: "sms-1" });
+    await notifyResultCorrected(args);
+    expect(fx.claimFns).toEqual(["result_claim_patient_notify"]);
+    expect((fx.audits[0].metadata as Record<string, unknown>).retry).toBeUndefined();
+  });
+  it("a retry claims through result_retry_patient_notify and is audited as one", async () => {
+    vi.mocked(sendEmail).mockResolvedValue({ ok: true, id: "em-1" });
+    vi.mocked(sendSms).mockResolvedValue({ ok: true, id: "sms-1" });
+    const out = await notifyResultCorrected({ ...args, retry: true });
+    expect(out).toBe("sent");
+    expect(fx.claimFns).toEqual(["result_retry_patient_notify"]);
+    expect((fx.audits[0].metadata as Record<string, unknown>).retry).toBe(true);
+  });
+  it("a retry that finds nothing to re-open sends nothing", async () => {
+    fx.claim = () => Promise.resolve({ data: [], error: null });
+    const out = await notifyResultCorrected({ ...args, retry: true });
+    expect(out).toBe("already");
+    expect(sendEmail).not.toHaveBeenCalled();
+    expect(sendSms).not.toHaveBeenCalled();
+  });
+});
+
 describe("describeSendFailure", () => {
   const noPhone = { ok: false as const, kind: "skipped" as const, reason: "patient has no phone on file" };
   const noEmail = { ok: false as const, kind: "skipped" as const, reason: "patient has no email on file" };
@@ -426,6 +471,22 @@ describe("describeSendFailure", () => {
       error: "timeout; patient has no email on file",
       notSetUp: false,
     });
+  });
+});
+
+// 0188 turns these stored reasons into result_outdated_copies.notify_problem
+// by matching their exact wording, so the writer and the SQL must not drift.
+describe("0188 notify_problem mapping matches what describeSendFailure writes", () => {
+  const sql = readFileSync(join(process.cwd(), "supabase/migrations/0188_result_followups_notify_problem.sql"), "utf8");
+  const skipped = (reason: string) => ({ ok: false as const, kind: "skipped" as const, reason });
+  it("not set up → the SQL prefix", () => {
+    const { error } = describeSendFailure(skipped("NOTIFICATIONS_LIVE not enabled in this environment"), skipped("patient has no email on file"));
+    expect(sql).toContain("like 'notices not set up%' then 'not_set_up'");
+    expect(error.startsWith("notices not set up")).toBe(true);
+  });
+  it("no contact → the SQL literal", () => {
+    const { error } = describeSendFailure(skipped("patient has no phone on file"), skipped("patient has no email on file"));
+    expect(sql).toContain(`= '${error}' then 'no_contact'`);
   });
 });
 

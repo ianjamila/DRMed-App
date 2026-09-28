@@ -42,6 +42,8 @@ export const GOOGLE_ADS_CONVERSION_LABELS = {
   booking: process.env.NEXT_PUBLIC_GOOGLE_ADS_BOOKING_LABEL,
   // "Messenger chat started" — a visitor tapped through to Messenger.
   messenger: process.env.NEXT_PUBLIC_GOOGLE_ADS_MESSENGER_LABEL,
+  // "Website call tap" — a visitor tapped a tel: link (TrackedTelLink).
+  callTap: process.env.NEXT_PUBLIC_GOOGLE_ADS_CALL_TAP_LABEL,
 } as const;
 
 export type GoogleAdsConversionName = keyof typeof GOOGLE_ADS_CONVERSION_LABELS;

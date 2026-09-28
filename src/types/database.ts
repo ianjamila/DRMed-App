@@ -7466,6 +7466,7 @@ export type Database = {
           notified_at: string
           notified_channels: string[]
           notify_failed: boolean
+          notify_problem: string
           patient_id: string
           patient_name: string
           phone: string
@@ -7479,6 +7480,15 @@ export type Database = {
       result_record_patient_notify: {
         Args: { p_amendment_id: string; p_channels: string[]; p_error: string }
         Returns: undefined
+      }
+      result_retry_patient_notify: {
+        Args: { p_amendment_id: string }
+        Returns: {
+          amendment_seq: number
+          anchor_test_request_id: string
+          patient_id: string
+          result_id: string
+        }[]
       }
       result_finalise_commit: {
         Args: {
@@ -7633,6 +7643,18 @@ export type Database = {
         Returns: boolean
       }
       staff_role: { Args: never; Returns: string }
+      view_as_end_for: {
+        Args: { p_actor: string; p_ip?: unknown; p_target: string; p_ua?: string }
+        Returns: boolean
+      }
+      view_as_expire: {
+        Args: { p_actor: string; p_ip?: unknown; p_ua?: string }
+        Returns: boolean
+      }
+      view_as_transition: {
+        Args: { p_actor: string; p_ip?: unknown; p_role?: string; p_ua?: string }
+        Returns: Json
+      }
       visits_classification_summary: {
         Args: { p_deleted?: string; p_end?: string; p_start?: string }
         Returns: {
