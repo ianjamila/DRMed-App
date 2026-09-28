@@ -298,13 +298,25 @@ sections above; listed here for a single audit trail against `00-context.md`.
   its first day. A row PapaParse itself flags as malformed (`TooManyFields`/`TooFewFields`/a quote error — e.g.
   an unquoted comma inside "1,234.50") is rejected as `malformed_row` and never reaches the money/campaign
   parsing. A campaign name that normalises to empty (e.g. "---") is rejected as `no_campaign`, not passed through
-  to fail the DB's `campaign_key` check and abort the whole upload. **`ad_spend_import` REPLACES everything
-  already saved for each `(spend_date, platform, campaign_key)` it contains** — not just the exact `(…, ad_key)`
-  rows it repeats — so uploading the same spend once as a campaign total, once per ad name and once per ad ID
-  can never stack under three different `ad_key`s and multiply the counted spend; a sibling campaign/day the
-  upload doesn't mention is untouched. The parser additionally refuses a file that mixes a campaign-total row
-  (`ad_key = "(campaign)"`) with per-ad rows for the same campaign and day, since that shape can never be saved
-  correctly at either granularity.
+  to fail the DB's `campaign_key` check and abort the whole upload. **Fixed 2026-09-28 (recheck, Codex #1/#2/#3):**
+  a Quotes-type PapaParse error (`MissingQuotes`/`InvalidQuotes` — an unterminated or malformed quote) refuses
+  the WHOLE file rather than being mapped to `malformed_row`, because PapaParse's own `row` index for that error
+  type does not reliably point at the record it names (it can merge several source lines into one field,
+  collapsing rows and shifting every later index) — only a `FieldMismatch` error (`TooManyFields`/`TooFewFields`,
+  e.g. an unquoted comma inside "1,234.50") is still mapped per-row to `malformed_row`. The whole
+  locateHeader → Papa.parse → error-classification pipeline lives in ONE pure function, `parseAdSpendText`, so
+  the server action never re-derives it. **`ad_spend_import`'s replace rule is now PARTIAL-preserving, not
+  whole-group:** each `ad_key` has a KIND — `(campaign)` = campaign total, `id:…` = per ad ID, anything else =
+  per ad name. A later upload for a `(spend_date, platform, campaign_key)` group that keeps the SAME kind only
+  touches the `ad_key`s it mentions — a partial correction for one ad leaves its sibling ads saved (spec §2.1
+  lines 108–111). Only a KIND CHANGE (e.g. a campaign total superseding per-ad rows) replaces everything saved
+  for that group, and only when the whole file had zero rejected rows (`p_rejected_count`, a new RPC parameter
+  the parser's rejection count feeds) — a kind change from a file that also had rejections is refused outright
+  (`22023`, all-or-nothing) rather than risk replacing a full breakdown with an incomplete one. The parser
+  refuses a file that mixes more than one KIND (campaign total, per ad name, per ad ID) for the same campaign
+  and day. `ad_spend_import` and `ad_spend_delete` both take `pg_advisory_xact_lock(hashtext('ad_spend_import'))`
+  right after their admin check, so an import can never race another import or a removal and stack two different
+  representations for an empty/stale group.
 - **P15** — Reception prompt: the patient update uses the RLS server client, is conditional on
   `referral_source is null`, never blocks the visit, and is audited `patient.referral_source_recorded`
   (`{ referral_source, via: 'new_visit' }`). Sits inside `createVisitAction`.
