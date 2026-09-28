@@ -155,4 +155,11 @@ describe("revenueTrendCsvRows", () => {
     // Float noise rounded to cents; the partial month says so; no % with no base.
     expect(rows[2]).toEqual(["2026-09", "to 2026-09-28", 0.3, 0, 0, 0.3, 0, 0, 0, 0, ""]);
   });
+
+  it("keeps one decimal of the change, up and down", () => {
+    const up = revenueTrendCsvRows([point({ lab: 1004, consult: 0, prior: { lab: 1000, consult: 0, procedure: 0 } })]);
+    const down = revenueTrendCsvRows([point({ lab: 987, consult: 0, prior: { lab: 1000, consult: 0, procedure: 0 } })]);
+    expect(up[1].at(-1)).toBe(0.4);
+    expect(down[1].at(-1)).toBe(-1.3);
+  });
 });

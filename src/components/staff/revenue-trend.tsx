@@ -227,7 +227,9 @@ function TrendChart({
         <svg
           width={w}
           height={HEIGHT}
-          role="img"
+          // "group", not "img": an img role makes its children presentational,
+          // which would hide the month links inside it from screen readers.
+          role="group"
           aria-label={`Monthly billed revenue by classification, ${monthName(points[0])} to ${monthName(points[points.length - 1])}. Peak ${PHP.format(max)}. Table view below.`}
           className="block"
           onMouseLeave={() => setActive(null)}
