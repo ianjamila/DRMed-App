@@ -57,7 +57,7 @@
 | `scripts/browser-check/lib.ts` | create | Guarded headless-Chrome helpers (sign-in, SQL, bar helpers, expect/summary) |
 | `scripts/browser-check/bulk-select.ts` | create | `npm run check:bulk-select` — the whole bulk-select browser checklist, asserting |
 | `package.json` | modify | two npm scripts |
-| `CLAUDE.md`, `~/Claude/DRMed/.claude/skills/drmed-staff-ui/SKILL.md`, `docs/drmed-user-guide.html` | modify | Guide-version rule; guide content (no version bump) |
+| `CLAUDE.md`, `.claude/skills/drmed-staff-ui/SKILL.md`, `docs/drmed-user-guide.html` | modify | Guide-version rule; guide content (no version bump) |
 
 ---
 
@@ -2452,7 +2452,7 @@ git commit -m "feat(scripts): local-only check:bulk-select headless-Chrome check
 
 **Files:**
 - Modify: `CLAUDE.md` (the `docs/drmed-user-guide.html` bullet, line ~21; the Key commands table; the feature index rows for bulk selection and scripts)
-- Modify: `~/Claude/DRMed/.claude/skills/drmed-staff-ui/SKILL.md` (container root — NOT versioned with the app; edit in place)
+- Modify: `.claude/skills/drmed-staff-ui/SKILL.md` (git-tracked in this repo — CLAUDE.md: update the matching skill in the same PR)
 - Modify: `docs/drmed-user-guide.html` (content only)
 
 - [ ] **Step 1: The rule in CLAUDE.md**
@@ -2479,10 +2479,9 @@ Match the guide's existing wording style (plain, reception-facing). Do not touch
 
 - [ ] **Step 4: Commit**
 ```bash
-git add CLAUDE.md docs/drmed-user-guide.html
+git add CLAUDE.md docs/drmed-user-guide.html .claude/skills/drmed-staff-ui/SKILL.md
 git commit -m "docs: guide version bumps at merge time; bulk-select follow-ups in the guide"
 ```
-(The skill file is outside the repo — no git add.)
 
 ---
 
