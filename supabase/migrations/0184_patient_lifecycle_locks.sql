@@ -32,7 +32,10 @@
 --     lifecycle_lock_results, and resolvers that follow EVERY patient-bearing reference
 -- (2) delete_patient / restore_patient re-created with FOR NO KEY UPDATE
 -- (3) enforce_patient_activity(): the default-refuse guard, as a_lifecycle_guard
--- (4) existing RPCs take the lock before their row locks
+-- (4) existing RPCs take the lock before their row locks; (4f)
+--     recompute_clinic_fee_for_unreleased gets an active-patient filter
+--     instead (it is a bulk, all-patients scrub, not a single-record RPC —
+--     a lock would only prove one patient active while it touches many)
 -- (5) resolve_patient_guarded: case-insensitive, locked, re-read
 -- (6) create_visit_encounter
 -- (7) result_create_linked
@@ -669,9 +672,9 @@ grant execute on function public.restore_patient(uuid, uuid, jsonb) to service_r
 --
 -- Installed as a_lifecycle_guard: same-timing triggers fire in name order and
 -- every other BEFORE trigger is tg_*/trg_*, so this lock is always taken
--- before another trigger takes a row lock (0183's planned payments guard locks
--- visits FOR UPDATE). SECURITY DEFINER (see (1)); EXECUTE revoked — firing
--- needs none.
+-- before another trigger takes a row lock (0183 is merged: `trg_payments_waived_visit_guard`
+-- / `guard_payment_on_waived_visit` exists on payments today and locks visits
+-- FOR UPDATE). SECURITY DEFINER (see (1)); EXECUTE revoked — firing needs none.
 -- ---------------------------------------------------------------------------
 create or replace function public.enforce_patient_activity()
 returns trigger
@@ -724,18 +727,46 @@ begin
   -- (a2) Ownership references that other rows depend on INDIRECTLY are
   -- immutable (Codex recheck P1): a withdrawn alert reaches a second result
   -- through its amendment, so re-pointing an amendment at another result (or
-  -- an alert at another result/test/patient) would change what dependent
-  -- writers must lock without taking any lock they conflict with. Nothing in
-  -- the app or SQL rebinds these; a correction is a new row.
+  -- an alert at another result/test) would change what dependent writers
+  -- must lock without taking any lock they conflict with. Nothing in the app
+  -- or SQL rebinds these; a correction is a new row.
+  --
+  -- critical_alerts.patient_id is DELIBERATELY NOT in this immutable list
+  -- (controller review after Tasks 5-6): the live merge flow
+  -- (mergePatientsAction, admin/patient-merge/actions.ts) repoints
+  -- critical_alerts.patient_id onto the kept record when it moves the
+  -- alert's visit, so freezing patient_id made every alert on a merged
+  -- source patient un-repointable (23514) and, once the source was
+  -- tombstoned, un-withdrawable/undeletable on its now-orphaned patient_id
+  -- (P0058). (a2') below keeps patient_id CONSISTENT with the alert's own
+  -- test instead of freezing it, and step (c) still asserts old ∪ new
+  -- active and takes the lock exclusive when the patient set changes.
   if tg_op = 'UPDATE' then
     if tg_table_name = 'result_amendments' and v_changed && array['result_id', 'test_request_id'] then
       raise exception 'a correction record stays on its result and test — record a new correction instead'
         using errcode = '23514';
     end if;
-    if tg_table_name = 'critical_alerts' and v_changed && array['result_id', 'test_request_id', 'patient_id'] then
-      raise exception 'a critical alert stays on its result, test and patient'
+    if tg_table_name = 'critical_alerts' and v_changed && array['result_id', 'test_request_id'] then
+      raise exception 'a critical alert stays on its result and test — record a new alert instead'
         using errcode = '23514';
     end if;
+  end if;
+
+  -- (a2') An alert's patient_id must always be the patient who currently
+  -- owns its test (via the test's visit) — it follows its test, it does not
+  -- roam independently. Checked on INSERT and on every UPDATE (test_request_id
+  -- itself can never change per (a2) above, so in practice this only re-runs
+  -- when patient_id changes, but checking unconditionally is cheap and needs
+  -- no v_changed bookkeeping). This is a consistency check, not an
+  -- active-patient check — step (c) below still locks and asserts whichever
+  -- patient(s) this resolves to are active.
+  if tg_table_name = 'critical_alerts' and tg_op <> 'DELETE'
+     and (v_n ->> 'patient_id') is distinct from (
+           select v.patient_id::text from public.test_requests tr
+             join public.visits v on v.id = tr.visit_id
+            where tr.id = (v_n ->> 'test_request_id')::uuid) then
+    raise exception 'a critical alert''s patient must match its test''s patient'
+      using errcode = '23514';
   end if;
 
   -- (a3) ON DELETE SET NULL on critical_alerts.withdrawn_by_amendment (0179):
@@ -1737,3 +1768,78 @@ revoke all on function public.appointments_insert_slot_guarded(jsonb, uuid, time
   from public, anon, authenticated;
 grant execute on function public.appointments_insert_slot_guarded(jsonb, uuid, timestamptz, boolean)
   to service_role;
+
+-- (4f) recompute_clinic_fee_for_unreleased — copied VERBATIM from
+-- 0136_physician_compensation_table.sql lines 136-175 (confirmed the latest
+-- DEFINER by `grep -ln "function public.recompute_clinic_fee_for_unreleased"
+-- supabase/migrations/*.sql`: 0180_posted_lookup_comments.sql also names it,
+-- but only for a `comment on function` — it does not re-create the body, so
+-- 0136 still owns the definition). The only change is the active-patient
+-- join/filter marked "-- 0184:" below.
+--
+-- This is a bulk, ALL-PATIENTS scrub (`admin/accounting/physicians-compensation.ts:62`
+-- calls it with no patient argument at all), unlike every other function in
+-- section (4) above, which locks and asserts ONE record's patient before its
+-- own row lock. A lock buys nothing here: the function doesn't know which
+-- patients it will touch until the CTE runs, and taking every patient's lock
+-- up front would mean locking the whole table. Instead, a single inactive
+-- patient's otherwise-eligible line used to abort the WHOLE UPDATE with
+-- P0058 (test_requests' a_lifecycle_guard, installed by this same migration
+-- in section (3)) — one bad row silently left every OTHER doctor's eligible
+-- line un-scrubbed too, on every run, until the offending patient was
+-- restored or its line stopped qualifying. The fix filters that patient's
+-- line OUT of the target set instead: this scrub only ever zeroes
+-- `clinic_fee_php` on lines that are not yet posted to the GL (the `not
+-- exists (... journal_entries ...)` clause, unchanged from 0136), so a
+-- deleted/merged patient's line was never going to book real money here —
+-- there is no live consultation fee this run is "letting slip"; the guard's
+-- job (stop NEW work/money on an inactive patient) is satisfied by leaving
+-- that line exactly as it already was.
+create or replace function public.recompute_clinic_fee_for_unreleased()
+returns jsonb
+language plpgsql
+security definer
+set search_path to 'public'
+as $function$
+declare
+  v_affected int;
+begin
+  with target_ids as (
+    select tr.id
+    from public.test_requests tr
+    join public.visits v on v.id = tr.visit_id
+    join public.patients pt on pt.id = v.patient_id   -- 0184: only an active patient's line
+    left join public.physicians p
+      on p.id = coalesce(tr.attending_physician_id, v.attending_physician_id)
+    left join public.physician_compensation pc on pc.physician_id = p.id
+    where coalesce(
+            pc.clinic_cut_php,
+            case when pc.compensation_arrangement in ('rent_paying', 'shareholder') then 0 else 100 end
+          ) = 0
+      and tr.clinic_fee_php > 0
+      and pt.deleted_at is null and pt.merged_into_id is null   -- 0184
+      and not exists (
+        select 1 from public.journal_entries je
+        where je.source_kind = 'test_request'
+          and je.source_id = tr.id
+          and je.status = 'posted'
+      )
+  ),
+  updated as (
+    update public.test_requests tr2
+      set clinic_fee_php = 0,
+          doctor_pf_php = tr2.final_price_php
+      where tr2.id in (select id from target_ids)
+      returning tr2.id
+  )
+  select count(*) into v_affected from updated;
+
+  return jsonb_build_object('rows_affected', v_affected);
+end;
+$function$;
+
+-- ACL restated exactly as 0118 left it (0136's `create or replace` did not
+-- touch grants, and local `proacl` confirms it: {postgres=X/postgres,
+-- service_role=X/postgres} — no anon/authenticated). service_role only.
+revoke all on function public.recompute_clinic_fee_for_unreleased() from public, anon, authenticated;
+grant execute on function public.recompute_clinic_fee_for_unreleased() to service_role;

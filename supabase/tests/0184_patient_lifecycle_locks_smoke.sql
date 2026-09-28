@@ -738,11 +738,23 @@ begin
   -- payments
   perform pg_temp.expect('s4.8 CONTROL payment on an active patient''s visit',
     pg_temp.state_of(format($q$select pg_temp.mk_pay(%L, 10)$q$, va)), 'ok');
-  perform pg_temp.expect('s4.9 payment on a deleted patient''s visit is refused',
+  -- s4.9/s4.10 are DOUBLY guarded (verified empirically, controller review
+  -- after Tasks 5-6): payments' own a_lifecycle_guard resolves visit_id -> vd
+  -- -> deleted d and refuses first in the normal (both-enabled) path, but
+  -- recalc_visit_payment (AFTER INSERT/void-UPDATE on payments) also writes
+  -- visits.paid_php/payment_status, which independently fires the VISITS
+  -- table's OWN a_lifecycle_guard on that nested UPDATE. Disabling
+  -- a_lifecycle_guard on payments ALONE still leaves it refused (P0058) via
+  -- that nested visits write; both must be disabled together for the
+  -- statement to succeed. So the label below intentionally does not claim
+  -- "the payments guard" is the (sole) blocker — s4.7c/s4.11 are the ones
+  -- that prove the payments trigger on its own (no nested recalc write is
+  -- involved in a payment-correction insert or a hard delete).
+  perform pg_temp.expect('s4.9 payment on a deleted patient''s visit is refused (doubly guarded: payments'' own a_lifecycle_guard, and — independently — the VISITS guard via recalc_visit_payment''s nested write)',
     pg_temp.state_of(format($q$select pg_temp.mk_pay(%L, 10)$q$, vd)), 'P0058');
-  perform pg_temp.expect('s4.10 voiding a deleted patient''s payment is refused',
+  perform pg_temp.expect('s4.10 voiding a deleted patient''s payment is refused (same double guard: payments'' own a_lifecycle_guard, and — independently — the VISITS guard via recalc_visit_payment''s nested write on void)',
     pg_temp.state_of(format($q$update public.payments set voided_at = now(), voided_by = %L, void_reason = 'x' where id = %L$q$, k_admin, pd)), 'P0058');
-  perform pg_temp.expect('s4.11 hard-deleting a deleted patient''s payment is refused',
+  perform pg_temp.expect('s4.11 hard-deleting a deleted patient''s payment is refused (payments'' own a_lifecycle_guard — DELETE fires no recalc write)',
     pg_temp.state_of(format($q$delete from public.payments where id = %L$q$, pd)), 'P0058');
 
   -- visit_pins
@@ -776,6 +788,7 @@ declare
   tpl uuid; prm uuid;
   al uuid; am_d uuid; am_a uuid; am_b uuid; am_w uuid; al_w uuid; rw uuid; ta5 uuid; am_rw uuid; al_rw uuid;
   s0 int; x0 int;
+  kk uuid; e uuid; ve uuid; te uuid; re uuid; ale uuid;
 begin
   insert into public.result_templates (service_id, layout) values ('c1000000-0000-4000-8000-000000000184', 'simple')
     returning id into tpl;
@@ -843,8 +856,14 @@ begin
     pg_temp.state_of(format($q$insert into public.result_amendments (result_id, test_request_id, prior_storage_path, prior_uploaded_by, prior_uploaded_at, reason, amended_by, amendment_seq) values (%L, %L, 'x', %L, now(), 'x', %L, 9)$q$, rd, ta, k_med, k_med)), 'P0058');
   perform pg_temp.expect('s5.15 an alert naming an active test + patient but a deleted patient''s result is refused',
     pg_temp.state_of(format($q$insert into public.critical_alerts (result_id, test_request_id, parameter_id, direction, parameter_name, patient_id) values (%L, %L, %L, 'low', 'LK param', %L)$q$, rd, ta, prm, a)), 'P0058');
-  perform pg_temp.expect('s5.16 an alert on an active result + test but patient_id = the deleted patient is refused',
-    pg_temp.state_of(format($q$insert into public.critical_alerts (result_id, test_request_id, parameter_id, direction, parameter_name, patient_id) values (%L, %L, %L, 'low', 'LK param', %L)$q$, ra, ta, prm, d)), 'P0058');
+  -- Was P0058 before the controller-review fix that freed critical_alerts.patient_id
+  -- from the (a2) immutable list: patient_id=d mismatches ta's real (active)
+  -- patient a, so the new (a2') consistency check now catches this — a data
+  -- integrity error (23514), not an activity check — BEFORE step (c) ever
+  -- gets a chance to notice d is deleted. s5.10 still covers "patient_id
+  -- correctly matches an INACTIVE patient's own test", which is P0058.
+  perform pg_temp.expect('s5.16 an alert on an active result + test but patient_id = an unrelated (deleted) patient mismatches and is refused (23514, not P0058 — the mismatch is caught before the activity check)',
+    pg_temp.state_of(format($q$insert into public.critical_alerts (result_id, test_request_id, parameter_id, direction, parameter_name, patient_id) values (%L, %L, %L, 'low', 'LK param', %L)$q$, ra, ta, prm, d)), '23514');
   perform pg_temp.expect('s5.17 an alert on an active result withdrawn by a DELETED patient''s amendment is refused',
     pg_temp.state_of(format($q$insert into public.critical_alerts (result_id, test_request_id, parameter_id, direction, parameter_name, patient_id, withdrawn_by_amendment) values (%L, %L, %L, 'low', 'LK param', %L, %L)$q$, ra, ta, prm, a, am_d)), 'P0058');
 
@@ -937,6 +956,58 @@ begin
         where c.relnamespace = 'public'::regnamespace
           and c.relname in ('results', 'result_test_requests', 'result_values', 'result_amendments', 'critical_alerts')) s),
     'a_lifecycle_guard,a_lifecycle_guard,a_lifecycle_guard,a_lifecycle_guard,a_lifecycle_guard');
+
+  -- critical_alerts.patient_id follows its test, it is not frozen (controller
+  -- review after Tasks 5-6, reviewer repro $SCRATCH/rv_x1.sql): the live
+  -- merge flow (mergePatientsAction) moves a visit's patient then repoints
+  -- critical_alerts.patient_id to match, which the old (a2) immutable-list
+  -- entry for patient_id refused with 23514, stranding every alert on the
+  -- merged-away record and then refusing its withdraw/delete with P0058 once
+  -- the source patient was tombstoned. al_w (result_id=ra, test_request_id=ta,
+  -- patient_id=a throughout s5 so far — every earlier attempt to change it
+  -- was refused) is reused here as the moved alert.
+  kk := pg_temp.mk_patient('S5KK');
+  perform pg_temp.expect('s5.36 CONTROL move va (a''s visit, carrying ta/ra/al_w) from active a to active kk',
+    pg_temp.state_of(format($q$update public.visits set patient_id = %L where id = %L$q$, kk, va)), 'ok');
+  perform pg_temp.expect('s5.37 …then repointing al_w''s patient_id to kk (matching ta''s new patient) is allowed',
+    pg_temp.state_of(format($q$update public.critical_alerts set patient_id = %L where id = %L$q$, kk, al_w)), 'ok');
+  perform pg_temp.expect('s5.37b …and it actually moved',
+    (select (patient_id = kk)::text from public.critical_alerts where id = al_w), 'true');
+  perform pg_temp.expect('s5.38 setting an alert''s patient_id to an UNRELATED active patient (b, whose own test is not ta) is refused',
+    pg_temp.state_of(format($q$update public.critical_alerts set patient_id = %L where id = %L$q$, b, al_w)), '23514');
+  perform pg_temp.expect('s5.38b inserting a critical alert whose patient_id mismatches its test''s patient is refused the same way',
+    pg_temp.state_of(format($q$insert into public.critical_alerts (result_id, test_request_id, parameter_id, direction, parameter_name, patient_id) values (%L, %L, %L, 'low', 'LK param', %L)$q$, ra, ta4, prm, b)), '23514');
+
+  -- (iii) "the same move" as s5.36/s5.37, but the SOURCE patient is DELETED
+  -- instead of merely active-about-to-merge: moving the visit itself is
+  -- refused at the VISIT step (OLD side names deleted e), before the alert
+  -- repoint is ever attempted. (Attempting the critical_alerts repoint
+  -- directly, without moving the visit first, cannot reach P0058 here at
+  -- all: since e's visit can never successfully move while e is deleted —
+  -- this assertion IS that proof — the test's real patient stays e forever,
+  -- so any critical_alerts.patient_id other than e would be a (a2')
+  -- MISMATCH, caught as 23514 before step (c)'s activity check ever runs.
+  -- The activity check on patient_id is still real, it is just proven
+  -- elsewhere: s5.10 is exactly "patient_id correctly matches an INACTIVE
+  -- patient's own test" — a fresh critical_alerts INSERT — and that raises
+  -- P0058, which is the only state this rule can ever actually reach.)
+  e  := pg_temp.mk_patient('S5E');
+  ve := pg_temp.mk_visit(e);
+  te := pg_temp.mk_line(ve, 'in_progress', 100, null, false, 'c1000000-0000-4000-8000-000000000184');
+  insert into public.results (generation_kind, uploaded_by) values ('structured', k_med) returning id into re;
+  insert into public.result_test_requests (result_id, test_request_id) values (re, te);
+  insert into public.critical_alerts (result_id, test_request_id, parameter_id, direction, parameter_name, patient_id)
+    values (re, te, prm, 'high', 'LK param', e) returning id into ale;
+  perform pg_temp.kill(e);
+  perform pg_temp.expect('s5.39 "the same move" when the source patient is DELETED: moving ve onto active kk is refused at the VISIT step (OLD side names deleted e), before any alert repoint is attempted',
+    pg_temp.state_of(format($q$update public.visits set patient_id = %L where id = %L$q$, kk, ve)), 'P0058');
+  perform pg_temp.expect('s5.39b …and ale is untouched (the move never happened, so the alert was never even reached)',
+    (select patient_id::text from public.critical_alerts where id = ale), e::text);
+  -- s5.10 (deleted patient's OWN consistent alert, "new critical alert for a
+  -- deleted patient is refused") already proves the activity check itself
+  -- fires P0058 when patient_id correctly matches an inactive patient's own
+  -- test — the exact case "the same move" can never actually construct at
+  -- the critical_alerts level once (a2') exists.
 end
 $s5$;
 
@@ -1034,6 +1105,7 @@ declare
   def text;
   lp int; rp int; mp int;
   res jsonb;
+  phys2 uuid; ta_fee uuid; td_fee uuid;
 begin
   -- Text order: the lifecycle call comes before the first FOR UPDATE / slot
   -- lock. BOTH positions must be > 0: position() returns 0 for a missing call,
@@ -1075,6 +1147,20 @@ begin
     values (rd2, td2, 'x/old.pdf', k_med, now(), 'smoke edit', k_med, 1, att,
             jsonb_build_object('alerts_added', '[]'::jsonb, 'alerts_removed', 0, 'alerts_kept_acknowledged', 0));
   pd := pg_temp.mk_pay(vd, 50);
+
+  -- (Controller review fix, item 2) recompute_clinic_fee_for_unreleased is a
+  -- bulk ALL-PATIENTS scrub with no lock to take — its fixture must be built
+  -- while d is still ACTIVE (the reviewer's actual bug: an inactive
+  -- patient's otherwise-eligible line used to abort the WHOLE UPDATE with
+  -- P0058, $SCRATCH/rv_x5.sql), so d is killed only AFTER both lines exist.
+  insert into public.physicians (slug, full_name, specialty) values ('lk-s7-doc', 'LK S7 Doc', 'GP') returning id into phys2;
+  insert into public.physician_compensation (physician_id, compensation_arrangement)
+    values (phys2, 'rent_paying')
+    on conflict (physician_id) do update set compensation_arrangement = 'rent_paying', clinic_cut_php = null;
+  ta_fee := pg_temp.mk_line(va, 'requested', 500);
+  td_fee := pg_temp.mk_line(vd, 'requested', 500);
+  update public.test_requests set attending_physician_id = phys2, clinic_fee_php = 100 where id in (ta_fee, td_fee);
+
   perform pg_temp.kill(d);
 
   perform pg_temp.expect('s7.3 result_save_draft on a deleted patient',
@@ -1099,6 +1185,21 @@ begin
     pg_temp.state_of($q$select public.appointments_insert_slot_guarded(jsonb_build_array(jsonb_build_object('walk_in_name', 'W', 'walk_in_phone', '09170000000', 'status', 'confirmed', 'scheduled_at', (now() + interval '1 day')::text)))$q$), 'ok');
   perform pg_temp.expect('s7.12 CONTROL active patient through the same RPC',
     pg_temp.state_of(format($q$select public.appointments_insert_slot_guarded(jsonb_build_array(jsonb_build_object('patient_id', %L, 'status', 'confirmed', 'scheduled_at', (now() + interval '1 day')::text)))$q$, a)), 'ok');
+
+  -- recompute_clinic_fee_for_unreleased (Task 4f): both lines were eligible
+  -- before d was killed; the scrub must not raise even though one of them
+  -- now belongs to a deleted patient, and must skip (not scrub) exactly that
+  -- one.
+  perform pg_temp.expect('s7.13 CONTROL both lines are eligible before the scrub',
+    (select count(*)::text from public.test_requests where id in (ta_fee, td_fee) and clinic_fee_php > 0), '2');
+  perform pg_temp.expect('s7.14 the bulk scrub does not raise P0058 even though a deleted patient''s line qualifies',
+    pg_temp.state_of($q$select public.recompute_clinic_fee_for_unreleased()$q$), 'ok');
+  perform pg_temp.expect('s7.15 the ACTIVE patient''s line was scrubbed (clinic_fee_php -> 0)',
+    (select clinic_fee_php::text from public.test_requests where id = ta_fee), '0.00');
+  perform pg_temp.expect('s7.15b …and doctor_pf_php absorbed it',
+    (select doctor_pf_php::text from public.test_requests where id = ta_fee), '500.00');
+  perform pg_temp.expect('s7.16 the DELETED patient''s line was SKIPPED — clinic_fee_php unchanged, not scrubbed',
+    (select clinic_fee_php::text from public.test_requests where id = td_fee), '100.00');
 end
 $s7$;
 
