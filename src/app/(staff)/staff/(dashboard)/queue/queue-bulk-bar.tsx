@@ -75,7 +75,9 @@ export function QueueBulkBar({ rowsByKey, hasPanels }: Props) {
     if (pending || claimKeys.length === 0) return;
     const keys = claimKeys;
     setRunning("claim");
-    start(async () => done("Claimed", keys, await claimTestsAction(keys), false));
+    start(async () =>
+      done("Claimed", keys, await claimTestsAction({ testIds: keys, panels: [] }), false),
+    );
   }
 
   function unclaim() {
@@ -90,7 +92,7 @@ export function QueueBulkBar({ rowsByKey, hasPanels }: Props) {
       done(
         "Unclaimed",
         keys,
-        await unclaimTestsAction({ items, reason: reason.trim() || undefined }),
+        await unclaimTestsAction({ items, panels: [], reason: reason.trim() || undefined }),
         true,
       ),
     );
@@ -108,7 +110,7 @@ export function QueueBulkBar({ rowsByKey, hasPanels }: Props) {
       done(
         "Deleted",
         keys,
-        await deleteTestRequestsManyAction({ testRequestIds: keys, reason: reason.trim() }),
+        await deleteTestRequestsManyAction({ testRequestIds: keys, panels: [], reason: reason.trim() }),
         true,
       ),
     );

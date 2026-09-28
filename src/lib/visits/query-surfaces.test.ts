@@ -192,6 +192,10 @@ const SURFACES: Record<string, Surface> = {
     meaning: "structural",
     why: "Acts on ids sourced only from the report-group-scoped page above, which no doctor line can reach.",
   },
+  "lib/queue/panel-members.ts": {
+    meaning: "structural",
+    why: "Server-only loader for the bulk queue's whole-panel selection (item 10). Scoped by services.report_group_id, same as the consolidated page — a doctor service carries no report_group_id.",
+  },
   "lib/actions/results/finalise-consolidated.ts": {
     meaning: "structural",
     why: "Same report_group_id scoping as the consolidated page it serves.",
@@ -490,6 +494,10 @@ const LIFECYCLES: Record<string, LifecycleSurface> = {
   "lib/actions/results/finalise-consolidated.ts": {
     lifecycle: "live",
     why: "Finalises the consolidated panel and renders its PDF. A deleted line has no result to publish.",
+  },
+  "lib/queue/panel-members.ts": {
+    lifecycle: "live",
+    why: "The bulk queue's whole-panel member loader (item 10) — resolves only the live bench (requested/in_progress, not deleted), same rule as the queue it serves.",
   },
   "app/(staff)/staff/(dashboard)/results/page.tsx": {
     lifecycle: "live",

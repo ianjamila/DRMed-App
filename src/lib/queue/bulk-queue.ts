@@ -30,10 +30,51 @@ export interface SkippedRow {
   reason: string;
 }
 
-/** Every id sent lands in exactly one of changedIds / skipped. */
+/**
+ * Every id sent lands in exactly one of changedIds / skipped. Ids are
+ * SELECTION keys — a test id, or a panel key for a whole panel.
+ */
 export type BulkQueueResult =
-  | { ok: true; changedIds: string[]; skipped: SkippedRow[] }
+  | { ok: true; changedIds: string[]; skipped: SkippedRow[]; batchId?: string }
   | { ok: false; error: string };
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * Selection key of a consolidated (chemistry) panel card: the visit + report
+ * group, NOT the ids the card shows — the queue pages by test before folding
+ * into cards, so a card can hold part of a panel. The server resolves every
+ * member (panel-members.ts).
+ */
+export function panelKey(visitId: string, groupId: string): string {
+  return `panel:${visitId}:${groupId}`;
+}
+
+export interface PanelRef {
+  key: string;
+  visitId: string;
+  groupId: string;
+}
+
+export function parsePanelKey(key: string): { visitId: string; groupId: string } | null {
+  const parts = key.split(":");
+  if (parts.length !== 3 || parts[0] !== "panel") return null;
+  const [, visitId, groupId] = parts as [string, string, string];
+  return UUID_RE.test(visitId) && UUID_RE.test(groupId) ? { visitId, groupId } : null;
+}
+
+export function splitQueueKeys(
+  keys: readonly string[],
+): { testIds: string[]; panels: PanelRef[] } {
+  const testIds: string[] = [];
+  const panels: PanelRef[] = [];
+  for (const key of keys) {
+    const panel = parsePanelKey(key);
+    if (panel) panels.push({ key, ...panel });
+    else testIds.push(key);
+  }
+  return { testIds, panels };
+}
 
 /** What the bar knows about a selectable row — serialisable, built by the server page. */
 export interface QueueRowInfo {

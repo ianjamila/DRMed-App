@@ -19,7 +19,9 @@ import {
   evaluateUnclaim,
 } from "@/lib/queue/claim-eligibility";
 import { ipAndAgent } from "@/lib/server/action-helpers";
-import type { BulkQueueResult, SkippedRow } from "@/lib/queue/bulk-queue";
+import { panelKey, type BulkQueueResult, type PanelRef, type SkippedRow } from "@/lib/queue/bulk-queue";
+import { loadPanelMembers } from "@/lib/queue/panel-members";
+import { MAX_BULK_RECORDS } from "@/lib/ui/bulk-selection";
 
 export type ClaimResult = { ok: true } | { ok: false; error: string };
 
@@ -263,7 +265,15 @@ export async function unclaimFromQueueAction(
 const NOT_LAB_STAFF = "Only lab staff can claim or unclaim tests from the queue.";
 const BULK_INPUT_ERROR = "Could not read the selection — refresh the queue and try again.";
 
-const BulkClaimSchema = z.array(z.string().uuid()).min(1).max(MAX_BULK_SELECTION);
+const PanelRefSchema = z.object({ visitId: z.string().uuid(), groupId: z.string().uuid() });
+const BulkClaimSchema = z
+  .object({
+    testIds: z.array(z.string().uuid()).max(MAX_BULK_SELECTION),
+    panels: z.array(PanelRefSchema).max(MAX_BULK_SELECTION),
+  })
+  .refine(
+    (v) => v.testIds.length + v.panels.length >= 1 && v.testIds.length + v.panels.length <= MAX_BULK_SELECTION,
+  );
 
 export async function claimTestsAction(input: unknown): Promise<BulkQueueResult> {
   // Role before anything candidate-dependent (spec §9 item 5).
@@ -273,9 +283,26 @@ export async function claimTestsAction(input: unknown): Promise<BulkQueueResult>
   }
   const parsed = BulkClaimSchema.safeParse(input);
   if (!parsed.success) return { ok: false, error: BULK_INPUT_ERROR };
-  const ids = Array.from(new Set(parsed.data));
+  const ids = Array.from(new Set(parsed.data.testIds));
+  const panelsByKey = new Map<string, PanelRef>();
+  for (const p of parsed.data.panels) {
+    const key = panelKey(p.visitId, p.groupId);
+    if (!panelsByKey.has(key)) panelsByKey.set(key, { key, visitId: p.visitId, groupId: p.groupId });
+  }
+  const panels = [...panelsByKey.values()];
 
   const supabase = await createClient();
+
+  const loaded = await loadPanelMembers(supabase, panels);
+  if (!loaded.ok) {
+    return { ok: false, error: "Could not load the chemistry panels — try again." };
+  }
+  const totalRecords =
+    ids.length + [...loaded.members.values()].reduce((n, list) => n + list.length, 0);
+  if (totalRecords > MAX_BULK_RECORDS) {
+    return { ok: false, error: "Too many tests in one go — select fewer panels." };
+  }
+
   const { data: rows, error: readError } = await supabase
     .from("test_requests")
     .select(
@@ -288,6 +315,12 @@ export async function claimTestsAction(input: unknown): Promise<BulkQueueResult>
   const byId = new Map((rows ?? []).map((r) => [r.id, r]));
 
   const changed: Array<{ id: string; visit_id: string }> = [];
+  const changedPanels: Array<{
+    key: string;
+    visitId: string;
+    groupId: string;
+    rows: { id: string; visit_id: string }[];
+  }> = [];
   const skipped: SkippedRow[] = [];
   const startedAt = new Date().toISOString();
   for (const id of ids) {
@@ -329,6 +362,76 @@ export async function claimTestsAction(input: unknown): Promise<BulkQueueResult>
     }
   }
 
+  // Whole-panel claim (owner decision): pre-check every live bench member,
+  // write with the state the operator SAW, and if the write returns fewer
+  // rows than members, hand back what THIS call just took so the panel is
+  // never left half-claimed.
+  for (const panel of panels) {
+    const list = loaded.members.get(panel.key) ?? [];
+    if (list.length === 0) {
+      skipped.push({ id: panel.key, reason: "Nothing left to claim in this panel — refresh the queue." });
+      continue;
+    }
+    const refusal = list
+      .map((m) =>
+        evaluateClaim(
+          {
+            isPackageHeader: m.is_package_header,
+            isDoctorLine: isDoctorKind(m.services.kind),
+            section: m.services.section,
+            visitDeleted: m.visits.deleted_at !== null,
+            visit: m.visits,
+          },
+          session.role,
+        ),
+      )
+      .find((v) => !v.ok);
+    if (refusal && !refusal.ok) {
+      skipped.push({ id: panel.key, reason: refusal.error });
+      continue;
+    }
+    if (list.some((m) => m.status !== "requested" || m.assigned_to !== null)) {
+      skipped.push({ id: panel.key, reason: "Part of this panel is already claimed — open it to check." });
+      continue;
+    }
+    const memberIds = list.map((m) => m.id);
+    const { data, error } = await supabase
+      .from("test_requests")
+      .update({ status: "in_progress", assigned_to: session.user_id, started_at: startedAt })
+      .in("id", memberIds)
+      .eq("status", "requested")
+      .is("assigned_to", null)
+      .is("deleted_at", null)
+      .select("id, visit_id");
+    if (error) {
+      skipped.push({ id: panel.key, reason: translatePgError(error) });
+      continue;
+    }
+    const got = data ?? [];
+    if (got.length !== memberIds.length) {
+      // Lost a race on part of the panel: hand back what THIS call just took
+      // (matched on our own started_at), so a panel is never left half-claimed.
+      if (got.length > 0) {
+        await supabase
+          .from("test_requests")
+          .update({ status: "requested", assigned_to: null, started_at: null })
+          .in(
+            "id",
+            got.map((r) => r.id),
+          )
+          .eq("status", "in_progress")
+          .eq("assigned_to", session.user_id)
+          .eq("started_at", startedAt);
+      }
+      skipped.push({
+        id: panel.key,
+        reason: "Part of this panel was claimed or changed just now — refresh the queue.",
+      });
+      continue;
+    }
+    changedPanels.push({ key: panel.key, visitId: panel.visitId, groupId: panel.groupId, rows: got });
+  }
+
   const { ip, ua } = await ipAndAgent();
   for (const row of changed) {
     await audit({
@@ -342,12 +445,34 @@ export async function claimTestsAction(input: unknown): Promise<BulkQueueResult>
       user_agent: ua,
     });
   }
+  for (const panel of changedPanels) {
+    for (const row of panel.rows) {
+      await audit({
+        actor_id: session.user_id,
+        actor_type: "staff",
+        action: "test_request.claimed",
+        resource_type: "test_request",
+        resource_id: row.id,
+        metadata: { visit_id: row.visit_id, bulk_batch_size: totalRecords, panel_key: panel.key },
+        ip_address: ip,
+        user_agent: ua,
+      });
+    }
+  }
 
-  if (changed.length > 0) {
+  if (changed.length > 0 || changedPanels.length > 0) {
     revalidatePath("/staff/queue");
     for (const row of changed) revalidatePath(`/staff/queue/${row.id}`);
+    for (const panel of changedPanels) {
+      for (const row of panel.rows) revalidatePath(`/staff/queue/${row.id}`);
+      revalidatePath(`/staff/queue/consolidated/${panel.visitId}/${panel.groupId}`);
+    }
   }
-  return { ok: true, changedIds: changed.map((r) => r.id), skipped };
+  return {
+    ok: true,
+    changedIds: [...changed.map((r) => r.id), ...changedPanels.map((p) => p.key)],
+    skipped,
+  };
 }
 
 const BulkUnclaimSchema = z.object({
@@ -359,10 +484,15 @@ const BulkUnclaimSchema = z.object({
         assignedTo: z.string().uuid(),
       }),
     )
-    .min(1)
     .max(MAX_BULK_SELECTION),
+  panels: z
+    .array(PanelRefSchema.extend({ assignedTo: z.string().uuid() }))
+    .max(MAX_BULK_SELECTION)
+    .default([]),
   reason: z.string().max(500).optional(),
-});
+}).refine(
+  (v) => v.items.length + v.panels.length >= 1 && v.items.length + v.panels.length <= MAX_BULK_SELECTION,
+);
 
 export async function unclaimTestsAction(input: unknown): Promise<BulkQueueResult> {
   const session = await requireActiveStaff();
@@ -377,11 +507,30 @@ export async function unclaimTestsAction(input: unknown): Promise<BulkQueueResul
     if (!seenHolder.has(item.testRequestId)) seenHolder.set(item.testRequestId, item.assignedTo);
   }
   const ids = [...seenHolder.keys()];
+  const panelsByKey = new Map<string, PanelRef & { assignedTo: string }>();
+  for (const p of parsed.data.panels) {
+    const key = panelKey(p.visitId, p.groupId);
+    if (!panelsByKey.has(key)) {
+      panelsByKey.set(key, { key, visitId: p.visitId, groupId: p.groupId, assignedTo: p.assignedTo });
+    }
+  }
+  const panels = [...panelsByKey.values()];
   const reason = parsed.data.reason?.trim() || null;
   // Same power as the row's Unclaim: admin anyone's, everyone else their own.
   const ownerId = session.role === "admin" ? null : session.user_id;
 
   const supabase = await createClient();
+
+  const loaded = await loadPanelMembers(supabase, panels);
+  if (!loaded.ok) {
+    return { ok: false, error: "Could not load the chemistry panels — try again." };
+  }
+  const totalRecords =
+    ids.length + [...loaded.members.values()].reduce((n, list) => n + list.length, 0);
+  if (totalRecords > MAX_BULK_RECORDS) {
+    return { ok: false, error: "Too many tests in one go — select fewer panels." };
+  }
+
   const { data: before, error: readError } = await supabase
     .from("test_requests")
     .select("id, assigned_to, status, visits!inner ( id )")
@@ -392,6 +541,12 @@ export async function unclaimTestsAction(input: unknown): Promise<BulkQueueResul
   const byId = new Map((before ?? []).map((r) => [r.id, r]));
 
   const changed: Array<{ id: string; visit_id: string; previous: string }> = [];
+  const changedPanels: Array<{
+    key: string;
+    visitId: string;
+    groupId: string;
+    rows: { id: string; visit_id: string; previous: string; previousStartedAt: string | null }[];
+  }> = [];
   const skipped: SkippedRow[] = [];
   for (const id of ids) {
     const row = byId.get(id);
@@ -427,6 +582,75 @@ export async function unclaimTestsAction(input: unknown): Promise<BulkQueueResul
     }
   }
 
+  // Whole-panel unclaim (owner decision): pre-check every live bench member
+  // against the holder the operator SAW, and if the write returns fewer rows
+  // than members, put back what THIS call just released so the panel is
+  // never left half-unclaimed.
+  for (const panel of panels) {
+    const list = loaded.members.get(panel.key) ?? [];
+    if (list.length === 0) {
+      skipped.push({ id: panel.key, reason: "Nothing left to unclaim in this panel — refresh the queue." });
+      continue;
+    }
+    if (list.some((m) => m.visits.deleted_at !== null)) {
+      skipped.push({ id: panel.key, reason: "Deleted from the queue — restore it before unclaiming it." });
+      continue;
+    }
+    const refusal = list.map((m) => evaluateUnclaim(m, ownerId)).find((v) => !v.ok);
+    if (refusal && !refusal.ok) {
+      skipped.push({ id: panel.key, reason: refusal.error });
+      continue;
+    }
+    if (list.some((m) => m.assigned_to !== panel.assignedTo)) {
+      skipped.push({ id: panel.key, reason: "Someone else holds part of this panel now — refresh the queue." });
+      continue;
+    }
+    const startedAtOf = new Map(list.map((m) => [m.id, m.started_at]));
+    const memberIds = list.map((m) => m.id);
+    const { data, error } = await supabase
+      .from("test_requests")
+      .update({ status: "requested", assigned_to: null, started_at: null })
+      .in("id", memberIds)
+      .eq("status", "in_progress")
+      .eq("assigned_to", panel.assignedTo)
+      .is("deleted_at", null)
+      .select("id, visit_id");
+    if (error) {
+      skipped.push({ id: panel.key, reason: translatePgError(error) });
+      continue;
+    }
+    const got = data ?? [];
+    if (got.length !== memberIds.length) {
+      // Lost a race on part of the panel: put back what THIS call just
+      // released, so a panel is never left half-unclaimed.
+      for (const row of got) {
+        await supabase
+          .from("test_requests")
+          .update({
+            status: "in_progress",
+            assigned_to: panel.assignedTo,
+            started_at: startedAtOf.get(row.id) ?? null,
+          })
+          .eq("id", row.id)
+          .eq("status", "requested")
+          .is("assigned_to", null);
+      }
+      skipped.push({ id: panel.key, reason: "Part of this panel changed just now — refresh the queue." });
+      continue;
+    }
+    changedPanels.push({
+      key: panel.key,
+      visitId: panel.visitId,
+      groupId: panel.groupId,
+      rows: got.map((row) => ({
+        id: row.id,
+        visit_id: row.visit_id,
+        previous: panel.assignedTo,
+        previousStartedAt: startedAtOf.get(row.id) ?? null,
+      })),
+    });
+  }
+
   // Same audit shape as performUnclaim, so the queue's Remarks column
   // (queue_claim_remarks, 0160) reads bulk unclaims unchanged.
   const { ip, ua } = await ipAndAgent();
@@ -448,12 +672,42 @@ export async function unclaimTestsAction(input: unknown): Promise<BulkQueueResul
       user_agent: ua,
     });
   }
+  for (const panel of changedPanels) {
+    for (const row of panel.rows) {
+      await audit({
+        actor_id: session.user_id,
+        actor_type: "staff",
+        action: "test_request.unclaimed",
+        resource_type: "test_request",
+        resource_id: row.id,
+        metadata: {
+          visit_id: row.visit_id,
+          previous_assignee: row.previous,
+          previous_started_at: row.previousStartedAt,
+          reason,
+          self_service: ownerId !== null,
+          bulk_batch_size: totalRecords,
+          panel_key: panel.key,
+        },
+        ip_address: ip,
+        user_agent: ua,
+      });
+    }
+  }
 
-  if (changed.length > 0) {
+  if (changed.length > 0 || changedPanels.length > 0) {
     revalidatePath("/staff/queue");
     for (const row of changed) revalidatePath(`/staff/queue/${row.id}`);
+    for (const panel of changedPanels) {
+      for (const row of panel.rows) revalidatePath(`/staff/queue/${row.id}`);
+      revalidatePath(`/staff/queue/consolidated/${panel.visitId}/${panel.groupId}`);
+    }
   }
-  return { ok: true, changedIds: changed.map((r) => r.id), skipped };
+  return {
+    ok: true,
+    changedIds: [...changed.map((r) => r.id), ...changedPanels.map((p) => p.key)],
+    skipped,
+  };
 }
 
 export async function reassignTestAction(

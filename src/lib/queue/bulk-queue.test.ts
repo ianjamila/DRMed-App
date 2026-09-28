@@ -1,5 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { QUEUE_KIND, bulkQueueMessage, queueRowKinds, type QueueRowInfo } from "./bulk-queue";
+import {
+  QUEUE_KIND,
+  bulkQueueMessage,
+  panelKey,
+  parsePanelKey,
+  queueRowKinds,
+  splitQueueKeys,
+  type QueueRowInfo,
+} from "./bulk-queue";
 
 const rows: Record<string, QueueRowInfo> = {
   a: { visitId: "v1", label: "CBC — Santos, Maria", assignedTo: null },
@@ -63,5 +71,27 @@ describe("bulkQueueMessage", () => {
     const lines = msg.split("\n");
     expect(lines[1]).toBe("Not changed (7):");
     expect(lines.slice(2)).toEqual(skipped.map((s) => `• A test: ${s.reason}`));
+  });
+});
+
+const V = "11111111-1111-4111-8111-111111111111";
+const G = "22222222-2222-4222-8222-222222222222";
+const T = "33333333-3333-4333-8333-333333333333";
+
+describe("panel keys", () => {
+  it("round-trips", () => {
+    expect(parsePanelKey(panelKey(V, G))).toEqual({ visitId: V, groupId: G });
+  });
+  it("rejects anything that is not two uuids", () => {
+    expect(parsePanelKey(T)).toBeNull();
+    expect(parsePanelKey(`panel:${V}`)).toBeNull();
+    expect(parsePanelKey(`panel:${V}:nope`)).toBeNull();
+    expect(parsePanelKey(`panel:${V}:${G}:x`)).toBeNull();
+  });
+  it("splits a selection into single tests and panels", () => {
+    expect(splitQueueKeys([T, panelKey(V, G)])).toEqual({
+      testIds: [T],
+      panels: [{ key: panelKey(V, G), visitId: V, groupId: G }],
+    });
   });
 });
