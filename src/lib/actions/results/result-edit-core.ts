@@ -140,6 +140,8 @@ export interface CommitResultEditArgs {
 
 export interface CommitResultEditData {
   replayed: boolean;
+  /** null when neither the RPC response nor the probe yielded an id. */
+  amendmentId: string | null;
   amendmentSeq: number;
   priorStoragePath: string;
   newStoragePath: string;
@@ -180,6 +182,7 @@ export async function commitResultEdit(
   // What the committed attempt did to critical alerts, as recorded on its
   // amendment row (0176) — read by the probe when the RPC's answer was lost.
   let probedOutcome: Json | null = null;
+  let probedAmendmentId: string | null = null;
   const outcome = await commitWithUploads<Json>(
     admin,
     uploads,
@@ -211,7 +214,10 @@ export async function commitResultEdit(
         .eq("attempt_id", attemptId)
         .maybeSingle();
       if (error) return null;
-      if (data) probedOutcome = data.commit_outcome;
+      if (data) {
+        probedOutcome = data.commit_outcome;
+        probedAmendmentId = data.id;
+      }
       return data != null;
     },
   );
@@ -220,6 +226,7 @@ export async function commitResultEdit(
   const d = (outcome.data ?? probedOutcome ?? {}) as {
     replayed?: boolean;
     outcome_unknown?: boolean;
+    amendment_id?: string;
     amendment_seq?: number;
     prior_storage_path?: string;
     alerts_added?: CommitResultEditData["alertsAdded"];
@@ -239,6 +246,7 @@ export async function commitResultEdit(
     ok: true,
     data: {
       replayed,
+      amendmentId: d.amendment_id ?? probedAmendmentId ?? null,
       amendmentSeq: d.amendment_seq ?? args.expectedAmendmentCount + 1,
       priorStoragePath: d.prior_storage_path ?? args.currentStoragePath,
       newStoragePath,

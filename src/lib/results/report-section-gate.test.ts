@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { membersWithinSections } from "./report-section-gate";
+import { membersWithinSections, resultsMemberSections } from "./report-section-gate";
 import { sectionsForRole } from "@/lib/auth/role-sections";
 import { canViewResultPdf } from "@/lib/visits/line-visibility";
 
@@ -55,5 +55,45 @@ describe("canViewResultPdf with memberSections", () => {
   it("admin and pathologist are never narrowed", () => {
     expect(canViewResultPdf("admin", { ...chemLine, memberSections: ["chemistry", null] })).toBe(true);
     expect(canViewResultPdf("pathologist", { ...chemLine, memberSections: [] })).toBe(true);
+  });
+});
+
+describe("resultsMemberSections — the batch reader", () => {
+  // Same shape as resultMemberSections's embed, with result_id alongside it.
+  function fakeDb(
+    rows: { result_id: string; test_requests: { services: { section: string | null } } }[] | null,
+    error: { message: string } | null = null,
+  ) {
+    return {
+      from: () => ({
+        select: () => ({
+          in: () => Promise.resolve({ data: rows, error }),
+        }),
+      }),
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    } as any;
+  }
+
+  it("groups sections by result_id across many results in one read", async () => {
+    const db = fakeDb([
+      { result_id: "r1", test_requests: { services: { section: "chemistry" } } },
+      { result_id: "r1", test_requests: { services: { section: "chemistry" } } },
+      { result_id: "r2", test_requests: { services: { section: "imaging_xray" } } },
+    ]);
+    const out = await resultsMemberSections(db, ["r1", "r2"]);
+    expect(out?.get("r1")).toEqual(["chemistry", "chemistry"]);
+    expect(out?.get("r2")).toEqual(["imaging_xray"]);
+  });
+
+  it("returns null on a read error — callers must fail closed", async () => {
+    const db = fakeDb(null, { message: "boom" });
+    expect(await resultsMemberSections(db, ["r1"])).toBeNull();
+  });
+
+  it("a result with no rows read back is simply absent from the map (deny via membersWithinSections([]))", async () => {
+    const db = fakeDb([]);
+    const out = await resultsMemberSections(db, ["r1"]);
+    expect(out?.has("r1")).toBe(false);
+    expect(membersWithinSections(sectionsForRole("medtech"), out?.get("r1") ?? [])).toBe(false);
   });
 });

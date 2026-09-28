@@ -46,3 +46,30 @@ export async function resultMemberSections(
     return svc?.section ?? null;
   });
 }
+
+/** Member sections for many results at once; null = read failed (deny). Deleted members included. */
+export async function resultsMemberSections(
+  db: SupabaseClient<Database>,
+  resultIds: readonly string[],
+): Promise<Map<string, (string | null)[]> | null> {
+  const out = new Map<string, (string | null)[]>();
+  const ids = [...new Set(resultIds)];
+  type Svc = { section: string | null };
+  type Tr = { services: Svc | Svc[] | null };
+  for (let i = 0; i < ids.length; i += 200) {
+    const { data, error } = await db
+      .from("result_test_requests")
+      .select("result_id, test_requests!inner ( services!inner ( section ) )")
+      .in("result_id", ids.slice(i, i + 200));
+    if (error) return null;
+    for (const row of (data ?? []) as { result_id: string; test_requests: Tr | Tr[] | null }[]) {
+      const trRel = row.test_requests;
+      const tr = Array.isArray(trRel) ? trRel[0] : trRel;
+      const svc = tr ? (Array.isArray(tr.services) ? tr.services[0] : tr.services) : null;
+      const list = out.get(row.result_id) ?? [];
+      list.push(svc?.section ?? null);
+      out.set(row.result_id, list);
+    }
+  }
+  return out;
+}

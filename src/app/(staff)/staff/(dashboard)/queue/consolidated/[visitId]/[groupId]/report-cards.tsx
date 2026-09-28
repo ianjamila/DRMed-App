@@ -5,6 +5,8 @@ import { testStatusLabel } from "@/lib/results/status-filter";
 import { codeDuplicatesName, reportHeadlineStatus } from "@/lib/results/consolidated-reports";
 import type { ClaimRemark } from "@/lib/queue/claim-remarks";
 import { ClaimHistory } from "@/components/staff/claim-remarks-list";
+import { ResultChanges } from "@/components/staff/result-changes";
+import type { AmendmentChanges } from "@/lib/results/version-diff";
 
 export interface ReportCardData {
   resultId: string;
@@ -25,8 +27,14 @@ export interface ReportCardData {
   history: { seq: number; at: string; reason: string; by: string | null }[];
   /** Set when the viewer may edit this report (staff_can_read_finished_result). */
   editHref: string | null;
+  /** Every-member section check (0179): whether the viewer's role covers
+   *  every linked test, deleted ones included — the shared PDF still prints
+   *  a deleted member's values. */
+  canViewPdf: boolean;
   /** Claims and edits across every member, oldest first (fetchClaimEvents). */
   remarks: ClaimRemark[];
+  /** "What changed" between corrected versions (0179), newest first — [] when nothing to show. */
+  changes: AmendmentChanges[];
 }
 
 const BADGE: Record<string, string> = {
@@ -140,14 +148,18 @@ export function ReportCards({
             </ul>
 
             <div className="mt-4 flex flex-wrap items-center gap-3">
-              <a
-                href={`/staff/results/${rep.pdfTestRequestId}/pdf`}
-                target="_blank"
-                rel="noopener"
-                className="inline-flex min-h-[44px] items-center rounded-lg bg-[color:var(--color-brand-navy)] px-4 py-2 text-sm font-semibold text-white hover:opacity-90"
-              >
-                View PDF →
-              </a>
+              {rep.canViewPdf ? (
+                <a
+                  href={`/staff/results/${rep.pdfTestRequestId}/pdf`}
+                  target="_blank"
+                  rel="noopener"
+                  className="inline-flex min-h-[44px] items-center rounded-lg bg-[color:var(--color-brand-navy)] px-4 py-2 text-sm font-semibold text-white hover:opacity-90"
+                >
+                  View PDF →
+                </a>
+              ) : (
+                <span className="text-sm text-[color:var(--color-brand-text-soft)]">View PDF —</span>
+              )}
               {rep.editHref && editForm?.resultId !== rep.resultId ? (
                 <Link
                   href={rep.editHref}
@@ -162,6 +174,7 @@ export function ReportCards({
             {editForm?.resultId === rep.resultId ? editForm.node : null}
 
             <ClaimHistory remarks={rep.remarks} className="mt-5" />
+            <ResultChanges amendments={rep.changes} />
 
             {rep.history.length > 0 ? (
               <div className="mt-5 rounded-md border border-[color:var(--color-brand-bg-mid)] bg-[color:var(--color-brand-bg)] p-3">
@@ -169,14 +182,20 @@ export function ReportCards({
                   Edit history
                 </p>
                 <p className="mt-1 text-xs">
-                  <a
-                    href={`/staff/results/${rep.pdfTestRequestId}/pdf`}
-                    target="_blank"
-                    rel="noopener"
-                    className="font-semibold text-[color:var(--color-brand-cyan)] hover:underline"
-                  >
-                    Current version (v{rep.amendmentCount + 1})
-                  </a>
+                  {rep.canViewPdf ? (
+                    <a
+                      href={`/staff/results/${rep.pdfTestRequestId}/pdf`}
+                      target="_blank"
+                      rel="noopener"
+                      className="font-semibold text-[color:var(--color-brand-cyan)] hover:underline"
+                    >
+                      Current version (v{rep.amendmentCount + 1})
+                    </a>
+                  ) : (
+                    <span className="text-[color:var(--color-brand-text-soft)]">
+                      Current version (v{rep.amendmentCount + 1}) —
+                    </span>
+                  )}
                 </p>
                 <ul className="mt-2 grid gap-2 text-xs">
                   {rep.history.map((h) => (
@@ -185,14 +204,20 @@ export function ReportCards({
                         v{h.seq + 1} · {manilaDateTime(h.at)} · {h.by ?? "—"}
                       </p>
                       <p className="mt-1 text-[color:var(--color-brand-text-mid)]">{h.reason}</p>
-                      <a
-                        href={`/staff/results/${rep.pdfTestRequestId}/pdf?version=${h.seq}`}
-                        target="_blank"
-                        rel="noopener"
-                        className="mt-1 inline-block text-[10px] font-semibold text-[color:var(--color-brand-cyan)] hover:underline"
-                      >
-                        View replaced version (v{h.seq})
-                      </a>
+                      {rep.canViewPdf ? (
+                        <a
+                          href={`/staff/results/${rep.pdfTestRequestId}/pdf?version=${h.seq}`}
+                          target="_blank"
+                          rel="noopener"
+                          className="mt-1 inline-block text-[10px] font-semibold text-[color:var(--color-brand-cyan)] hover:underline"
+                        >
+                          View replaced version (v{h.seq})
+                        </a>
+                      ) : (
+                        <span className="mt-1 inline-block text-[10px] font-semibold text-[color:var(--color-brand-text-soft)]">
+                          View replaced version (v{h.seq}) —
+                        </span>
+                      )}
                     </li>
                   ))}
                 </ul>

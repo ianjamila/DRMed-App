@@ -1,7 +1,13 @@
 import "server-only";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { fetchCompleteRows, IN_CHUNK } from "@/lib/reports/paging";
-import { foldPrintEvents, type PrintEventRow, type PrintSummary } from "./print-summary";
+import {
+  foldPrintEvents,
+  foldStalePrints,
+  type PrintEventRow,
+  type PrintSummary,
+  type StalePrint,
+} from "./print-summary";
 
 /**
  * Who printed each of these result FILES, and when last — for the
@@ -25,9 +31,23 @@ export async function fetchPrintSummaries(
   files: readonly { resultId: string; version: number }[],
   opts: { patientId?: string } = {},
 ): Promise<Map<string, PrintSummary>> {
+  return (await fetchPrintState(files, opts)).summaries;
+}
+
+/**
+ * One read of the print audit rows, folded two ways: the "Printed …" note
+ * (`summaries`, unchanged behaviour — see `fetchPrintSummaries`) and which
+ * of these files were last printed at an OLDER version than the current one
+ * (`stale`, for the "reprint before handing over" warning). `currentVersions`
+ * is built the same way `fetchPrintSummaries` always has.
+ */
+export async function fetchPrintState(
+  files: readonly { resultId: string; version: number }[],
+  opts: { patientId?: string } = {},
+): Promise<{ summaries: Map<string, PrintSummary>; stale: Map<string, StalePrint> }> {
   const versions = new Map(files.map((f) => [f.resultId, f.version]));
   const ids = [...versions.keys()];
-  if (ids.length === 0) return new Map();
+  if (ids.length === 0) return { summaries: new Map(), stale: new Map() };
   const admin = createAdminClient();
 
   const rows: PrintEventRow[] = [];
@@ -37,7 +57,7 @@ export async function fetchPrintSummaries(
       let q = admin
         .from("audit_log")
         .select(
-          "id, result_id:metadata->>result_id, amendment_count:metadata->>amendment_count, created_at, actor_id",
+          "id, result_id:metadata->>result_id, amendment_count:metadata->>amendment_count, created_at, actor_id, role:metadata->>role",
         )
         .eq("action", "result.printed_staff")
         .in("metadata->>result_id", slice);
@@ -46,7 +66,7 @@ export async function fetchPrintSummaries(
     });
     // A note is a convenience: on a read error show none rather than a
     // wrong one, and never fail the page over it.
-    if (error || !data) return new Map();
+    if (error || !data) return { summaries: new Map(), stale: new Map() };
     rows.push(...data);
   }
 
@@ -61,5 +81,5 @@ export async function fetchPrintSummaries(
       .in("id", actorIds);
     for (const p of data ?? []) names.set(p.id, p.full_name);
   }
-  return foldPrintEvents(rows, names, versions);
+  return { summaries: foldPrintEvents(rows, names, versions), stale: foldStalePrints(rows, versions) };
 }

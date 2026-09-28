@@ -41,8 +41,14 @@ import {
   commitResultFinalise,
 } from "@/lib/actions/results/result-edit-core";
 import { translatePgError } from "@/lib/accounting/pg-errors";
+import { resolveCorrectedNotifyOutcome, type CorrectedNotifyOutcome } from "@/lib/notifications/notify-corrected";
 import type { Json } from "@/types/database";
 import { assertPatientActive } from "@/lib/patients/require-active";
+
+/** The edit forms' notify outcome — a real send outcome, or one of the
+ * server's own "no"s when the client asked but the server-side re-check
+ * refused or could not complete. */
+export type NotifyResultOutcome = CorrectedNotifyOutcome;
 
 const MAX_BYTES = 10 * 1024 * 1024; // 10 MB
 
@@ -100,7 +106,7 @@ export interface StructuredPayload {
 }
 
 export type StructuredResult =
-  | { ok: true; resultId: string; controlNo: number | null }
+  | { ok: true; resultId: string; controlNo: number | null; notify?: NotifyResultOutcome }
   | { ok: false; error: string };
 
 interface PreparedContext {
@@ -845,7 +851,9 @@ export async function uploadResultAction(
   return { ok: true };
 }
 
-export type AmendResult = { ok: true } | { ok: false; error: string };
+export type AmendResult =
+  | { ok: true; notify?: NotifyResultOutcome }
+  | { ok: false; error: string };
 
 // A consolidated (report-group) result is ONE results row shared by every
 // member test (the chemistry panel). Both amend actions below are single-test
@@ -931,7 +939,7 @@ export async function amendResultAction(
   const { data: testRow } = await admin
     .from("test_requests")
     .select(
-      "id, status, visit_id, services!inner ( section, report_group_id ), visits!inner ( id, patient_id )",
+      "id, status, visit_id, services!inner ( name, section, report_group_id ), visits!inner ( id, patient_id )",
     )
     .eq("id", testRequestId)
     // Queue-deleted lines (0125) accept no result work.
@@ -941,10 +949,12 @@ export async function amendResultAction(
   if (!testRow) return { ok: false, error: "Test not found." };
   // N1 (go-live): section gate. This read runs on the admin client (no RLS),
   // so the role check has to happen here explicitly.
+  let testName = "the result";
   {
     const gateSvc = Array.isArray(testRow.services)
       ? testRow.services[0]
       : testRow.services;
+    testName = gateSvc?.name ?? testName;
     if (!isSectionAllowed(sectionsForRole(session.role), gateSvc?.section ?? null)) {
       return { ok: false, error: SECTION_DENIED_ERROR };
     }
@@ -1014,9 +1024,21 @@ export async function amendResultAction(
     user_agent: h.get("user-agent"),
   });
 
+  // Opt-in patient notice (0179): only after the edit committed, and only
+  // once the server re-checks the offer itself — the client's checkbox is
+  // never trusted on its own.
+  const notify = await resolveCorrectedNotifyOutcome({
+    wantsNotify: formData.get("notify_patient") === "on",
+    resultId: result.id,
+    amendmentId: committed.data.amendmentId,
+    testName,
+    actorId: session.user_id,
+    patientId: visit.patient_id,
+  });
+
   revalidatePath(`/staff/queue/${testRow.id}`);
   revalidatePath(`/staff/visits/${visit.id}`);
-  return { ok: true };
+  return { ok: true, notify };
 }
 
 // ---------------------------------------------------------------------------
@@ -1371,10 +1393,22 @@ export async function amendStructuredResultAction(
     ua,
   });
 
+  // Opt-in patient notice (0179): only after the edit committed, and only
+  // once the server re-checks the offer itself — the client's checkbox is
+  // never trusted on its own.
+  const notify = await resolveCorrectedNotifyOutcome({
+    wantsNotify: formData.get("notify_patient") === "on",
+    resultId: result.id,
+    amendmentId: committed.data.amendmentId,
+    testName: svc.name,
+    actorId: session.user_id,
+    patientId: visit.patient_id,
+  });
+
   revalidatePath(`/staff/queue`);
   revalidatePath(`/staff/queue/${testRow.id}`);
   revalidatePath(`/staff/visits/${visit.id}`);
-  return { ok: true, resultId: result.id, controlNo: result.control_no ?? null };
+  return { ok: true, resultId: result.id, controlNo: result.control_no ?? null, notify };
 }
 
 export async function getResultDownloadUrl(

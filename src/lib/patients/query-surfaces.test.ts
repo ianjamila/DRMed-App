@@ -61,6 +61,7 @@ const SURFACES: Record<string, Surface> = {
   "src/app/(patient)/portal/(authenticated)/data-export/route.ts": { meaning: "history", why: "RA 10173 export of the signed-in (already active-checked) patient's own record." },
   "src/components/staff/notification-bell.tsx": { meaning: "history", why: "Names the patient of a past staff event." },
   "src/lib/appointments/booking-alert.ts": { meaning: "history", why: "Names the patient of a booking that already happened." },
+  "src/lib/notifications/notify-corrected.ts": { meaning: "history", why: "Reads contact info of a patient already proven active by checkPatientRecipient above (0167)." },
   "src/lib/consent/gate.ts": { meaning: "history", why: "Resolves the actual visit's consent state, never a directory lookup." },
   "src/lib/emails-log/query.ts": { meaning: "history", why: "Email history must still find deleted and merged identities." },
 
