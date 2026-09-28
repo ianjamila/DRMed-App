@@ -66,7 +66,9 @@ export function BulkBar({ noun, children }: Props) {
             </span>
           ) : null}
         </div>
-        <div className="ml-auto flex flex-wrap items-center gap-2">{children}</div>
+        <div data-bar-actions className="ml-auto flex flex-wrap items-center gap-2">
+          {children}
+        </div>
       </Panel>
     </FixedBottomBar>
   );

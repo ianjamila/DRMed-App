@@ -195,7 +195,7 @@ export function BulkActionBar({
           Clear
         </button>
 
-        <div className="ml-auto flex flex-wrap items-center gap-2">
+        <div data-bar-actions className="ml-auto flex flex-wrap items-center gap-2">
           {releaseCount > 0 ? (
             <div className="flex items-center gap-1.5">
               {!consentOnFile && !gateRequired ? (

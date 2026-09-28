@@ -14,6 +14,19 @@ export const BAR_FOCUS_EVENT = "staff:focus-selection-bar";
 export const FOCUSABLE_IN_BAR =
   "button:not([disabled]), select:not([disabled]), textarea:not([disabled]), a[href]";
 
+/**
+ * Same controls, scoped to a bar's actions container (`[data-bar-actions]` —
+ * the kit BulkBar's and the visit page's own bar's `ml-auto flex …` div).
+ * Querying this first is what keeps the keyboard jump off "Clear" (which
+ * lives in the count line, ahead of the actions container) and off an inline
+ * outcome panel's Undo/Dismiss (excluded separately — see
+ * firstBarFocusTarget — because BulkOutcomePanel can render as the actions
+ * container's first child while rows stay selected).
+ */
+export const ACTIONS_FIRST_SELECTOR = FOCUSABLE_IN_BAR.split(",")
+  .map((selector) => `[data-bar-actions] ${selector.trim()}`)
+  .join(", ");
+
 export function isBarShortcut(e: {
   code: string;
   altKey: boolean;
@@ -37,6 +50,21 @@ export function requestBarFocus(): void {
 }
 
 /**
+ * Where the keyboard jump (Alt+B / Enter-on-checkbox) sends focus inside a
+ * mounted bar: the first enabled ACTION control — inside `[data-bar-actions]`
+ * and not part of an inline outcome panel (`[data-bar-outcome]`, which can
+ * render as that container's first child while rows stay selected) — falling
+ * back to any enabled control anywhere in the bar, then the bar itself.
+ */
+export function firstBarFocusTarget(bar: HTMLElement): HTMLElement {
+  const actionCandidates = bar.querySelectorAll<HTMLElement>(ACTIONS_FIRST_SELECTOR);
+  for (const el of actionCandidates) {
+    if (!el.closest("[data-bar-outcome]")) return el;
+  }
+  return bar.querySelector<HTMLElement>(FOCUSABLE_IN_BAR) ?? bar;
+}
+
+/**
  * Wires a mounted bar: Alt+B and BAR_FOCUS_EVENT move focus into `barRef`;
  * the element focused before the jump is remembered, and restoreFocus() puts
  * focus back there (call it before the bar closes). Returns restoreFocus.
@@ -51,7 +79,7 @@ export function useBarFocus(barRef: RefObject<HTMLElement | null>, active: boole
       if (!bar) return;
       const current = document.activeElement;
       if (current instanceof HTMLElement && !bar.contains(current)) returnTo.current = current;
-      const target = bar.querySelector<HTMLElement>(FOCUSABLE_IN_BAR) ?? bar;
+      const target = firstBarFocusTarget(bar);
       target.focus();
     };
     const onKey = (e: KeyboardEvent) => {

@@ -403,7 +403,7 @@ describe("running an Undo", () => {
   });
 });
 
-it("Enter on a row checkbox jumps focus into the bar, and Escape clears the selection and returns it", async () => {
+it("Enter on a row checkbox jumps focus to the first action, not Clear (Alt+B / Enter-on-checkbox footgun)", async () => {
   const user = userEvent.setup();
   render(<Harness rows={[{ key: "g1", ids: ["a1"], status: "confirmed" }]} />);
   const checkbox = screen.getByRole("checkbox", { name: "Select g1" });
@@ -411,13 +411,48 @@ it("Enter on a row checkbox jumps focus into the bar, and Escape clears the sele
   expect(document.activeElement).toBe(checkbox);
 
   await user.keyboard("{Enter}");
-  // The first enabled control inside the bar, in DOM order, is "Clear" (it
-  // sits ahead of the action buttons in the markup) — prove the jump landed
-  // somewhere real inside the bar rather than asserting it stayed put.
-  const clearButton = screen.getByRole("button", { name: "Clear" });
-  expect(document.activeElement).toBe(clearButton);
+  // "Clear" sits in the count line, ahead of the actions container, in DOM
+  // order — the jump must land INSIDE the actions container instead, so a
+  // keyboard user pressing Enter twice acts on their selection rather than
+  // wiping it.
+  const actionButton = screen.getByRole("button", { name: "Mark arrived (1)" });
+  expect(document.activeElement).toBe(actionButton);
+  expect(document.activeElement).not.toBe(screen.getByRole("button", { name: "Clear" }));
 
   await user.keyboard("{Escape}");
   expect(screen.queryByRole("region", { name: "Selected rows" })).toBeNull();
   expect(document.activeElement).toBe(checkbox);
+});
+
+it("with an inline outcome showing, the jump still lands on a real action button, not Undo/Dismiss", async () => {
+  vi.mocked(bulkTransitionAction).mockResolvedValue({ ok: true, changedIds: ["a1"], batchId: "b-1" });
+  const user = userEvent.setup();
+  render(
+    <Harness
+      rows={[
+        { key: "g1", ids: ["a1"], status: "confirmed" },
+        { key: "g2", ids: ["a2"], status: "pending_callback" },
+      ]}
+    />,
+  );
+  // g2 (pending_callback) is never eligible for "arrive" — sending only g1
+  // leaves g2 selected, so the bar keeps rendering with the outcome panel
+  // INLINE as the actions container's first child (see the "mixed-status
+  // selection" test above).
+  await user.click(screen.getByRole("checkbox", { name: "Select g1" }));
+  await user.click(screen.getByRole("checkbox", { name: "Select g2" }));
+  await user.click(screen.getByRole("button", { name: "Mark arrived (1)" }));
+  await screen.findByRole("button", { name: "↶ Undo" }); // outcome + Undo are inline now
+
+  const checkbox = screen.getByRole("checkbox", { name: "Select g2" });
+  checkbox.focus();
+  await user.keyboard("{Enter}");
+
+  // Landed on a real action button (g2 is pending_callback, still eligible
+  // for Confirm and Cancel — Confirm renders first), never the inline
+  // outcome's Undo or Dismiss, which render ahead of it in DOM order.
+  const confirmButton = screen.getByRole("button", { name: "Confirm (1)" });
+  expect(document.activeElement).toBe(confirmButton);
+  expect(document.activeElement).not.toBe(screen.getByRole("button", { name: "↶ Undo" }));
+  expect(document.activeElement).not.toBe(screen.getByRole("button", { name: "Dismiss" }));
 });

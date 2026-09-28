@@ -58,6 +58,7 @@ export function BulkOutcomePanel({
       ref={inline ? undefined : ref}
       tabIndex={inline ? undefined : -1}
       role="status"
+      data-bar-outcome
       className={
         inline
           ? "flex basis-full items-start gap-3 p-3 text-xs"

@@ -84,7 +84,13 @@ async function evalInBar(page: Page, barSelector: string) {
   return page.evaluate((sel) => {
     const bar = document.querySelector(sel);
     const el = document.activeElement;
-    return { inBar: !!(bar && el && bar.contains(el)), tag: el?.tagName ?? null };
+    const inActions = !!(el && el.closest("[data-bar-actions]"));
+    return {
+      inBar: !!(bar && el && bar.contains(el)),
+      inActions,
+      tag: el?.tagName ?? null,
+      text: el instanceof HTMLElement ? el.textContent?.trim() : null,
+    };
   }, barSelector);
 }
 
@@ -161,7 +167,7 @@ async function sectionFixedBars(c: CheckContext, med: Page, admin: Page): Promis
 // Keyboard jump (item 7) — each check is self-contained (fresh selection).
 // ---------------------------------------------------------------------------
 async function sectionKeyboard(c: CheckContext, med: Page): Promise<void> {
-  await check(c, "K1 Enter on a row checkbox focuses the first bar action", async () => {
+  await check(c, "K1 Enter on a row checkbox focuses the first bar action, not Clear", async () => {
     await goto(med, `${APP_BASE}/staff/queue?q=BSQ`);
     const box = rowBoxes(med).first();
     await box.focus();
@@ -170,10 +176,13 @@ async function sectionKeyboard(c: CheckContext, med: Page): Promise<void> {
     await box.press("Enter");
     await sleep(300);
     const info = await evalInBar(med, BAR);
-    return { ok: info.inBar && info.tag === "BUTTON", detail: info };
+    return {
+      ok: info.inBar && info.inActions && info.tag === "BUTTON" && info.text !== "Clear",
+      detail: info,
+    };
   });
 
-  await check(c, "K2 Alt+B jumps from anywhere", async () => {
+  await check(c, "K2 Alt+B jumps from anywhere, to the first bar action, not Clear", async () => {
     await goto(med, `${APP_BASE}/staff/queue?q=BSQ`);
     const box = rowBoxes(med).first();
     await box.check();
@@ -182,7 +191,10 @@ async function sectionKeyboard(c: CheckContext, med: Page): Promise<void> {
     await med.keyboard.press("Alt+B");
     await sleep(300);
     const info = await evalInBar(med, BAR);
-    return { ok: info.inBar && info.tag === "BUTTON", detail: info };
+    return {
+      ok: info.inBar && info.inActions && info.tag === "BUTTON" && info.text !== "Clear",
+      detail: info,
+    };
   });
 
   await check(c, "K3 Escape in the bar clears and returns focus to the checkbox", async () => {
