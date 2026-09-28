@@ -169,6 +169,8 @@ const EXEMPT: Record<string, string> = {
     "Same reasoning as submitBatchAction above; voiding also reduces work rather than adding it.",
   [`src/app/(staff)/staff/(dashboard)/admin/accounting/hmo-claims/actions.ts:bulkSetHmoResponseAction`]:
     "Same reasoning as submitBatchAction above — a bulk item-response update on a batch whose items are already guarded at creation/edit time.",
+  [`src/app/(staff)/staff/(dashboard)/admin/closures/actions.ts:bulkRescheduleForClosureAction`]:
+    "Deliberately unguarded: reschedule_closure_appointments locks every candidate patient and SKIPS deleted/merged ones inside the transaction (0184) — one inactive patient must never block rescheduling the whole closed day.",
 };
 
 const isCheckable = (p: string) => /\.(ts|tsx)$/.test(p) && !/\.test\.tsx?$/.test(p) && !/\.d\.ts$/.test(p);
