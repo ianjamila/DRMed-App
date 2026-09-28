@@ -218,6 +218,9 @@ export function translatePgError(err: PgError): string {
     // exists, or it is not the result's latest correction any more.
     case "P0068":
       return "This correction is no longer the latest one (the result was corrected again, or the entry is gone). Refresh the list and follow up the newest correction.";
+    // 0187: view_as_transition — the caller is not an active admin.
+    case "P0074":
+      return "Only an admin can view the app as another role.";
     default:
       return err.message ?? "Database error. Please try again.";
   }
