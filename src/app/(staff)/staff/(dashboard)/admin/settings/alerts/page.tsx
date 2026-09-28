@@ -6,6 +6,8 @@ import { ROUTE_NAME } from "@/lib/staff/route-names";
 import { STAFF_ALERT_LIST, type StaffAlertKey } from "@/lib/notifications/staff-alerts";
 import { loadActiveStaffForAlerts } from "@/lib/notifications/staff-alert-recipients";
 import { normaliseAlertSentMetadata } from "@/lib/notifications/alert-last-sent";
+import { NoticeChannelsPanel } from "@/components/staff/notice-channels-panel";
+import { emailStatus, smsStatus } from "@/lib/notifications/channel-status";
 import { AlertCard, type AlertExtraAddressProp, type AlertLastSentProp } from "./client";
 
 export const metadata = { title: ROUTE_NAME["/staff/admin/settings/alerts"] };
@@ -69,6 +71,8 @@ export default async function EmailAlertsPage() {
         title={ROUTE_NAME["/staff/admin/settings/alerts"]}
         subtitle="Choose who gets the clinic's alert emails — new website messages, result-template problems and possible duplicate patients. Switch each alert on or off, pick staff one by one, or add a shared inbox."
       />
+
+      <NoticeChannelsPanel email={emailStatus()} sms={smsStatus()} />
 
       <div className="space-y-6">
         {STAFF_ALERT_LIST.map((def, i) => {
