@@ -334,15 +334,18 @@ async function main() {
   }
   async function customerRow(
     looseKey: string,
-    opts: { patientId?: string | null; source?: string | null; registeredOn?: string | null; referredBy?: string | null } = {},
+    opts: {
+      patientId?: string | null; source?: string | null; registeredOn?: string | null;
+      referredBy?: string | null; sheetRow?: number;
+    } = {},
   ): Promise<void> {
     await q(
       `insert into public.sheet_customer_rows
          (sheet_row, source_key, full_name_raw, name_norm, loose_key, link_key, registered_on, referral_source_id,
           referred_by_raw, patient_id, link_state, row_hash, run_id)
-       values (1, md5(random()::text), $1, $1, $1, md5(random()::text), $2, $3, $4, $5, $6, md5(random()::text), $7)`,
+       values ($8, md5(random()::text), $1, $1, $1, md5(random()::text), $2, $3, $4, $5, $6, md5(random()::text), $7)`,
       [looseKey, opts.registeredOn ?? null, opts.source ?? null, opts.referredBy ?? null, opts.patientId ?? null,
-       opts.patientId ? "linked" : "unlinked", fx.runId],
+       opts.patientId ? "linked" : "unlinked", fx.runId, opts.sheetRow ?? 1],
     );
   }
   async function facts(patientId: string, registeredOn: string | null, newRepeat: "new" | "repeat" | null): Promise<void> {
@@ -941,10 +944,36 @@ async function main() {
         await q(`update public.patients set referred_by_doctor = $1 where id = $2`, [doc, id]);
         await visit(id, "2026-06-15");
       }
+      // Sheet referrer found via a MERGED member row: X (the survivor) has no
+      // app referred_by_doctor; Y merges into X and carries two sheet rows —
+      // only the LATEST by sheet_row must win.
+      const xId = await patient("Zzproofrefx", "XRay");
+      const yId = await patient("Zzproofrefy", "YRay");
+      await q(`update public.patients set merged_into_id = $1 where id = $2`, [xId, yId]);
+      await visit(xId, "2026-06-16");
+      await customerRow("zzproofrefy|earlier", { patientId: yId, referredBy: "Dr. Earlyref", sheetRow: 1 });
+      await customerRow("zzproofrefy|later", { patientId: yId, referredBy: "Dr. Latestref", sheetRow: 5 });
+
+      // App referred_by_doctor beats a sheet referrer on the same survivor.
+      const zId = await patient("Zzproofrefz", "ZRay");
+      await q(`update public.patients set referred_by_doctor = 'Dr. Appwinsref' where id = $1`, [zId]);
+      await visit(zId, "2026-06-17");
+      await customerRow("zzproofrefz|sheet", { patientId: zId, referredBy: "Dr. Sheetloseref", sheetRow: 1 });
+
       const rows = await referrersRows();
       const row = rows.find((r) => r.doctor_label === "Dr. Juan Santos");
       assert(!!row, `expected a referrer row labelled "Dr. Juan Santos", got ${JSON.stringify(rows)}`);
       assert(row!.new_confirmed === 3, `expected new_confirmed 3 for Dr. Juan Santos, got ${row!.new_confirmed}`);
+
+      const rowLatest = rows.find((r) => r.doctor_label === "Dr. Latestref");
+      assert(!!rowLatest && rowLatest.new_confirmed === 1, `expected the LATEST sheet row (via the merged member) to win, got ${JSON.stringify(rows)}`);
+      const rowEarly = rows.find((r) => r.doctor_label === "Dr. Earlyref");
+      assert(!rowEarly, `the earlier sheet row must not surface as its own referrer, got ${JSON.stringify(rows)}`);
+
+      const rowAppWins = rows.find((r) => r.doctor_label === "Dr. Appwinsref");
+      assert(!!rowAppWins && rowAppWins.new_confirmed === 1, `expected the app referred_by_doctor to win over a sheet referrer, got ${JSON.stringify(rows)}`);
+      const rowSheetLoses = rows.find((r) => r.doctor_label === "Dr. Sheetloseref");
+      assert(!rowSheetLoses, `a sheet referrer must not surface when the app field is set, got ${JSON.stringify(rows)}`);
     }));
 
     // 18. Converted mode ----------------------------------------------------

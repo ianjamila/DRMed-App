@@ -568,22 +568,29 @@ begin
     where i.basis in ('encounter', 'registration') and not i.is_returning
       and i.first_date between p_from and p_to
   ),
-  surv as (
+  -- MATERIALIZED so the recursive _ps_survivors() walk runs exactly once for
+  -- this call, not once per confirmed identity (it now feeds sheet_ref only).
+  surv as materialized (
     select s.patient_id, s.survivor_id from public._ps_survivors() s
+  ),
+  -- The latest (highest sheet_row) non-blank referrer per survivor, computed
+  -- once for the whole call instead of a correlated SubPlan re-run per row
+  -- (each of which re-walked _ps_survivors() and re-scanned
+  -- sheet_customer_rows — hundreds x a 7k-row recursive CTE + a full scan at
+  -- prod scale over a 12-month preset).
+  sheet_ref as (
+    select distinct on (s.survivor_id) s.survivor_id, c.referred_by_raw
+    from public.sheet_customer_rows c
+    join surv s on s.patient_id = c.patient_id
+    where nullif(btrim(c.referred_by_raw), '') is not null
+    order by s.survivor_id, c.sheet_row desc
   ),
   raw as (
     select i.identity, true as confirmed,
-           coalesce(
-             nullif(btrim(sp.referred_by_doctor), ''),
-             (select c.referred_by_raw
-                from public.sheet_customer_rows c
-                join surv s on s.patient_id = c.patient_id
-               where s.survivor_id = i.survivor_id and nullif(btrim(c.referred_by_raw), '') is not null
-               order by c.sheet_row desc
-               limit 1)
-           ) as raw_label
+           coalesce(nullif(btrim(sp.referred_by_doctor), ''), sr.referred_by_raw) as raw_label
     from ids i
     join public.patients sp on sp.id = i.survivor_id
+    left join sheet_ref sr on sr.survivor_id = i.survivor_id
     where i.confirmed
     union all
     select i.identity, false,
@@ -612,6 +619,14 @@ begin
   limit greatest(1, least(coalesce(p_limit, 20), 100));
 end;
 $$;
+
+-- (12b) Partial index for the unlinked-name lookup patient_sources_people
+-- runs per row below (spec §3.3): up to p_limit (<= 1000) seq scans of
+-- sheet_encounter_lines without it. Mirrors 0170's sheet_customer_rows_loose
+-- pattern; no equivalent exists there for sheet_encounter_lines.
+create index if not exists sheet_encounter_lines_loose_unlinked
+  on public.sheet_encounter_lines (loose_key, service_date, id)
+  where patient_id is null;
 
 -- (13) The people behind a count (spec §3.3; P9). Total order (first_date, identity).
 create or replace function public.patient_sources_people(
@@ -927,6 +942,9 @@ begin
   if has_table_privilege('anon', 'public.ad_spend_daily', 'select')
      or has_table_privilege('authenticated', 'public.ad_spend_daily', 'insert') then
     raise exception '0189: ad_spend_daily grants are wider than admin read';
+  end if;
+  if not (select relrowsecurity from pg_class where oid = 'public.ad_spend_daily'::regclass) then
+    raise exception '0189: ad_spend_daily does not have row level security enabled';
   end if;
 end;
 $$;
