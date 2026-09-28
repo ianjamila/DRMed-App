@@ -15,7 +15,8 @@ import {
   type BulkQueueResult,
   type QueueRowInfo,
 } from "@/lib/queue/bulk-queue";
-import { claimTestsAction, unclaimTestsAction } from "./actions";
+import { UNDO_WINDOW_MS, undoOutcomeMessage } from "@/lib/ui/bulk-undo";
+import { claimTestsAction, unclaimTestsAction, undoBulkQueueAction } from "./actions";
 
 interface Props {
   // Every selectable row the page rendered, keyed by test id OR panel key
@@ -25,11 +26,21 @@ interface Props {
 
 type Panel = null | "unclaim" | "delete";
 
+interface OutcomeUndo {
+  batchId: string;
+  doneAt: number;
+  /** Every selection key (test id or panel key) this action sent, mapped to
+   * that row's label — snapshotted here since the keys may not resolve to a
+   * row any more once the page refreshes. */
+  labelOf: Record<string, string>;
+}
+
 interface Outcome {
   message: string;
   /** The `selectionEdits` value when this outcome was set — see the
    * render-time drop rule below. */
   edits: number;
+  undo: OutcomeUndo | null;
 }
 
 // The lab queue's selection bar: Claim · Unclaim (optional reason) · Delete
@@ -40,6 +51,9 @@ export function QueueBulkBar({ rowsByKey }: Props) {
   const { keysByKind, clearKeys, count, selectionEdits } = useRowSelection();
   const router = useRouter();
   const [pending, start] = useTransition();
+  // Separate from the bar's own action transition so an Undo in flight
+  // doesn't get mistaken for (or block) a fresh bulk action.
+  const [undoing, startUndo] = useTransition();
   const [panel, setPanel] = useState<Panel>(null);
   const [reason, setReason] = useState("");
   const [err, setErr] = useState<string | null>(null);
@@ -68,18 +82,54 @@ export function QueueBulkBar({ rowsByKey }: Props) {
     setErr(null);
   }
 
-  function done(verb: string, keys: string[], result: BulkQueueResult, inPanel: boolean) {
+  function done(verb: string, keys: string[], result: BulkQueueResult, inPanel: boolean, doneAt: number) {
     if (!result.ok) {
       // Nothing was attempted (role / input / reason) — keep the selection.
       if (inPanel) setErr(result.error);
       else alert(result.error);
       return;
     }
-    setOutcome({ message: bulkQueueMessage(verb, keys.length, result, rowsByKey), edits: selectionEdits });
+    // Claim, Unclaim and Delete all get Undo — only when the server gave us
+    // a batch id and at least one row actually changed.
+    const undo: OutcomeUndo | null =
+      result.batchId && result.changedIds.length > 0
+        ? {
+            batchId: result.batchId,
+            doneAt,
+            labelOf: Object.fromEntries(keys.map((key) => [key, rowsByKey[key]?.label ?? "A test"])),
+          }
+        : null;
+    setOutcome({ message: bulkQueueMessage(verb, keys.length, result, rowsByKey), edits: selectionEdits, undo });
     // Pruning wins (spec §4): clear everything sent; the outcome panel is the record.
     clearKeys(keys);
     closePanel();
     router.refresh();
+  }
+
+  function runUndo(u: OutcomeUndo) {
+    startUndo(async () => {
+      const r = await undoBulkQueueAction({ batchId: u.batchId });
+      if (!r.ok) {
+        setOutcome({ message: r.error, edits: selectionEdits, undo: null });
+        return;
+      }
+      const restoredLabels = new Set(r.restoredIds.map((id) => u.labelOf[id] ?? id));
+      const notRestored = [...new Map(r.notRestored.map((n) => [u.labelOf[n.id] ?? "A test", n.reason])).entries()].map(
+        ([label, reason]) => ({ label, reason }),
+      );
+      setOutcome({
+        message: undoOutcomeMessage({ one: "test", many: "tests" }, { restored: restoredLabels.size, notRestored }),
+        edits: selectionEdits,
+        undo: null,
+      });
+      router.refresh();
+    });
+  }
+
+  function undoProp(undo: OutcomeUndo | null) {
+    return undo
+      ? { doneAt: undo.doneAt, windowMs: UNDO_WINDOW_MS, pending: undoing, onUndo: () => runUndo(undo) }
+      : null;
   }
 
   function claim() {
@@ -96,6 +146,7 @@ export function QueueBulkBar({ rowsByKey }: Props) {
           panels: panels.map(({ visitId, groupId }) => ({ visitId, groupId })),
         }),
         false,
+        Date.now(),
       ),
     );
   }
@@ -123,6 +174,7 @@ export function QueueBulkBar({ rowsByKey }: Props) {
           reason: reason.trim() || undefined,
         }),
         true,
+        Date.now(),
       ),
     );
   }
@@ -146,6 +198,7 @@ export function QueueBulkBar({ rowsByKey }: Props) {
           reason: reason.trim(),
         }),
         true,
+        Date.now(),
       ),
     );
   }
@@ -176,13 +229,20 @@ export function QueueBulkBar({ rowsByKey }: Props) {
 
   if (count === 0) {
     if (!outcome) return null;
-    return <BulkOutcomePanel message={outcome.message} onDismiss={() => setOutcome(null)} />;
+    return (
+      <BulkOutcomePanel message={outcome.message} undo={undoProp(outcome.undo)} onDismiss={() => setOutcome(null)} />
+    );
   }
 
   return (
     <BulkBar noun="test">
       {outcome ? (
-        <BulkOutcomePanel inline message={outcome.message} onDismiss={() => setOutcome(null)} />
+        <BulkOutcomePanel
+          inline
+          message={outcome.message}
+          undo={undoProp(outcome.undo)}
+          onDismiss={() => setOutcome(null)}
+        />
       ) : null}
       {claimKeys.length > 0 ? (
         <Button type="button" size="sm" variant="brand" disabled={pending} onClick={claim}>

@@ -113,3 +113,21 @@ export function groupUndoSteps(steps: readonly QueueUndoStep[]): Array<{ key: st
   }
   return [...byKey].map(([key, list]) => ({ key, steps: list }));
 }
+
+/**
+ * The message a bulk bar shows once an Undo finishes: how many rows came
+ * back, and every row that did not, named with why. Mirrors
+ * `formatBulkOutcome`'s "every skipped row is named" rule, for the reverse
+ * direction.
+ */
+export function undoOutcomeMessage(
+  noun: { one: string; many: string },
+  r: { restored: number; notRestored: ReadonlyArray<{ label: string; reason: string }> },
+): string {
+  const head =
+    r.restored === 0
+      ? "Nothing was undone."
+      : `Undone — ${r.restored} ${r.restored === 1 ? noun.one : noun.many} ${r.restored === 1 ? "is" : "are"} back to what ${r.restored === 1 ? "it was" : "they were"}.`;
+  if (r.notRestored.length === 0) return head;
+  return [head, `Not undone (${r.notRestored.length}):`, ...r.notRestored.map((l) => `• ${l.label}: ${l.reason}`)].join("\n");
+}

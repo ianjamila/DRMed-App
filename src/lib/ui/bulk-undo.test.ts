@@ -5,6 +5,7 @@ import {
   groupUndoSteps,
   planAppointmentUndo,
   planQueueUndo,
+  undoOutcomeMessage,
   undoWindowStartIso,
 } from "./bulk-undo";
 
@@ -102,5 +103,21 @@ describe("planQueueUndo", () => {
       [P, ["t1", "t2"]],
       ["t3", ["t3"]],
     ]);
+  });
+});
+
+describe("undoOutcomeMessage", () => {
+  it("says what came back and names what did not", () => {
+    expect(
+      undoOutcomeMessage(
+        { one: "booking", many: "bookings" },
+        { restored: 2, notRestored: [{ label: "Santos, Maria", reason: "changed again since — refresh to see its status" }] },
+      ),
+    ).toBe(
+      "Undone — 2 bookings are back to what they were.\nNot undone (1):\n• Santos, Maria: changed again since — refresh to see its status",
+    );
+  });
+  it("nothing came back", () => {
+    expect(undoOutcomeMessage({ one: "test", many: "tests" }, { restored: 0, notRestored: [] })).toBe("Nothing was undone.");
   });
 });

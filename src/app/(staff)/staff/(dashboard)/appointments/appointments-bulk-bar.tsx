@@ -14,7 +14,8 @@ import {
   type BulkAction,
   type GroupInfo,
 } from "@/lib/appointments/bulk-eligibility";
-import { bulkDeleteAction, bulkTransitionAction } from "./actions";
+import { UNDO_WINDOW_MS, undoOutcomeMessage } from "@/lib/ui/bulk-undo";
+import { bulkDeleteAction, bulkTransitionAction, undoBulkAppointmentsAction } from "./actions";
 
 interface Props {
   // Every booking group the page rendered, keyed by ApptGroup.key. Serialisable
@@ -51,17 +52,41 @@ const BUTTONS: Array<{
   },
 ];
 
+interface OutcomeUndo {
+  batchId: string;
+  doneAt: number;
+  /** Every appointment id of the bookings this action sent, mapped to that
+   * booking's label — snapshotted here because the page refresh drops those
+   * rows from `groupsByKey`. */
+  labelOf: Record<string, string>;
+}
+
 interface Outcome {
   message: string;
   /** The `selectionEdits` value when this outcome was set — see the
    * render-time drop rule below. */
   edits: number;
+  undo: OutcomeUndo | null;
+}
+
+/** Maps every appointment id of the given booking keys to that booking's label. */
+function labelOfKeys(keys: readonly string[], groupsByKey: Record<string, GroupInfo>): Record<string, string> {
+  const labelOf: Record<string, string> = {};
+  for (const key of keys) {
+    const info = groupsByKey[key];
+    if (!info) continue;
+    for (const id of info.ids) labelOf[id] = info.label;
+  }
+  return labelOf;
 }
 
 export function AppointmentsBulkBar({ groupsByKey, isAdmin }: Props) {
   const { state, clearKeys, count, selectionEdits } = useRowSelection();
   const router = useRouter();
   const [pending, start] = useTransition();
+  // Separate from the bar's own action transition so an Undo in flight
+  // doesn't get mistaken for (or block) a fresh bulk action.
+  const [undoing, startUndo] = useTransition();
   // The last action's outcome, naming every booking not changed or skipped.
   // An action only clears the keys it acted on, so other selected rows (e.g.
   // a pending-callback booking under Mark arrived) can leave `count > 0` —
@@ -104,9 +129,16 @@ export function AppointmentsBulkBar({ groupsByKey, isAdmin }: Props) {
       }
       const outcomeResult = summariseOutcome(keys, groupsByKey, result.changedIds);
       const notSent = plan[button.action].skippedInactiveKeys;
+      // Delete is permanent — never offer Undo for it. Otherwise, only when
+      // the server gave us a batch id and at least one row actually changed.
+      const undo: OutcomeUndo | null =
+        button.action !== "delete" && result.batchId && result.changedIds.length > 0
+          ? { batchId: result.batchId, doneAt: Date.now(), labelOf: labelOfKeys(keys, groupsByKey) }
+          : null;
       setOutcome({
         message: bulkAppointmentsMessage(button, outcomeResult, groupsByKey, notSent),
         edits: selectionEdits,
+        undo,
       });
       // Pruning wins (spec §4): clear everything sent — and the inactive ones the
       // button left out, which the message now names — the panel is the record.
@@ -115,16 +147,48 @@ export function AppointmentsBulkBar({ groupsByKey, isAdmin }: Props) {
     });
   }
 
+  function runUndo(u: OutcomeUndo) {
+    startUndo(async () => {
+      const r = await undoBulkAppointmentsAction({ batchId: u.batchId });
+      if (!r.ok) {
+        setOutcome({ message: r.error, edits: selectionEdits, undo: null });
+        return;
+      }
+      // Name bookings, not appointment rows: collapse ids to their labels.
+      const restoredLabels = new Set(r.restoredIds.map((id) => u.labelOf[id] ?? id));
+      const notRestored = [...new Map(r.notRestored.map((n) => [u.labelOf[n.id] ?? "A booking", n.reason])).entries()].map(
+        ([label, reason]) => ({ label, reason }),
+      );
+      setOutcome({
+        message: undoOutcomeMessage({ one: "booking", many: "bookings" }, { restored: restoredLabels.size, notRestored }),
+        edits: selectionEdits,
+        undo: null,
+      });
+      router.refresh();
+    });
+  }
+
+  function undoProp(undo: OutcomeUndo | null) {
+    return undo
+      ? { doneAt: undo.doneAt, windowMs: UNDO_WINDOW_MS, pending: undoing, onUndo: () => runUndo(undo) }
+      : null;
+  }
+
   if (count === 0) {
     return outcome ? (
-      <BulkOutcomePanel message={outcome.message} onDismiss={() => setOutcome(null)} />
+      <BulkOutcomePanel message={outcome.message} undo={undoProp(outcome.undo)} onDismiss={() => setOutcome(null)} />
     ) : null;
   }
 
   return (
     <BulkBar noun="booking">
       {outcome ? (
-        <BulkOutcomePanel inline message={outcome.message} onDismiss={() => setOutcome(null)} />
+        <BulkOutcomePanel
+          inline
+          message={outcome.message}
+          undo={undoProp(outcome.undo)}
+          onDismiss={() => setOutcome(null)}
+        />
       ) : null}
       {inactiveCount > 0 ? (
         <span className="text-[11px] text-amber-700">
