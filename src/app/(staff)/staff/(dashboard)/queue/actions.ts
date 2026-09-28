@@ -8,19 +8,16 @@ import { audit } from "@/lib/audit/log";
 import { requireActiveStaff, type StaffSession } from "@/lib/auth/require-staff";
 import { requireAdminStaff } from "@/lib/auth/require-admin";
 import { translatePgError } from "@/lib/accounting/pg-errors";
-import { labQueueGate } from "@/lib/visits/lab-gate";
-import {
-  canClaimSection,
-  claimOwnerLabel,
-  claimOwnerRole,
-  sectionsForRole,
-} from "@/lib/auth/role-sections";
-import {
-  MAX_BULK_SELECTION,
-  scopeToAllowedSections,
-} from "@/lib/visits/bulk-selection";
+import { canClaimSection, claimOwnerLabel, claimOwnerRole } from "@/lib/auth/role-sections";
+import { MAX_BULK_SELECTION } from "@/lib/visits/bulk-selection";
 import { isDoctorKind } from "@/lib/visits/order-lines";
 import { DOCTOR_KINDS_PG_LIST } from "@/lib/visits/classification";
+import {
+  UNCLAIM_REFUSAL_ANY,
+  UNCLAIM_REFUSAL_OWN,
+  evaluateClaim,
+  evaluateUnclaim,
+} from "@/lib/queue/claim-eligibility";
 
 export type ClaimResult = { ok: true } | { ok: false; error: string };
 
@@ -44,58 +41,20 @@ export async function claimTestAction(
   if (!testRequest) {
     return { ok: false, error: "Test not found." };
   }
-  // Whole-visit deletes don't cascade deleted_at onto lines — check the
-  // parent here so a stale tab can't claim work on a deleted visit.
-  if (testRequest.visits.deleted_at !== null) {
-    return { ok: false, error: "This visit was deleted from the queue." };
-  }
-  if (testRequest.is_package_header) {
-    return {
-      ok: false,
-      error: "Package headers cannot be claimed — they have no work.",
-    };
-  }
-  // Same reasoning for doctor lines: a consultation has no bench step to
-  // claim. The section gate below cannot refuse one — doctor services carry a
-  // null `section`, which passes for the unrestricted roles by design (that
-  // is what lets an admin mark a consultation done). So admin/pathologist
-  // could claim a consultation into `in_progress`, where it would then sit
-  // forever: nothing on the bench can move it on.
-  if (isDoctorKind(testRequest.services.kind)) {
-    return {
-      ok: false,
-      error:
-        "Consultations and procedures are completed on the visit page with “Mark done”, not claimed from the lab queue.",
-    };
-  }
-  // Section gate, server-side: RLS lets every lab role (and reception) write
-  // test_requests, so the queue list's section filter is UX, not the guard.
-  // reception's [] denies outright; a null-section doctor line survives only
-  // for admin/pathologist — the same rule as the release actions.
-  if (
-    scopeToAllowedSections([testRequest], sectionsForRole(session.role)).length ===
-    0
-  ) {
-    return {
-      ok: false,
-      error: "This test is outside the sections you can claim.",
-    };
-  }
-  // Single-owner sections (x-ray → x-ray technician): the role scope above
-  // lets admin/pathologist through, so this is the check that keeps them out.
-  const owner = claimOwnerRole(testRequest.services.section);
-  if (owner && !canClaimSection(session.role, testRequest.services.section)) {
-    return {
-      ok: false,
-      error: `Only an ${claimOwnerLabel(owner)} can claim this test.`,
-    };
-  }
-  // Payment gate (item 10, decision 1): the queue hides these rows, but a
-  // stale tab or direct link must not start lab work on an unpaid visit.
-  const gate = labQueueGate(testRequest.visits);
-  if (!gate.ok) {
-    return { ok: false, error: gate.hint };
-  }
+  // Every refusal lives in evaluateClaim (src/lib/queue/claim-eligibility.ts)
+  // so the bulk claim refuses a row for exactly the same reason. isDoctorKind
+  // stays HERE, beside the read (query-surfaces.test.ts looks for it).
+  const verdict = evaluateClaim(
+    {
+      isPackageHeader: testRequest.is_package_header,
+      isDoctorLine: isDoctorKind(testRequest.services.kind),
+      section: testRequest.services.section,
+      visitDeleted: testRequest.visits.deleted_at !== null,
+      visit: testRequest.visits,
+    },
+    session.role,
+  );
+  if (!verdict.ok) return verdict;
 
   // Only claim if currently 'requested' — concurrency-safe.
   const { data, error } = await supabase
@@ -186,18 +145,8 @@ async function performUnclaim(
   }
   // All-or-nothing for a group: refuse up front rather than hand back half a
   // chemistry panel. The UPDATE below re-proves the same predicate.
-  const refusal =
-    ownerId === null
-      ? "Only claimed, in-progress tests can be unclaimed."
-      : "You can only unclaim a test you currently hold that has no result yet.";
-  if (
-    before.some(
-      (r) =>
-        r.status !== "in_progress" ||
-        r.assigned_to === null ||
-        (ownerId !== null && r.assigned_to !== ownerId),
-    )
-  ) {
+  const refusal = ownerId === null ? UNCLAIM_REFUSAL_ANY : UNCLAIM_REFUSAL_OWN;
+  if (before.some((r) => !evaluateUnclaim(r, ownerId).ok)) {
     return { ok: false, error: refusal };
   }
 
