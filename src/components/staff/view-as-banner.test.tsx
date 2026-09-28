@@ -6,10 +6,11 @@ import { describe, expect, it, vi } from "vitest";
 // Server Actions (a string action serialises as a plain form action).
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ refresh: () => {} }),
+  usePathname: () => "/staff",
 }));
 vi.mock("@/app/(staff)/staff/(dashboard)/view-as/actions", () => ({
-  startViewAsAction: "/noop-start",
-  exitViewAsAction: "/noop-exit",
+  startViewAsAction: async () => ({ error: null }),
+  exitViewAsAction: async () => ({ error: null }),
 }));
 
 const { ViewAsBanner } = await import("./view-as-banner");
@@ -27,9 +28,8 @@ describe("ViewAsBanner", () => {
   it("is a status region hidden on print, with Exit and a role select", () => {
     expect(html).toContain('role="status"');
     expect(html).toContain("print:hidden");
-    expect(html).toContain('action="/noop-exit"');
     expect(html).toContain(">Exit<");
-    expect(html).toContain('action="/noop-start"');
+    expect(html).toContain('name="return_to"');
     expect(html).toContain('name="role"');
   });
 });
@@ -51,5 +51,20 @@ describe("ViewAsSelect", () => {
     expect(html).toContain('value=""');
     expect(html).toContain("View as…");
     expect(html).toContain('selected=""');
+  });
+  it("carries a hidden return_to field and no error by default", () => {
+    const html = renderToStaticMarkup(<ViewAsSelect current={null} id="t" />);
+    expect(html).toContain('type="hidden"');
+    expect(html).toContain('name="return_to"');
+    expect(html).not.toContain('role="alert"');
+  });
+});
+
+const { ViewAsExitButton } = await import("./view-as-exit-button");
+describe("ViewAsExitButton", () => {
+  it("renders an Exit submit with a hidden return_to", () => {
+    const html = renderToStaticMarkup(<ViewAsExitButton />);
+    expect(html).toContain(">Exit<");
+    expect(html).toContain('name="return_to"');
   });
 });
