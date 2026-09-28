@@ -119,3 +119,34 @@ describe("0188 result_outdated_copies = 0179's + notify_problem", () => {
     expect(body0188()).not.toMatch(/\breason\b|prior_values|notify_error\s*[,)]/);
   });
 });
+
+// 0188's retry claim re-opens a send slot, so every condition that keeps a
+// retry from double-sending — or from retrying what a retry can't fix — is
+// pinned, along with its service_role-only ACL.
+describe("0188 result_retry_patient_notify", () => {
+  const M0188 = read("0188_result_followups_notify_problem.sql");
+  const fn = () => {
+    const start = M0188.indexOf("create function public.result_retry_patient_notify(");
+    expect(start).toBeGreaterThan(-1);
+    return M0188.slice(start, M0188.indexOf("\n$$;", start));
+  };
+  it.each([
+    ["the latest correction only", "ra.amendment_seq = (select r.amendment_count from public.results r where r.id = ra.result_id)"],
+    ["nobody contacted yet", "ra.patient_contacted_at is null"],
+    ["an attempt was made", "ra.patient_notified_at is not null"],
+    ["it reached no channel", "coalesce(cardinality(ra.patient_notified_channels), 0) = 0"],
+    ["it failed", "ra.patient_notify_error is not null"],
+    ["not because notices aren't set up", "ra.patient_notify_error not like 'notices not set up%'"],
+    ["not because there's no contact", "ra.patient_notify_error <> 'no contact on file'"],
+  ])("only re-opens %s", (_label, clause) => {
+    expect(fn()).toContain(clause);
+  });
+  it("claims by clearing the outcome in the same UPDATE (a second click matches nothing)", () => {
+    expect(fn()).toMatch(/set patient_notified_at\s+= now\(\),\s+patient_notified_channels = null,\s+patient_notify_error\s+= null/);
+  });
+  it("is service_role only", () => {
+    expect(M0188).toMatch(/revoke all on function public\.result_retry_patient_notify\(uuid\) from public, anon, authenticated;/);
+    expect(M0188).toMatch(/grant execute on function public\.result_retry_patient_notify\(uuid\) to service_role;/);
+    expect(M0188).not.toMatch(/grant execute on function public\.result_retry_patient_notify\(uuid\) to [^;]*authenticated/);
+  });
+});

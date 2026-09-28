@@ -22,6 +22,7 @@ vi.mock("@/lib/results/copy-followups.server", () => ({
 const fx = vi.hoisted(() => ({
   claim: null as null | (() => Promise<{ data: unknown; error: { message: string } | null }>),
   claimCalls: 0,
+  claimFns: [] as string[],
   patient: null as null | {
     id: string;
     first_name: string | null;
@@ -43,8 +44,9 @@ const releasedRow = { test_requests: { status: "released" } };
 vi.mock("@/lib/supabase/admin", () => ({
   createAdminClient: () => ({
     rpc: async (fn: string, args: Record<string, unknown>) => {
-      if (fn === "result_claim_patient_notify") {
+      if (fn === "result_claim_patient_notify" || fn === "result_retry_patient_notify") {
         fx.claimCalls += 1;
+        fx.claimFns.push(fn);
         return fx.claim!();
       }
       if (fn === "result_record_patient_notify") {
@@ -105,6 +107,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   fx.claim = okClaim;
   fx.claimCalls = 0;
+  fx.claimFns = [];
   fx.patient = {
     id: "pt1",
     first_name: "Ana",
@@ -409,6 +412,31 @@ const offeredState = {
   has_email: true,
   has_phone: false,
 };
+
+describe("0188 retry", () => {
+  it("an edit claims through result_claim_patient_notify, and its audit has no retry flag", async () => {
+    vi.mocked(sendEmail).mockResolvedValue({ ok: true, id: "em-1" });
+    vi.mocked(sendSms).mockResolvedValue({ ok: true, id: "sms-1" });
+    await notifyResultCorrected(args);
+    expect(fx.claimFns).toEqual(["result_claim_patient_notify"]);
+    expect((fx.audits[0].metadata as Record<string, unknown>).retry).toBeUndefined();
+  });
+  it("a retry claims through result_retry_patient_notify and is audited as one", async () => {
+    vi.mocked(sendEmail).mockResolvedValue({ ok: true, id: "em-1" });
+    vi.mocked(sendSms).mockResolvedValue({ ok: true, id: "sms-1" });
+    const out = await notifyResultCorrected({ ...args, retry: true });
+    expect(out).toBe("sent");
+    expect(fx.claimFns).toEqual(["result_retry_patient_notify"]);
+    expect((fx.audits[0].metadata as Record<string, unknown>).retry).toBe(true);
+  });
+  it("a retry that finds nothing to re-open sends nothing", async () => {
+    fx.claim = () => Promise.resolve({ data: [], error: null });
+    const out = await notifyResultCorrected({ ...args, retry: true });
+    expect(out).toBe("already");
+    expect(sendEmail).not.toHaveBeenCalled();
+    expect(sendSms).not.toHaveBeenCalled();
+  });
+});
 
 describe("describeSendFailure", () => {
   const noPhone = { ok: false as const, kind: "skipped" as const, reason: "patient has no phone on file" };

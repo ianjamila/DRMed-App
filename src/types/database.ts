@@ -7481,6 +7481,15 @@ export type Database = {
         Args: { p_amendment_id: string; p_channels: string[]; p_error: string }
         Returns: undefined
       }
+      result_retry_patient_notify: {
+        Args: { p_amendment_id: string }
+        Returns: {
+          amendment_seq: number
+          anchor_test_request_id: string
+          patient_id: string
+          result_id: string
+        }[]
+      }
       result_finalise_commit: {
         Args: {
           p_alerts: Json

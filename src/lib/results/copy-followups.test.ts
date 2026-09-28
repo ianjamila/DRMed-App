@@ -4,11 +4,14 @@ import {
   copyKindLabel,
   followUpStatusLabel,
   notifyProblemHint,
+  canRetryNotice,
+  RETRY_OUTCOME_TEXT,
   isOutdatedCopiesCapped,
   outdatedCopyChip,
   shouldOfferNotify,
   type CopyState,
 } from "./copy-followups";
+import type { NotifyOutcome } from "@/lib/notifications/notify-corrected";
 
 const base: CopyState = {
   result_id: "r1", latest_amendment_id: "a1", amendment_count: 1,
@@ -82,6 +85,20 @@ describe("notifyProblemHint", () => {
     expect(notifyProblemHint({ contacted_at: "2026-09-28T00:00:00Z", notify_problem: "send_error" })).toBeNull();
     expect(notifyProblemHint({ contacted_at: null, notify_problem: null })).toBeNull();
     expect(notifyProblemHint({ contacted_at: null, notify_problem: "RESEND_API_KEY / RESEND_FROM_EMAIL not configured" })).toBeNull();
+  });
+});
+
+describe("canRetryNotice", () => {
+  it("offers a retry only for a send error nobody has followed up", () => {
+    expect(canRetryNotice({ contacted_at: null, notify_problem: "send_error" })).toBe(true);
+    expect(canRetryNotice({ contacted_at: "2026-09-28T00:00:00Z", notify_problem: "send_error" })).toBe(false);
+    expect(canRetryNotice({ contacted_at: null, notify_problem: "not_set_up" })).toBe(false);
+    expect(canRetryNotice({ contacted_at: null, notify_problem: "no_contact" })).toBe(false);
+    expect(canRetryNotice({ contacted_at: null, notify_problem: null })).toBe(false);
+  });
+  it("has words for every outcome a retry can end in", () => {
+    const outcomes: NotifyOutcome[] = ["sent", "sent_unrecorded", "failed", "not_set_up", "already", "inactive", "not_released"];
+    for (const o of outcomes) expect(RETRY_OUTCOME_TEXT[o]).toBeTruthy();
   });
 });
 

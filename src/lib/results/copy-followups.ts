@@ -69,6 +69,25 @@ export function notifyProblemHint(s: { contacted_at: string | null; notify_probl
   }
 }
 
+/** 0188: whether Result Follow-ups offers "Retry notice" — only a send error
+ * a retry can fix, on a row nobody has contacted yet. The SQL claim
+ * (result_retry_patient_notify) re-checks all of this; this only decides
+ * whether to show the button. */
+export function canRetryNotice(s: { contacted_at: string | null; notify_problem: string | null }): boolean {
+  return !s.contacted_at && s.notify_problem === "send_error";
+}
+
+/** 0188: what the "Retry notice" button says afterwards, per notify outcome. */
+export const RETRY_OUTCOME_TEXT: Record<string, string> = {
+  sent: "Sent.",
+  sent_unrecorded: "Sent, but the list couldn't be updated — it may still show them.",
+  failed: "Still couldn't send — call the patient.",
+  not_set_up: "Couldn't send — email and text notices aren't set up. Call the patient.",
+  already: "Nothing to retry — it was already handled.",
+  inactive: "Not sent — the patient's record is no longer active.",
+  not_released: "Not sent — the result isn't released, so the patient can't open it yet.",
+};
+
 /** Visit-page chip text, or null when there is nothing to chase. */
 export function outdatedCopyChip(s: CopyState | undefined): string | null {
   if (!s || s.followed_up || !(s.portal_outdated || s.printed_outdated)) return null;

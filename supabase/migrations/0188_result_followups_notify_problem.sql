@@ -15,6 +15,9 @@
 --   anything else (provider error, "internal error while sending") → send_error
 -- The raw text still never leaves the database (0179's rule for staff RPCs).
 --
+-- It also adds result_retry_patient_notify (end of file), the claim behind the
+-- list's "Retry notice" button for a send error.
+--
 -- Adding an OUT column changes the return type, so the function is dropped
 -- and re-created from 0179's body, unchanged apart from the new column; its
 -- ACL is restated as 0179 left it (authenticated + service_role; the body
@@ -96,3 +99,52 @@ end;
 $$;
 revoke all on function public.result_outdated_copies(boolean) from public, anon;
 grant execute on function public.result_outdated_copies(boolean) to authenticated, service_role;
+
+-- -----------------------------------------------------------------------------
+-- "Retry notice" on Result Follow-ups: re-open the send slot of a correction
+-- whose opt-in patient notice reached NOBODY because of a send error, so
+-- notify-corrected.ts can try once more. result_claim_patient_notify stays
+-- the one-time claim for the edit itself; this is its retry twin, and it only
+-- matches a row that
+--   * is the result's LATEST correction (an older one is not on the list),
+--   * nobody has marked contacted,
+--   * was attempted (patient_notified_at set) and delivered on no channel,
+--   * failed for a reason a retry can fix — a send error, not
+--     "notices not set up" or "no contact on file" (the same wording 0188's
+--     notify_problem matches above).
+-- The UPDATE is the claim: a second click (or a racing tab) re-checks the
+-- WHERE after the first commits, finds the error cleared, and gets no row, so
+-- a retry can never double-send. Clearing channels + error while in flight
+-- makes the list read "Send status unknown" until the outcome is recorded.
+-- Service role only, like the claim: the Server Action gates reception/admin.
+-- -----------------------------------------------------------------------------
+create function public.result_retry_patient_notify(p_amendment_id uuid)
+returns table (result_id uuid, amendment_seq int, anchor_test_request_id uuid, patient_id uuid)
+language sql
+volatile
+security definer
+set search_path = public
+as $$
+  with c as (
+    update public.result_amendments ra
+       set patient_notified_at       = now(),
+           patient_notified_channels = null,
+           patient_notify_error      = null
+     where ra.id = p_amendment_id
+       and ra.patient_contacted_at is null
+       and ra.patient_notified_at is not null
+       and coalesce(cardinality(ra.patient_notified_channels), 0) = 0
+       and ra.patient_notify_error is not null
+       and ra.patient_notify_error not like 'notices not set up%'
+       and ra.patient_notify_error <> 'no contact on file'
+       and ra.amendment_seq = (select r.amendment_count from public.results r where r.id = ra.result_id)
+    returning ra.result_id, ra.amendment_seq
+  )
+  -- As in result_claim_patient_notify: the lateral call reads only the anchor
+  -- and patient, which don't depend on notify state.
+  select c.result_id, c.amendment_seq, s.anchor_test_request_id, s.patient_id
+    from c
+    cross join lateral public.result_copy_states_internal(array[c.result_id]) s;
+$$;
+revoke all on function public.result_retry_patient_notify(uuid) from public, anon, authenticated;
+grant execute on function public.result_retry_patient_notify(uuid) to service_role;

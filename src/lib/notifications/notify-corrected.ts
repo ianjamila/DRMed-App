@@ -72,6 +72,10 @@ interface Args {
   /** The visit's patient (0167) — checked BEFORE the claim so a deleted or
    * merged record never consumes the once-only send slot. */
   patientId: string;
+  /** 0188: a reception/admin "Retry notice" from Result Follow-ups — claims
+   * through result_retry_patient_notify, which only re-opens a slot whose
+   * earlier attempt reached nobody because of a send error. */
+  retry?: boolean;
 }
 
 type ClaimRow = {
@@ -103,6 +107,7 @@ export async function notifyResultCorrected({
   testName,
   actorId,
   patientId,
+  retry = false,
 }: Args): Promise<NotifyOutcome> {
   if (amendmentId === null) {
     await reportError({
@@ -153,7 +158,7 @@ export async function notifyResultCorrected({
   let claim: ClaimRow | undefined;
   try {
     const { data: claimed, error: claimErr } = await admin.rpc(
-      "result_claim_patient_notify",
+      retry ? "result_retry_patient_notify" : "result_claim_patient_notify",
       { p_amendment_id: amendmentId },
     );
     if (claimErr) throw new Error(claimErr.message);
@@ -279,6 +284,7 @@ export async function notifyResultCorrected({
       resource_id: claim.anchor_test_request_id,
       metadata: {
         kind: "corrected",
+        ...(retry ? { retry: true } : {}),
         result_id: claim.result_id,
         amendment_id: amendmentId,
         amendment_seq: claim.amendment_seq,
