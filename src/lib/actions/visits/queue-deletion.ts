@@ -15,15 +15,17 @@
  */
 
 import { revalidatePath } from "next/cache";
+import { z } from "zod";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { audit } from "@/lib/audit/log";
-import { requireActiveStaff } from "@/lib/auth/require-staff";
+import { requireActiveStaff, type StaffSession } from "@/lib/auth/require-staff";
 import { ipAndAgent } from "@/lib/server/action-helpers";
 import { QueueDeleteReasonSchema } from "@/lib/validations/accounting";
 import { translatePgError } from "@/lib/accounting/pg-errors";
 import { QUEUE_DELETE_ROLES } from "@/lib/visits/deletion";
 import { MAX_BULK_SELECTION } from "@/lib/visits/bulk-selection";
 import { assertVisitPatientActive } from "@/lib/patients/require-active";
+import type { BulkQueueResult, SkippedRow } from "@/lib/queue/bulk-queue";
 
 export type QueueDeletionResult =
   | { ok: true; count: number }
@@ -180,25 +182,21 @@ export async function restoreVisitAction(
 // DB trigger; components themselves are rejected there (P0044).
 // ---------------------------------------------------------------------------
 
-export async function deleteTestRequestsAction(
+type VisitDeleteOutcome =
+  | { ok: true; deletedIds: string[] }
+  | { ok: false; error: string };
+
+// Per-visit core shared by deleteTestRequestsAction (one visit) and
+// deleteTestRequestsManyAction (a queue selection across visits). NOT
+// exported: every export of a "use server" file is a public endpoint, and
+// this trusts the session + reason its caller already checked.
+async function deleteTestRequestsForVisit(
+  session: StaffSession,
   visitId: string,
   testRequestIds: string[],
   reason: string,
-): Promise<QueueDeletionResult> {
-  const { session, error: roleError } = await requireQueueDeleteStaff();
-  if (!session) return { ok: false, error: roleError };
-  const parsed = parseReason(reason);
-  if (!parsed.ok) return { ok: false, error: parsed.error };
-  if (testRequestIds.length === 0) {
-    return { ok: false, error: "No tests selected." };
-  }
-  if (testRequestIds.length > MAX_BULK_SELECTION) {
-    return {
-      ok: false,
-      error: `Too many tests selected — the limit is ${MAX_BULK_SELECTION} per action.`,
-    };
-  }
-
+  bulkBatchSize?: number,
+): Promise<VisitDeleteOutcome> {
   const admin = createAdminClient();
   const { data: candidates } = await admin
     .from("test_requests")
@@ -216,15 +214,15 @@ export async function deleteTestRequestsAction(
     return { ok: false, error: "Visit is already deleted." };
   }
 
-  // One UPDATE per action call — the 0125 guard raises P0042/P0043/P0044 for
-  // the whole statement, so a mixed selection fails atomically rather than
-  // half-deleting.
+  // One UPDATE per visit — the 0125 guard raises P0042/P0043/P0044 for the
+  // whole statement, so a mixed selection on one visit fails atomically
+  // rather than half-deleting.
   const { data: deleted, error } = await admin
     .from("test_requests")
     .update({
       deleted_at: new Date().toISOString(),
       deleted_by: session.user_id,
-      delete_reason: parsed.reason,
+      delete_reason: reason,
     })
     .in(
       "id",
@@ -251,13 +249,14 @@ export async function deleteTestRequestsAction(
       resource_id: row.id,
       metadata: {
         visit_id: visitId,
-        reason: parsed.reason,
+        reason,
         service_name: info?.services?.name ?? null,
         service_code: info?.services?.code ?? null,
         final_price_php:
           info?.final_price_php != null ? Number(info.final_price_php) : null,
         is_package_header: info?.is_package_header ?? false,
         bulk: deleted.length > 1,
+        ...(bulkBatchSize !== undefined ? { bulk_batch_size: bulkBatchSize } : {}),
       },
       ip_address: ip,
       user_agent: ua,
@@ -265,7 +264,118 @@ export async function deleteTestRequestsAction(
   }
 
   revalidateQueueSurfaces(visitId);
-  return { ok: true, count: deleted.length };
+  return { ok: true, deletedIds: deleted.map((r) => r.id) };
+}
+
+export async function deleteTestRequestsAction(
+  visitId: string,
+  testRequestIds: string[],
+  reason: string,
+): Promise<QueueDeletionResult> {
+  const { session, error: roleError } = await requireQueueDeleteStaff();
+  if (!session) return { ok: false, error: roleError };
+  const parsed = parseReason(reason);
+  if (!parsed.ok) return { ok: false, error: parsed.error };
+  if (testRequestIds.length === 0) {
+    return { ok: false, error: "No tests selected." };
+  }
+  if (testRequestIds.length > MAX_BULK_SELECTION) {
+    return {
+      ok: false,
+      error: `Too many tests selected — the limit is ${MAX_BULK_SELECTION} per action.`,
+    };
+  }
+  const outcome = await deleteTestRequestsForVisit(
+    session,
+    visitId,
+    testRequestIds,
+    parsed.reason,
+  );
+  if (!outcome.ok) return outcome;
+  return { ok: true, count: outcome.deletedIds.length };
+}
+
+const ManyDeleteSchema = z.object({
+  testRequestIds: z
+    .array(z.string().uuid({ message: "Could not read the selection — refresh the queue and try again." }))
+    .min(1, { message: "Nothing to delete — no tests were selected." })
+    .max(MAX_BULK_SELECTION, {
+      message: `Too many tests selected — the limit is ${MAX_BULK_SELECTION} per action.`,
+    }),
+  reason: z.string(),
+});
+
+// The lab queue's bulk Delete (spec §6): a selection that can span visits.
+// Order matters — role, then the input's shape and the reason, and only then
+// the service-role read — so an empty or unknown-id batch from a caller
+// without the role gets the role error, never a candidate-dependent message.
+// Each visit is its own atomic statement (deleteTestRequestsForVisit): a
+// refused visit (paid, HMO-claimed, shared report…) is reported as skipped
+// with the translated reason, and visits already committed stay committed.
+export async function deleteTestRequestsManyAction(input: unknown): Promise<BulkQueueResult> {
+  const { session, error: roleError } = await requireQueueDeleteStaff();
+  if (!session) return { ok: false, error: roleError };
+  const shape = ManyDeleteSchema.safeParse(input);
+  if (!shape.success) {
+    return {
+      ok: false,
+      error:
+        shape.error.issues[0]?.message ??
+        "Could not read the selection — refresh the queue and try again.",
+    };
+  }
+  const parsed = parseReason(shape.data.reason);
+  if (!parsed.ok) return { ok: false, error: parsed.error };
+  const ids = Array.from(new Set(shape.data.testRequestIds));
+
+  const admin = createAdminClient();
+  const { data: candidates, error: readError } = await admin
+    .from("test_requests")
+    .select("id, visit_id")
+    .in("id", ids)
+    .is("deleted_at", null);
+  if (readError) return { ok: false, error: translatePgError(readError) };
+  if (!candidates || candidates.length === 0) {
+    return {
+      ok: false,
+      error: "Nothing to delete — these tests were already deleted or no longer exist.",
+    };
+  }
+
+  const visitOf = new Map(candidates.map((c) => [c.id, c.visit_id]));
+  const byVisit = new Map<string, string[]>();
+  const skipped: SkippedRow[] = [];
+  for (const id of ids) {
+    const visitId = visitOf.get(id);
+    if (!visitId) {
+      skipped.push({ id, reason: "Already deleted or no longer exists." });
+      continue;
+    }
+    const group = byVisit.get(visitId);
+    if (group) group.push(id);
+    else byVisit.set(visitId, [id]);
+  }
+
+  const changedIds: string[] = [];
+  for (const [visitId, groupIds] of byVisit) {
+    const outcome = await deleteTestRequestsForVisit(
+      session,
+      visitId,
+      groupIds,
+      parsed.reason,
+      ids.length,
+    );
+    if (!outcome.ok) {
+      for (const id of groupIds) skipped.push({ id, reason: outcome.error });
+      continue;
+    }
+    const done = new Set(outcome.deletedIds);
+    for (const id of groupIds) {
+      if (done.has(id)) changedIds.push(id);
+      else skipped.push({ id, reason: "Already deleted or not deletable." });
+    }
+  }
+  return { ok: true, changedIds, skipped };
 }
 
 export async function restoreTestRequestsAction(
