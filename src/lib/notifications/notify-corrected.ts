@@ -173,7 +173,7 @@ export async function notifyResultCorrected({
   }
   if (!claim) return "already";
 
-  let channels: string[] = [];
+  const channels: string[] = [];
   let error: string | null = null;
   let notSetUp = false;
   let smsMeta: unknown = null;
