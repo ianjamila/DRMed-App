@@ -27,7 +27,7 @@ import {
   type StaffRole,
 } from "./staff-nav-config";
 import { ROLE_LABEL } from "@/lib/staff/role-labels";
-import { viewAsStateKey, type ActiveViewAs } from "@/lib/auth/view-as";
+import { drawerOpenForState, viewAsStateKey, type ActiveViewAs } from "@/lib/auth/view-as";
 import { ViewAsSelect } from "./view-as-select";
 
 interface Props {
@@ -250,7 +250,7 @@ export function StaffMobileNavTrigger({
   // the picker's error stays visible.
   const stateKey = viewAsStateKey(viewAs);
   const [openFor, setOpenFor] = useState<string | null>(null);
-  const open = openFor === stateKey;
+  const open = drawerOpenForState(openFor, stateKey);
   const close = () => setOpenFor(null);
   const pathname = usePathname();
 

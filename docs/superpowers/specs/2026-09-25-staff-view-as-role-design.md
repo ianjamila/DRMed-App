@@ -165,10 +165,10 @@ stopped applying. Three cases:
   `actualRole` and `viewAs` so an admin can start from a phone.
 - **Banner** (`src/components/staff/view-as-banner.tsx`): rendered by the
   shell above the page content on every width, `print:hidden`, amber,
-  `role="status"`. Text: "Viewing as Reception. Anything you save is recorded
-  under your name. Ends in 3h 40m." Contains an **Exit** button
-  (`exitViewAsAction`) and the same role select for hopping between roles
-  without exiting first.
+  `role="status"`. Text: "Viewing as Reception until 6:12 PM · 3h 40m left.
+  Anything you save is recorded under your name." (updated by the
+  2026-09-28 follow-ups) Contains an **Exit** button (`exitViewAsAction`)
+  and the same role select for hopping between roles without exiting first.
 - **Footer role line** while simulating (desktop and mobile): "Reception
   (viewing as) · Admin".
 - `ROLE_LABEL` is duplicated today in `staff-shell.tsx` and

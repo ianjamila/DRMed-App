@@ -104,6 +104,18 @@ export function viewAsStateKey(v: ActiveViewAs | null): string {
   return v ? `${v.role}@${v.until}` : "none";
 }
 
+/** The mobile drawer is open iff it was opened FOR the state key that is
+ *  current right now. A successful switch/exit changes `stateKey` (via
+ *  `viewAsStateKey`), so the drawer closes itself without an effect; a
+ *  failed switch leaves `stateKey` unchanged, so the drawer (and its picker
+ *  error) stays open. Never opened (`openFor` is null) is always closed. */
+export function drawerOpenForState(
+  openFor: string | null,
+  stateKey: string,
+): boolean {
+  return openFor !== null && openFor === stateKey;
+}
+
 /** What the View-as Server Actions return to `useActionState`. */
 export interface ViewAsActionState {
   error: string | null;
