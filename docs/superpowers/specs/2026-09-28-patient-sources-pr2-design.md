@@ -288,7 +288,19 @@ sections above; listed here for a single audit trail against `00-context.md`.
   rows are never trusted. Google's title lines and a UTF-8 BOM are skipped; "Total:" rows are ignored, not
   rejected. Ambiguous numeric dates follow the in-browser view. No spend column → whole file refused; a blank
   spend cell → that row rejected; an explicit 0 is kept (a correction upload can zero a day). Any row whose
-  platform isn't Meta or Google refuses the whole file.
+  platform isn't Meta or Google refuses the whole file. **Fixed 2026-09-28 (final review, Codex #1/#2/#3, Sonnet
+  #3):** a date cell's trailing text must be a real timestamp suffix (`[ T]HH:MM[:SS][.ffff][Z|±HH:MM]`) or the
+  whole cell is rejected — an "A to B" / "A - B" range in one cell is `date_range`, never silently truncated to
+  its first day. A row PapaParse itself flags as malformed (`TooManyFields`/`TooFewFields`/a quote error — e.g.
+  an unquoted comma inside "1,234.50") is rejected as `malformed_row` and never reaches the money/campaign
+  parsing. A campaign name that normalises to empty (e.g. "---") is rejected as `no_campaign`, not passed through
+  to fail the DB's `campaign_key` check and abort the whole upload. **`ad_spend_import` REPLACES everything
+  already saved for each `(spend_date, platform, campaign_key)` it contains** — not just the exact `(…, ad_key)`
+  rows it repeats — so uploading the same spend once as a campaign total, once per ad name and once per ad ID
+  can never stack under three different `ad_key`s and multiply the counted spend; a sibling campaign/day the
+  upload doesn't mention is untouched. The parser additionally refuses a file that mixes a campaign-total row
+  (`ad_key = "(campaign)"`) with per-ad rows for the same campaign and day, since that shape can never be saved
+  correctly at either granularity.
 - **P15** — Reception prompt: the patient update uses the RLS server client, is conditional on
   `referral_source is null`, never blocks the visit, and is audited `patient.referral_source_recorded`
   (`{ referral_source, via: 'new_visit' }`). Sits inside `createVisitAction`.
