@@ -1918,3 +1918,214 @@ $$;
 revoke all on function public.resolve_patient_guarded(text, text, date, jsonb) from public;
 revoke execute on function public.resolve_patient_guarded(text, text, date, jsonb) from anon, authenticated;
 grant execute on function public.resolve_patient_guarded(text, text, date, jsonb) to service_role;
+
+-- ---------------------------------------------------------------------------
+-- (6) create_visit_encounter — one transaction for what visits/new/actions.ts
+-- did in 3-5 PostgREST calls plus a compensating delete: the visit(s) (two
+-- sharing visit_group_id when the order has doctor AND lab lines), every
+-- test_requests row (headers and standalone lines first, then package
+-- components — tg_test_request_parent_is_header, 0040), one visit_pins row per
+-- visit carrying the SAME bcrypt hash, the pre_registered clear, and the
+-- audit rows (patient.identity_verified, visit.created, visit_pin.issued,
+-- package.decomposed) — so a crash can no longer leave a visit without its
+-- lines, PIN or audit trail. Prices come from the app (pure reads + TS
+-- arithmetic, src/lib/visits/encounter-payload.ts); this re-checks the actor,
+-- the shape and that each visit's total equals its lines. P0073 = refused
+-- here (message passes through); P0058 = inactive patient.
+-- ---------------------------------------------------------------------------
+create or replace function public.create_visit_encounter(
+  p_actor          uuid,
+  p_patient_id     uuid,
+  p_pin_hash       text,
+  p_visits         jsonb,
+  p_visit_group_id uuid  default null,   -- set only for a split (doctor + lab) encounter
+  p_context        jsonb default null    -- {ip, user_agent} for the audit rows
+)
+returns jsonb
+language plpgsql
+volatile
+security definer
+set search_path = pg_catalog, public, pg_temp
+as $$
+declare
+  v_ip       inet;
+  v_ua       text := left(nullif(p_context ->> 'user_agent', ''), 512);
+  v_visit    jsonb;
+  v_lines    jsonb;
+  v_total    numeric;
+  v_sum_c    bigint;    -- centavos
+  v_id       uuid;
+  v_number   text;
+  v_hmo      uuid;
+  v_out      jsonb := '[]'::jsonb;
+  v_verified boolean;
+begin
+  if p_actor is null or not exists (
+    select 1 from public.staff_profiles s
+     where s.id = p_actor and s.role in ('reception', 'admin') and s.is_active and s.deleted_at is null
+  ) then
+    raise exception 'only active reception or admin staff can start a visit' using errcode = 'P0073';
+  end if;
+  if p_patient_id is null then
+    raise exception 'choose a patient' using errcode = 'P0073';
+  end if;
+  if jsonb_typeof(p_visits) is distinct from 'array' or jsonb_array_length(p_visits) not in (1, 2) then
+    raise exception 'a visit encounter has one or two visits' using errcode = 'P0073';
+  end if;
+  if (jsonb_array_length(p_visits) = 2) <> (p_visit_group_id is not null) then
+    raise exception 'a split encounter needs a group id, and only a split one has one' using errcode = 'P0073';
+  end if;
+  if p_pin_hash is null or p_pin_hash !~ '^\$2[aby]\$[0-9]{2}\$.{53}$' then
+    raise exception 'the portal PIN was not hashed' using errcode = 'P0073';
+  end if;
+  if p_context is not null and (
+       jsonb_typeof(p_context) <> 'object'
+       or exists (select 1 from jsonb_object_keys(p_context) k where k not in ('ip', 'user_agent'))) then
+    raise exception 'unexpected audit context' using errcode = 'P0073';
+  end if;
+  begin
+    v_ip := nullif(p_context ->> 'ip', '')::inet;
+  exception when invalid_text_representation then
+    v_ip := null;
+  end;
+
+  -- Shape of every line, before anything is written.
+  for v_visit in select value from jsonb_array_elements(p_visits) loop
+    v_lines := v_visit -> 'lines';
+    if jsonb_typeof(v_lines) is distinct from 'array' or jsonb_array_length(v_lines) = 0 then
+      raise exception 'each visit needs at least one line' using errcode = 'P0073';
+    end if;
+    if exists (
+      select 1 from jsonb_array_elements(v_lines) l
+       where (l ->> 'id') is null or (l ->> 'service_id') is null
+          or coalesce(l ->> 'status', '') not in ('requested', 'in_progress')
+          or ((l ->> 'is_package_header')::boolean) is distinct from ((l ->> 'status') = 'in_progress')
+          or (nullif(l ->> 'parent_id', '') is not null and not exists (
+                select 1 from jsonb_array_elements(v_lines) h
+                 where h ->> 'id' = l ->> 'parent_id' and (h ->> 'is_package_header')::boolean))
+    ) then
+      raise exception 'a bill line is malformed (missing id, bad status, or a component without its package)'
+        using errcode = 'P0073';
+    end if;
+    -- Compared in integer CENTAVOS: the app sums JS numbers (100.10 + 200.20
+    -- arrives as 300.29999999999995) and every money column is numeric(10,2).
+    v_total := (v_visit -> 'visit' ->> 'total_php')::numeric;
+    select coalesce(sum(round((l ->> 'final_price_php')::numeric * 100)), 0)::bigint into v_sum_c
+      from jsonb_array_elements(v_lines) l;
+    if v_total is null or round(v_total * 100)::bigint <> v_sum_c then
+      raise exception 'the visit total (%) does not match its lines (%)', round(v_total, 2), v_sum_c / 100.0
+        using errcode = 'P0073';
+    end if;
+  end loop;
+
+  -- The patient's lifecycle lock (shared) before the first row is written.
+  perform public.lifecycle_lock_and_assert(array[p_patient_id], false);
+
+  -- M5: a visit means the patient is at the counter — identity verified.
+  update public.patients set pre_registered = false where id = p_patient_id and pre_registered;
+  v_verified := found;
+  if v_verified then
+    insert into public.audit_log (actor_id, actor_type, patient_id, action, resource_type, resource_id,
+                                  metadata, ip_address, user_agent)
+    values (p_actor, 'staff', p_patient_id, 'patient.identity_verified', 'patient', p_patient_id,
+            jsonb_build_object('via', 'visit_created'), v_ip, v_ua);
+  end if;
+
+  for v_visit in select value from jsonb_array_elements(p_visits) with ordinality as t(value, n) order by n loop
+    v_lines := v_visit -> 'lines';
+    v_total := round((v_visit -> 'visit' ->> 'total_php')::numeric, 2);   -- centavos, as checked above
+    v_hmo   := nullif(v_visit -> 'visit' ->> 'hmo_provider_id', '')::uuid;
+
+    insert into public.visits (patient_id, total_php, notes, created_by, hmo_provider_id, hmo_approval_date,
+                               hmo_authorization_no, attending_physician_id, visit_group_id, is_sample)
+    values (p_patient_id, v_total, nullif(v_visit -> 'visit' ->> 'notes', ''), p_actor, v_hmo,
+            nullif(v_visit -> 'visit' ->> 'hmo_approval_date', '')::date,
+            nullif(v_visit -> 'visit' ->> 'hmo_authorization_no', ''),
+            nullif(v_visit -> 'visit' ->> 'attending_physician_id', '')::uuid,
+            p_visit_group_id,
+            coalesce((v_visit -> 'visit' ->> 'is_sample')::boolean, false))
+    returning id, visit_number into v_id, v_number;
+
+    -- Headers + standalone lines, then components. The money columns are
+    -- numeric(10,2): the assignment cast rounds every amount to centavos.
+    insert into public.test_requests (id, visit_id, service_id, requested_by, base_price_php, discount_kind,
+                                      discount_amount_php, final_price_php, hmo_provider_id, hmo_approval_date,
+                                      hmo_authorization_no, receptionist_remarks, clinic_fee_php, doctor_pf_php,
+                                      procedure_description, hmo_approved_amount_php, parent_id,
+                                      is_package_header, status)
+    select x.id, v_id, x.service_id, p_actor, x.base_price_php, x.discount_kind,
+           coalesce(x.discount_amount_php, 0), x.final_price_php, x.hmo_provider_id, x.hmo_approval_date,
+           x.hmo_authorization_no, x.receptionist_remarks, x.clinic_fee_php, x.doctor_pf_php,
+           x.procedure_description, x.hmo_approved_amount_php, x.parent_id, x.is_package_header, x.status
+      from jsonb_to_recordset(v_lines) as x(id uuid, service_id uuid, base_price_php numeric, discount_kind text,
+             discount_amount_php numeric, final_price_php numeric, hmo_provider_id uuid, hmo_approval_date date,
+             hmo_authorization_no text, receptionist_remarks text, clinic_fee_php numeric, doctor_pf_php numeric,
+             procedure_description text, hmo_approved_amount_php numeric, parent_id uuid,
+             is_package_header boolean, status text)
+     where x.parent_id is null;
+    insert into public.test_requests (id, visit_id, service_id, requested_by, base_price_php, discount_kind,
+                                      discount_amount_php, final_price_php, hmo_provider_id, hmo_approval_date,
+                                      hmo_authorization_no, receptionist_remarks, clinic_fee_php, doctor_pf_php,
+                                      procedure_description, hmo_approved_amount_php, parent_id,
+                                      is_package_header, status)
+    select x.id, v_id, x.service_id, p_actor, x.base_price_php, x.discount_kind,
+           coalesce(x.discount_amount_php, 0), x.final_price_php, x.hmo_provider_id, x.hmo_approval_date,
+           x.hmo_authorization_no, x.receptionist_remarks, x.clinic_fee_php, x.doctor_pf_php,
+           x.procedure_description, x.hmo_approved_amount_php, x.parent_id, x.is_package_header, x.status
+      from jsonb_to_recordset(v_lines) as x(id uuid, service_id uuid, base_price_php numeric, discount_kind text,
+             discount_amount_php numeric, final_price_php numeric, hmo_provider_id uuid, hmo_approval_date date,
+             hmo_authorization_no text, receptionist_remarks text, clinic_fee_php numeric, doctor_pf_php numeric,
+             procedure_description text, hmo_approved_amount_php numeric, parent_id uuid,
+             is_package_header boolean, status text)
+     where x.parent_id is not null;
+
+    insert into public.visit_pins (visit_id, pin_hash) values (v_id, p_pin_hash);
+
+    insert into public.audit_log (actor_id, actor_type, patient_id, action, resource_type, resource_id,
+                                  metadata, ip_address, user_agent)
+    select p_actor, 'staff', p_patient_id, 'visit.created', 'visit', v_id,
+           jsonb_build_object(
+             'visit_number', v_number,
+             'total_php', v_total,
+             'service_count', count(*) filter (where nullif(l ->> 'parent_id', '') is null),
+             'visit_group_id', p_visit_group_id,
+             'hmo_provider_id', v_hmo,
+             'discounted_lines', count(*) filter (where nullif(l ->> 'parent_id', '') is null
+                                                   and coalesce((l ->> 'discount_amount_php')::numeric, 0) > 0),
+             'is_sample', coalesce((v_visit -> 'visit' ->> 'is_sample')::boolean, false)),
+           v_ip, v_ua
+      from jsonb_array_elements(v_lines) l;
+
+    -- Never the PIN or its hash (RA 10173) — only that one was issued.
+    insert into public.audit_log (actor_id, actor_type, patient_id, action, resource_type, resource_id,
+                                  metadata, ip_address, user_agent)
+    values (p_actor, 'staff', p_patient_id, 'visit_pin.issued', 'visit', v_id,
+            jsonb_build_object('visit_number', v_number, 'reason', 'visit_created'), v_ip, v_ua);
+
+    insert into public.audit_log (actor_id, actor_type, patient_id, action, resource_type, resource_id,
+                                  metadata, ip_address, user_agent)
+    select p_actor, 'staff', p_patient_id, 'package.decomposed', 'test_request', (h.value ->> 'id')::uuid,
+           jsonb_build_object(
+             'visit_id', v_id,
+             'package_service_id', (h.value ->> 'service_id')::uuid,
+             'package_code', s.code,
+             'package_name', s.name,
+             'component_count', (select count(*) from jsonb_array_elements(v_lines) c
+                                  where c ->> 'parent_id' = h.value ->> 'id'),
+             'component_service_ids', coalesce((select jsonb_agg(c.value ->> 'service_id' order by c.n)
+                                                  from jsonb_array_elements(v_lines) with ordinality as c(value, n)
+                                                 where c.value ->> 'parent_id' = h.value ->> 'id'), '[]'::jsonb)),
+           v_ip, v_ua
+      from jsonb_array_elements(v_lines) as h(value)
+      left join public.services s on s.id = (h.value ->> 'service_id')::uuid
+     where (h.value ->> 'is_package_header')::boolean;
+
+    v_out := v_out || jsonb_build_array(jsonb_build_object('id', v_id, 'visit_number', v_number));
+  end loop;
+
+  return jsonb_build_object('visits', v_out, 'identity_verified', v_verified);
+end;
+$$;
+
+revoke all on function public.create_visit_encounter(uuid, uuid, text, jsonb, uuid, jsonb) from public, anon, authenticated;
+grant execute on function public.create_visit_encounter(uuid, uuid, text, jsonb, uuid, jsonb) to service_role;

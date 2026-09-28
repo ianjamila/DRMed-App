@@ -1247,4 +1247,149 @@ begin
 end
 $s8$;
 
+-- --- s9: create_visit_encounter ------------------------------------------------------
+create function pg_temp.enc_line(id uuid, svc uuid, price numeric, parent uuid, header boolean, status text)
+returns jsonb language sql as $f$
+  select jsonb_build_object('id', id, 'service_id', svc, 'base_price_php', price, 'discount_kind', null,
+    'discount_amount_php', 0, 'final_price_php', price, 'hmo_provider_id', null, 'hmo_approval_date', null,
+    'hmo_authorization_no', null, 'receptionist_remarks', null, 'clinic_fee_php', null, 'doctor_pf_php', null,
+    'procedure_description', null, 'hmo_approved_amount_php', null, 'parent_id', parent,
+    'is_package_header', header, 'status', status);
+$f$;
+create function pg_temp.enc_visit(total numeric, lines jsonb) returns jsonb language sql as $f$
+  select jsonb_build_object('visit', jsonb_build_object('total_php', total, 'notes', null, 'hmo_provider_id', null,
+    'hmo_approval_date', null, 'hmo_authorization_no', null, 'attending_physician_id', null, 'is_sample', false),
+    'lines', lines);
+$f$;
+do $grant9$
+declare f regprocedure;
+begin
+  for f in select p.oid::regprocedure from pg_proc p where p.pronamespace = pg_my_temp_schema() loop
+    execute format('grant execute on function %s to public', f);
+  end loop;
+end
+$grant9$;
+
+do $s9$
+declare
+  k_rec  constant uuid := 'a1000000-0000-4000-8000-000000000184';
+  k_med  constant uuid := 'a2000000-0000-4000-8000-000000000184';
+  k_pkg  constant uuid := 'c2000000-0000-4000-8000-000000000184';
+  k_lab  constant uuid := 'c0000000-0000-4000-8000-000000000184';
+  k_lab2 constant uuid := 'c1000000-0000-4000-8000-000000000184';
+  k_con  constant uuid := 'c3000000-0000-4000-8000-000000000184';
+  hash   constant text := '$2a$12$' || repeat('a', 53);
+  a uuid := pg_temp.mk_patient('S9A');
+  pr uuid := pg_temp.mk_patient('S9P');
+  d uuid := pg_temp.mk_patient('S9D');
+  h uuid := gen_random_uuid();
+  g uuid := gen_random_uuid();
+  one jsonb; res jsonb; vid uuid; n int;
+begin
+  one := pg_temp.enc_visit(1900, jsonb_build_array(
+    pg_temp.enc_line(h, k_pkg, 1500, null, true, 'in_progress'),
+    pg_temp.enc_line(gen_random_uuid(), k_lab, 400, null, false, 'requested'),
+    pg_temp.enc_line(gen_random_uuid(), k_lab, 0, h, false, 'requested'),
+    pg_temp.enc_line(gen_random_uuid(), k_lab2, 0, h, false, 'requested')));
+  res := public.create_visit_encounter(k_rec, a, hash, jsonb_build_array(one), null, '{"ip":"203.0.113.5","user_agent":"smoke"}');
+  vid := (res -> 'visits' -> 0 ->> 'id')::uuid;
+  perform pg_temp.expect('s9.1 one visit created', jsonb_array_length(res -> 'visits')::text, '1');
+  perform pg_temp.expect('s9.2 four bill lines', (select count(*)::text from public.test_requests where visit_id = vid), '4');
+  perform pg_temp.expect('s9.3 package header auto-promoted (0040)',
+    (select status from public.test_requests where id = h), 'ready_for_release');
+  perform pg_temp.expect('s9.4 total and creator recorded',
+    (select total_php::text || '|' || created_by::text from public.visits where id = vid), '1900.00|' || k_rec);
+  perform pg_temp.expect('s9.5 one PIN row with the given hash',
+    (select count(*)::text from public.visit_pins where visit_id = vid and pin_hash = hash), '1');
+  perform pg_temp.expect('s9.6 audits: visit.created, visit_pin.issued, package.decomposed(2 components)',
+    (select string_agg(action || coalesce(':' || (metadata ->> 'component_count'), ''), ',' order by action collate "C")
+       from public.audit_log where patient_id = a and action in ('visit.created', 'visit_pin.issued', 'package.decomposed')),
+    'package.decomposed:2,visit.created,visit_pin.issued');
+  perform pg_temp.expect('s9.7 visit.created metadata counts order lines, not components',
+    (select (metadata ->> 'service_count') || '|' || (metadata ->> 'total_php')
+       from public.audit_log where patient_id = a and action = 'visit.created' order by created_at limit 1), '2|1900.00');
+
+  -- Split encounter + pre-registered patient.
+  update public.patients set pre_registered = true where id = pr;
+  res := public.create_visit_encounter(k_rec, pr, hash, jsonb_build_array(
+    pg_temp.enc_visit(500, jsonb_build_array(pg_temp.enc_line(gen_random_uuid(), k_con, 500, null, false, 'requested'))),
+    pg_temp.enc_visit(400, jsonb_build_array(pg_temp.enc_line(gen_random_uuid(), k_lab, 400, null, false, 'requested')))),
+    g, null);
+  perform pg_temp.expect('s9.8 split: two visits share the group id',
+    (select count(*)::text from public.visits where visit_group_id = g), '2');
+  perform pg_temp.expect('s9.9 split: both carry the same PIN hash',
+    (select count(distinct pin_hash)::text || '|' || count(*)::text from public.visit_pins vp
+       join public.visits v on v.id = vp.visit_id where v.visit_group_id = g), '1|2');
+  perform pg_temp.expect('s9.10 identity verified: pre_registered cleared + audited',
+    (select (not pre_registered)::text from public.patients where id = pr)
+      || '|' || (select count(*)::text from public.audit_log where patient_id = pr and action = 'patient.identity_verified')
+      || '|' || (res ->> 'identity_verified'), 'true|1|true');
+
+  -- Refusals write nothing.
+  perform pg_temp.kill(d);
+  n := (select count(*) from public.visits where patient_id = d);
+  perform pg_temp.expect('s9.11 deleted patient refused',
+    pg_temp.state_of(format($q$select public.create_visit_encounter(%L, %L, %L, jsonb_build_array(%L::jsonb))$q$, k_rec, d, hash, one)), 'P0058');
+  perform pg_temp.expect('s9.12 …and nothing was written', (select count(*) from public.visits where patient_id = d)::text, n::text);
+  perform pg_temp.expect('s9.13 total that does not match the lines',
+    pg_temp.state_of(format($q$select public.create_visit_encounter(%L, %L, %L, jsonb_build_array(%L::jsonb))$q$,
+      k_rec, a, hash, jsonb_set(one, '{visit,total_php}', '1'))), 'P0073');
+  perform pg_temp.expect('s9.14 a medtech cannot start a visit',
+    pg_temp.state_of(format($q$select public.create_visit_encounter(%L, %L, %L, jsonb_build_array(%L::jsonb))$q$, k_med, a, hash, one)), 'P0073');
+  perform pg_temp.expect('s9.15 component whose header is not in the payload',
+    pg_temp.state_of(format($q$select public.create_visit_encounter(%L, %L, %L, jsonb_build_array(%L::jsonb))$q$,
+      k_rec, a, hash, pg_temp.enc_visit(0, jsonb_build_array(pg_temp.enc_line(gen_random_uuid(), k_lab, 0, gen_random_uuid(), false, 'requested'))))), 'P0073');
+  perform pg_temp.expect('s9.16 two visits without a group id',
+    pg_temp.state_of(format($q$select public.create_visit_encounter(%L, %L, %L, jsonb_build_array(%L::jsonb, %L::jsonb))$q$, k_rec, a, hash, one, one)), 'P0073');
+  perform pg_temp.expect('s9.17 an unhashed PIN',
+    pg_temp.state_of(format($q$select public.create_visit_encounter(%L, %L, 'ABCD2345', jsonb_build_array(%L::jsonb))$q$, k_rec, a, one)), 'P0073');
+  n := (select count(*) from public.visits where patient_id = a);
+  perform pg_temp.expect('s9.18 a failing SECOND visit leaves no first visit behind (atomic)',
+    pg_temp.state_of(format($q$select public.create_visit_encounter(%L, %L, %L, jsonb_build_array(%L::jsonb, %L::jsonb), %L)$q$,
+      k_rec, a, hash,
+      pg_temp.enc_visit(400, jsonb_build_array(pg_temp.enc_line(gen_random_uuid(), k_lab, 400, null, false, 'requested'))),
+      pg_temp.enc_visit(400, jsonb_build_array(pg_temp.enc_line(gen_random_uuid(), gen_random_uuid(), 400, null, false, 'requested'))),
+      gen_random_uuid())), '23503');
+  perform pg_temp.expect('s9.19 …visit count unchanged', (select count(*) from public.visits where patient_id = a)::text, n::text);
+  -- Centavo normalisation (Codex plan review P2-4): the app sums JS floats.
+  n := (select count(*) from public.visits where patient_id = a);
+  res := public.create_visit_encounter(k_rec, a, hash, jsonb_build_array(
+    pg_temp.enc_visit(300.29999999999995, jsonb_build_array(
+      pg_temp.enc_line(gen_random_uuid(), k_lab, 100.10, null, false, 'requested'),
+      pg_temp.enc_line(gen_random_uuid(), k_lab2, 200.20, null, false, 'requested')))), null, null);
+  vid := (res -> 'visits' -> 0 ->> 'id')::uuid;
+  perform pg_temp.expect('s9.21 100.10 + 200.20 sent as the JS float 300.29999999999995 is accepted, stored 300.30',
+    (select total_php::text from public.visits where id = vid), '300.30');
+  res := public.create_visit_encounter(k_rec, a, hash, jsonb_build_array(
+    pg_temp.enc_visit(79.99000000000001, jsonb_build_array(
+      jsonb_set(jsonb_set(pg_temp.enc_line(gen_random_uuid(), k_lab, 79.99000000000001, null, false, 'requested'),
+                          '{base_price_php}', '99.99'), '{discount_amount_php}', '20')))), null, null);
+  vid := (res -> 'visits' -> 0 ->> 'id')::uuid;
+  perform pg_temp.expect('s9.22 a discounted line whose float final is 79.99000000000001 is stored 79.99',
+    (select total_php::text || '|' || (select final_price_php::text from public.test_requests where visit_id = vid)
+       from public.visits where id = vid), '79.99|79.99');
+  res := public.create_visit_encounter(k_rec, a, hash, jsonb_build_array(
+    pg_temp.enc_visit(0.30000000000000004, jsonb_build_array(
+      pg_temp.enc_line(gen_random_uuid(), k_con, 0.1, null, false, 'requested'),
+      pg_temp.enc_line(gen_random_uuid(), k_con, 0.2, null, false, 'requested'))),
+    pg_temp.enc_visit(100.1, jsonb_build_array(pg_temp.enc_line(gen_random_uuid(), k_lab, 100.1, null, false, 'requested')))),
+    gen_random_uuid(), null);
+  perform pg_temp.expect('s9.23 a split encounter with fractional totals on both halves',
+    (select string_agg(total_php::text, ',' order by total_php) from public.visits
+      where id in (select (x ->> 'id')::uuid from jsonb_array_elements(res -> 'visits') x)), '0.30,100.10');
+  perform pg_temp.expect('s9.24 a real one-centavo mismatch is still refused',
+    pg_temp.state_of(format($q$select public.create_visit_encounter(%L, %L, %L, jsonb_build_array(%L::jsonb))$q$, k_rec, a, hash,
+      pg_temp.enc_visit(300.31, jsonb_build_array(
+        pg_temp.enc_line(gen_random_uuid(), k_lab, 100.10, null, false, 'requested'),
+        pg_temp.enc_line(gen_random_uuid(), k_lab2, 200.20, null, false, 'requested'))))), 'P0073');
+  perform pg_temp.expect('s9.25 …three encounters, four visits written',
+    ((select count(*) from public.visits where patient_id = a) - n)::text, '4');
+
+  perform pg_temp.expect('s9.20 EXECUTE service_role only',
+    (has_function_privilege('service_role', 'public.create_visit_encounter(uuid,uuid,text,jsonb,uuid,jsonb)', 'execute')
+     and not has_function_privilege('authenticated', 'public.create_visit_encounter(uuid,uuid,text,jsonb,uuid,jsonb)', 'execute')
+     and not has_function_privilege('anon', 'public.create_visit_encounter(uuid,uuid,text,jsonb,uuid,jsonb)', 'execute'))::text, 'true');
+end
+$s9$;
+
 rollback;
