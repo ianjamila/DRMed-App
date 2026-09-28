@@ -154,8 +154,15 @@ logic only (no DB / no RSC) — modules under test must not `import "server-only
 `*.test.tsx` is also picked up, for the few *client* components worth asserting
 markup on (e.g. the staff sidebar's collapsed-by-default sections): render them
 with `react-dom/server`'s `renderToStaticMarkup` and stub their browser hooks —
-still no DOM, still no RSC. The smoke scripts above still cover the render
-pipeline + integration paths.
+still no DOM, still no RSC. When the behaviour worth pinning is
+interactive (type, tick, save, the page re-rendering with a newer version),
+opt that one file into a DOM with a `// @vitest-environment jsdom` first line
+and drive it with `@testing-library/react` + `@testing-library/user-event` — the
+result edit forms (`queue/[id]/amend-form.test.tsx`, the consolidated
+`report-edit-form.test.tsx`) are the model; `rerender` with new props stands in for
+a Server Action's revalidation. jsdom quirk: a `required` file input reads as
+empty even with a file attached, so submit that form with `fireEvent.submit`. The
+smoke scripts above still cover the render pipeline + integration paths.
 
 ## Architecture — the things that aren't obvious from file structure
 
