@@ -54,14 +54,17 @@ export function HiddenVoidedEmptyState({
   noun,
   hiddenVoided,
   showHref,
+  lead = `No active ${noun}s match your filters.`,
 }: {
   noun: string;
   hiddenVoided: number;
   showHref: string;
+  /** The first sentence; the lists default to the filter wording. */
+  lead?: string;
 }) {
   return (
     <p className="rounded-md border border-dashed border-gray-300 bg-gray-50 p-6 text-center text-sm text-[color:var(--color-brand-text-soft)]">
-      No active {noun}s match your filters. {hiddenVoided} voided {noun}
+      {lead} {hiddenVoided} voided {noun}
       {hiddenVoided !== 1 ? "s are" : " is"} hidden —{" "}
       <Link
         href={showHref}

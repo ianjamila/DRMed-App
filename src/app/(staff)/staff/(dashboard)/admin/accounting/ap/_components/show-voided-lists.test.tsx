@@ -14,6 +14,13 @@ vi.mock("next/navigation", () => ({
 
 import { BillsIndexClient } from "../bills/bills-index-client";
 import { PaymentsIndexClient } from "../payments/payments-index-client";
+import { VendorDetailClient } from "../vendors/[id]/vendor-detail-client";
+import { APDashboardClient } from "../ap-dashboard-client";
+
+vi.mock("@/lib/actions/accounting/vendors", () => ({
+  deactivateVendorAction: vi.fn(),
+  reactivateVendorAction: vi.fn(),
+}));
 
 // Every AP bill and payment on prod in 2026-09 was a voided duplicate from the
 // June books reconciliation, so both lists opened on nothing but greyed-out
@@ -161,5 +168,91 @@ describe("AP Bill Payments list — voided payments", () => {
     render(<PaymentsIndexClient initialPayments={[payment("2", true)]} vendors={[]} initialFilter={payFilter} />);
     expect(screen.getByText(/No active payments match your filters\. 1 voided payment is hidden/)).toBeTruthy();
     expect(screen.getByRole("link", { name: "show voided" }).getAttribute("href")).toBe("/staff/admin/accounting/ap/payments?voided=1");
+  });
+});
+
+describe("Vendor page — voided bills and payments", () => {
+  const vendor = {
+    id: "v1",
+    name: "Acme Supplies",
+    tin: null,
+    email: null,
+    phone: null,
+    is_active: true,
+    is_partner_lab: false,
+    notes: null,
+    default_account_id: null,
+    default_wt_classification: null,
+    default_wt_rate: null,
+    created_at: "2026-01-01T00:00:00Z",
+    updated_at: "2026-01-01T00:00:00Z",
+    created_by: null,
+    updated_by: null,
+  };
+  const bills = [
+    { ...bill("1", "posted"), vendor_invoice_number: "INV-1" },
+    { ...bill("2", "voided"), vendor_invoice_number: "INV-2" },
+  ];
+  const payments = [payment("1", true), payment("2", true)];
+  const tables = () => screen.getAllByRole("table");
+  const links = (t: HTMLElement) => within(t).queryAllByRole("link").map((a) => a.textContent);
+
+  it("hides voided rows in both tables by default, with the counts and an empty state", () => {
+    render(<VendorDetailClient vendor={vendor} bills={bills} payments={payments} showVoided={false} />);
+    expect(tables()).toHaveLength(1);
+    expect(links(tables()[0])).toEqual(["INV-1"]);
+    expect(screen.getByText("1 voided bill hidden.")).toBeTruthy();
+    expect(screen.getByText(/No active payments for this vendor\. 2 voided payments are hidden/)).toBeTruthy();
+    const box = screen.getByRole("checkbox", { name: "Show voided (3)" }) as HTMLInputElement;
+    expect(box.checked).toBe(false);
+  });
+
+  it("ticking the switch goes to ?voided=1 on this vendor", async () => {
+    render(<VendorDetailClient vendor={vendor} bills={bills} payments={payments} showVoided={false} />);
+    await userEvent.setup().click(screen.getByRole("checkbox", { name: "Show voided (3)" }));
+    expect(nav.router.push).toHaveBeenCalledWith("/staff/admin/accounting/ap/vendors/v1?voided=1", { scroll: false });
+  });
+
+  it("shows every row with the switch on, and unticking returns to the bare page", async () => {
+    render(<VendorDetailClient vendor={vendor} bills={bills} payments={payments} showVoided />);
+    expect(links(tables()[0])).toEqual(["INV-1", "INV-2"]);
+    expect(links(tables()[1])).toEqual(["BP-1", "BP-2"]);
+    expect(screen.queryByText(/hidden/)).toBeNull();
+    await userEvent.setup().click(screen.getByRole("checkbox", { name: "Show voided (3)" }));
+    expect(nav.router.push).toHaveBeenCalledWith("/staff/admin/accounting/ap/vendors/v1", { scroll: false });
+  });
+
+  it("keeps the no-records wording for a vendor with nothing at all", () => {
+    render(<VendorDetailClient vendor={vendor} bills={[]} payments={[]} showVoided={false} />);
+    expect(screen.getByText("No bills on record for this vendor.")).toBeTruthy();
+    expect(screen.getByText("No payments on record for this vendor.")).toBeTruthy();
+  });
+});
+
+describe("Expenses Overview — voided entries card", () => {
+  const data = {
+    outstanding_total_php: 0,
+    aging_buckets: { current: 0, d1_30: 0, d31_60: 0, d60_plus: 0 },
+    drafts: { count: 0, oldest_age_days: 0 },
+    upcoming_recurring: [],
+    top_vendors_by_outstanding: [],
+    wt_accumulated_this_month_php: 0,
+  };
+
+  it("says how many are voided and links to each list's voided view", () => {
+    render(<APDashboardClient data={{ ...data, voided: { bills: 75, payments: 75 } }} />);
+    expect(screen.getByText("Voided entries")).toBeTruthy();
+    expect(screen.getByText(/75 voided bills · 75 voided payments/)).toBeTruthy();
+    expect(screen.getByRole("link", { name: "View voided bills →" }).getAttribute("href")).toBe(
+      "/staff/admin/accounting/ap/bills?status=voided",
+    );
+    expect(screen.getByRole("link", { name: "View voided payments →" }).getAttribute("href")).toBe(
+      "/staff/admin/accounting/ap/payments?voided=1",
+    );
+  });
+
+  it("is absent when nothing is voided", () => {
+    render(<APDashboardClient data={{ ...data, voided: { bills: 0, payments: 0 } }} />);
+    expect(screen.queryByText("Voided entries")).toBeNull();
   });
 });
