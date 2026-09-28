@@ -917,3 +917,823 @@ drop trigger if exists a_lifecycle_guard on public.doctor_pf_entries;
 create trigger a_lifecycle_guard
   before insert or update or delete on public.doctor_pf_entries
   for each row execute function public.enforce_patient_activity();
+
+-- ---------------------------------------------------------------------------
+-- (4) Existing RPCs take the lifecycle lock BEFORE their own row/slot lock.
+-- Each body is copied verbatim from its latest migration; the only changes
+-- are the lines marked "-- 0184:". NULLs are dropped from the pre-acquired set
+-- so each function's own not-found error still wins (its guard triggers still
+-- fail closed). After the row lock the set is resolved again: a record that
+-- moved to another patient while we waited raises P0072 (retry once).
+-- ---------------------------------------------------------------------------
+
+-- (4a) result_save_draft — copied verbatim from 0172_result_edit_commit.sql
+-- lines 571-615.
+create or replace function public.result_save_draft(
+  p_result_id uuid,
+  p_values    jsonb
+)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_result public.results%rowtype;
+  v_patients uuid[];  -- 0184
+begin
+  -- 0184: the result-membership lock (shared), then the patient lifecycle
+  -- lock, before the result row lock.
+  perform public.lifecycle_lock_results(array[p_result_id], false);
+  v_patients := public.lifecycle_norm(array_remove(public.lifecycle_patients_of_result(p_result_id), null));
+  perform public.lifecycle_lock_and_assert(v_patients, false);
+
+  select * into v_result
+    from public.results
+   where id = p_result_id
+   for update;
+  if not found then
+    raise exception 'result not found' using errcode = 'P0066';
+  end if;
+  -- 0184: the result's patients must still be the ones we locked.
+  if public.lifecycle_norm(array_remove(public.lifecycle_patients_of_result(p_result_id), null))
+       is distinct from v_patients then
+    raise exception 'the patient on this result changed while it was being saved — try again'
+      using errcode = 'P0072';
+  end if;
+  if v_result.generation_kind <> 'structured' or v_result.finalised_at is not null then
+    raise exception 'this result is already finalised — use Edit results to change it'
+      using errcode = 'P0066';
+  end if;
+
+  insert into public.result_values (
+    result_id, parameter_id, numeric_value_si, numeric_value_conv,
+    text_value, select_value, flag, is_blank
+  )
+  select p_result_id, x.parameter_id, x.numeric_value_si, x.numeric_value_conv,
+         x.text_value, x.select_value, x.flag, coalesce(x.is_blank, false)
+    from jsonb_to_recordset(coalesce(p_values, '[]'::jsonb)) as x(
+      parameter_id uuid, numeric_value_si numeric, numeric_value_conv numeric,
+      text_value text, select_value text, flag text, is_blank boolean
+    )
+  on conflict (result_id, parameter_id) do update
+     set numeric_value_si   = excluded.numeric_value_si,
+         numeric_value_conv = excluded.numeric_value_conv,
+         text_value         = excluded.text_value,
+         select_value       = excluded.select_value,
+         flag               = excluded.flag,
+         is_blank           = excluded.is_blank;
+end;
+$$;
+revoke all on function public.result_save_draft(uuid, jsonb) from public, anon, authenticated;
+grant execute on function public.result_save_draft(uuid, jsonb) to service_role;
+
+-- (4b) result_finalise_commit — copied verbatim from 0172_result_edit_commit.sql
+-- lines 437-568.
+create or replace function public.result_finalise_commit(
+  p_result_id       uuid,
+  p_finaliser       uuid,
+  p_values          jsonb,        -- the COMPLETE value set the PDF was rendered from
+  p_storage_path    text,
+  p_file_size_bytes int,
+  p_finalised_at    timestamptz,  -- the instant printed on the PDF
+  p_new_image       jsonb,        -- null = no image (non-imaging layouts)
+  p_alerts          jsonb         -- crossings of p_values; '[]' = none
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_result     public.results%rowtype;
+  v_live       int;
+  v_bad        int;
+  v_patient_id uuid;
+  v_drm_id     text;
+  v_added      jsonb := '[]'::jsonb;
+  v_patients   uuid[];  -- 0184
+begin
+  -- 0184: the result-membership lock (shared), then the patient lifecycle
+  -- lock, before the result row lock.
+  perform public.lifecycle_lock_results(array[p_result_id], false);
+  v_patients := public.lifecycle_norm(array_remove(public.lifecycle_patients_of_result(p_result_id), null));
+  perform public.lifecycle_lock_and_assert(v_patients, false);
+
+  select * into v_result
+    from public.results
+   where id = p_result_id
+   for update;
+  if not found then
+    raise exception 'result not found' using errcode = 'P0066';
+  end if;
+  -- 0184: the result's patients must still be the ones we locked.
+  if public.lifecycle_norm(array_remove(public.lifecycle_patients_of_result(p_result_id), null))
+       is distinct from v_patients then
+    raise exception 'the patient on this result changed while it was being saved — try again'
+      using errcode = 'P0072';
+  end if;
+  if v_result.generation_kind <> 'structured' then
+    raise exception 'this result was uploaded as a PDF' using errcode = 'P0066';
+  end if;
+  if v_result.finalised_at is not null then
+    raise exception 'this result is already finalised — use Edit results to change it'
+      using errcode = 'P0066';
+  end if;
+
+  select count(*),
+         count(*) filter (where tr.status not in ('in_progress', 'result_uploaded'))
+    into v_live, v_bad
+    from public.result_test_requests rtr
+    join public.test_requests tr on tr.id = rtr.test_request_id
+    join public.visits v on v.id = tr.visit_id
+   where rtr.result_id = p_result_id
+     and tr.deleted_at is null
+     and v.deleted_at is null;
+  if v_live = 0 then
+    raise exception 'no live test is linked to this result' using errcode = 'P0066';
+  end if;
+  if v_bad > 0 then
+    raise exception 'a test on this result is not in progress' using errcode = 'P0066';
+  end if;
+
+  select v.patient_id, p.drm_id
+    into v_patient_id, v_drm_id
+    from public.result_test_requests rtr
+    join public.test_requests tr on tr.id = rtr.test_request_id
+    join public.visits v on v.id = tr.visit_id
+    join public.patients p on p.id = v.patient_id
+   where rtr.result_id = p_result_id
+   limit 1;
+
+  delete from public.result_values where result_id = p_result_id;
+  insert into public.result_values (
+    result_id, parameter_id, numeric_value_si, numeric_value_conv,
+    text_value, select_value, flag, is_blank
+  )
+  select p_result_id, x.parameter_id, x.numeric_value_si, x.numeric_value_conv,
+         x.text_value, x.select_value, x.flag, coalesce(x.is_blank, false)
+    from jsonb_to_recordset(coalesce(p_values, '[]'::jsonb)) as x(
+      parameter_id uuid, numeric_value_si numeric, numeric_value_conv numeric,
+      text_value text, select_value text, flag text, is_blank boolean
+    );
+
+  update public.results
+     set storage_path       = p_storage_path,
+         file_size_bytes    = p_file_size_bytes,
+         finalised_at       = p_finalised_at,
+         uploaded_by        = p_finaliser,
+         uploaded_at        = now(),
+         image_storage_path = case when p_new_image is null then image_storage_path
+                                   else p_new_image->>'storage_path' end,
+         image_filename     = case when p_new_image is null then image_filename
+                                   else p_new_image->>'filename' end,
+         image_mime_type    = case when p_new_image is null then image_mime_type
+                                   else p_new_image->>'mime_type' end,
+         image_size_bytes   = case when p_new_image is null then image_size_bytes
+                                   else (p_new_image->>'size_bytes')::int end,
+         image_uploaded_at  = case when p_new_image is null then image_uploaded_at
+                                   else now() end,
+         image_uploaded_by  = case when p_new_image is null then image_uploaded_by
+                                   else p_finaliser end
+   where id = p_result_id;
+
+  -- A result is finalised once, so there should be no alerts yet. Any left by
+  -- a pre-0172 attempt are cleared unless acknowledged (never touched).
+  delete from public.critical_alerts
+   where result_id = p_result_id
+     and acknowledged_at is null;
+
+  with ins as (
+    insert into public.critical_alerts (
+      result_id, test_request_id, parameter_id, parameter_name, direction,
+      observed_value_si, threshold_si, patient_id, patient_drm_id
+    )
+    select p_result_id, d.test_request_id, d.parameter_id, d.parameter_name,
+           d.direction, d.observed_value_si, d.threshold_si, v_patient_id, v_drm_id
+      from jsonb_to_recordset(coalesce(p_alerts, '[]'::jsonb)) as d(
+        test_request_id uuid, parameter_id uuid, parameter_name text,
+        direction text, observed_value_si numeric, threshold_si numeric
+      )
+     where not exists (
+       select 1 from public.critical_alerts ca
+        where ca.result_id = p_result_id
+          and ca.parameter_id = d.parameter_id
+          and ca.direction = d.direction
+          and ca.observed_value_si is not distinct from d.observed_value_si
+     )
+    returning parameter_name, direction, observed_value_si, threshold_si
+  )
+  select coalesce(jsonb_agg(to_jsonb(ins)), '[]'::jsonb) into v_added from ins;
+
+  return jsonb_build_object('alerts_added', v_added);
+end;
+$$;
+revoke all on function public.result_finalise_commit(
+  uuid, uuid, jsonb, text, int, timestamptz, jsonb, jsonb
+) from public, anon, authenticated;
+grant execute on function public.result_finalise_commit(
+  uuid, uuid, jsonb, text, int, timestamptz, jsonb, jsonb
+) to service_role;
+
+-- (4c) result_edit_commit — copied verbatim from 0179_result_copy_followups.sql
+-- (0176's body plus three "-- 0179" hunks, merged #239); the create statement
+-- through its closing "$$;" and its revoke/grant. The three "-- 0179" hunks
+-- are kept byte-for-byte.
+create or replace function public.result_edit_commit(
+  p_attempt_id               uuid,
+  p_result_id                uuid,
+  p_expected_amendment_count int,
+  p_editor                   uuid,
+  p_reason                   text,
+  p_anchor_test_request_id   uuid,
+  p_new_storage_path         text,
+  p_new_file_size_bytes      int,
+  p_values                   jsonb,  -- null = PDF-only edit, values untouched
+  p_new_image                jsonb,  -- null = keep the current image columns
+  p_alerts                   jsonb   -- null = leave critical_alerts alone
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_existing    public.result_amendments%rowtype;
+  v_result      public.results%rowtype;
+  v_seq         int;
+  v_reason      text := btrim(coalesce(p_reason, ''));
+  v_live        int;
+  v_unfinished  int;
+  v_patient_id  uuid;
+  v_drm_id      text;
+  v_snapshot    jsonb;
+  v_amend_id    uuid;
+  v_added       jsonb := '[]'::jsonb;
+  v_removed     int := 0;
+  v_kept_ack    int := 0;
+  v_patients    uuid[];  -- 0184
+  v_replay_first boolean;  -- 0184
+begin
+  -- 0184: a replay of an attempt that already committed writes nothing, so it
+  -- must still answer after the patient was deleted (the app would otherwise
+  -- treat the rejection as final and remove the committed PDF). Only a NEW
+  -- attempt takes the lifecycle lock — before the result row lock.
+  v_replay_first := exists (select 1 from public.result_amendments a where a.attempt_id = p_attempt_id);
+  if not v_replay_first then
+    perform public.lifecycle_lock_results(array[p_result_id], false);
+    v_patients := public.lifecycle_norm(array_remove(public.lifecycle_patients_of_result(p_result_id), null));
+    perform public.lifecycle_lock_and_assert(v_patients, false);
+  end if;
+
+  -- 1) Serialise every edit, draft and finalise of this result on its row.
+  select * into v_result
+    from public.results
+   where id = p_result_id
+   for update;
+  if not found then
+    raise exception 'result not found' using errcode = 'P0066';
+  end if;
+
+  -- 2) Replay: this attempt already committed (the app lost the response and
+  --    asked again). Checked UNDER the lock, so two overlapping calls with one
+  --    attempt id cannot both pass — the second waits, then finds the first
+  --    committed and returns it instead of failing the stale check below.
+  select * into v_existing
+    from public.result_amendments
+   where attempt_id = p_attempt_id;
+  if found then
+    if v_existing.result_id <> p_result_id then
+      raise exception 'this edit attempt belongs to another result' using errcode = 'P0066';
+    end if;
+    -- 0176: answer with what the original attempt DID to critical alerts
+    -- (recorded below), so a retried or probed commit still audits every
+    -- alert it added and withdrew. Rows from before 0176 have no record.
+    return coalesce(
+             v_existing.commit_outcome,
+             jsonb_build_object('alerts_added', '[]'::jsonb, 'alerts_removed', 0,
+                                'alerts_kept_acknowledged', 0, 'outcome_unknown', true)
+           )
+           || jsonb_build_object(
+                'replayed', true,
+                'amendment_id', v_existing.id,
+                'amendment_seq', v_existing.amendment_seq,
+                'prior_storage_path', v_existing.prior_storage_path
+              );
+  end if;
+
+  -- 0184: the pre-check saw a committed attempt, but it is gone now (its
+  -- result was deleted in between). Nothing to replay and no lock was taken.
+  if v_replay_first then
+    raise exception 'this edit could not be confirmed — reload the result to check it'
+      using errcode = 'P0066';
+  end if;
+  if public.lifecycle_norm(array_remove(public.lifecycle_patients_of_result(p_result_id), null))
+       is distinct from v_patients then
+    raise exception 'the patient on this result changed while it was being saved — try again'
+      using errcode = 'P0072';
+  end if;
+
+  -- 3) Editable?
+  if v_result.storage_path is null then
+    raise exception 'this result has no finished PDF yet' using errcode = 'P0066';
+  end if;
+  if v_result.generation_kind = 'structured' and v_result.finalised_at is null then
+    raise exception 'this result has not been finalised yet' using errcode = 'P0066';
+  end if;
+  if length(v_reason) < 5 or length(v_reason) > 2000 then
+    raise exception 'the reason must be 5 to 2000 characters' using errcode = 'P0066';
+  end if;
+
+  select count(*),
+         count(*) filter (
+           where tr.status not in ('result_uploaded', 'ready_for_release', 'released')
+         )
+    into v_live, v_unfinished
+    from public.result_test_requests rtr
+    join public.test_requests tr on tr.id = rtr.test_request_id
+    join public.visits v on v.id = tr.visit_id
+   where rtr.result_id = p_result_id
+     and tr.deleted_at is null
+     and v.deleted_at is null;
+  if v_live = 0 then
+    raise exception 'every test on this result was deleted' using errcode = 'P0066';
+  end if;
+  if v_unfinished > 0 then
+    raise exception 'a test on this result is not finished' using errcode = 'P0066';
+  end if;
+
+  select v.patient_id, p.drm_id
+    into v_patient_id, v_drm_id
+    from public.result_test_requests rtr
+    join public.test_requests tr on tr.id = rtr.test_request_id
+    join public.visits v on v.id = tr.visit_id
+    join public.patients p on p.id = v.patient_id
+   where rtr.result_id = p_result_id
+     and rtr.test_request_id = p_anchor_test_request_id
+     and tr.deleted_at is null
+     and v.deleted_at is null;
+  if not found then
+    raise exception 'the anchor test is not a live test on this result' using errcode = 'P0066';
+  end if;
+
+  -- 4) Stale form: someone saved an edit since this one was opened.
+  if v_result.amendment_count <> p_expected_amendment_count then
+    raise exception 'this result was edited by someone else since you opened it'
+      using errcode = 'P0065';
+  end if;
+  v_seq := p_expected_amendment_count + 1;
+
+  -- 5) Snapshot, taken under the same lock as the overwrite.
+  select coalesce(
+           jsonb_agg(
+             jsonb_build_object(
+               'parameter_id', rv.parameter_id,
+               'parameter_name', rtp.parameter_name,
+               'numeric_value_si', rv.numeric_value_si,
+               'numeric_value_conv', rv.numeric_value_conv,
+               'text_value', rv.text_value,
+               'select_value', rv.select_value,
+               'flag', rv.flag,
+               'is_blank', rv.is_blank
+             )
+             order by rtp.sort_order, rv.parameter_id
+           ),
+           '[]'::jsonb
+         )
+    into v_snapshot
+    from public.result_values rv
+    left join public.result_template_params rtp on rtp.id = rv.parameter_id
+   where rv.result_id = p_result_id;
+
+  insert into public.result_amendments (
+    result_id, test_request_id,
+    prior_storage_path, prior_uploaded_by, prior_uploaded_at,
+    prior_file_size_bytes, prior_notes,
+    prior_values_json,
+    prior_image_storage_path, prior_image_filename,
+    prior_image_mime_type, prior_image_size_bytes,
+    reason, amended_by, amendment_seq, attempt_id
+  ) values (
+    p_result_id, p_anchor_test_request_id,
+    v_result.storage_path, v_result.uploaded_by, v_result.uploaded_at,
+    v_result.file_size_bytes, v_result.notes,
+    case when v_result.generation_kind = 'structured' then v_snapshot else null end,
+    v_result.image_storage_path, v_result.image_filename,
+    v_result.image_mime_type, v_result.image_size_bytes,
+    v_reason, p_editor, v_seq, p_attempt_id
+  )
+  returning id into v_amend_id;
+
+  -- 6) New values (flags were computed in TypeScript — 0010).
+  if p_values is not null then
+    delete from public.result_values where result_id = p_result_id;
+    insert into public.result_values (
+      result_id, parameter_id, numeric_value_si, numeric_value_conv,
+      text_value, select_value, flag, is_blank
+    )
+    select p_result_id, x.parameter_id, x.numeric_value_si, x.numeric_value_conv,
+           x.text_value, x.select_value, x.flag, coalesce(x.is_blank, false)
+      from jsonb_to_recordset(p_values) as x(
+        parameter_id uuid, numeric_value_si numeric, numeric_value_conv numeric,
+        text_value text, select_value text, flag text, is_blank boolean
+      );
+  end if;
+
+  -- 7) Point the result at the new PDF. finalised_at is untouched, so
+  --    advance_test_on_result_upload cannot fire, and test_requests is never
+  --    written here.
+  update public.results
+     set storage_path       = p_new_storage_path,
+         file_size_bytes    = p_new_file_size_bytes,
+         uploaded_by        = p_editor,
+         uploaded_at        = now(),
+         amended_at         = now(),
+         amendment_count    = v_seq,
+         image_storage_path = case when p_new_image is null then image_storage_path
+                                   else p_new_image->>'storage_path' end,
+         image_filename     = case when p_new_image is null then image_filename
+                                   else p_new_image->>'filename' end,
+         image_mime_type    = case when p_new_image is null then image_mime_type
+                                   else p_new_image->>'mime_type' end,
+         image_size_bytes   = case when p_new_image is null then image_size_bytes
+                                   else (p_new_image->>'size_bytes')::int end,
+         image_uploaded_at  = case when p_new_image is null then image_uploaded_at
+                                   else now() end,
+         image_uploaded_by  = case when p_new_image is null then image_uploaded_by
+                                   else p_editor end
+   where id = p_result_id;
+
+  -- 8) Critical alerts. Identity = (parameter_id, direction, observed value).
+  --    Lock this result's alerts first so an acknowledgement in flight either
+  --    lands before (and is then kept) or waits for this commit.
+  if p_alerts is not null then
+    perform 1 from public.critical_alerts where result_id = p_result_id for update;
+
+    with desired as (
+      select x.test_request_id, x.parameter_id, x.parameter_name, x.direction,
+             x.observed_value_si, x.threshold_si
+        from jsonb_to_recordset(p_alerts) as x(
+          test_request_id uuid, parameter_id uuid, parameter_name text,
+          direction text, observed_value_si numeric, threshold_si numeric
+        )
+    ),
+    ins as (
+      insert into public.critical_alerts (
+        result_id, test_request_id, parameter_id, parameter_name, direction,
+        observed_value_si, threshold_si, patient_id, patient_drm_id
+      )
+      select p_result_id, d.test_request_id, d.parameter_id, d.parameter_name,
+             d.direction, d.observed_value_si, d.threshold_si, v_patient_id, v_drm_id
+        from desired d
+       where not exists (
+         select 1 from public.critical_alerts ca
+          where ca.result_id = p_result_id
+            and ca.parameter_id = d.parameter_id
+            and ca.direction = d.direction
+            and ca.observed_value_si is not distinct from d.observed_value_si
+            -- 0179: a withdrawn alert is history, not a live match — a value
+            -- corrected back to it pages again.
+            and ca.withdrawn_at is null
+       )
+      returning parameter_name, direction, observed_value_si, threshold_si
+    )
+    select coalesce(jsonb_agg(to_jsonb(ins)), '[]'::jsonb) into v_added from ins;
+
+    -- 0179: a removed alert is WITHDRAWN (kept as history), never deleted.
+    with gone as (
+      update public.critical_alerts ca
+         set withdrawn_at = now(),
+             withdrawn_by = p_editor,
+             withdrawn_by_amendment = v_amend_id
+       where ca.result_id = p_result_id
+         and ca.acknowledged_at is null
+         and ca.withdrawn_at is null
+         and not exists (
+           select 1
+             from jsonb_to_recordset(p_alerts) as d(
+               parameter_id uuid, direction text, observed_value_si numeric
+             )
+            where d.parameter_id = ca.parameter_id
+              and d.direction = ca.direction
+              and d.observed_value_si is not distinct from ca.observed_value_si
+         )
+      returning 1
+    )
+    select count(*) into v_removed from gone;
+
+    select count(*) into v_kept_ack
+      from public.critical_alerts
+     where result_id = p_result_id
+       and acknowledged_at is not null
+       and withdrawn_at is null; -- 0179
+  end if;
+
+  -- 0176: keep this attempt's alert outcome on its amendment row, in the
+  -- same transaction, for a replay or a lost-response probe to report.
+  update public.result_amendments
+     set commit_outcome = jsonb_build_object(
+           'alerts_added', v_added,
+           'alerts_removed', v_removed,
+           'alerts_kept_acknowledged', v_kept_ack
+         )
+   where id = v_amend_id;
+
+  return jsonb_build_object(
+    'replayed', false,
+    'amendment_id', v_amend_id,
+    'amendment_seq', v_seq,
+    'prior_storage_path', v_result.storage_path,
+    'alerts_added', v_added,
+    'alerts_removed', v_removed,
+    'alerts_kept_acknowledged', v_kept_ack
+  );
+end;
+$$;
+
+revoke all on function public.result_edit_commit(
+  uuid, uuid, int, uuid, text, uuid, text, int, jsonb, jsonb, jsonb
+) from public, anon, authenticated;
+grant execute on function public.result_edit_commit(
+  uuid, uuid, int, uuid, text, uuid, text, int, jsonb, jsonb, jsonb
+) to service_role;
+
+-- (4d) correct_payment — copied verbatim from 0183_waived_balance_gl.sql lines
+-- 1198-1391 (controller correction: 0183, not 0174 as the plan text names —
+-- 0183 merged #242 on 2026-09-28 and re-creates this function from 0174's
+-- stale-guard body plus the waived-visit rule; 0184 copies 0183's body).
+create or replace function public.correct_payment(
+  p_payment_id       uuid,
+  p_amount_php       numeric,
+  p_method           text,
+  p_reference_number text,
+  p_notes            text,
+  p_reason           text,
+  p_actor_id         uuid,
+  p_visit_id         uuid default null,
+  p_expected         jsonb default null
+)
+returns uuid
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_old    public.payments%rowtype;
+  v_new_id uuid;
+  v_target uuid;
+  v_moving boolean;
+  v_ref    text := nullif(btrim(coalesce(p_reference_number, '')), '');
+  v_notes  text := nullif(btrim(coalesce(p_notes, '')), '');
+  v_src_status text;
+  v_tgt_status text;
+  r_v          record;
+  v_patients   uuid[];  -- 0184
+begin
+  if p_actor_id is null then
+    raise exception 'Edit payment needs the staff member making the change.'
+      using errcode = 'P0054';
+  end if;
+  if p_reason is null or btrim(p_reason) = '' then
+    raise exception 'A reason is required to edit a payment.'
+      using errcode = 'P0054';
+  end if;
+
+  -- 0184: lifecycle locks — the payment's patient and, for a move, the target
+  -- visit's — before the payment row lock.
+  v_patients := public.lifecycle_norm(array_remove(
+                  public.lifecycle_patients_of_payments(array[p_payment_id])
+                  || case when p_visit_id is null then '{}'::uuid[]
+                          else public.lifecycle_patients_of_visits(array[p_visit_id]) end,
+                  null));
+  perform public.lifecycle_lock_and_assert(v_patients, false);
+
+  select * into v_old
+    from public.payments
+   where id = p_payment_id
+   for update;
+
+  if not found then
+    raise exception 'Payment not found.' using errcode = 'P0054';
+  end if;
+  if v_old.voided_at is not null then
+    raise exception 'This payment was already deleted or edited. Refresh the visit and try again.'
+      using errcode = 'P0054';
+  end if;
+  -- 0184: still the same patients?
+  if public.lifecycle_norm(array_remove(
+       public.lifecycle_patients_of_payments(array[p_payment_id])
+       || case when p_visit_id is null then '{}'::uuid[]
+               else public.lifecycle_patients_of_visits(array[p_visit_id]) end,
+       null)) is distinct from v_patients then
+    raise exception 'the patient on this payment changed while it was being saved — try again'
+      using errcode = 'P0072';
+  end if;
+
+  -- What the caller saw must still be what is there. Text fields compare the
+  -- way they are stored (trimmed, '' = NULL); a key the caller left out is
+  -- not checked.
+  if p_expected is not null and (
+       (p_expected ? 'amount_php'
+          and v_old.amount_php is distinct from (p_expected->>'amount_php')::numeric)
+    or (p_expected ? 'method'
+          and v_old.method is distinct from (p_expected->>'method'))
+    or (p_expected ? 'visit_id'
+          and v_old.visit_id is distinct from (p_expected->>'visit_id')::uuid)
+    or (p_expected ? 'reference_number'
+          and v_old.reference_number is distinct from
+              nullif(btrim(coalesce(p_expected->>'reference_number', '')), ''))
+    or (p_expected ? 'notes'
+          and v_old.notes is distinct from
+              nullif(btrim(coalesce(p_expected->>'notes', '')), ''))
+  ) then
+    raise exception 'Someone else changed this payment since you opened it. Refresh the visit and try again.'
+      using errcode = 'P0054';
+  end if;
+
+  if v_old.method in ('gift_code', 'hmo')
+     or exists (select 1 from public.gift_codes where redeemed_payment_id = v_old.id) then
+    raise exception 'Gift code and HMO payments cannot be edited. Delete it and record it again.'
+      using errcode = 'P0054';
+  end if;
+  if v_old.legacy_import_run_id is not null then
+    raise exception 'Payments from the imported history cannot be edited. Delete it and record it again.'
+      using errcode = 'P0054';
+  end if;
+  -- The method is only checked when it CHANGES: a Move (or a reference fix)
+  -- re-sends the payment's own method, and a legacy bpi / maybank receipt
+  -- must stay what it was rather than be refused for a method the counter no
+  -- longer offers. A new method must be one the counter records today.
+  if p_method is null
+     or (p_method is distinct from v_old.method
+         and p_method not in ('cash', 'gcash', 'maya', 'card', 'bank_transfer')) then
+    raise exception 'Choose Cash, GCash, Maya, Card or Bank transfer.'
+      using errcode = 'P0054';
+  end if;
+  if p_amount_php is null or p_amount_php <= 0 then
+    raise exception 'Amount must be greater than zero.' using errcode = 'P0054';
+  end if;
+  if round(p_amount_php, 2) <> p_amount_php then
+    raise exception 'Amount can have at most two decimal places.' using errcode = 'P0054';
+  end if;
+  if p_amount_php > 99999999.99 then
+    raise exception 'Amount is too large.' using errcode = 'P0054';
+  end if;
+
+  v_target := coalesce(p_visit_id, v_old.visit_id);
+  v_moving := v_target <> v_old.visit_id;
+  if v_moving then
+    if not exists (select 1 from public.visits where id = v_target) then
+      raise exception 'Visit not found.' using errcode = 'P0054';
+    end if;
+    if exists (select 1 from public.visits where id = v_target and deleted_at is not null) then
+      raise exception 'That visit was deleted from the queue. Restore it before moving a payment onto it.'
+        using errcode = 'P0054';
+    end if;
+  end if;
+
+  -- 0183: a waived visit's money is fixed. Lock order payment → visits
+  -- in uuid order (source and target both), the same order as
+  -- guard_payment_on_waived_visit, so two opposite-direction moves
+  -- cannot cycle.
+  for r_v in
+    select id, payment_status from public.visits
+     where id in (v_old.visit_id, coalesce(v_target, v_old.visit_id))
+     order by id for update
+  loop
+    if r_v.id = v_old.visit_id then v_src_status := r_v.payment_status; end if;
+    if v_moving and r_v.id = v_target then v_tgt_status := r_v.payment_status; end if;
+  end loop;
+  if v_moving and v_tgt_status = 'waived' then
+    raise exception 'That visit''s balance was waived, so no payment can be moved onto it.' using errcode = 'P0070';
+  end if;
+  if v_src_status = 'waived' then
+    if v_moving then
+      raise exception 'This visit''s balance was waived, so its payments cannot be moved.' using errcode = 'P0070';
+    end if;
+    if p_amount_php <> v_old.amount_php then
+      raise exception 'This visit''s balance was waived, so the amount is fixed. Change only the method, reference or notes.'
+        using errcode = 'P0070';
+    end if;
+  end if;
+
+  -- Reference / notes only: not a money change, edit in place.
+  if not v_moving and p_amount_php = v_old.amount_php and p_method = v_old.method then
+    if v_ref is not distinct from v_old.reference_number
+       and v_notes is not distinct from v_old.notes then
+      raise exception 'Nothing changed.' using errcode = 'P0054';
+    end if;
+    update public.payments
+       set reference_number = v_ref,
+           notes            = v_notes
+     where id = p_payment_id;
+    return p_payment_id;
+  end if;
+
+  -- Money change or move: re-create, then void. See 0161's header for the order.
+  if v_src_status = 'waived' then
+    perform set_config('app.waived_visit_edit', 'on', true);
+  end if;
+  insert into public.payments (
+    visit_id, amount_php, method, reference_number, notes,
+    received_by, received_at, corrects_payment_id
+  ) values (
+    v_target, p_amount_php, p_method, v_ref, v_notes,
+    v_old.received_by, v_old.received_at, v_old.id
+  )
+  returning id into v_new_id;
+
+  update public.payments
+     set voided_at   = now(),
+         voided_by   = p_actor_id,
+         void_reason = case when v_moving then 'Moved: ' else 'Edited: ' end || btrim(p_reason)
+   where id = p_payment_id;
+  perform set_config('app.waived_visit_edit', 'off', true);
+
+  return v_new_id;
+end;
+$$;
+
+comment on function public.correct_payment(uuid, numeric, text, text, text, text, uuid, uuid, jsonb) is
+  'Edit / Move a payment (0161, stale guard 0174, waived-visit rule 0183): re-create then void in one transaction; reference/notes-only edits in place. On a waived visit only an equal-amount replacement is allowed (P0070). p_expected = the payment as the caller saw it; any difference is refused (P0054).';
+
+revoke execute on function public.correct_payment(uuid, numeric, text, text, text, text, uuid, uuid, jsonb)
+  from public, anon, authenticated;
+grant  execute on function public.correct_payment(uuid, numeric, text, text, text, text, uuid, uuid, jsonb)
+  to service_role;
+
+-- (4e) appointments_insert_slot_guarded — copied verbatim from
+-- 0154_website_messages_inbox.sql lines 213-276.
+create or replace function public.appointments_insert_slot_guarded(
+  p_rows jsonb,
+  p_physician_id uuid default null,    -- null ⇒ no slot guard, plain insert
+  p_scheduled_at timestamptz default null,
+  p_allow_concurrent boolean default false
+)
+returns setof uuid
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_existing int;
+  r jsonb;
+  v_id uuid;
+begin
+  -- 0184: every named patient's lifecycle lock (shared, sorted) BEFORE the slot
+  -- lock, refusing an inactive patient before anything is inserted. A walk-in
+  -- row (no patient_id) names nobody.
+  perform public.lifecycle_lock_and_assert(
+    array(select distinct nullif(e.elem ->> 'patient_id', '')::uuid
+            from jsonb_array_elements(coalesce(p_rows, '[]'::jsonb)) as e(elem)
+           where nullif(e.elem ->> 'patient_id', '') is not null),
+    false);
+
+  if p_physician_id is not null and p_scheduled_at is not null then
+    perform pg_advisory_xact_lock(
+      hashtext('appt_slot:' || p_physician_id::text || ':' || p_scheduled_at::text)
+    );
+    if not p_allow_concurrent then
+      select count(*) into v_existing
+        from public.appointments
+       where physician_id = p_physician_id
+         and scheduled_at = p_scheduled_at
+         and status not in ('cancelled','no_show');
+      if v_existing > 0 then
+        raise exception 'slot_taken: that slot was just taken'
+          using errcode = 'P0040';
+      end if;
+    end if;
+  end if;
+
+  for r in select * from jsonb_array_elements(p_rows) loop
+    insert into public.appointments (
+      patient_id, service_id, physician_id, scheduled_at, notes, status,
+      booking_group_id, home_service_requested, walk_in_name, walk_in_phone, created_by,
+      source, attribution
+    ) values (
+      nullif(r->>'patient_id','')::uuid,
+      nullif(r->>'service_id','')::uuid,
+      nullif(r->>'physician_id','')::uuid,
+      nullif(r->>'scheduled_at','')::timestamptz,
+      nullif(r->>'notes',''),
+      r->>'status',
+      nullif(r->>'booking_group_id','')::uuid,
+      coalesce((r->>'home_service_requested')::boolean, false),
+      nullif(r->>'walk_in_name',''),
+      nullif(r->>'walk_in_phone',''),
+      nullif(r->>'created_by','')::uuid,
+      nullif(r->>'source',''),
+      case when jsonb_typeof(r->'attribution') = 'object' then r->'attribution' end
+    ) returning id into v_id;
+    return next v_id;
+  end loop;
+end;
+$$;
+
+-- As 0112 + 0113 left it: service_role only. Hosted Supabase grants anon and
+-- authenticated directly, so revoking from PUBLIC alone is not enough.
+revoke all on function public.appointments_insert_slot_guarded(jsonb, uuid, timestamptz, boolean)
+  from public, anon, authenticated;
+grant execute on function public.appointments_insert_slot_guarded(jsonb, uuid, timestamptz, boolean)
+  to service_role;

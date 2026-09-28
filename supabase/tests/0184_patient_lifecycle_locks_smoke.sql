@@ -1022,4 +1022,84 @@ begin
 end
 $s6$;
 
+-- --- s7: existing RPCs lock the patient first ---------------------------------------
+do $s7$
+declare
+  k_admin constant uuid := 'a0000000-0000-4000-8000-000000000184';
+  k_med   constant uuid := 'a2000000-0000-4000-8000-000000000184';
+  a  uuid := pg_temp.mk_patient('S7A');
+  d  uuid := pg_temp.mk_patient('S7D');
+  va uuid; vd uuid; td uuid; td2 uuid; rd uuid; rd2 uuid; pd uuid; att uuid := gen_random_uuid();
+  f  text;
+  def text;
+  lp int; rp int; mp int;
+  res jsonb;
+begin
+  -- Text order: the lifecycle call comes before the first FOR UPDATE / slot
+  -- lock. BOTH positions must be > 0: position() returns 0 for a missing call,
+  -- and 0 < n would pass (Codex plan review P3).
+  foreach f in array array[
+    'public.result_save_draft(uuid,jsonb)',
+    'public.result_finalise_commit(uuid,uuid,jsonb,text,integer,timestamp with time zone,jsonb,jsonb)',
+    'public.result_edit_commit(uuid,uuid,integer,uuid,text,uuid,text,integer,jsonb,jsonb,jsonb)',
+    'public.correct_payment(uuid,numeric,text,text,text,text,uuid,uuid,jsonb)']
+  loop
+    def := lower(pg_get_functiondef(f::regprocedure));
+    lp := position('lifecycle_lock_and_assert' in def);
+    rp := position('for update' in def);
+    perform pg_temp.expect('s7.1 lock before row lock: ' || f, (lp > 0 and rp > 0 and lp < rp)::text, 'true');
+    -- The three result RPCs take the membership lock before the patient lock.
+    if f like 'public.result_%' then
+      mp := position('lifecycle_lock_results' in def);
+      perform pg_temp.expect('s7.1m membership lock before patient lock: ' || f, (mp > 0 and lp > 0 and mp < lp)::text, 'true');
+    end if;
+  end loop;
+  def := pg_get_functiondef('public.appointments_insert_slot_guarded(jsonb,uuid,timestamp with time zone,boolean)'::regprocedure);
+  lp := position('lifecycle_lock_and_assert' in def);
+  rp := position('appt_slot:' in def);
+  perform pg_temp.expect('s7.2 lock before slot lock: appointments_insert_slot_guarded', (lp > 0 and rp > 0 and lp < rp)::text, 'true');
+
+  -- Behaviour on a deleted patient.
+  va := pg_temp.mk_visit(a);
+  vd := pg_temp.mk_visit(d);
+  td := pg_temp.mk_line(vd, 'in_progress', 100, null, false, 'c1000000-0000-4000-8000-000000000184');
+  td2 := pg_temp.mk_line(vd, 'released', 100, null, false, 'c1000000-0000-4000-8000-000000000184');
+  insert into public.results (generation_kind, uploaded_by) values ('structured', k_med) returning id into rd;
+  insert into public.result_test_requests (result_id, test_request_id) values (rd, td);
+  insert into public.results (generation_kind, uploaded_by, storage_path, file_size_bytes, finalised_at)
+    values ('structured', k_med, 'x/y.pdf', 10, now()) returning id into rd2;
+  insert into public.result_test_requests (result_id, test_request_id) values (rd2, td2);
+  -- A committed edit attempt recorded BEFORE the delete (for the replay case).
+  insert into public.result_amendments (result_id, test_request_id, prior_storage_path, prior_uploaded_by,
+                                        prior_uploaded_at, reason, amended_by, amendment_seq, attempt_id, commit_outcome)
+    values (rd2, td2, 'x/old.pdf', k_med, now(), 'smoke edit', k_med, 1, att,
+            jsonb_build_object('alerts_added', '[]'::jsonb, 'alerts_removed', 0, 'alerts_kept_acknowledged', 0));
+  pd := pg_temp.mk_pay(vd, 50);
+  perform pg_temp.kill(d);
+
+  perform pg_temp.expect('s7.3 result_save_draft on a deleted patient',
+    pg_temp.state_of(format($q$select public.result_save_draft(%L, '[]'::jsonb)$q$, rd)), 'P0058');
+  perform pg_temp.expect('s7.4 result_finalise_commit on a deleted patient',
+    pg_temp.state_of(format($q$select public.result_finalise_commit(%L, %L, '[]'::jsonb, 'p.pdf', 1, now(), null, '[]'::jsonb)$q$, rd, k_med)), 'P0058');
+  perform pg_temp.expect('s7.5 result_edit_commit (new attempt) on a deleted patient',
+    pg_temp.state_of(format($q$select public.result_edit_commit(%L, %L, 1, %L, 'a long enough reason', %L, 'n.pdf', 1, null, null, null)$q$, gen_random_uuid(), rd2, k_med, td2)), 'P0058');
+  res := public.result_edit_commit(att, rd2, 0, k_med, 'smoke edit', td2, 'n.pdf', 1, null, null, null);
+  perform pg_temp.expect('s7.6 …but a REPLAY of an attempt that already committed still answers',
+    (res ->> 'replayed'), 'true');
+  perform pg_temp.expect('s7.7 correct_payment on a deleted patient',
+    pg_temp.state_of(format($q$select public.correct_payment(%L, 40, 'cash', null, null, 'smoke fix', %L)$q$, pd, k_admin)), 'P0058');
+  perform pg_temp.expect('s7.8 correct_payment moving money ONTO a deleted patient''s visit',
+    pg_temp.state_of(format($q$select public.correct_payment(%L, 10, 'cash', null, null, 'move', %L, %L)$q$,
+      pg_temp.mk_pay(va, 10), k_admin, vd)), 'P0058');
+  perform pg_temp.expect('s7.9 correct_payment on a missing payment keeps its own message (P0054)',
+    pg_temp.state_of(format($q$select public.correct_payment(%L, 1, 'cash', null, null, 'x', %L)$q$, gen_random_uuid(), k_admin)), 'P0054');
+  perform pg_temp.expect('s7.10 appointments_insert_slot_guarded for a deleted patient',
+    pg_temp.state_of(format($q$select public.appointments_insert_slot_guarded(jsonb_build_array(jsonb_build_object('patient_id', %L, 'status', 'confirmed', 'scheduled_at', (now() + interval '1 day')::text)))$q$, d)), 'P0058');
+  perform pg_temp.expect('s7.11 CONTROL walk-in through the same RPC',
+    pg_temp.state_of($q$select public.appointments_insert_slot_guarded(jsonb_build_array(jsonb_build_object('walk_in_name', 'W', 'walk_in_phone', '09170000000', 'status', 'confirmed', 'scheduled_at', (now() + interval '1 day')::text)))$q$), 'ok');
+  perform pg_temp.expect('s7.12 CONTROL active patient through the same RPC',
+    pg_temp.state_of(format($q$select public.appointments_insert_slot_guarded(jsonb_build_array(jsonb_build_object('patient_id', %L, 'status', 'confirmed', 'scheduled_at', (now() + interval '1 day')::text)))$q$, a)), 'ok');
+end
+$s7$;
+
 rollback;
