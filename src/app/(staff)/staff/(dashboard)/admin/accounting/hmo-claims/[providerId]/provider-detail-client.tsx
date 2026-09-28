@@ -10,6 +10,7 @@ import {
   WriteOffHistoricModal,
 } from "../_components/historic-claim-modals";
 import { Panel } from "@/components/ui/panel";
+import { FixedBottomBar } from "@/components/staff/fixed-bottom-bar";
 import { manilaDate } from "@/lib/dates/manila";
 
 type SummaryRow =
@@ -446,68 +447,70 @@ function UnbilledTab({
           </tbody>
         </table>
       </Panel>
-      <Panel className="sticky bottom-0 z-10 flex flex-wrap items-center justify-between gap-3 p-3 shadow-sm">
-        <div className="text-xs text-[color:var(--color-brand-text-soft)]">
-          <span className="font-semibold text-[color:var(--color-brand-navy)]">
-            {selected.size}
-          </span>{" "}
-          selected · total{" "}
-          <span className="font-semibold text-[color:var(--color-brand-navy)]">
-            {PHP.format(selectedTotal)}
-          </span>
-          {historicIds.length > 0 && liveIds.length === 0 ? (
-            <span className="ml-2 rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider text-amber-800">
-              Historic
+      <FixedBottomBar>
+        <Panel className="flex flex-wrap items-center justify-between gap-3 p-3 shadow-lg">
+          <div className="text-xs text-[color:var(--color-brand-text-soft)]">
+            <span className="font-semibold text-[color:var(--color-brand-navy)]">
+              {selected.size}
+            </span>{" "}
+            selected · total{" "}
+            <span className="font-semibold text-[color:var(--color-brand-navy)]">
+              {PHP.format(selectedTotal)}
             </span>
-          ) : null}
-        </div>
-        {selected.size === 0 ? (
-          <button
-            type="button"
-            disabled
-            className="min-h-[44px] rounded-md border border-[color:var(--color-brand-bg-mid)] bg-white px-4 py-2 text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]"
-          >
-            Select items to start
-          </button>
-        ) : isMixed ? (
-          <p className="max-w-md text-xs text-amber-900">
-            Mixed selection — pick only live items (to batch) <em>or</em> only
-            historic items (to mark billed/paid/written-off).
-          </p>
-        ) : liveIds.length > 0 ? (
-          <Link
-            href={newBatchHref}
-            className="min-h-[44px] rounded-md bg-[color:var(--color-brand-navy)] px-4 py-2 text-xs font-bold uppercase tracking-wider text-white"
-          >
-            Add {liveIds.length} item{liveIds.length === 1 ? "" : "s"} to new
-            batch
-          </Link>
-        ) : (
-          <div className="flex flex-nowrap items-center gap-2">
-            <button
-              type="button"
-              onClick={() => setBulkModal("billed")}
-              className="min-h-[44px] whitespace-nowrap rounded-md bg-[color:var(--color-brand-navy)] px-3 py-2 text-xs font-bold uppercase tracking-wider text-white"
-            >
-              Mark billed ({historicIds.length})
-            </button>
-            <button
-              type="button"
-              onClick={() => setBulkModal("paid")}
-              className="min-h-[44px] whitespace-nowrap rounded-md border border-emerald-600 bg-white px-3 py-2 text-xs font-bold uppercase tracking-wider text-emerald-700 hover:bg-emerald-600 hover:text-white"
-            >
-              Mark paid
-            </button>
-            <button
-              type="button"
-              onClick={() => setBulkModal("writeoff")}
-              className="min-h-[44px] whitespace-nowrap rounded-md border border-red-600 bg-white px-3 py-2 text-xs font-bold uppercase tracking-wider text-red-700 hover:bg-red-600 hover:text-white"
-            >
-              Write off
-            </button>
+            {historicIds.length > 0 && liveIds.length === 0 ? (
+              <span className="ml-2 rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider text-amber-800">
+                Historic
+              </span>
+            ) : null}
           </div>
-        )}
-      </Panel>
+          {selected.size === 0 ? (
+            <button
+              type="button"
+              disabled
+              className="min-h-[44px] rounded-md border border-[color:var(--color-brand-bg-mid)] bg-white px-4 py-2 text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]"
+            >
+              Select items to start
+            </button>
+          ) : isMixed ? (
+            <p className="max-w-md text-xs text-amber-900">
+              Mixed selection — pick only live items (to batch) <em>or</em> only
+              historic items (to mark billed/paid/written-off).
+            </p>
+          ) : liveIds.length > 0 ? (
+            <Link
+              href={newBatchHref}
+              className="min-h-[44px] rounded-md bg-[color:var(--color-brand-navy)] px-4 py-2 text-xs font-bold uppercase tracking-wider text-white"
+            >
+              Add {liveIds.length} item{liveIds.length === 1 ? "" : "s"} to new
+              batch
+            </Link>
+          ) : (
+            <div className="flex flex-nowrap items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setBulkModal("billed")}
+                className="min-h-[44px] whitespace-nowrap rounded-md bg-[color:var(--color-brand-navy)] px-3 py-2 text-xs font-bold uppercase tracking-wider text-white"
+              >
+                Mark billed ({historicIds.length})
+              </button>
+              <button
+                type="button"
+                onClick={() => setBulkModal("paid")}
+                className="min-h-[44px] whitespace-nowrap rounded-md border border-emerald-600 bg-white px-3 py-2 text-xs font-bold uppercase tracking-wider text-emerald-700 hover:bg-emerald-600 hover:text-white"
+              >
+                Mark paid
+              </button>
+              <button
+                type="button"
+                onClick={() => setBulkModal("writeoff")}
+                className="min-h-[44px] whitespace-nowrap rounded-md border border-red-600 bg-white px-3 py-2 text-xs font-bold uppercase tracking-wider text-red-700 hover:bg-red-600 hover:text-white"
+              >
+                Write off
+              </button>
+            </div>
+          )}
+        </Panel>
+      </FixedBottomBar>
       {bulkModal === "billed" && (
         <MarkHistoricBilledModal
           claimIds={historicIds}

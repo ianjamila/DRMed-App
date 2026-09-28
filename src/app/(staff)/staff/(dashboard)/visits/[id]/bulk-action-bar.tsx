@@ -3,6 +3,7 @@
 import { useState, useTransition } from "react";
 import { Button } from "@/components/ui/button";
 import { Panel } from "@/components/ui/panel";
+import { FixedBottomBar } from "@/components/staff/fixed-bottom-bar";
 import {
   releaseSelectedAction,
   undoReleaseSelectedAction,
@@ -156,119 +157,121 @@ export function BulkActionBar({
   }
 
   return (
-    <Panel
-      role="region"
-      aria-label="Bulk actions"
-      className="sticky bottom-0 z-10 mt-4 flex flex-wrap items-center gap-3 p-3 shadow-sm"
-    >
-      <div
-        aria-live="polite"
-        className="text-xs text-[color:var(--color-brand-text-soft)]"
+    <FixedBottomBar>
+      <Panel
+        role="region"
+        aria-label="Bulk actions"
+        className="flex flex-wrap items-center gap-3 p-3 shadow-lg"
       >
-        <span className="font-semibold text-[color:var(--color-brand-navy)]">
-          {totalSelected}
-        </span>{" "}
-        selected
-        {releaseCount > 0 ? ` · ${releaseCount} ready` : ""}
-        {unreleaseCount > 0 ? ` · ${unreleaseCount} released` : ""}
-      </div>
+        <div
+          aria-live="polite"
+          className="text-xs text-[color:var(--color-brand-text-soft)]"
+        >
+          <span className="font-semibold text-[color:var(--color-brand-navy)]">
+            {totalSelected}
+          </span>{" "}
+          selected
+          {releaseCount > 0 ? ` · ${releaseCount} ready` : ""}
+          {unreleaseCount > 0 ? ` · ${unreleaseCount} released` : ""}
+        </div>
 
-      <button
-        type="button"
-        onClick={() => {
-          clear();
-          setReason("");
-          setReasonError(null);
-        }}
-        className="text-xs font-semibold text-[color:var(--color-brand-text-soft)] hover:underline"
-      >
-        Clear
-      </button>
+        <button
+          type="button"
+          onClick={() => {
+            clear();
+            setReason("");
+            setReasonError(null);
+          }}
+          className="text-xs font-semibold text-[color:var(--color-brand-text-soft)] hover:underline"
+        >
+          Clear
+        </button>
 
-      <div className="ml-auto flex flex-wrap items-center gap-2">
-        {releaseCount > 0 ? (
-          <div className="flex items-center gap-1.5">
-            {!consentOnFile && !gateRequired ? (
-              <span className="text-[11px] text-amber-600">
-                Consent not on file
-              </span>
-            ) : null}
-            <select
-              value={medium}
-              onChange={(e) => setMedium(e.target.value as ReleaseMedium)}
-              disabled={releaseDisabled}
-              title={releaseTitle ?? "Release medium"}
-              className="rounded-md border border-[color:var(--color-brand-bg-mid)] bg-white px-2 py-1 text-xs focus:border-[color:var(--color-brand-cyan)] focus:outline-none disabled:opacity-50"
-            >
-              {MEDIUM_OPTIONS.map((o) => (
-                <option key={o.value} value={o.value}>
-                  {o.label}
-                </option>
-              ))}
-            </select>
-            <Button
-              type="button"
-              size="sm"
-              disabled={releaseDisabled}
-              title={releaseTitle}
-              className="bg-[color:var(--color-brand-cyan)] text-white hover:bg-[color:var(--color-brand-navy)]"
-              onClick={onRelease}
-            >
-              {releasePending
-                ? "Releasing…"
-                : `Release selected (${releaseCount})`}
-            </Button>
-          </div>
-        ) : null}
+        <div className="ml-auto flex flex-wrap items-center gap-2">
+          {releaseCount > 0 ? (
+            <div className="flex items-center gap-1.5">
+              {!consentOnFile && !gateRequired ? (
+                <span className="text-[11px] text-amber-600">
+                  Consent not on file
+                </span>
+              ) : null}
+              <select
+                value={medium}
+                onChange={(e) => setMedium(e.target.value as ReleaseMedium)}
+                disabled={releaseDisabled}
+                title={releaseTitle ?? "Release medium"}
+                className="rounded-md border border-[color:var(--color-brand-bg-mid)] bg-white px-2 py-1 text-xs focus:border-[color:var(--color-brand-cyan)] focus:outline-none disabled:opacity-50"
+              >
+                {MEDIUM_OPTIONS.map((o) => (
+                  <option key={o.value} value={o.value}>
+                    {o.label}
+                  </option>
+                ))}
+              </select>
+              <Button
+                type="button"
+                size="sm"
+                disabled={releaseDisabled}
+                title={releaseTitle}
+                className="bg-[color:var(--color-brand-cyan)] text-white hover:bg-[color:var(--color-brand-navy)]"
+                onClick={onRelease}
+              >
+                {releasePending
+                  ? "Releasing…"
+                  : `Release selected (${releaseCount})`}
+              </Button>
+            </div>
+          ) : null}
 
-        {unreleaseCount > 0 ? (
-          <div className="flex items-center gap-1.5">
-            {touchedReports.size > 0 ? (
-              <span className="rounded-md border border-violet-300 bg-violet-50 px-2 py-1 text-[11px] font-semibold text-violet-900">
-                {Array.from(touchedReports.values())
-                  .map((r) => `the whole ${r.label} report (${r.memberIds.length} tests)`)
-                  .join(", ")}{" "}
-                {touchedReports.size === 1 ? "will" : "will each"} be undone as
-                a whole{extraFromReports > 0 ? ` — ${extraFromReports} more test${extraFromReports === 1 ? "" : "s"} beyond your selection` : ""}.
-              </span>
-            ) : null}
-            {viewedSelected > 0 ? (
-              <span className="rounded-md border border-amber-300 bg-amber-50 px-2 py-1 text-[11px] font-semibold text-amber-800">
-                {viewedSelected === 1
-                  ? expandedIds.size === 1
-                    ? "Patient already viewed the selected result — undoing does not un-see it."
-                    : `Patient already viewed 1 of the ${expandedIds.size} affected results — undoing does not un-see it.`
-                  : `Patient already viewed ${viewedSelected} of the ${expandedIds.size} affected results — undoing does not un-see them.`}
-              </span>
-            ) : null}
-            <input
-              type="text"
-              value={reason}
-              onChange={(e) => {
-                setReason(e.target.value);
-                if (reasonError) setReasonError(null);
-              }}
-              placeholder="Reason (required)…"
-              disabled={unreleasePending}
-              className="w-40 rounded-md border border-[color:var(--color-brand-bg-mid)] bg-white px-2 py-1 text-xs focus:border-[color:var(--color-brand-cyan)] focus:outline-none disabled:opacity-50"
-            />
-            {reasonError ? (
-              <span className="text-[11px] text-red-600">{reasonError}</span>
-            ) : null}
-            <Button
-              type="button"
-              size="sm"
-              variant="outline"
-              disabled={unreleaseDisabled}
-              onClick={onUnrelease}
-            >
-              {unreleasePending
-                ? "Undoing…"
-                : `Unrelease selected (${unreleaseCount})`}
-            </Button>
-          </div>
-        ) : null}
-      </div>
-    </Panel>
+          {unreleaseCount > 0 ? (
+            <div className="flex items-center gap-1.5">
+              {touchedReports.size > 0 ? (
+                <span className="rounded-md border border-violet-300 bg-violet-50 px-2 py-1 text-[11px] font-semibold text-violet-900">
+                  {Array.from(touchedReports.values())
+                    .map((r) => `the whole ${r.label} report (${r.memberIds.length} tests)`)
+                    .join(", ")}{" "}
+                  {touchedReports.size === 1 ? "will" : "will each"} be undone as
+                  a whole{extraFromReports > 0 ? ` — ${extraFromReports} more test${extraFromReports === 1 ? "" : "s"} beyond your selection` : ""}.
+                </span>
+              ) : null}
+              {viewedSelected > 0 ? (
+                <span className="rounded-md border border-amber-300 bg-amber-50 px-2 py-1 text-[11px] font-semibold text-amber-800">
+                  {viewedSelected === 1
+                    ? expandedIds.size === 1
+                      ? "Patient already viewed the selected result — undoing does not un-see it."
+                      : `Patient already viewed 1 of the ${expandedIds.size} affected results — undoing does not un-see it.`
+                    : `Patient already viewed ${viewedSelected} of the ${expandedIds.size} affected results — undoing does not un-see them.`}
+                </span>
+              ) : null}
+              <input
+                type="text"
+                value={reason}
+                onChange={(e) => {
+                  setReason(e.target.value);
+                  if (reasonError) setReasonError(null);
+                }}
+                placeholder="Reason (required)…"
+                disabled={unreleasePending}
+                className="w-40 rounded-md border border-[color:var(--color-brand-bg-mid)] bg-white px-2 py-1 text-xs focus:border-[color:var(--color-brand-cyan)] focus:outline-none disabled:opacity-50"
+              />
+              {reasonError ? (
+                <span className="text-[11px] text-red-600">{reasonError}</span>
+              ) : null}
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                disabled={unreleaseDisabled}
+                onClick={onUnrelease}
+              >
+                {unreleasePending
+                  ? "Undoing…"
+                  : `Unrelease selected (${unreleaseCount})`}
+              </Button>
+            </div>
+          ) : null}
+        </div>
+      </Panel>
+    </FixedBottomBar>
   );
 }

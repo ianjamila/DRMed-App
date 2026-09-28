@@ -16,6 +16,7 @@ import {
   type PaymentMethod,
 } from "./_components/historic-claim-modals";
 import { Panel } from "@/components/ui/panel";
+import { FixedBottomBar } from "@/components/staff/fixed-bottom-bar";
 import { ExportCsvButton } from "@/components/staff/export-csv-link";
 import { manilaDate, manilaISODate, todayManilaISODate } from "@/lib/dates/manila";
 import {
@@ -1107,47 +1108,49 @@ function AllUnbilled({
         </table>
       </Panel>
       {selected.size > 0 && (
-        <Panel className="sticky bottom-0 z-10 flex flex-wrap items-center justify-between gap-3 p-3 shadow-sm">
-          <div className="text-xs text-[color:var(--color-brand-text-soft)]">
-            <span className="font-semibold text-[color:var(--color-brand-navy)]">
-              {selected.size}
-            </span>{" "}
-            historic claims selected · total{" "}
-            <span className="font-semibold text-[color:var(--color-brand-navy)]">
-              {PHP.format(selectedHistoricTotal)}
-            </span>
-          </div>
-          <div className="flex flex-nowrap items-center gap-2">
-            <button
-              type="button"
-              onClick={() => setBulkModal("billed")}
-              className="min-h-[44px] whitespace-nowrap rounded-md bg-[color:var(--color-brand-navy)] px-3 py-2 text-xs font-bold uppercase tracking-wider text-white"
-            >
-              Mark billed ({selected.size})
-            </button>
-            <button
-              type="button"
-              onClick={() => setBulkModal("paid")}
-              className="min-h-[44px] whitespace-nowrap rounded-md border border-emerald-600 bg-white px-3 py-2 text-xs font-bold uppercase tracking-wider text-emerald-700 hover:bg-emerald-600 hover:text-white"
-            >
-              Mark paid
-            </button>
-            <button
-              type="button"
-              onClick={() => setBulkModal("writeoff")}
-              className="min-h-[44px] whitespace-nowrap rounded-md border border-red-600 bg-white px-3 py-2 text-xs font-bold uppercase tracking-wider text-red-700 hover:bg-red-600 hover:text-white"
-            >
-              Write off
-            </button>
-            <button
-              type="button"
-              onClick={() => setSelected(new Set())}
-              className="min-h-[44px] whitespace-nowrap rounded-md border border-[color:var(--color-brand-bg-mid)] bg-white px-3 py-2 text-xs font-semibold text-[color:var(--color-brand-text-soft)]"
-            >
-              Clear
-            </button>
-          </div>
-        </Panel>
+        <FixedBottomBar>
+          <Panel className="flex flex-wrap items-center justify-between gap-3 p-3 shadow-lg">
+            <div className="text-xs text-[color:var(--color-brand-text-soft)]">
+              <span className="font-semibold text-[color:var(--color-brand-navy)]">
+                {selected.size}
+              </span>{" "}
+              historic claims selected · total{" "}
+              <span className="font-semibold text-[color:var(--color-brand-navy)]">
+                {PHP.format(selectedHistoricTotal)}
+              </span>
+            </div>
+            <div className="flex flex-nowrap items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setBulkModal("billed")}
+                className="min-h-[44px] whitespace-nowrap rounded-md bg-[color:var(--color-brand-navy)] px-3 py-2 text-xs font-bold uppercase tracking-wider text-white"
+              >
+                Mark billed ({selected.size})
+              </button>
+              <button
+                type="button"
+                onClick={() => setBulkModal("paid")}
+                className="min-h-[44px] whitespace-nowrap rounded-md border border-emerald-600 bg-white px-3 py-2 text-xs font-bold uppercase tracking-wider text-emerald-700 hover:bg-emerald-600 hover:text-white"
+              >
+                Mark paid
+              </button>
+              <button
+                type="button"
+                onClick={() => setBulkModal("writeoff")}
+                className="min-h-[44px] whitespace-nowrap rounded-md border border-red-600 bg-white px-3 py-2 text-xs font-bold uppercase tracking-wider text-red-700 hover:bg-red-600 hover:text-white"
+              >
+                Write off
+              </button>
+              <button
+                type="button"
+                onClick={() => setSelected(new Set())}
+                className="min-h-[44px] whitespace-nowrap rounded-md border border-[color:var(--color-brand-bg-mid)] bg-white px-3 py-2 text-xs font-semibold text-[color:var(--color-brand-text-soft)]"
+              >
+                Clear
+              </button>
+            </div>
+          </Panel>
+        </FixedBottomBar>
       )}
       <ClientListPagination
         page={page}
@@ -1500,40 +1503,42 @@ function AllAging({
         </table>
       </Panel>
       {selected.size > 0 && (
-        <Panel className="sticky bottom-0 z-10 flex flex-wrap items-center justify-between gap-3 p-3 shadow-sm">
-          <div className="text-xs text-[color:var(--color-brand-text-soft)]">
-            <span className="font-semibold text-[color:var(--color-brand-navy)]">
-              {selected.size}
-            </span>{" "}
-            historic claims selected · total{" "}
-            <span className="font-semibold text-[color:var(--color-brand-navy)]">
-              {PHP.format(selectedHistoricTotal)}
-            </span>
-          </div>
-          <div className="flex flex-nowrap items-center gap-2">
-            <button
-              type="button"
-              onClick={() => setBulkModal("paid")}
-              className="min-h-[44px] whitespace-nowrap rounded-md border border-emerald-600 bg-white px-3 py-2 text-xs font-bold uppercase tracking-wider text-emerald-700 hover:bg-emerald-600 hover:text-white"
-            >
-              Mark paid ({selected.size})
-            </button>
-            <button
-              type="button"
-              onClick={() => setBulkModal("writeoff")}
-              className="min-h-[44px] whitespace-nowrap rounded-md border border-red-600 bg-white px-3 py-2 text-xs font-bold uppercase tracking-wider text-red-700 hover:bg-red-600 hover:text-white"
-            >
-              Write off
-            </button>
-            <button
-              type="button"
-              onClick={() => setSelected(new Set())}
-              className="min-h-[44px] whitespace-nowrap rounded-md border border-[color:var(--color-brand-bg-mid)] bg-white px-3 py-2 text-xs font-semibold text-[color:var(--color-brand-text-soft)]"
-            >
-              Clear
-            </button>
-          </div>
-        </Panel>
+        <FixedBottomBar>
+          <Panel className="flex flex-wrap items-center justify-between gap-3 p-3 shadow-lg">
+            <div className="text-xs text-[color:var(--color-brand-text-soft)]">
+              <span className="font-semibold text-[color:var(--color-brand-navy)]">
+                {selected.size}
+              </span>{" "}
+              historic claims selected · total{" "}
+              <span className="font-semibold text-[color:var(--color-brand-navy)]">
+                {PHP.format(selectedHistoricTotal)}
+              </span>
+            </div>
+            <div className="flex flex-nowrap items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setBulkModal("paid")}
+                className="min-h-[44px] whitespace-nowrap rounded-md border border-emerald-600 bg-white px-3 py-2 text-xs font-bold uppercase tracking-wider text-emerald-700 hover:bg-emerald-600 hover:text-white"
+              >
+                Mark paid ({selected.size})
+              </button>
+              <button
+                type="button"
+                onClick={() => setBulkModal("writeoff")}
+                className="min-h-[44px] whitespace-nowrap rounded-md border border-red-600 bg-white px-3 py-2 text-xs font-bold uppercase tracking-wider text-red-700 hover:bg-red-600 hover:text-white"
+              >
+                Write off
+              </button>
+              <button
+                type="button"
+                onClick={() => setSelected(new Set())}
+                className="min-h-[44px] whitespace-nowrap rounded-md border border-[color:var(--color-brand-bg-mid)] bg-white px-3 py-2 text-xs font-semibold text-[color:var(--color-brand-text-soft)]"
+              >
+                Clear
+              </button>
+            </div>
+          </Panel>
+        </FixedBottomBar>
       )}
       <ClientListPagination
         page={page}
