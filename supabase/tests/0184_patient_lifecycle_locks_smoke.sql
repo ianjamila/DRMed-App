@@ -639,4 +639,80 @@ begin
 end
 $s3$;
 
+-- --- s4: guards on the visit-path tables ----------------------------------------
+do $s4$
+declare
+  k_admin constant uuid := 'a0000000-0000-4000-8000-000000000184';
+  a  uuid := pg_temp.mk_patient('S4A');
+  d  uuid := pg_temp.mk_patient('S4D');
+  va uuid; vd uuid; vd2 uuid;
+  la uuid; ld uuid; ld_rel uuid;
+  ha uuid; hd uuid;
+  pa uuid; pd uuid;
+  pin_d uuid;
+begin
+  va := pg_temp.mk_visit(a);
+  vd := pg_temp.mk_visit(d);
+  vd2 := pg_temp.mk_visit(d);
+  la := pg_temp.mk_line(va, 'requested', 100);
+  ld := pg_temp.mk_line(vd, 'requested', 100);
+  ld_rel := pg_temp.mk_line(vd2, 'released', 0);
+  ha := pg_temp.mk_line(va, 'in_progress', 0, null, true, 'c2000000-0000-4000-8000-000000000184');
+  hd := pg_temp.mk_line(vd, 'in_progress', 0, null, true, 'c2000000-0000-4000-8000-000000000184');
+  pd := pg_temp.mk_pay(vd, 50);
+  insert into public.visit_pins (visit_id, pin_hash) values (vd, '$2a$12$abcdefghijklmnopqrstuuM2ZyN0bN6o5uX0B0Qe0b8bOIG8J8r5a')
+    returning id into pin_d;
+  perform pg_temp.kill(d);
+
+  -- test_requests
+  perform pg_temp.expect('s4.1 CONTROL add a line on an active patient''s visit',
+    pg_temp.state_of(format($q$select pg_temp.mk_line(%L, 'requested', 10)$q$, va)), 'ok');
+  perform pg_temp.expect('s4.2 add a line on a deleted patient''s visit is refused',
+    pg_temp.state_of(format($q$select pg_temp.mk_line(%L, 'requested', 10)$q$, vd)), 'P0058');
+  perform pg_temp.expect('s4.3 status change is refused',
+    pg_temp.state_of(format($q$update public.test_requests set status = 'in_progress' where id = %L$q$, ld)), 'P0058');
+  perform pg_temp.expect('s4.4 cancelling a released line is refused (reverses revenue + PF)',
+    pg_temp.state_of(format($q$update public.test_requests set status = 'cancelled', cancelled_reason = 'x' where id = %L$q$, ld_rel)), 'P0058');
+  perform pg_temp.expect('s4.5 soft-deleting a line is refused',
+    pg_temp.state_of(format($q$update public.test_requests set deleted_at = now(), deleted_by = %L, delete_reason = 'x' where id = %L$q$, k_admin, ld)), 'P0058');
+  perform pg_temp.expect('s4.6 moving a line from an active visit onto a deleted patient''s visit is refused',
+    pg_temp.state_of(format($q$update public.test_requests set visit_id = %L where id = %L$q$, vd, la)), 'P0058');
+  perform pg_temp.expect('s4.7 a line pointing at a visit that does not exist fails closed',
+    pg_temp.state_of(format($q$select pg_temp.mk_line(%L, 'requested', 10)$q$, gen_random_uuid())), 'P0058');
+  -- Mismatched references (Codex plan review P1-1): every reference is locked and asserted.
+  perform pg_temp.expect('s4.7a CONTROL a component under its own visit''s header',
+    pg_temp.state_of(format($q$select pg_temp.mk_line(%L, 'requested', 0, %L, false)$q$, va, ha)), 'ok');
+  perform pg_temp.expect('s4.7b a component on an ACTIVE visit whose parent header is on a deleted patient''s visit is refused',
+    pg_temp.state_of(format($q$select pg_temp.mk_line(%L, 'requested', 0, %L, false)$q$, va, hd)), 'P0058');
+  perform pg_temp.expect('s4.7c a payment on an ACTIVE visit that corrects a deleted patient''s payment is refused',
+    pg_temp.state_of(format($q$insert into public.payments (visit_id, amount_php, method, received_by, corrects_payment_id) values (%L, 10, 'cash', %L, %L)$q$,
+      va, 'a1000000-0000-4000-8000-000000000184', pd)), 'P0058');
+
+  -- payments
+  perform pg_temp.expect('s4.8 CONTROL payment on an active patient''s visit',
+    pg_temp.state_of(format($q$select pg_temp.mk_pay(%L, 10)$q$, va)), 'ok');
+  perform pg_temp.expect('s4.9 payment on a deleted patient''s visit is refused',
+    pg_temp.state_of(format($q$select pg_temp.mk_pay(%L, 10)$q$, vd)), 'P0058');
+  perform pg_temp.expect('s4.10 voiding a deleted patient''s payment is refused',
+    pg_temp.state_of(format($q$update public.payments set voided_at = now(), voided_by = %L, void_reason = 'x' where id = %L$q$, k_admin, pd)), 'P0058');
+  perform pg_temp.expect('s4.11 hard-deleting a deleted patient''s payment is refused',
+    pg_temp.state_of(format($q$delete from public.payments where id = %L$q$, pd)), 'P0058');
+
+  -- visit_pins
+  perform pg_temp.expect('s4.12 sign-in bookkeeping on a deleted patient''s PIN is allowed',
+    pg_temp.state_of(format($q$update public.visit_pins set failed_attempts = failed_attempts + 1, locked_until = now() where id = %L$q$, pin_d)), 'ok');
+  perform pg_temp.expect('s4.13 PIN REISSUE (hash change) is refused',
+    pg_temp.state_of(format($q$update public.visit_pins set pin_hash = 'x', expires_at = now() + interval '60 days' where id = %L$q$, pin_d)), 'P0058');
+  perform pg_temp.expect('s4.14 new PIN row on a deleted patient''s visit is refused',
+    pg_temp.state_of(format($q$insert into public.visit_pins (visit_id, pin_hash) values (%L, 'x')$q$, vd2)), 'P0058');
+  perform pg_temp.expect('s4.15 PIN retention delete is allowed',
+    pg_temp.state_of(format($q$delete from public.visit_pins where id = %L$q$, pin_d)), 'ok');
+
+  -- Restore lifts it.
+  perform pg_temp.revive(d);
+  perform pg_temp.expect('s4.16 after restore, a line can be added again',
+    pg_temp.state_of(format($q$select pg_temp.mk_line(%L, 'requested', 10)$q$, vd)), 'ok');
+end
+$s4$;
+
 rollback;

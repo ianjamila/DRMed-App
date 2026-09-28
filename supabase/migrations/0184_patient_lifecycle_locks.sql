@@ -828,3 +828,19 @@ drop trigger if exists a_lifecycle_guard on public.appointment_attachments;
 create trigger a_lifecycle_guard
   before insert or update or delete on public.appointment_attachments
   for each row execute function public.enforce_patient_activity();
+
+-- Tables that reach the patient through visit_id.
+drop trigger if exists a_lifecycle_guard on public.test_requests;
+create trigger a_lifecycle_guard
+  before insert or update or delete on public.test_requests
+  for each row execute function public.enforce_patient_activity();
+
+drop trigger if exists a_lifecycle_guard on public.payments;
+create trigger a_lifecycle_guard
+  before insert or update or delete on public.payments
+  for each row execute function public.enforce_patient_activity();
+
+drop trigger if exists a_lifecycle_guard on public.visit_pins;
+create trigger a_lifecycle_guard
+  before insert or update or delete on public.visit_pins
+  for each row execute function public.enforce_patient_activity();
