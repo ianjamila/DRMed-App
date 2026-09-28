@@ -17,10 +17,6 @@ const CALLERS: Record<string, string> = {
   "src/lib/marketing/patient-sources.server.ts": "the loader module",
   "src/app/(staff)/staff/(dashboard)/marketing/ad-spend-actions.ts": "the two ad-spend write actions",
   "src/types/database.ts": "generated types",
-  // Not an RPC call: its audit action is literally named "patient_sources_people"
-  // (P12), which happens to string-match the RPC of the same name. The route
-  // only calls the RPC through loadAllPeople() (patient-sources.server.ts).
-  "src/app/api/admin/reports/patient-sources-people.csv/route.ts": "the people CSV route's audit action name collides with the RPC name",
 };
 const S = "src/app/(staff)/staff/(dashboard)";
 const SURFACES: Record<string, string> = {
@@ -28,7 +24,23 @@ const SURFACES: Record<string, string> = {
   [`${S}/marketing/sources/page.tsx`]: "loadPatientSourcesSummary",
   [`${S}/_dashboards/admin-dashboard.tsx`]: "loadNewPatientsToday",
   ["src/app/api/admin/reports/patient-sources.csv/route.ts"]: "loadPatientSourcesSummary",
+  ["src/app/api/admin/reports/patient-sources-people.csv/route.ts"]: "loadAllPeople",
+  [`${S}/marketing/patients/people/page.tsx`]: "loadPeoplePage",
 };
+
+// The people CSV route's own audit action is named, by design (P12), exactly
+// like the RPC it does NOT call directly: `report: "patient_sources_people"`.
+// Stripping only that one known literal — never the whole file — keeps the
+// route OUT of CALLERS, so a real `.rpc("patient_sources_people", …)` added to
+// it later still trips the offender scan below.
+const AUDIT_KEY_EXCEPTION: [string, RegExp] = [
+  "src/app/api/admin/reports/patient-sources-people.csv/route.ts",
+  /report:\s*["']patient_sources_people["']/g,
+];
+function scanText(file: string, src: string): string {
+  const [exceptionFile, pattern] = AUDIT_KEY_EXCEPTION;
+  return file === exceptionFile ? src.replace(pattern, "") : src;
+}
 
 function walk(dir: string): string[] {
   return readdirSync(dir).flatMap((n) => {
@@ -44,7 +56,7 @@ describe("Patient Sources has one definition and one caller", () => {
       .map(rel)
       .filter((f) => !(f in CALLERS) && !f.endsWith(".test.ts"))
       .filter((f) => {
-        const src = readFileSync(join(ROOT, f), "utf8");
+        const src = scanText(f, readFileSync(join(ROOT, f), "utf8"));
         return RPCS.some((r) => src.includes(`"${r}"`) || src.includes(`'${r}'`));
       });
     expect(offenders).toEqual([]);
@@ -60,3 +72,4 @@ describe("Patient Sources has one definition and one caller", () => {
     expect(readFileSync(join(ROOT, "src/lib/marketing/patient-sources.server.ts"), "utf8")).toContain('"patient_sources_summary"');
   });
 });
+
