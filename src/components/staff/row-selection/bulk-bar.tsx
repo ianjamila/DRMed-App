@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, type ReactNode } from "react";
 import { Panel } from "@/components/ui/panel";
 import { FixedBottomBar } from "@/components/staff/fixed-bottom-bar";
 import { isTextTarget, useBarFocus } from "./bar-focus";
+import { ShortcutsHelp } from "./shortcuts-help";
 import { useRowSelection } from "./selection-context";
 
 interface Props {
@@ -59,7 +60,8 @@ export function BulkBar({ noun, children }: Props) {
           >
             Clear
           </button>
-          <span className="hidden text-[color:var(--color-brand-text-soft)] sm:inline"> · Alt+B</span>
+          {" "}
+          <ShortcutsHelp />
           {refusedCount > 0 ? (
             <span className="ml-2 text-amber-700">
               Selected the first {count} — the limit is {limits.rows} rows at a time

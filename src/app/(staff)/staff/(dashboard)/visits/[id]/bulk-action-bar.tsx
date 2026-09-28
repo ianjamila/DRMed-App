@@ -1,10 +1,11 @@
 "use client";
 
-import { useRef, useState, useTransition } from "react";
+import { useCallback, useEffect, useRef, useState, useTransition } from "react";
 import { Button } from "@/components/ui/button";
 import { Panel } from "@/components/ui/panel";
 import { FixedBottomBar } from "@/components/staff/fixed-bottom-bar";
-import { useBarFocus } from "@/components/staff/row-selection/bar-focus";
+import { isTextTarget, useBarFocus } from "@/components/staff/row-selection/bar-focus";
+import { ShortcutsHelp } from "@/components/staff/row-selection/shortcuts-help";
 import {
   releaseSelectedAction,
   undoReleaseSelectedAction,
@@ -78,6 +79,26 @@ export function BulkActionBar({
   const totalSelected = releaseCount + unreleaseCount;
   const barRef = useRef<HTMLDivElement>(null);
   const restoreFocus = useBarFocus(barRef, totalSelected > 0);
+  const clearAndReturn = useCallback(() => {
+    restoreFocus();
+    clear();
+    setReason("");
+    setReasonError(null);
+  }, [restoreFocus, clear]);
+
+  // Same rule as the kit's BulkBar: Escape clears the selection unless a
+  // dialog/sheet is open or focus is in a text field (the reason input).
+  useEffect(() => {
+    if (totalSelected === 0) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      if (document.querySelector('[role="dialog"]')) return;
+      if (isTextTarget(event.target)) return;
+      clearAndReturn();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [totalSelected, clearAndReturn]);
 
   if (totalSelected === 0) return null;
 
@@ -179,21 +200,17 @@ export function BulkActionBar({
           selected
           {releaseCount > 0 ? ` · ${releaseCount} ready` : ""}
           {unreleaseCount > 0 ? ` · ${unreleaseCount} released` : ""}
-          <span className="hidden text-[color:var(--color-brand-text-soft)] sm:inline"> · Alt+B</span>
         </div>
 
         <button
           type="button"
-          onClick={() => {
-            restoreFocus();
-            clear();
-            setReason("");
-            setReasonError(null);
-          }}
+          onClick={clearAndReturn}
           className="text-xs font-semibold text-[color:var(--color-brand-text-soft)] hover:underline"
         >
           Clear
         </button>
+
+        <ShortcutsHelp />
 
         <div data-bar-actions className="ml-auto flex flex-wrap items-center gap-2">
           {releaseCount > 0 ? (
