@@ -260,7 +260,11 @@ async function seed(db: pg.Client, staffId: string, email: string, password: str
      values ($1, $2, $3, 550, 550)`,
     [s.waivedVisitId, xray, staffId],
   );
-  await q("update visits set total_php = 550, payment_status = 'waived' where id = $1", [s.waivedVisitId]);
+  // 0183: payment_status = 'waived' may only be set inside waive_visit_balance()
+  // (the seeded staff is an admin); total_php must reconcile to the sum of the
+  // visit's priced live lines (the one X-ray line above, 550) before waiving.
+  await q("update visits set total_php = 550 where id = $1", [s.waivedVisitId]);
+  await q("select public.waive_visit_balance($1, $2, 'smoke: charity')", [s.waivedVisitId, staffId]);
 
   // Retire the X-ray after billing it: the patient's portal copy must still
   // name it (0175 lets a patient read catalog rows their own bill references).
@@ -345,6 +349,21 @@ async function cleanup(db: pg.Client, s: Partial<Seed> & { staffId: string }): P
     await q("delete from doctor_pf_disbursements where id = $1", [s.disbursementId]);
   }
   if (s.eodId) await q("delete from eod_close_records where id = $1", [s.eodId]);
+  // 0183: the waiver's own JE + allocation rows aren't covered by smoke_je
+  // (keyed off test_requests, not visit_waiver_allocations) and
+  // visit_waiver_allocations has no ON DELETE CASCADE from visits.
+  await q(
+    `delete from journal_lines where entry_id in (
+       select id from journal_entries where source_kind = 'visit_waiver'
+          and source_id in (select id from visit_waiver_allocations where visit_id = any($1::uuid[])))`,
+    [visitIds],
+  );
+  await q(
+    `delete from journal_entries where source_kind = 'visit_waiver'
+        and source_id in (select id from visit_waiver_allocations where visit_id = any($1::uuid[]))`,
+    [visitIds],
+  );
+  await q("delete from visit_waiver_allocations where visit_id = any($1::uuid[])", [visitIds]);
   await q("delete from payments where visit_id = any($1::uuid[])", [visitIds]);
   await q("delete from test_requests where visit_id = any($1::uuid[])", [visitIds]);
   await q("delete from visits where id = any($1::uuid[])", [visitIds]);

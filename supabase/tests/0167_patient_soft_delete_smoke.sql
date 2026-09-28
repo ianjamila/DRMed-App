@@ -472,9 +472,15 @@ begin
   perform pg_temp.expect('s3.19 partial blocks', pg_temp.kinds(p), 'balance');
   perform pg_temp.expect('s3.20 amount is the balance',
     (select b->>'amount_php' from jsonb_array_elements(public.patient_delete_blockers(p)) b), '600.00');
+  perform set_config('app.waive_visit', 'on', true);  -- 0183 guard: this fixture sets the status directly
   update public.visits set payment_status = 'waived' where id = v;
   perform pg_temp.expect('s3.21 waived does not block', pg_temp.kinds(p), '');
-  update public.visits set payment_status = 'paid', paid_php = 1000 where id = v;
+  -- 0183: payment_status may never leave 'waived' once set ("a waived balance
+  -- cannot be un-waived", P0069) — s3.22 needs its own visit rather than
+  -- transitioning the one just waived above.
+  p := pg_temp.mk_patient('S3O2');
+  v := pg_temp.mk_visit(p, false, 'paid', 1000, 1000);
+  perform pg_temp.mk_line(v, 'released', 1000, null);
   perform pg_temp.expect('s3.22 paid does not block', pg_temp.kinds(p), '');
 
   -- Shape: every blocker carries the six keys; links point at staff pages.
@@ -534,6 +540,7 @@ begin
   select b->>'amount_php' into amt from jsonb_array_elements(public.patient_delete_blockers(p)) b;
   perform pg_temp.expect('s4.5 voided payment ignored', amt, '200.00');
   -- Waiver clears the original co-pay.
+  perform set_config('app.waive_visit', 'on', true);  -- 0183 guard: this fixture sets the status directly
   update public.visits set payment_status = 'waived' where id = v;
   perform pg_temp.expect('s4.6 waived clears co-pay', pg_temp.kinds(p), '');
 
@@ -561,8 +568,20 @@ begin
   values (bt, l, 1000, 700, 300);
   perform pg_temp.expect('s4.10 transfer to patient blocks as patient share', pg_temp.kinds(p), 'hmo_patient_share');
   -- Waiver does NOT clear a later claim-to-patient transfer.
+  perform set_config('app.waive_visit', 'on', true);  -- 0183 guard: this fixture sets the status directly
   update public.visits set payment_status = 'waived' where id = v;
   perform pg_temp.expect('s4.11 waiver keeps the transfer', pg_temp.kinds(p), 'hmo_patient_share');
+  -- 0183 freezes payments on a waived visit entirely (P0070: "nothing can be
+  -- recorded, changed, deleted or moved on it"), so "transfer paid:
+  -- deletable" is proven on a fresh, un-waived visit rather than paying off
+  -- the one just waived above.
+  p := pg_temp.mk_patient('S4D2');
+  v := pg_temp.mk_visit(p, true, 'unpaid', 1000, 0);
+  l := pg_temp.mk_line(v, 'released', 1000, 1000);
+  insert into public.hmo_claim_batches (provider_id, status) values (k_hmo, 'partial_paid') returning id into bt;
+  insert into public.hmo_claim_items (batch_id, test_request_id, billed_amount_php, paid_amount_php,
+                                      patient_billed_amount_php)
+  values (bt, l, 1000, 700, 300);
   insert into public.payments (visit_id, amount_php, method, received_by) values (v, 300, 'gcash', k_admin);
   perform pg_temp.expect('s4.12 transfer paid: deletable', pg_temp.kinds(p), '');
 

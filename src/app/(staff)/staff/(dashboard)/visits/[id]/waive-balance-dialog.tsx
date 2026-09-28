@@ -1,14 +1,21 @@
 "use client";
 
 import { useState, useTransition } from "react";
+import { formatPhp } from "@/lib/marketing/format";
 import { waiveVisitBalanceAction } from "./actions";
 
 export function WaiveBalanceDialog({
   visitId,
   balanceLabel,
+  preview,
+  legacy,
 }: {
   visitId: string;
   balanceLabel: string;
+  /** The discount split waiving this balance would post (0183). Null when the visit's lines don't add up. */
+  preview: { labPhp: number; doctorPhp: number; lines: number } | null;
+  /** An imported (legacy history) visit: waiving posts nothing to the books. */
+  legacy: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const [reason, setReason] = useState("");
@@ -51,6 +58,27 @@ export function WaiveBalanceDialog({
         no-charge — the patient owes nothing). Results become releasable
         without payment. Reason is audit-logged.
       </p>
+      {legacy ? (
+        <p className="text-xs text-[color:var(--color-brand-text-soft)]" data-testid="waive-preview">
+          Imported visit: the books never held this balance, so nothing is posted.
+        </p>
+      ) : preview ? (
+        <p className="text-xs text-[color:var(--color-brand-text-soft)]" data-testid="waive-preview">
+          {formatPhp(preview.labPhp + preview.doctorPhp)} is recorded as a discount as each line is released
+          (lines already released: now)
+          {preview.doctorPhp > 0 && preview.labPhp > 0
+            ? ` — ${formatPhp(preview.labPhp)} on lab tests and ${formatPhp(preview.doctorPhp)} on doctor fees`
+            : preview.doctorPhp > 0
+              ? " on doctor fees"
+              : " on lab tests"}
+          , across {preview.lines} line{preview.lines === 1 ? "" : "s"}, and the patient receivable is cleared.
+          Nothing is collected. After this, payments and lines on the visit are fixed.
+        </p>
+      ) : (
+        <p className="text-xs text-amber-800" data-testid="waive-preview">
+          This visit&apos;s lines do not add up to its total; fix the lines before waiving.
+        </p>
+      )}
       <textarea
         rows={2}
         value={reason}
