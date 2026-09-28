@@ -209,6 +209,13 @@ export async function notifyResultCorrected({
           }),
     ]);
 
+    // 0188: record what was DELIVERED before anything else can throw — a
+    // failure in the reporting below must never erase a real delivery, or
+    // the row would read as a send error and "Retry notice" would message a
+    // patient who already got it.
+    if (smsResult.ok) channels.push("sms");
+    if (emailResult.ok) channels.push("email");
+
     if (!smsResult.ok && smsResult.kind === "error") {
       await reportError({
         scope: "notify/result-corrected:sms",
@@ -235,8 +242,6 @@ export async function notifyResultCorrected({
         ? { ok: false, skipped: true, reason: emailResult.reason }
         : { ok: false, error: emailResult.error, to: patient?.email };
 
-    if (smsResult.ok) channels.push("sms");
-    if (emailResult.ok) channels.push("email");
     if (channels.length === 0) {
       ({ error, notSetUp } = describeSendFailure(smsResult, emailResult));
     }
@@ -246,8 +251,10 @@ export async function notifyResultCorrected({
       error: e,
       metadata: { amendment_id: amendmentId },
     });
-    channels = [];
-    error = "internal error while sending";
+    // Keep any channel that already delivered (see above): only a throw
+    // before anything was sent is a failure a retry may repeat.
+    notSetUp = false;
+    error = channels.length === 0 ? "internal error while sending" : null;
   }
 
   // The claim already succeeded, so this amendment will never be retried by

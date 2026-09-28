@@ -93,6 +93,7 @@ vi.mock("@/lib/observability/report-error", () => ({
 }));
 
 import { sendEmail } from "./email";
+import { reportError } from "@/lib/observability/report-error";
 import { sendSms } from "./sms";
 import { fetchCopyStateAdmin } from "@/lib/results/copy-followups.server";
 import { describeSendFailure, notifyResultCorrected, resolveCorrectedNotifyOutcome } from "./notify-corrected";
@@ -307,6 +308,20 @@ describe("notifyResultCorrected", () => {
     expect(fx.recordCalls).toHaveLength(1);
     expect(fx.recordCalls[0].p_channels).toEqual([]);
     expect(fx.errors.some((e) => e.scope === "notify/result-corrected:send")).toBe(true);
+  });
+
+  it("0188: a throw AFTER a delivery keeps that channel, so the row never looks retryable", async () => {
+    vi.mocked(sendSms).mockResolvedValue({ ok: true, id: "sms-1" });
+    vi.mocked(sendEmail).mockResolvedValue({ ok: false, kind: "error", error: "Resend 500" });
+    // Reporting the email failure itself blows up (e.g. Sentry down).
+    vi.mocked(reportError).mockImplementationOnce(async () => {
+      throw new Error("sentry down");
+    });
+
+    const out = await notifyResultCorrected(args);
+
+    expect(out).toBe("sent");
+    expect(fx.recordCalls[0]).toMatchObject({ p_channels: ["sms"], p_error: null });
   });
 
   it("R4: the record RPC returning an error (not throwing) reports and returns sent_unrecorded (X3)", async () => {
