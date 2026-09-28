@@ -11,6 +11,7 @@ import { RowSelectCheckbox } from "@/components/staff/row-selection/row-select-c
 import { SelectAllCheckbox } from "@/components/staff/row-selection/select-all-checkbox";
 import type { SelectionEntry } from "@/lib/ui/bulk-selection";
 import { conflictingGroupKeys, type GroupInfo } from "@/lib/appointments/bulk-eligibility";
+import { withoutDatedCallbacks } from "@/lib/appointments/callback-dedupe";
 import { AppointmentsBulkBar } from "./appointments-bulk-bar";
 import {
   NewAppointmentSheet,
@@ -542,10 +543,12 @@ export default async function AppointmentsPage({ searchParams }: SearchProps) {
   const registerUrl = `${proto}://${host}/register?src=staff_qr`;
 
   // Build full (unfiltered) groups for each section — used for tab counts.
-  const allPendingGroups = groupRows(pending);
   const allWalkInGroups = groupRows(openWalkIns);
   const allTodayGroups = groupRows(todayScheduled);
   const allUpcomingGroups = groupRows(upcoming);
+  // A dated pending callback shows once, in its date section (callback-dedupe.ts).
+  const callbackSplit = withoutDatedCallbacks(groupRows(pending), [allTodayGroups, allUpcomingGroups]);
+  const allPendingGroups = callbackSplit.pending;
 
   const groupIds = Array.from(
     new Set(
@@ -579,6 +582,7 @@ export default async function AppointmentsPage({ searchParams }: SearchProps) {
 
   // Filtered groups for the active tab.
   const pendingGroups = applyFilter(allPendingGroups, type);
+  const movedCallbacks = applyFilter(callbackSplit.moved, type).length;
   const walkInGroups = applyFilter(allWalkInGroups, type);
   const todayGroups = applyFilter(allTodayGroups, type);
   const upcomingGroups = applyFilter(allUpcomingGroups, type);
@@ -867,6 +871,16 @@ export default async function AppointmentsPage({ searchParams }: SearchProps) {
         <>
           <Section
             title={`Pending callback (${pendingGroups.length})`}
+            description={
+              movedCallbacks > 0 ? (
+                <>
+                  +{movedCallbacks} more with a date — shown under{" "}
+                  <a href="#today" className="font-semibold underline">Today</a> /{" "}
+                  <a href="#next-30-days" className="font-semibold underline">Next 30 days</a>{" "}
+                  with a Callback needed tag.
+                </>
+              ) : undefined
+            }
             groups={pendingGroups}
             empty="No pending callbacks. Nice."
             isAdmin={session.role === "admin"}
@@ -908,6 +922,7 @@ export default async function AppointmentsPage({ searchParams }: SearchProps) {
             }
           />
           <Section
+            anchor="today"
             title={`Today (${todayGroups.length})`}
             groups={todayGroups}
             empty="No appointments today."
@@ -922,6 +937,7 @@ export default async function AppointmentsPage({ searchParams }: SearchProps) {
             }
           />
           <Section
+            anchor="next-30-days"
             title={`Next 30 days (${upcomingGroups.length})`}
             groups={upcomingGroups}
             empty="No upcoming appointments."
@@ -1187,7 +1203,14 @@ function GroupRow({
       </td>
       <td className="px-4 py-3 whitespace-nowrap text-[color:var(--color-brand-text-mid)]">
         {r.scheduled_at ? (
-          manilaDateTime(r.scheduled_at)
+          <>
+            {manilaDateTime(r.scheduled_at)}
+            {r.status === "pending_callback" ? (
+              <p className="mt-1 inline-block rounded-md bg-amber-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-amber-900">
+                Callback needed
+              </p>
+            ) : null}
+          </>
         ) : r.status === "pending_callback" ? (
           <span className="text-xs italic text-amber-700">
             Pending callback
