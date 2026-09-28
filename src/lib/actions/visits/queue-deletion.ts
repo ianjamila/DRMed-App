@@ -209,11 +209,14 @@ async function deleteTestRequestsForVisit(
 
   // One UPDATE per visit — the 0125 guard raises P0042/P0043/P0044 for the
   // whole statement, so a mixed selection on one visit fails atomically
-  // rather than half-deleting.
+  // rather than half-deleting. The exact timestamp rides the audit metadata
+  // below so a bulk Undo can predicate its restore on it (P1: exact
+  // predicates) rather than restoring whatever is currently deleted.
+  const deletedAtIso = new Date().toISOString();
   const { data: deleted, error } = await admin
     .from("test_requests")
     .update({
-      deleted_at: new Date().toISOString(),
+      deleted_at: deletedAtIso,
       deleted_by: session.user_id,
       delete_reason: reason,
     })
@@ -249,6 +252,7 @@ async function deleteTestRequestsForVisit(
           info?.final_price_php != null ? Number(info.final_price_php) : null,
         is_package_header: info?.is_package_header ?? false,
         bulk: deleted.length > 1,
+        deleted_at: deletedAtIso,
         ...(bulk
           ? {
               bulk_batch_size: bulk.size,

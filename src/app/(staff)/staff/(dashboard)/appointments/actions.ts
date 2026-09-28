@@ -31,6 +31,7 @@ import { todayManilaISODate } from "@/lib/dates/manila";
 import { loadOwnBatchRows } from "@/lib/audit/bulk-batch";
 import {
   BULK_UNDO_VIA,
+  CHANGED_SINCE_REASON,
   UNDO_ALREADY,
   UNDO_EXPIRED,
   bucketAppointmentUndo,
@@ -925,6 +926,7 @@ export async function undoBulkAppointmentsAction(input: unknown): Promise<BulkUn
   });
   if (!loaded.ok) return { ok: false, error: loaded.error };
   if (loaded.alreadyUndone) return { ok: false, error: UNDO_ALREADY };
+  const { changedSince } = loaded;
   const entries = planAppointmentUndo(loaded.rows);
   if (entries.length === 0) return { ok: false, error: UNDO_EXPIRED };
 
@@ -952,9 +954,16 @@ export async function undoBulkAppointmentsAction(input: unknown): Promise<BulkUn
     heldIds = new Set(heldBack.flat());
   }
   for (const e of entries) {
-    if (heldIds.has(e.id)) notRestored.push({ id: e.id, reason: "patient record deleted or merged" });
+    if (heldIds.has(e.id)) {
+      notRestored.push({ id: e.id, reason: "patient record deleted or merged" });
+    } else if (changedSince.has(e.id)) {
+      // Someone (or something else) wrote a newer audit row for this booking
+      // that isn't part of this batch — refuse it rather than risk reversing
+      // a change this batch never made (P1).
+      notRestored.push({ id: e.id, reason: CHANGED_SINCE_REASON });
+    }
   }
-  const toWrite = entries.filter((e) => !heldIds.has(e.id));
+  const toWrite = entries.filter((e) => !heldIds.has(e.id) && !changedSince.has(e.id));
   const activeCheckIds = toWrite
     .filter((e) => e.restoreTo !== "no_show" && e.restoreTo !== "cancelled")
     .map((e) => e.id);
@@ -990,9 +999,7 @@ export async function undoBulkAppointmentsAction(input: unknown): Promise<BulkUn
     if (movedIds.has(e.id)) continue;
     notRestored.push({
       id: e.id,
-      reason: erroredIds.has(e.id)
-        ? "could not be undone just now — try again"
-        : "changed again since — refresh to see its status",
+      reason: erroredIds.has(e.id) ? "could not be undone just now — try again" : CHANGED_SINCE_REASON,
     });
   }
 

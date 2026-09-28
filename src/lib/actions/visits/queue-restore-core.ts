@@ -14,6 +14,7 @@ import type { StaffSession } from "@/lib/auth/require-staff";
 import { ipAndAgent } from "@/lib/server/action-helpers";
 import { translatePgError } from "@/lib/accounting/pg-errors";
 import { assertVisitPatientActive } from "@/lib/patients/require-active";
+import { sameInstant } from "@/lib/ui/bulk-undo";
 
 // Every surface that renders visits or queue rows and must drop (or show)
 // deleted entries immediately. Moved here from queue-deletion.ts so both
@@ -35,6 +36,13 @@ export type RestoreOutcome =
  * Restores queue-deleted tests on one visit. Trusts its caller for the
  * session, role and reason (restoreTestRequestsAction; the bulk Undo) — it is
  * NOT a server action. `extraMetadata` rides on every audit row.
+ *
+ * `expectedDeletedAtOf` (bulk Undo only): the exact `deleted_at` each id was
+ * recorded as carrying when the original bulk delete wrote it. When given, a
+ * candidate is restorable only while its CURRENT `deleted_at` still matches —
+ * otherwise it was restored-and-re-deleted (or never touched by this batch at
+ * all) by someone else since, and Undo must not reverse that newer change
+ * (P1). `restoreTestRequestsAction` passes nothing, so it is unaffected.
  */
 export async function restoreTestRequestsForVisit(
   session: StaffSession,
@@ -42,6 +50,7 @@ export async function restoreTestRequestsForVisit(
   testRequestIds: string[],
   reason: string,
   extraMetadata: Record<string, unknown> = {},
+  expectedDeletedAtOf?: ReadonlyMap<string, string>,
 ): Promise<RestoreOutcome> {
   // 0167: a queue restore puts a deleted visit's work back on the board —
   // refuse it on an inactive patient (restore the patient first).
@@ -59,7 +68,14 @@ export async function restoreTestRequestsForVisit(
     .not("deleted_at", "is", null)
     // Components ride their header's cascade on restore, exactly like delete.
     .is("parent_id", null);
-  const rows = candidates ?? [];
+  let rows = candidates ?? [];
+  if (expectedDeletedAtOf) {
+    // sameInstant, not ===: PostgREST normalizes a "Z"-suffixed timestamp to
+    // "+00:00" on read-back, so a raw string compare against the value
+    // recorded in audit metadata (via new Date().toISOString()) never
+    // matches even when it's the exact same instant.
+    rows = rows.filter((r) => sameInstant(expectedDeletedAtOf.get(r.id), r.deleted_at));
+  }
   if (rows.length === 0) {
     return { ok: false, error: "None of the selected tests can be restored." };
   }
