@@ -147,7 +147,7 @@ export const STAFF_NAV: StaffNavSection[] = [
       },
       {
         href: "/staff/visits",
-        quicklink: {"reception":{"order":6,"group":"Front Desk"}},
+        quicklink: {"reception":{"order":5,"group":"Front Desk"}},
         label: ROUTE_NAME["/staff/visits"],
         // /staff/visits is the visit records page (every visit ever); each
         // visit opens to its printable A5 billing. "Visit Records" is the one
@@ -163,7 +163,7 @@ export const STAFF_NAV: StaffNavSection[] = [
       },
       {
         href: "/staff/visits/queue",
-        quicklink: {"reception":{"order":5,"group":"Front Desk"}},
+        quicklink: {"reception":{"order":6,"group":"Front Desk"}},
         label: ROUTE_NAME["/staff/visits/queue"],
         description: "Today's live front-desk worklist in three stages: Waiting for payment (record the payment), Processing (lab/imaging still working on results) and Completed (paid, nothing outstanding — print the patient's billing). Updates on its own as payments come in and tests finish.",
         roles: ["reception", "admin"],
