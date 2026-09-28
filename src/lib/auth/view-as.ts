@@ -84,6 +84,20 @@ export function hasStaleViewAs(profile: ViewAsColumns, now: Date = new Date()): 
   return profile.role === "admin" && profile.view_as_role !== null && activeViewAs(profile, now) === null;
 }
 
+/** Pure countdown arithmetic for the banner's `useCountdown` hook. `tick` is
+ *  `{ base, elapsed }` from a `performance.now()`-based interval: `base` is
+ *  the `remainingMs` in force when the tick was captured, `elapsed` is
+ *  wall-clock ms since the timer armed. Only apply the tick when its `base`
+ *  still matches the current `remainingMs` — a new server render (new props)
+ *  invalidates any tick captured against the old value, so a stale tick from
+ *  before a refresh is ignored rather than applied to the wrong baseline. */
+export function countdownRemainingMs(
+  remainingMs: number,
+  tick: { base: number; elapsed: number } | null,
+): number {
+  return tick && tick.base === remainingMs ? remainingMs - tick.elapsed : remainingMs;
+}
+
 /** Identity of a View-as state; changes on every start/switch/exit. Used as a
  *  React key (reset the picker) and to close the mobile drawer. */
 export function viewAsStateKey(v: ActiveViewAs | null): string {

@@ -37,7 +37,10 @@ describe("ViewAsBanner", () => {
     expect(html).toContain(">Exit<");
     expect(html).toContain('name="role"');
   });
-  it("renders the time left from the server's remainingMs, not the device clock", () => {
+  it("first render uses the server's remainingMs, not the device clock", () => {
+    // Tick-by-tick countdown behaviour (a matching vs. a stale tick) is
+    // covered by the pure countdownRemainingMs unit tests in view-as.test.ts —
+    // effects (and thus the interval) never run under renderToStaticMarkup.
     const skewed = vi.spyOn(Date, "now").mockReturnValue(Date.parse("2030-01-01T00:00:00Z"));
     const h = renderToStaticMarkup(
       <ViewAsBanner role="medtech" until="2026-09-25T08:00:00.000Z" untilLabel="4:00 PM" remainingMs={12 * 60_000} />,

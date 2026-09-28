@@ -9,6 +9,7 @@ import {
   isViewAsRole,
 } from "./view-as";
 import {
+  countdownRemainingMs,
   expiryRefreshDelay,
   formatRemainingMs,
   hasStaleViewAs,
@@ -111,6 +112,27 @@ describe("hasStaleViewAs", () => {
     expect(hasStaleViewAs({ role: "admin", view_as_role: "reception", view_as_until: "2026-09-28T05:00:00.000Z" }, now)).toBe(false);
     expect(hasStaleViewAs({ role: "admin", view_as_role: null, view_as_until: null }, now)).toBe(false);
     expect(hasStaleViewAs({ role: "medtech", view_as_role: "reception", view_as_until: "2026-09-28T03:00:00.000Z" }, now)).toBe(false);
+  });
+});
+
+describe("countdownRemainingMs", () => {
+  it("no tick yet: returns remainingMs unchanged", () => {
+    expect(countdownRemainingMs(12 * 60_000, null)).toBe(12 * 60_000);
+  });
+  it("a tick matching the current remainingMs subtracts its elapsed time", () => {
+    expect(countdownRemainingMs(12 * 60_000, { base: 12 * 60_000, elapsed: 30_000 })).toBe(
+      12 * 60_000 - 30_000,
+    );
+  });
+  it("a stale tick from an older remainingMs (a new server render arrived) is ignored", () => {
+    expect(countdownRemainingMs(20 * 60_000, { base: 12 * 60_000, elapsed: 30_000 })).toBe(
+      20 * 60_000,
+    );
+  });
+  it("can go negative once elapsed exceeds remainingMs; formatRemainingMs reads it as under a minute", () => {
+    const left = countdownRemainingMs(30_000, { base: 30_000, elapsed: 45_000 });
+    expect(left).toBe(-15_000);
+    expect(formatRemainingMs(left)).toBe("under a minute");
   });
 });
 

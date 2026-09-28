@@ -13,6 +13,7 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
+  countdownRemainingMs,
   expiryRefreshDelay,
   formatRemainingMs,
   viewAsStateKey,
@@ -45,7 +46,7 @@ function useCountdown(remainingMs: number): number {
     );
     return () => clearInterval(id);
   }, [remainingMs]);
-  return tick && tick.base === remainingMs ? remainingMs - tick.elapsed : remainingMs;
+  return countdownRemainingMs(remainingMs, tick);
 }
 
 export function ViewAsBanner({ role, until, untilLabel, remainingMs }: Props) {
