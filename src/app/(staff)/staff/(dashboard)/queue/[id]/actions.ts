@@ -1,5 +1,6 @@
 "use server";
 
+import { randomUUID } from "node:crypto";
 import { headers } from "next/headers";
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
@@ -34,12 +35,18 @@ import {
   valueRowsToDocValues,
   type ValueRow,
 } from "@/lib/results/value-rows";
-import { countValueChanges, isEditableStatus, validateEditReason } from "@/lib/results/result-edit";
+import { countValueChanges, editVersionPath, isEditableStatus, validateEditReason } from "@/lib/results/result-edit";
 import {
   auditAlertChanges,
   commitResultEdit,
   commitResultFinalise,
+  commitWithUploads,
 } from "@/lib/actions/results/result-edit-core";
+import {
+  callResultCreateLinked,
+  canContinueRacedStructuredDraft,
+  createLinkedResult,
+} from "@/lib/actions/results/create-linked";
 import { translatePgError } from "@/lib/accounting/pg-errors";
 import { resolveCorrectedNotifyOutcome, type CorrectedNotifyOutcome } from "@/lib/notifications/notify-corrected";
 import type { Json } from "@/types/database";
@@ -223,32 +230,32 @@ async function prepareStructured(
   let isNewResult = false;
 
   if (!resultId) {
-    const { data: inserted, error: insErr } = await admin
-      .from("results")
-      .insert({
-        generation_kind: "structured",
-        storage_path: null,
-        uploaded_by: session.user_id,
-      })
-      .select("id")
-      .single();
-    if (insErr || !inserted) {
-      return {
-        ok: false,
-        error: `Could not create result: ${insErr?.message ?? "unknown"}`,
-      };
+    // 0184: the draft row and its link in one transaction (was two calls —
+    // a failure between them leaked an orphan results row on every retry).
+    const created = await createLinkedResult(admin, {
+      actor: session.user_id,
+      testRequestIds: [testRequestId],
+      kind: "structured",
+    });
+    if (created.ok) {
+      resultId = created.resultId;
+      isNewResult = true;
+    } else if (created.code === "P0066") {
+      // Someone created it a moment ago (two tabs, a double click): use theirs
+      // if it is still an unfinished structured draft.
+      const { data: raced } = await admin
+        .from("result_test_requests")
+        .select("result_id, results!inner(id, generation_kind, finalised_at)")
+        .eq("test_request_id", testRequestId)
+        .maybeSingle();
+      const r = raced ? (Array.isArray(raced.results) ? raced.results[0] : raced.results) ?? null : null;
+      if (!canContinueRacedStructuredDraft(r)) {
+        return { ok: false, error: created.error };
+      }
+      resultId = r!.id;
+    } else {
+      return { ok: false, error: created.error };
     }
-    const { error: jErr } = await admin
-      .from("result_test_requests")
-      .insert({ result_id: inserted.id, test_request_id: testRequestId });
-    if (jErr) {
-      return {
-        ok: false,
-        error: `Could not link result: ${jErr.message}`,
-      };
-    }
-    resultId = inserted.id;
-    isNewResult = true;
   } else if (existing?.generation_kind !== "structured") {
     return {
       ok: false,
@@ -722,8 +729,6 @@ export async function uploadResultAction(
   const active = await assertPatientActive(admin, visit.patient_id);
   if (!active.ok) return { ok: false, error: active.error };
 
-  const path = `${visit.patient_id}/${visit.id}/${testRequest.id}.pdf`;
-
   // If a junction already exists (e.g. the first upload's status-flip trigger
   // failed pre-0059 and left the test stuck at in_progress), replace the
   // existing uploaded result in place instead of inserting a duplicate —
@@ -746,36 +751,42 @@ export async function uploadResultAction(
     };
   }
 
-  // Upload (overwrite if a previous attempt left a stray file).
+  // 0184: every upload gets its OWN object path (upsert off), and the row(s)
+  // pointing at it are written in one transaction. A rejection removes only
+  // this attempt's object; a lost response is re-checked by path before
+  // anything is removed — never a committed PDF (result-edit-core.ts).
+  const attemptId = randomUUID();
+  const path = editVersionPath(`${visit.patient_id}/${visit.id}/${testRequest.id}`, 0, attemptId);
   const buffer = Buffer.from(await file.arrayBuffer());
-  const { error: uploadErr } = await admin.storage
-    .from("results")
-    .upload(path, buffer, {
-      contentType: "application/pdf",
-      upsert: true,
-    });
-  if (uploadErr) {
-    return { ok: false, error: `Upload failed: ${uploadErr.message}` };
-  }
+  const probe = async (): Promise<boolean | null> => {
+    const { data, error } = await admin.from("results").select("id").eq("storage_path", path).maybeSingle();
+    if (error) return null;
+    return data != null;
+  };
+  const upload = [{ bucket: "results" as const, path, body: buffer, contentType: "application/pdf" }];
 
   let resultId: string;
   if (existingResult) {
-    // Replace-in-place path: update the existing result row. The 0059
-    // junction trigger isn't involved here (junction is unchanged), so
-    // re-advance the test_request status explicitly if it's still stuck.
-    const { error: updateErr } = await admin
-      .from("results")
-      .update({
-        storage_path: path,
-        file_size_bytes: file.size,
-        uploaded_by: session.user_id,
-        uploaded_at: new Date().toISOString(),
-        notes: notes || null,
-      })
-      .eq("id", existingResult.id);
-    if (updateErr) {
-      return { ok: false, error: `Could not update result: ${updateErr.message}` };
-    }
+    // Replace-in-place (a first upload whose status flip failed pre-0059).
+    const outcome = await commitWithUploads(
+      admin,
+      upload,
+      () =>
+        admin
+          .from("results")
+          .update({
+            storage_path: path,
+            file_size_bytes: file.size,
+            uploaded_by: session.user_id,
+            uploaded_at: new Date().toISOString(),
+            notes: notes || null,
+          })
+          .eq("id", existingResult.id)
+          .select("id")
+          .single(),
+      probe,
+    );
+    if (outcome.status === "failed") return { ok: false, error: outcome.error };
     resultId = existingResult.id;
 
     if (testRequest.status === "in_progress") {
@@ -796,35 +807,28 @@ export async function uploadResultAction(
         .eq("id", testRequest.id);
     }
   } else {
-    // First-time path: insert results then junction. Junction insert fires
-    // trg_rtr_advance_test (migration 0059) to flip test_requests.status.
-    const { data: resultRow, error: insertErr } = await admin
-      .from("results")
-      .insert({
-        storage_path: path,
-        file_size_bytes: file.size,
-        uploaded_by: session.user_id,
-        notes: notes || null,
-      })
-      .select("id")
-      .single();
-
-    if (insertErr || !resultRow) {
-      await admin.storage.from("results").remove([path]);
-      return {
-        ok: false,
-        error: insertErr?.message ?? "Could not record the result.",
-      };
+    const outcome = await commitWithUploads(
+      admin,
+      upload,
+      () =>
+        callResultCreateLinked(admin, {
+          actor: session.user_id,
+          testRequestIds: [testRequest.id],
+          kind: "uploaded",
+          storagePath: path,
+          fileSizeBytes: file.size,
+          notes: notes || null,
+        }),
+      probe,
+    );
+    if (outcome.status === "failed") return { ok: false, error: outcome.error };
+    if (outcome.data) {
+      resultId = outcome.data as string;
+    } else {
+      // Committed but the response was lost: find the row by this attempt's path.
+      const { data: row } = await admin.from("results").select("id").eq("storage_path", path).single();
+      resultId = row!.id;
     }
-
-    const { error: jErr } = await admin
-      .from("result_test_requests")
-      .insert({ result_id: resultRow.id, test_request_id: testRequest.id });
-    if (jErr) {
-      await admin.storage.from("results").remove([path]);
-      return { ok: false, error: `Could not link result: ${jErr.message}` };
-    }
-    resultId = resultRow.id;
   }
 
   const h = await headers();

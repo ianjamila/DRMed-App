@@ -60,6 +60,7 @@ const KNOWN_WRITER_RPCS = new Set<string>([
   "claim_panel_members", // panel-writes.ts claimPanelMembers — all-or-nothing panel claim (0191).
   "unclaim_panel_members", // panel-writes.ts unclaimPanelMembers — all-or-nothing panel hand-back (0191).
   "create_visit_encounter", // visits/new/actions.ts createVisitAction — visit, lines, PIN in one transaction (0184).
+  "result_create_linked", // create-linked.ts — a result row and its links (0184).
 ]);
 
 // Names that count as "this write is guarded" WHEN CALLED DIRECTLY from the
@@ -84,16 +85,16 @@ const GUARD_PATTERN = /\b(assert\w*Active|getActivePatientSession|isActivePatien
 const GUARD_WRAPPERS: Record<string, string> = {
   [`src/app/(staff)/staff/(dashboard)/visits/[id]/actions.ts:refuseIfVisitDeleted`]:
     "Wraps assertVisitPatientActive and returns an early-refusal object every caller checks before writing (6 call sites: release/undo-release/mark-done family).",
-  // NOTE: prepareStructured itself still calls assertPatientActive before its
-  // OWN two writes (a new results/result_test_requests row) — those resolve
-  // directly against GUARD_PATTERN, with no wrapper credit needed. A
-  // GUARD_WRAPPERS entry for it went stale post-rebase: 0172 moved the
-  // draft/finalise/amend writes themselves out of saveDraftAction/
-  // finaliseStructuredAction's own bodies and into separate helpers
-  // (saveDraftValues here; commitResultEdit/commitResultFinalise in
-  // result-edit-core.ts) that do not call prepareStructured directly — so no
-  // caller's write is ever credited THROUGH this wrapper. See the EXEMPT
-  // entries below for where that credit now belongs.
+  // NOTE: prepareStructured calls assertPatientActive before it can reach a
+  // write at all, but as of 0184 its new-result write itself (the
+  // result_create_linked RPC) lives in create-linked.ts, not in
+  // prepareStructured's own body — so no caller's write is ever credited
+  // THROUGH this wrapper. A GUARD_WRAPPERS entry for it went stale
+  // post-rebase: 0172 moved the draft/finalise/amend writes out of
+  // saveDraftAction/finaliseStructuredAction's own bodies into separate
+  // helpers (saveDraftValues here; commitResultEdit/commitResultFinalise in
+  // result-edit-core.ts) that do not call prepareStructured directly either.
+  // See the EXEMPT entries below for where that credit now belongs.
 };
 
 // file:function → why it deliberately has no guard. Seeded from the plan's
@@ -152,6 +153,8 @@ const EXEMPT: Record<string, string> = {
     "Shared commit helper for the result_edit_commit RPC — every caller (amend-consolidated.ts's amendConsolidatedReport, queue/[id]/actions.ts's amendResultAction/amendStructuredResultAction) calls assertPatientActive before invoking it.",
   [`src/lib/actions/results/result-edit-core.ts:commitResultFinalise`]:
     "Shared commit helper for the result_finalise_commit RPC — every caller (finalise-consolidated.ts's finaliseConsolidatedReport, queue/[id]/actions.ts's finaliseStructuredAction via prepareStructured) calls assertVisitPatientActive/assertPatientActive before invoking it.",
+  [`src/lib/actions/results/create-linked.ts:callResultCreateLinked`]:
+    "Shared creation helper for result_create_linked — every caller (prepareStructured, finaliseConsolidatedReport, uploadResultAction) calls assertPatientActive first, and the RPC itself refuses an inactive patient under the lifecycle lock (0184).",
   [`src/lib/actions/patients/lifecycle.ts:deletePatientAction`]:
     "delete_patient IS the lifecycle-deleting RPC itself — the database refuses it (P0058) when the record is already deleted or merged, so an app-level active-patient guard here would be circular.",
   [`src/lib/actions/patients/lifecycle.ts:restorePatientAction`]:
