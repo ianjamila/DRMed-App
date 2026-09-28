@@ -505,12 +505,21 @@ begin
   -- Review fix #8: the original s3.2 used patient `d`, who already had visit
   -- `vd` created above. Inserting a SECOND visit under `d` fires 0167's
   -- maintain_repeat_patient_flag (AFTER INSERT on visits: v_count > 1 →
-  -- UPDATE patients SET is_repeat_patient), and THAT UPDATE is what 0167's
-  -- own trg_patients_lifecycle_guard refuses on a deleted patient —
-  -- a_lifecycle_guard's BEFORE INSERT check never even runs first because
-  -- the whole statement aborts either way, so s3.2 "passed" for the wrong
-  -- reason. d2 has NO prior visit: v_count = 1 after the insert, the
-  -- repeat-flag UPDATE never fires, so only a_lifecycle_guard can refuse it.
+  -- UPDATE patients SET is_repeat_patient), and THAT UPDATE is refused by
+  -- 0167's own trg_patients_lifecycle_guard on a deleted patient. That is not
+  -- a question of which trigger runs FIRST — a_lifecycle_guard is BEFORE
+  -- INSERT ROW and genuinely does run (and would raise) before the AFTER
+  -- INSERT repeat-flag path ever gets a chance to. The actual flaw is that
+  -- the ASSERTION cannot tell WHICH guard refused: with a_lifecycle_guard
+  -- disabled, patient `d`'s second-visit attempt is STILL refused (P0058) by
+  -- the unrelated repeat-flag mechanism, so "insert raises P0058" is true
+  -- whether or not a_lifecycle_guard exists, and the differential proof below
+  -- (disable, retry, re-enable) cannot distinguish the two — it would show
+  -- the insert still failing even with a_lifecycle_guard off, wrongly
+  -- appearing to confirm the guard when it confirms nothing about it. d2 has
+  -- NO prior visit: v_count = 1 after the insert, the repeat-flag UPDATE
+  -- never fires, so a_lifecycle_guard is the ONLY thing that can refuse it,
+  -- and the differential proof (s3.2b/s3.2c below) is meaningful.
   perform pg_temp.expect('s3.2 a patient''s FIRST-EVER visit is refused when deleted (no prior visit — only a_lifecycle_guard can be blocking it)',
     pg_temp.state_of(format($q$select pg_temp.mk_visit(%L)$q$, d2)), 'P0058');
   -- Differential proof: disable a_lifecycle_guard inside a sub-transaction
@@ -522,6 +531,14 @@ begin
     v_disabled_insert_ok boolean := false;
   begin
     begin
+      -- The shared local DB has other live sessions; ALTER TABLE ... DISABLE
+      -- TRIGGER takes SHARE ROW EXCLUSIVE on visits and would otherwise queue
+      -- behind another session's write indefinitely. lock_timeout is SET
+      -- LOCAL, so it is scoped to this nested block (an implicit savepoint)
+      -- and is undone along with the ALTER TABLE and the INSERT the moment
+      -- either exception handler below rolls back to that savepoint — no
+      -- explicit reset needed, and no later section is affected.
+      set local lock_timeout = '5s';
       alter table public.visits disable trigger a_lifecycle_guard;
       perform pg_temp.mk_visit(d2);
       v_disabled_insert_ok := true;
@@ -551,9 +568,13 @@ begin
     (pg_temp.held('ExclusiveLock') - x0 >= 2)::text, 'true');
   perform pg_temp.expect('s3.9 moving a visit onto a deleted patient is refused',
     pg_temp.state_of(format($q$update public.visits set patient_id = %L where id = %L$q$, d, va)), 'P0058');
+  -- d2 (no prior visit, per review fix #8/s3.2 above), not d: d already has
+  -- vd, so a second insert for d would be confounded by 0167's own
+  -- repeat-flag guard the same way the original s3.2 was — this must be
+  -- refusable ONLY by a_lifecycle_guard to prove service_role gets no bypass.
   set local role service_role;
   perform pg_temp.expect('s3.10 service_role gets no bypass',
-    pg_temp.state_of(format($q$select pg_temp.mk_visit(%L)$q$, d)), 'P0058');
+    pg_temp.state_of(format($q$select pg_temp.mk_visit(%L)$q$, d2)), 'P0058');
   reset role;
 
   -- appointments
@@ -631,11 +652,27 @@ begin
   end;
 
   -- Negative control: a patient that is only SOFT-deleted still exists as a
-  -- row, so the vanished-patient carve-out must NOT swallow the ordinary
-  -- guard — an UPDATE (not delete) of `d`'s existing attachment is still
-  -- refused exactly as before.
-  perform pg_temp.expect('s3.32 NEGATIVE CONTROL: updating (not deleting) a SOFT-deleted patient''s upload is still refused',
+  -- row, so the vanished-patient carve-out (s3.29-31, a hard delete) must NOT
+  -- swallow the ordinary guard — an UPDATE (not delete) of `d`'s existing
+  -- attachment is still refused exactly as before. Note this does NOT by
+  -- itself prove the OLD-side carve-out survives an UPDATE: the row's NEW
+  -- side still names `d` too (only `filename` changes), so the refusal here
+  -- is consistent with either the OLD or the NEW side alone being enough —
+  -- s3.33-35 below isolate the OLD side specifically.
+  perform pg_temp.expect('s3.32 updating (not deleting) a soft-deleted patient''s upload is still refused when the row still names that patient on both old and new',
     pg_temp.state_of(format($q$update public.appointment_attachments set filename = 'renamed.pdf' where id = %L$q$, att_d)), 'P0058');
+
+  -- Real OLD-side negatives: the NEW side resolves to an ACTIVE patient (or
+  -- no patient at all), so if a_lifecycle_guard only asserted the NEW side,
+  -- each of these would be allowed. It must still refuse because the OLD
+  -- side names the inactive patient `d` — moving work or evidence off a
+  -- deleted/merged patient is itself an action on that patient's record.
+  perform pg_temp.expect('s3.33 moving vd (d''s visit) onto ACTIVE patient b is still refused (OLD side names deleted d)',
+    pg_temp.state_of(format($q$update public.visits set patient_id = %L where id = %L$q$, b, vd)), 'P0058');
+  perform pg_temp.expect('s3.34 moving ap3 (d''s appointment) onto ACTIVE patient b is still refused (OLD side names deleted d)',
+    pg_temp.state_of(format($q$update public.appointments set patient_id = %L where id = %L$q$, b, ap3)), 'P0058');
+  perform pg_temp.expect('s3.35 clearing att_d.patient_id to NULL is still refused (OLD side names deleted d, NEW side has no patient at all)',
+    pg_temp.state_of(format($q$update public.appointment_attachments set patient_id = null where id = %L$q$, att_d)), 'P0058');
 end
 $s3$;
 
@@ -645,7 +682,7 @@ declare
   k_admin constant uuid := 'a0000000-0000-4000-8000-000000000184';
   a  uuid := pg_temp.mk_patient('S4A');
   d  uuid := pg_temp.mk_patient('S4D');
-  va uuid; vd uuid; vd2 uuid;
+  va uuid; vd uuid; vd2 uuid; vp uuid;
   la uuid; ld uuid; ld_rel uuid;
   ha uuid; hd uuid;
   pa uuid; pd uuid;
@@ -654,12 +691,22 @@ begin
   va := pg_temp.mk_visit(a);
   vd := pg_temp.mk_visit(d);
   vd2 := pg_temp.mk_visit(d);
+  -- vp is a THIRD visit for d, dedicated to the payments tests below (rule-#4
+  -- audit finding): recalc_visit_payment sets payment_status = 'paid'
+  -- whenever total_php = 0 (mk_visit's default), so recording ANY payment on
+  -- a visit flips it. If `pd` were recorded on `vd`, s4.5's soft-delete of
+  -- `ld` (also on vd) would then be refused by enforce_deletable_test_request
+  -- (P0042, "visit is not unpaid") regardless of a_lifecycle_guard — vacuous
+  -- per the audit. Keeping the payment on its own visit `vp` leaves `vd`
+  -- 'unpaid' throughout, so a_lifecycle_guard is the only thing that can
+  -- refuse s4.2-s4.7b.
+  vp := pg_temp.mk_visit(d);
   la := pg_temp.mk_line(va, 'requested', 100);
   ld := pg_temp.mk_line(vd, 'requested', 100);
   ld_rel := pg_temp.mk_line(vd2, 'released', 0);
   ha := pg_temp.mk_line(va, 'in_progress', 0, null, true, 'c2000000-0000-4000-8000-000000000184');
   hd := pg_temp.mk_line(vd, 'in_progress', 0, null, true, 'c2000000-0000-4000-8000-000000000184');
-  pd := pg_temp.mk_pay(vd, 50);
+  pd := pg_temp.mk_pay(vp, 50);
   insert into public.visit_pins (visit_id, pin_hash) values (vd, '$2a$12$abcdefghijklmnopqrstuuM2ZyN0bN6o5uX0B0Qe0b8bOIG8J8r5a')
     returning id into pin_d;
   perform pg_temp.kill(d);

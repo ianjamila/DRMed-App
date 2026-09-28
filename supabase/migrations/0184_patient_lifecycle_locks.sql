@@ -11,6 +11,22 @@
 -- different patient takes it EXCLUSIVE on old and new (sorted). Lock order
 -- everywhere: advisory lock(s) first, sorted by key → row locks → fresh re-read.
 -- Never shared-then-exclusive on one key in one transaction (upgrades deadlock).
+-- Caveat: this is the RPC-level (delete_patient/restore_patient, and the other
+-- lock-then-row-lock functions in section (4)) and guard-internal lock order —
+-- it does NOT describe ordinary trigger-guarded UPDATE/DELETE traffic. For an
+-- UPDATE or DELETE that fires a_lifecycle_guard, Postgres has already taken
+-- the target row's lock (that is how the statement reached a BEFORE ROW
+-- trigger) BEFORE the guard takes its advisory lock — the reverse of "advisory
+-- lock first". That reversal is harmless against delete_patient/restore_patient
+-- (they only ever take the patients row lock, never a child row's), but it is
+-- exactly why two ordinary UPDATEs that touch the same two rows in opposite
+-- order (move a visit onto patient A while another session moves a different
+-- visit onto patient A's old patient) can deadlock on ROW locks before either
+-- reaches the advisory lock — a plain Postgres 40P01, not something this lock
+-- protocol can order away. This is the deadlock the two-connection race test
+-- in scripts/smoke-lifecycle-locks.ts is expected to hit on a "move vs. touch"
+-- race; the app retries once on 40P01 (LIFECYCLE_RETRYABLE_CODES, planned:
+-- src/lib/patients/lifecycle-retry.ts), the same as P0072/40001.
 --
 -- (1) lifecycle_lock / lifecycle_lock_and_assert, the result-membership lock
 --     lifecycle_lock_results, and resolvers that follow EVERY patient-bearing reference
@@ -724,11 +740,17 @@ begin
 
   -- (a3) ON DELETE SET NULL on critical_alerts.withdrawn_by_amendment (0179):
   -- deleting an amendment (directly, or cascading from its result or test)
-  -- UPDATEs the alert after the amendment row is gone. That OLD reference
-  -- can no longer be resolved; drop just that key so it does not fail closed
-  -- as "patient not found" — the alert's result, test and patient_id are
-  -- still locked and asserted below. Only this exact shape qualifies: the new
-  -- value is NULL and the referenced amendment no longer exists.
+  -- UPDATEs the alert after the amendment row is gone. That OLD reference can
+  -- no longer be resolved. Since the Task 2 fix below always resolves the OLD
+  -- row with p_for_delete = true, lifecycle_patients_of_row's own null-strip
+  -- (it drops every unresolved reference from the OLD side, not only on a
+  -- literal DELETE) ALREADY covers this exact case — a vanished
+  -- withdrawn_by_amendment resolves to a NULL element that the generic
+  -- p_for_delete pass then strips, same as any other vanished OLD reference.
+  -- This block is now belt-and-braces, not the only thing preventing a false
+  -- "patient not found": it makes the drop explicit and documented for this
+  -- one FK's ON DELETE SET NULL shape, and stays cheap enough to keep even
+  -- though the generic mechanism would already produce the same result.
   if tg_op = 'UPDATE' and tg_table_name = 'critical_alerts'
      and v_o ->> 'withdrawn_by_amendment' is not null
      and v_n ->> 'withdrawn_by_amendment' is null
