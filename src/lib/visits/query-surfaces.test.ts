@@ -268,6 +268,10 @@ const SURFACES: Record<string, Surface> = {
     meaning: "all",
     why: "Soft-delete/restore of whatever line reception selected. A mis-keyed consultation is exactly the sort of line that gets deleted.",
   },
+  "lib/actions/visits/queue-restore-core.ts": {
+    meaning: "all",
+    why: "restoreTestRequestsForVisit, extracted from queue-deletion.ts's restoreTestRequestsAction — same reasoning: restores whatever line reception (or the bulk queue Undo) selected.",
+  },
 
   // --- Patient lifecycle (0167) --------------------------------------------
   "lib/patients/require-active.ts": {
@@ -441,6 +445,10 @@ const LIFECYCLES: Record<string, LifecycleSurface> = {
   "lib/actions/visits/queue-deletion.ts": {
     lifecycle: "any",
     why: "Delete and restore. The restore path reads with .not('deleted_at','is',null) on purpose — it is looking for exactly the rows every other surface hides.",
+  },
+  "lib/actions/visits/queue-restore-core.ts": {
+    lifecycle: "any",
+    why: "restoreTestRequestsForVisit, extracted from queue-deletion.ts. It reads with .not('deleted_at','is',null) on purpose — it is looking for exactly the deleted rows every other surface hides, so it can restore them.",
   },
   "app/(staff)/staff/(dashboard)/visits/[id]/page.tsx": {
     lifecycle: "any",

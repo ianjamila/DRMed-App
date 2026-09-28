@@ -28,20 +28,11 @@ import { assertVisitPatientActive } from "@/lib/patients/require-active";
 import { panelKey, type BulkQueueResult, type PanelRef, type SkippedRow } from "@/lib/queue/bulk-queue";
 import { loadPanelMembers } from "@/lib/queue/panel-members";
 import { MAX_BULK_RECORDS } from "@/lib/ui/bulk-selection";
+import { revalidateQueueSurfaces, restoreTestRequestsForVisit } from "@/lib/actions/visits/queue-restore-core";
 
 export type QueueDeletionResult =
   | { ok: true; count: number }
   | { ok: false; error: string };
-
-// Every surface that renders visits or queue rows and must drop (or show)
-// deleted entries immediately.
-function revalidateQueueSurfaces(visitId: string) {
-  revalidatePath("/staff/visits/queue");
-  revalidatePath("/staff/queue");
-  revalidatePath("/staff/visits");
-  revalidatePath("/staff/results");
-  revalidatePath(`/staff/visits/${visitId}`);
-}
 
 async function requireQueueDeleteStaff() {
   const session = await requireActiveStaff();
@@ -466,10 +457,6 @@ export async function restoreTestRequestsAction(
 ): Promise<QueueDeletionResult> {
   const { session, error: roleError } = await requireQueueDeleteStaff();
   if (!session) return { ok: false, error: roleError };
-  // 0167: same as restoreVisitAction — a test-level restore puts work back
-  // on the board.
-  const active = await assertVisitPatientActive(createAdminClient(), visitId);
-  if (!active.ok) return { ok: false, error: active.error };
   const parsed = parseReason(reason);
   if (!parsed.ok) return { ok: false, error: parsed.error };
   if (testRequestIds.length === 0) {
@@ -482,68 +469,7 @@ export async function restoreTestRequestsAction(
     };
   }
 
-  const admin = createAdminClient();
-  const { data: candidates } = await admin
-    .from("test_requests")
-    .select(
-      "id, deleted_at, delete_reason, parent_id, visits!inner ( patient_id, deleted_at ), services ( name, code )",
-    )
-    .in("id", testRequestIds)
-    .eq("visit_id", visitId)
-    .not("deleted_at", "is", null)
-    // Components ride their header's cascade on restore, exactly like delete.
-    .is("parent_id", null);
-  const rows = candidates ?? [];
-  if (rows.length === 0) {
-    return { ok: false, error: "None of the selected tests can be restored." };
-  }
-  if (rows.some((r) => r.visits.deleted_at !== null)) {
-    return {
-      ok: false,
-      error: "The visit itself is deleted — restore the visit first.",
-    };
-  }
-
-  const { data: restored, error } = await admin
-    .from("test_requests")
-    .update({ deleted_at: null, deleted_by: null, delete_reason: null })
-    .in(
-      "id",
-      rows.map((r) => r.id),
-    )
-    .eq("visit_id", visitId)
-    .not("deleted_at", "is", null)
-    .select("id");
-  if (error) return { ok: false, error: translatePgError(error) };
-  if (!restored || restored.length === 0) {
-    return { ok: false, error: "None of the selected tests can be restored." };
-  }
-
-  const rowById = new Map(rows.map((r) => [r.id, r]));
-  const { ip, ua } = await ipAndAgent();
-  for (const row of restored) {
-    const info = rowById.get(row.id);
-    await audit({
-      actor_id: session.user_id,
-      actor_type: "staff",
-      patient_id: info?.visits.patient_id ?? null,
-      action: "test_request.restored",
-      resource_type: "test_request",
-      resource_id: row.id,
-      metadata: {
-        visit_id: visitId,
-        reason: parsed.reason,
-        service_name: info?.services?.name ?? null,
-        service_code: info?.services?.code ?? null,
-        prior_delete_reason: info?.delete_reason ?? null,
-        prior_deleted_at: info?.deleted_at ?? null,
-        bulk: restored.length > 1,
-      },
-      ip_address: ip,
-      user_agent: ua,
-    });
-  }
-
-  revalidateQueueSurfaces(visitId);
-  return { ok: true, count: restored.length };
+  const outcome = await restoreTestRequestsForVisit(session, visitId, testRequestIds, parsed.reason);
+  if (!outcome.ok) return outcome;
+  return { ok: true, count: outcome.restoredIds.length };
 }

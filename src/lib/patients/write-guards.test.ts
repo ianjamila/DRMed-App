@@ -107,6 +107,8 @@ const EXEMPT: Record<string, string> = {
     "Bulk form of the queue list's Unclaim — handing a claim back reduces work, same reasoning as performUnclaim.",
   [`src/app/(staff)/staff/(dashboard)/queue/actions.ts:reassignTestAction`]:
     "Reassigning an already-claimed line does not put new work or money on the record.",
+  [`src/app/(staff)/staff/(dashboard)/queue/actions.ts:undoBulkQueueAction`]:
+    "Undo of a bulk claim (unclaim) or a bulk unclaim (reclaim) — same reasoning as performUnclaim/claimTestsAction: neither bills nor releases. The restore branch calls restoreTestRequestsForVisit (queue-restore-core.ts), which guards itself with assertVisitPatientActive.",
   [`src/app/(staff)/staff/(dashboard)/queue/consolidated/[visitId]/[groupId]/actions.ts:claimConsolidated`]:
     "Same as claimTestAction, for a consolidated report — claiming does not bill.",
   [`src/app/(marketing)/appointments/cancel/[id]/actions.ts:cancelAppointmentAction`]:
