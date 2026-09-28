@@ -6,6 +6,8 @@ import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { amendResultAction, type AmendResult } from "./actions";
 import { StructuredResultForm } from "./structured-form";
+import { NotifyPatientCheckbox } from "@/components/staff/notify-patient-checkbox";
+import { NOTIFY_OUTCOME_TEXT, type NotifyOffer } from "@/lib/results/copy-followups";
 import type {
   ParamValue,
   PatientSex,
@@ -23,6 +25,10 @@ interface Props {
   // save so an edit made by someone else in the meantime is refused (P0065)
   // instead of silently overwritten.
   expectedAmendmentCount: number;
+  // 0179: whether the "let the patient know" checkbox can offer anything —
+  // computed server-side (fetchCopyStates + shouldOfferNotify) from the
+  // signed-in client; the Server Action re-checks before it ever sends.
+  notifyOffer: NotifyOffer;
   // Only used when generationKind === 'structured'. Reuses the same data
   // the finalise flow loads in page.tsx.
   structured?: {
@@ -44,6 +50,7 @@ export function AmendResultForm({
   testRequestId,
   generationKind,
   expectedAmendmentCount,
+  notifyOffer,
   structured,
 }: Props) {
   const router = useRouter();
@@ -75,8 +82,9 @@ export function AmendResultForm({
               Edit the values below and add a reason. The current PDF,
               values{structured.layout === "imaging_report" ? ", and image" : ""}
               {" "}are snapshotted to the amendment history; the regenerated
-              PDF replaces them as the canonical version. Patients with the
-              prior PDF already downloaded need to be notified manually.
+              PDF replaces them as the canonical version. Patients who
+              already have a copy appear on Result follow-ups until someone
+              contacts them.
             </p>
           </div>
           <Button
@@ -98,6 +106,7 @@ export function AmendResultForm({
           mode="amend"
           expectedAmendmentCount={expectedAmendmentCount}
           currentImageFilename={structured.currentImageFilename}
+          notifyOffer={notifyOffer}
         />
       </div>
     );
@@ -107,12 +116,13 @@ export function AmendResultForm({
     <form
       onSubmit={(e) => {
         e.preventDefault();
-        const formData = new FormData(e.currentTarget);
+        const form = e.currentTarget;
+        const formData = new FormData(form);
         start(async () => {
           const result = await amendResultAction(testRequestId, formData);
           setState(result);
           if (result.ok) {
-            setOpen(false);
+            form.reset();
             router.refresh();
           }
         });
@@ -129,8 +139,8 @@ export function AmendResultForm({
       </p>
       <p className="text-xs text-amber-900">
         Snapshots the current PDF, replaces it with the corrected version.
-        The original is preserved in the audit trail. Patients with the
-        result already downloaded need to be notified manually.
+        The original is preserved in the audit trail. Patients who already
+        have a copy appear on Result follow-ups until someone contacts them.
       </p>
 
       <div className="grid gap-1.5">
@@ -159,9 +169,20 @@ export function AmendResultForm({
         />
       </div>
 
+      <NotifyPatientCheckbox
+        offer={notifyOffer}
+        name="notify_patient"
+        id={`notify-patient-${testRequestId}`}
+      />
+
       {state && !state.ok ? (
         <p className="text-sm text-red-600" role="alert">
           {state.error}
+        </p>
+      ) : null}
+      {state?.ok ? (
+        <p className="text-sm text-emerald-700" role="status">
+          Result replaced.{NOTIFY_OUTCOME_TEXT[state.notify ?? ""] ?? ""}
         </p>
       ) : null}
 

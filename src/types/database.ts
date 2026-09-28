@@ -1255,6 +1255,9 @@ export type Database = {
           result_id: string
           test_request_id: string
           threshold_si: number | null
+          withdrawn_at: string | null
+          withdrawn_by: string | null
+          withdrawn_by_amendment: string | null
         }
         Insert: {
           acknowledged_at?: string | null
@@ -1270,6 +1273,9 @@ export type Database = {
           result_id: string
           test_request_id: string
           threshold_si?: number | null
+          withdrawn_at?: string | null
+          withdrawn_by?: string | null
+          withdrawn_by_amendment?: string | null
         }
         Update: {
           acknowledged_at?: string | null
@@ -1285,6 +1291,9 @@ export type Database = {
           result_id?: string
           test_request_id?: string
           threshold_si?: number | null
+          withdrawn_at?: string | null
+          withdrawn_by?: string | null
+          withdrawn_by_amendment?: string | null
         }
         Relationships: [
           {
@@ -1327,6 +1336,13 @@ export type Database = {
             columns: ["test_request_id"]
             isOneToOne: false
             referencedRelation: "test_requests"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "critical_alerts_withdrawn_by_amendment_fkey"
+            columns: ["withdrawn_by_amendment"]
+            isOneToOne: false
+            referencedRelation: "result_amendments"
             referencedColumns: ["id"]
           },
         ]
@@ -4667,6 +4683,11 @@ export type Database = {
           attempt_id: string | null
           commit_outcome: Json | null
           id: string
+          patient_contacted_at: string | null
+          patient_contacted_by: string | null
+          patient_notified_at: string | null
+          patient_notified_channels: string[] | null
+          patient_notify_error: string | null
           prior_file_size_bytes: number | null
           prior_image_filename: string | null
           prior_image_mime_type: string | null
@@ -4688,6 +4709,11 @@ export type Database = {
           attempt_id?: string | null
           commit_outcome?: Json | null
           id?: string
+          patient_contacted_at?: string | null
+          patient_contacted_by?: string | null
+          patient_notified_at?: string | null
+          patient_notified_channels?: string[] | null
+          patient_notify_error?: string | null
           prior_file_size_bytes?: number | null
           prior_image_filename?: string | null
           prior_image_mime_type?: string | null
@@ -4709,6 +4735,11 @@ export type Database = {
           attempt_id?: string | null
           commit_outcome?: Json | null
           id?: string
+          patient_contacted_at?: string | null
+          patient_contacted_by?: string | null
+          patient_notified_at?: string | null
+          patient_notified_channels?: string[] | null
+          patient_notify_error?: string | null
           prior_file_size_bytes?: number | null
           prior_image_filename?: string | null
           prior_image_mime_type?: string | null
@@ -5436,6 +5467,8 @@ export type Database = {
           signature_path: string | null
           signature_uploaded_at: string | null
           updated_at: string
+          view_as_role: string | null
+          view_as_until: string | null
         }
         Insert: {
           created_at?: string
@@ -5450,6 +5483,8 @@ export type Database = {
           signature_path?: string | null
           signature_uploaded_at?: string | null
           updated_at?: string
+          view_as_role?: string | null
+          view_as_until?: string | null
         }
         Update: {
           created_at?: string
@@ -5464,6 +5499,8 @@ export type Database = {
           signature_path?: string | null
           signature_uploaded_at?: string | null
           updated_at?: string
+          view_as_role?: string | null
+          view_as_until?: string | null
         }
         Relationships: [
           {
@@ -6591,6 +6628,10 @@ export type Database = {
         Args: { p_business_date: string; p_shift_id: string }
         Returns: undefined
       }
+      eod_unclosed_days: {
+        Args: { p_from: string | null; p_shift_id: string; p_to: string | null }
+        Returns: string[]
+      }
       generate_drm_id: { Args: never; Returns: string }
       generate_visit_number: { Args: never; Returns: string }
       has_role: { Args: { roles: string[] }; Returns: boolean }
@@ -6706,6 +6747,89 @@ export type Database = {
           reason: string
           test_request_id: string
         }[]
+      }
+      result_claim_patient_notify: {
+        Args: { p_amendment_id: string }
+        Returns: {
+          amendment_seq: number
+          anchor_test_request_id: string
+          patient_id: string
+          result_id: string
+        }[]
+      }
+      result_copy_state: {
+        Args: { p_result_ids: string[] }
+        Returns: {
+          amended_at: string
+          amendment_count: number
+          followed_up: boolean
+          has_email: boolean
+          has_phone: boolean
+          holds_copy: boolean
+          latest_amendment_id: string
+          notified_at: string
+          notify_failed: boolean
+          portal_outdated: boolean
+          printed_outdated: boolean
+          result_id: string
+        }[]
+      }
+      result_copy_states_internal: {
+        Args: { p_result_ids: string[] }
+        Returns: {
+          amended_at: string
+          amendment_count: number
+          anchor_test_request_id: string
+          contacted_at: string
+          contacted_by: string
+          followed_up: boolean
+          has_email: boolean
+          has_phone: boolean
+          holds_copy: boolean
+          last_handover_print_count: number
+          latest_amendment_id: string
+          notified_at: string
+          notified_channels: string[]
+          notify_error: string
+          patient_id: string
+          portal_downloaded_at: string
+          portal_outdated: boolean
+          printed_outdated: boolean
+          result_id: string
+          visit_id: string
+        }[]
+      }
+      result_mark_copy_contacted: {
+        Args: { p_amendment_id: string }
+        Returns: string
+      }
+      result_outdated_copies: {
+        Args: { p_include_followed_up?: boolean }
+        Returns: {
+          amended_at: string
+          amendment_count: number
+          contacted_at: string
+          contacted_by_name: string
+          drm_id: string
+          followed_up: boolean
+          has_email: boolean
+          latest_amendment_id: string
+          notified_at: string
+          notified_channels: string[]
+          notify_failed: boolean
+          patient_id: string
+          patient_name: string
+          phone: string
+          portal_outdated: boolean
+          printed_outdated: boolean
+          result_id: string
+          test_names: string
+          visit_id: string
+        }[]
+      }
+      result_record_patient_notify: {
+        Args: { p_amendment_id: string; p_channels: string[]; p_error: string }
+        Returns: undefined
       }
       result_finalise_commit: {
         Args: {

@@ -13,6 +13,7 @@ import {
 } from "@/lib/operations/cash-report";
 import { enumerateDays } from "@/lib/operations/daily-report";
 import { buildDenominationTrend } from "@/lib/accounting/denomination-trends";
+import { loadUnclosedEodDaysByDay } from "@/lib/accounting/eod-reminders";
 import { fetchAllRows, REPORT_EXPORT_MAX_ROWS } from "@/lib/reports/paging";
 import { ExportCsvLink } from "@/components/staff/export-csv-link";
 import { Card } from "@/components/ui/card";
@@ -51,8 +52,9 @@ export default async function CashCollectedPage({
   let collectionsResult: { rows: CollectionRow[]; truncated: boolean };
   let hmoResult: { rows: HmoReceivedRow[]; truncated: boolean };
   let eodResult: { rows: EodCloseRow[]; truncated: boolean };
+  let notClosed: Map<string, string[]>;
   try {
-    [collectionsResult, hmoResult, eodResult] = await Promise.all([
+    [collectionsResult, hmoResult, eodResult, notClosed] = await Promise.all([
       fetchAllRows<CollectionRow>(
         (rFrom, rTo) =>
           admin
@@ -93,6 +95,9 @@ export default async function CashCollectedPage({
             .returns<EodCloseRow[]>(),
         REPORT_EXPORT_MAX_ROWS,
       ),
+      // Days that moved cash and were never closed — empty until Admin sets
+      // the End of Day reminders start date on Money Routing.
+      loadUnclosedEodDaysByDay(admin, from, to),
     ]);
   } catch {
     return (
@@ -113,7 +118,7 @@ export default async function CashCollectedPage({
   const days = enumerateDays(from, to);
   const matrix = buildCollectionsMatrix(collectionsResult.rows, days, hmoResult.rows);
   const creditCard = buildCreditCardPanel(collectionsResult.rows, days);
-  const reconRows = buildCashReconRows(eodResult.rows, days);
+  const reconRows = buildCashReconRows(eodResult.rows, days, notClosed);
   // Trends run off the reconciled days only — a day with no close has no count
   // to trend, and counting it as "balanced" would flatter the numbers.
   const trend = buildDenominationTrend(

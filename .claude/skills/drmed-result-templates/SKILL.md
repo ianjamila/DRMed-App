@@ -22,10 +22,13 @@ supabase/migrations/
 ├── 0115_restore_chemistry_group_params.sql ← repaired the group template after a manual bulk delete
 ├── 0120–0122                              ← report_group_service_params (which group params each service enables),
 │                                            param-delete guardrails (P0041, audited), activation audit
-└── 0172_result_edit_commit.sql            ← ONE write path for structured results: result_save_draft /
-                                             result_finalise_commit / result_edit_commit (service_role only, row lock,
-                                             P0065 stale / P0066 not editable), section read rule
-                                             (lab_sections_for_role + staff_can_read_finished_result), P0067 delete guard
+├── 0172_result_edit_commit.sql            ← ONE write path for structured results: result_save_draft /
+│                                            result_finalise_commit / result_edit_commit (service_role only, row lock,
+│                                            P0065 stale / P0066 not editable), section read rule
+│                                            (lab_sections_for_role + staff_can_read_finished_result), P0067 delete guard
+└── 0179_result_copy_followups.sql         ← follow-up columns on result_amendments, withdrawal columns on
+                                             critical_alerts, result_edit_commit redefined by 3 text hunks (removed
+                                             alerts now withdrawn not deleted), copy-state RPCs, notify claim/record, P0068
 
 src/lib/results/
 ├── loaders.ts              ← loadTemplateParams(); loadResultDocumentInput(id, { finalisedAtOverride, valuesOverride, signerStaffId }) LAZY-imports the admin client (keep it that way — smoke:results runs under tsx)
@@ -101,6 +104,12 @@ Drafts, the first finalise and every edit of a structured result go through thre
 - **The patient data export scrubs clinic-only audit text** (`patientSafeAuditRows`, `src/lib/portal/export-audit.ts`): reason/note/remark/comment/prior_values keys are dropped at any depth; events stay.
 - **`prepareStructured` and `amendStructuredResultAction` load ACTIVE templates only**; an inactive single-service template answers "No active template is configured for this service."
 - **A finalised structured single test shows Edit, not the entry form**, and `prepareStructured` refuses it; the amend forms carry `expected_amendment_count`.
+- **0179: removed alerts are withdrawn, not deleted.** `result_edit_commit` is redefined by applying three text hunks to the 0172/0176 body (`src/lib/results/edit-commit-0179-hunks.ts`, `extractFunction`/`applyHunks`, pure — pinned by `result-copy-followups-migration.test.ts`), so an unacknowledged alert a correction removes now gets `withdrawn_at`/`withdrawn_by` instead of a DELETE and stays visible as history on Critical Alerts. Finalise's initial-alert insert is untouched — there's nothing to withdraw before the first finalise.
+- **The copy-state RPCs (0179):** `result_copy_states_internal(uuid[])` (service_role only — the one place the logic lives) is wrapped by `result_copy_state(uuid[])` (any staff; rows gated per result by `staff_can_read_finished_result` for non-reception/admin — this is what the visit-page chip calls) and `result_outdated_copies(boolean)` (reception/admin only — the Result Follow-ups list; it inner-joins `patients` on `deleted_at is null and merged_into_id is null`, so a deleted or merged patient's rows drop off it entirely — the visit-page chip does NOT filter that way, since it's history, not a contact list). `result_mark_copy_contacted(uuid)` (reception/admin) re-checks the amendment is still the result's latest under a row lock (else P0068, "this result was corrected again") and is audited `result.patient_contacted` directly from its own SQL body.
+- **The notify claim/record (0179).** No `patient_notify_requested` column: `result_claim_patient_notify(uuid)` stamps `patient_notified_at` and returns a row only the FIRST time, so nothing is ever re-sent; `result_record_patient_notify` files the outcome (channels, or an error — never the reason). Both service_role only. `notifyResultCorrected` (`src/lib/notifications/notify-corrected.ts`) calls `checkPatientRecipient` (0167's active-patient rule) BEFORE claiming, so a deleted/merged patient's record never consumes the once-only send slot.
+- **"What changed"** (`src/lib/results/version-diff.ts`: `diffResultVersions` / `changesPerAmendment`, pure) is a value-by-value diff between two snapshots, rendered by `<ResultChanges>` on the queue detail page and each chemistry report card.
+- **The stale-print warning** (`foldStalePrints` in `src/lib/results/print-summary.ts`, `<StalePrintWarning>`): only `result.printed_staff` rows with `metadata.role` in `reception`/`admin` count (lab prints are internal) — out of date means the highest printed `amendment_count` is behind the current one. Shown under `PrintedNote` on the queue and visit pages; the results archive has no Print button, so it shows a "Printed copy out of date" chip in its Updated column instead.
+- **The archive `?updated=` filter** (`src/lib/results/updated-filter.ts`, `results/page.tsx`): `7d` is a rolling 7×24h window on `amended_at` (timezone-safe); `mine` is edited by the signed-in staff. Both are PostgREST `!inner` embed filters (`result_test_requests!inner(results!inner(amended_at))`, and for `mine` a further `result_amendments!inner(amended_by)` nested under `results` so consolidated-report siblings match) spliced into the SAME query via a literal ternary `.select(cond ? A : B)` — added only while the filter is active, never an inlined id list. `src/lib/visits/query-surfaces.test.ts` requires the inner embed in every branch of such a conditional select.
 
 ## Worklists: lab queue and results archive
 

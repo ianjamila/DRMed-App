@@ -8,6 +8,7 @@ export const ROUTE_NAME: Record<string, string> = {
   "/staff/visits": "Visit Records",
   "/staff/quote": "Quick Quote",
   "/staff/payments/cash-drawer": "Cash In & Out",
+  "/staff/result-follow-ups": "Result Follow-ups",
   "/staff/queue": "Queue",
   "/staff/critical-alerts": "Critical Alerts",
   "/staff/results": "Results",

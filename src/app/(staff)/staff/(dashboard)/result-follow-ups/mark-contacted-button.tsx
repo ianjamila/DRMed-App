@@ -1,0 +1,41 @@
+"use client";
+
+import { useState, useTransition } from "react";
+import { useRouter } from "next/navigation";
+import { markCopyContactedAction } from "./actions";
+
+export function MarkContactedButton({ amendmentId }: { amendmentId: string }) {
+  const router = useRouter();
+  const [err, setErr] = useState<string | null>(null);
+  const [pending, startTransition] = useTransition();
+
+  function onMarkContacted() {
+    startTransition(async () => {
+      setErr(null);
+      const result = await markCopyContactedAction(amendmentId);
+      if (!result.ok) {
+        setErr(result.error);
+        return;
+      }
+      router.refresh();
+    });
+  }
+
+  return (
+    <div className="flex flex-col items-end gap-1">
+      <button
+        type="button"
+        onClick={onMarkContacted}
+        disabled={pending}
+        className="min-h-[44px] rounded-md bg-[color:var(--color-brand-navy)] px-3 text-xs font-bold uppercase tracking-wider text-white hover:opacity-90 disabled:opacity-50"
+      >
+        {pending ? "Saving…" : "Mark as contacted"}
+      </button>
+      {err ? (
+        <p role="alert" className="text-xs text-red-600">
+          {err}
+        </p>
+      ) : null}
+    </div>
+  );
+}

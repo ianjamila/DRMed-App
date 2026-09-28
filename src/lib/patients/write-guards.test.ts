@@ -133,6 +133,8 @@ const EXEMPT: Record<string, string> = {
     "The patient is resolved via an activePatients(...)-filtered read or resolvePatient (active-only, Task 9) earlier in this same function, before the attach write.",
   [`src/app/(staff)/staff/(dashboard)/appointments/actions.ts:deleteAppointmentAction`]:
     "Deletes reduce work and stay unguarded, same reasoning as cancelAppointmentAction (Task 22 note).",
+  [`src/app/(staff)/staff/(dashboard)/appointments/actions.ts:markLikelyNoShowsAction`]:
+    "Bulk confirmed → no_show only — takes work off the record, the same transition transitionGroup leaves unguarded for the single No-show button. Its Undo (undoLikelyNoShowsAction) puts work back and does call assertAppointmentsPatientsActive.",
   [`src/app/(staff)/staff/(dashboard)/visits/new/actions.ts:createOneVisit`]:
     "Private helper invoked by createVisitAction only after that function's own assertPatientActive guard already passed.",
   [`src/app/(staff)/staff/(dashboard)/visits/new/actions.ts:deleteVisitCascade`]:

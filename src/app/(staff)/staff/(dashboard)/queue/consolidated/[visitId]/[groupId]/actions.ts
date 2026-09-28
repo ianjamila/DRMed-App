@@ -153,6 +153,7 @@ const AmendSchema = z.object({
       numeric_value_conv: z.number().nullable(),
     }),
   ),
+  notifyPatient: z.boolean().optional(),
 });
 
 export async function amendConsolidated(input: unknown): Promise<AmendConsolidatedResult> {

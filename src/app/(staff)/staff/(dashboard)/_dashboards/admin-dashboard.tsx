@@ -9,6 +9,8 @@ import { PAYABLE_BILL_STATUSES } from "@/lib/accounting/payable-bills";
 import { todayManilaISODate } from "@/lib/dates/manila";
 import { loadHiddenCardIds } from "@/lib/dashboards/card-prefs";
 import { loadCandidatePairsWithStatus } from "@/lib/patients/find-duplicates";
+import { fetchOutdatedCopies } from "@/lib/results/copy-followups.server";
+import { cappedCountLabel } from "@/lib/results/copy-followups";
 import {
   fetchAllRows,
   REPORT_EXPORT_MAX_ROWS,
@@ -23,6 +25,7 @@ import {
 } from "@/lib/reports/hmo-unbilled-bands";
 import { HmoUnbilledCard } from "./_admin-components/hmo-unbilled-card";
 import { DashboardHeader } from "./_components/dashboard-header";
+import { EodReminderBanner } from "./_components/eod-reminder-banner";
 import { SectionHeading } from "./_components/section-heading";
 import { StatCard } from "./_components/stat-card";
 import { QuickLinks } from "./_components/quick-links";
@@ -141,6 +144,7 @@ async function loadAdminStats(show: (id: string) => boolean) {
     grossProfitRows,
     booksLines,
     newMessagesCount,
+    resultFollowups,
   ] = await Promise.all([
     // The audit wanted all three of these cut as "throughput decoration".
     // The owner deferred Visits today and Queue to a LATER re-review, so
@@ -446,6 +450,9 @@ async function loadAdminStats(show: (id: string) => boolean) {
           .select("id", { count: "exact", head: true })
           .eq("status", "new")
       : SKIP_COUNT,
+    show("admin.result_followups")
+      ? fetchOutdatedCopies(supabase, false)
+      : Promise.resolve({ ok: true as const, rows: [], capped: false }),
   ]);
 
   // "Unclaimed": lab lines nobody holds yet, on the same money gate as the
@@ -498,6 +505,7 @@ async function loadAdminStats(show: (id: string) => boolean) {
     { scope: "net_income_books", error: booksLines.error },
     { scope: "new_messages", error: newMessagesCount.error },
     { scope: "queue_unclaimed", error: queueUnclaimed.error ?? queueUnclaimedXray.error },
+    { scope: "result_followups", error: resultFollowups.ok ? null : resultFollowups.error },
   ];
   await Promise.all(
     namedResults
@@ -692,6 +700,9 @@ async function loadAdminStats(show: (id: string) => boolean) {
     dupError,
     newMessages: newMessagesCount.count ?? 0,
     newMessagesError: Boolean(newMessagesCount.error),
+    resultFollowupsCount: resultFollowups.ok ? resultFollowups.rows.length : 0,
+    resultFollowupsCapped: resultFollowups.ok && resultFollowups.capped,
+    resultFollowupsError: !resultFollowups.ok,
     currentFiscalYear,
     today,
     monthStart,
@@ -762,8 +773,14 @@ export async function AdminDashboard({ session }: { session: StaffSession }) {
 
   const showStaleDraftsStrip =
     show("admin.strip_stale_drafts") && (stats.staleDraftsError || stats.staleDrafts.length > 0);
+  const showResultFollowupsCard =
+    show("admin.result_followups") &&
+    (stats.resultFollowupsError || stats.resultFollowupsCount > 0);
   const showAttention =
-    show("admin.strip_audit") || showStaleDraftsStrip || showReleasedByStaffStrip;
+    show("admin.strip_audit") ||
+    showStaleDraftsStrip ||
+    showReleasedByStaffStrip ||
+    showResultFollowupsCard;
 
   return (
     <div className="px-4 py-8 sm:px-6 lg:px-8">
@@ -778,6 +795,8 @@ export async function AdminDashboard({ session }: { session: StaffSession }) {
         title="Clinic command centre"
         updatedAt={new Date()}
       />
+
+      <EodReminderBanner />
 
       {showOperations && (
         <SectionHeading title="Operations">
@@ -1001,6 +1020,16 @@ export async function AdminDashboard({ session }: { session: StaffSession }) {
       {showAttention && (
         <SectionHeading title="What needs attention">
           <div className="grid gap-4 lg:grid-cols-2">
+            {showResultFollowupsCard && (
+              <StatCard
+                label="Patients with an out-of-date copy"
+                value={cappedCountLabel(stats.resultFollowupsCount, stats.resultFollowupsCapped)}
+                hint="Downloaded or handed a result before it was corrected"
+                href="/staff/result-follow-ups"
+                accent="warn"
+                error={stats.resultFollowupsError}
+              />
+            )}
             {show("admin.strip_audit") && (
               <ActivityStrip
                 title="Recent audit anomalies (7d)"

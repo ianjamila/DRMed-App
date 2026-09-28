@@ -74,6 +74,16 @@ export const CRON_HEARTBEATS = [
     maxAge: 8 * 24 * 60 * 60 * 1000,
     activeFrom: "2026-09-22",
   },
+  {
+    key: "stale-bookings",
+    label: "Bookings not acted on (daily)",
+    description: "Emails reception a morning list of bookings with no set time that nobody has acted on for 3 days or more.",
+    path: "/api/cron/stale-bookings",
+    schedule: "30 0 * * *",
+    actions: ["system.stale_bookings.completed"],
+    maxAge: 30 * 60 * 60 * 1000,
+    activeFrom: "2026-09-27",
+  },
 ] as const;
 
 export type CronKey = (typeof CRON_HEARTBEATS)[number]["key"];

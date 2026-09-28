@@ -17,8 +17,15 @@ import type { CashReconRow } from "@/lib/operations/cash-report";
 const PESO = (n: number) =>
   new Intl.NumberFormat("en-PH", { style: "currency", currency: "PHP" }).format(n);
 
+const eodHref = (day: string, shiftId?: string) =>
+  `/staff/payments/eod?date=${day}${shiftId ? `&shift=${shiftId}` : ""}`;
+
 export function CashReconPanel({ rows }: { rows: CashReconRow[] }) {
-  const allUnreconciled = rows.every((r) => !r.reconciled);
+  // Closed days, plus the days flagged as never closed once Admin has set an
+  // End of Day reminders start date (Money Routing). Days that are neither —
+  // no cash moved, or before the start date — stay out, as before.
+  const shown = rows.filter((r) => r.reconciled || r.notClosedShiftIds.length > 0);
+  const allUnreconciled = shown.length === 0;
 
   return (
     <Card className="mt-6 py-0">
@@ -52,9 +59,34 @@ export function CashReconPanel({ rows }: { rows: CashReconRow[] }) {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {rows
-                    .filter((r) => r.reconciled)
-                    .map((r) => {
+                  {shown.map((r) => {
+                      if (!r.reconciled) {
+                        return (
+                          <TableRow key={r.day} className="bg-amber-50/60">
+                            <TableCell className="px-3 py-1">
+                              <Link
+                                href={eodHref(r.day, r.notClosedShiftIds[0])}
+                                className="font-medium text-[color:var(--color-brand-cyan)] hover:underline"
+                              >
+                                {r.day}
+                              </Link>
+                            </TableCell>
+                            {/* Cash moved but nobody counted it: there is no
+                                expected-vs-counted to show, so say so and link
+                                straight to the screen that closes it. */}
+                            <TableCell colSpan={3} className="px-3 py-1 text-right">
+                              <span className="font-semibold text-amber-900">Not closed</span>
+                              {" · "}
+                              <Link
+                                href={eodHref(r.day, r.notClosedShiftIds[0])}
+                                className="font-medium text-[color:var(--color-brand-cyan)] hover:underline"
+                              >
+                                Close this day
+                              </Link>
+                            </TableCell>
+                          </TableRow>
+                        );
+                      }
                       const summary = formatDenominationSummary(r.denominations);
                       return (
                         <Fragment key={r.day}>
@@ -105,7 +137,22 @@ export function CashReconPanel({ rows }: { rows: CashReconRow[] }) {
                               className="px-3 pb-2 pt-0 text-[11px] text-muted-foreground"
                             >
                               <span className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
-                                <span>{summary || "Denomination count not recorded"}</span>
+                                <span>
+                                  {summary || "Denomination count not recorded"}
+                                  {/* Only reachable with more than one shift:
+                                      one shift closed, another never was. */}
+                                  {r.notClosedShiftIds.length > 0 && (
+                                    <>
+                                      {" · "}
+                                      <Link
+                                        href={eodHref(r.day, r.notClosedShiftIds[0])}
+                                        className="font-medium text-amber-900 hover:underline"
+                                      >
+                                        Another shift was not closed
+                                      </Link>
+                                    </>
+                                  )}
+                                </span>
                                 {r.closeIds.length > 0 && (
                                   <span className="flex shrink-0 flex-wrap gap-x-3">
                                     {r.closeIds.map((id, i) => (

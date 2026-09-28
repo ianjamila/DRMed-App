@@ -25,7 +25,10 @@ export const DASHBOARD_CARDS: readonly CardDef[] = [
   { id: "reception.visits_today",      label: "Visits today",      roles: ["reception"], group: "snapshot" },
   { id: "reception.unpaid_balance",    label: "Unpaid balance",    roles: ["reception"], group: "snapshot", sensitive: true },
   { id: "reception.pending_release",   label: "Pending release",   roles: ["reception"], group: "snapshot" },
-  { id: "reception.walk_ins_waiting",  label: "Walk-ins waiting",  roles: ["reception"], group: "snapshot" },
+  // Id kept from when the card was called "Walk-ins waiting"; renaming the id
+  // would drop saved preferences.
+  { id: "reception.walk_ins_waiting",  label: "Arrivals awaiting registration", roles: ["reception"], group: "snapshot" },
+  { id: "reception.likely_no_shows",   label: "Likely no-shows",   roles: ["reception"], group: "snapshot" },
   { id: "reception.new_messages",      label: "Website messages",  roles: ["reception"], group: "snapshot" },
   // Off by default since partner revision 8 sent "Sell gift code" to the
   // admin-only Hidden Tabs section: counter sales are rare enough that a
@@ -36,10 +39,12 @@ export const DASHBOARD_CARDS: readonly CardDef[] = [
   { id: "reception.strip_appointments", label: "Strip: next appointments", roles: ["reception"], group: "attention" },
   { id: "reception.strip_unpaid",       label: "Strip: today's unpaid",    roles: ["reception"], group: "attention", sensitive: true },
   { id: "reception.strip_messages",     label: "Strip: website messages",  roles: ["reception"], group: "attention" },
+  { id: "reception.result_followups",   label: "Result follow-ups",        roles: ["reception"], group: "attention" },
 
   // ---- Lab ----------------------------------------------------------------
   { id: "lab.my_unclaimed",         label: "Unclaimed in my sections", roles: ["medtech", "xray_technician"], group: "snapshot" },
   { id: "lab.my_claimed",           label: "Claimed by me",            roles: ["medtech", "xray_technician"], group: "snapshot" },
+  { id: "lab.updated_7d",           label: "Updated (last 7 days)",    roles: ["medtech", "pathologist", "xray_technician"], group: "snapshot" },
   // Sign-off ships OFF: /staff/signoff is still a placeholder, so both of
   // these advertise a review-and-approve action nobody can perform, and the
   // count's destination tab (status-filter.ts `ready`) covers
@@ -67,6 +72,7 @@ export const DASHBOARD_CARDS: readonly CardDef[] = [
   { id: "admin.released_today",    label: "Released today (plain count)",  roles: ["admin"], group: "operations", defaultHidden: true },
   { id: "admin.dup_candidates",    label: "Possible duplicates", roles: ["admin"], group: "operations" },
   { id: "admin.new_messages",      label: "Website messages",    roles: ["admin"], group: "operations" },
+  { id: "admin.result_followups",  label: "Result follow-ups",   roles: ["admin"], group: "attention" },
 
   // ---- Admin: Money -------------------------------------------------------
   { id: "admin.net_income_books_mtd", label: "Net Income (Books)", roles: ["admin"], group: "money", sensitive: true },

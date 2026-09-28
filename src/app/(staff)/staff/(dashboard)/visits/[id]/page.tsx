@@ -75,9 +75,12 @@ import { fetchClaimEvents } from "@/lib/queue/fetch-claim-events";
 import { HandedBackBadge } from "@/components/staff/claim-remarks-list";
 import { PrintResultButton } from "@/components/staff/print-result-button";
 import { printAllFiles, resultPdfStates } from "@/lib/results/pdf-availability";
-import { fetchPrintSummaries } from "@/lib/results/print-history";
-import type { PrintSummary } from "@/lib/results/print-summary";
+import { fetchPrintState } from "@/lib/results/print-history";
+import type { PrintSummary, StalePrint } from "@/lib/results/print-summary";
 import { PrintedNote } from "@/components/staff/printed-note";
+import { StalePrintWarning } from "@/components/staff/stale-print-warning";
+import { outdatedCopyChip } from "@/lib/results/copy-followups";
+import { fetchCopyStates } from "@/lib/results/copy-followups.server";
 import { isActivePatient } from "@/lib/patients/active";
 import { loadPatientLifecycle } from "@/lib/patients/lifecycle-display";
 import { PatientLifecycleBanner } from "@/components/staff/patient-lifecycle-banner";
@@ -237,16 +240,35 @@ export default async function VisitDetailPage({ params, searchParams }: Props) {
   // result" / "View PDF" without each row firing its own join.
   const allTestIds = (tests ?? []).map((t) => t.id);
   const pdfStates = await resultPdfStates(supabase, allTestIds);
+  // Whether the patient is holding an out-of-date portal download or
+  // printout of any of these results — drives the amber chip next to each
+  // status. Read with the signed-in client (the RPC gates rows by role).
+  const resultIds = [...new Set([...pdfStates.values()].map((s) => s.resultId))];
+  const copyStates = await fetchCopyStates(supabase, resultIds);
+  // R5: fetchCopyStates returns null on an RPC error. copyStates?.get(...)
+  // then reads exactly like "checked, nothing outdated" — the spec (design
+  // doc) requires the read failing to show as its own notice, never a quiet
+  // all-clear.
+  const copyStatesFailed = copyStates === null && resultIds.length > 0;
+  const outdatedChipFor = (id: string) => {
+    const s = pdfStates.get(id);
+    return s ? outdatedCopyChip(copyStates?.get(s.resultId)) : null;
+  };
   // "Printed … by …" under each Print button — per FILE (a shared chemistry
   // PDF printed from any member counts for all of them), read off the audit
-  // log as a derived fact only.
-  const printSummaries = await fetchPrintSummaries(
+  // log as a derived fact only. Same read also flags a file whose newest
+  // print is an older version than the one on file now (`stale`).
+  const printState = await fetchPrintState(
     [...pdfStates.values()].map((s) => ({ resultId: s.resultId, version: s.version })),
     { patientId: patient.id },
   );
   const printedFor = (testId: string) => {
     const state = pdfStates.get(testId);
-    return state ? printSummaries.get(state.resultId) : undefined;
+    return state ? printState.summaries.get(state.resultId) : undefined;
+  };
+  const staleFor = (testId: string) => {
+    const state = pdfStates.get(testId);
+    return state ? printState.stale.get(state.resultId) : undefined;
   };
   // "Print all released results": the distinct released reports this role
   // may print, combined by visits/[id]/results-pdf. Offered from two up —
@@ -982,6 +1004,16 @@ export default async function VisitDetailPage({ params, searchParams }: Props) {
           ) : null}
         </div>
 
+        {copyStatesFailed ? (
+          <p
+            role="status"
+            className="mb-3 rounded-md border border-amber-300 bg-amber-50 p-2 text-xs text-amber-900"
+          >
+            Couldn&apos;t load follow-ups — a patient holding an out-of-date copy of a result
+            below may not be flagged.
+          </p>
+        ) : null}
+
         {packageHeaders.length > 0 ? (
           <>
             <h3 className="mb-2 text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
@@ -1198,6 +1230,7 @@ export default async function VisitDetailPage({ params, searchParams }: Props) {
                                       {c.status.replace(/_/g, " ")}
                                     </span>
                                     <HandedBackBadge info={handedBackFor(c.id)} />
+                                    <OutdatedCopyChip chip={outdatedChipFor(c.id)} />
                                   </td>
                                   <td className="px-4 py-3 text-right">
                                     <TestAction
@@ -1213,6 +1246,7 @@ export default async function VisitDetailPage({ params, searchParams }: Props) {
                                       gateRequired={gateRequired}
                                       hasPdf={pdfStates.has(c.id)}
                                       printed={printedFor(c.id)}
+                                      stale={staleFor(c.id)}
                                       canViewPdf={canViewResultPdf(session.role, {
                                         section: rowSection(c),
                                         status: c.status,
@@ -1424,6 +1458,12 @@ export default async function VisitDetailPage({ params, searchParams }: Props) {
                         {t.status.replace(/_/g, " ")}
                       </span>
                       <HandedBackBadge info={handedBackFor(t.id)} />
+                      {/* OutdatedCopyChip (patient's portal/printed copy is behind
+                          the current version) and TestAction's StalePrintWarning
+                          (the newest PRINT on file is behind it) are deliberately
+                          separate signals — one about the patient's copy, one
+                          about the paper reception/admin last handed over. */}
+                      <OutdatedCopyChip chip={outdatedChipFor(t.id)} />
                     </td>
                     <td className="px-4 py-3 text-right">
                       <TestAction
@@ -1438,6 +1478,7 @@ export default async function VisitDetailPage({ params, searchParams }: Props) {
                         gateRequired={gateRequired}
                         hasPdf={pdfStates.has(t.id)}
                         printed={printedFor(t.id)}
+                        stale={staleFor(t.id)}
                         canViewPdf={canViewResultPdf(session.role, {
                           section: rowSection(t),
                           status: t.status,
@@ -1793,6 +1834,15 @@ interface PfEntryShape {
   voided_at: string | null;
 }
 
+function OutdatedCopyChip({ chip }: { chip: string | null }) {
+  if (!chip) return null;
+  return (
+    <span className="ml-1 inline-flex rounded bg-amber-50 px-1.5 py-0.5 text-xs text-amber-800 ring-1 ring-amber-200">
+      {chip}
+    </span>
+  );
+}
+
 function PfStatusBadge({ entry }: { entry: PfEntryShape }) {
   if (entry.voided_at) {
     return (
@@ -1851,6 +1901,9 @@ interface TestActionProps {
   // Staff prints of this line's file (result.printed_staff), for the
   // "Printed …" note.
   printed?: PrintSummary;
+  // Set when the newest print of this line's file is an OLDER version than
+  // the one on file now — the "reprint before handing over" warning.
+  stale?: StalePrint;
   // May this role open the result PDF (canViewResultPdf)? True wherever
   // canAct is, and ALSO for reception on a released lab line — the one door
   // into a result reception has, so the counter can print the patient's copy.
@@ -1888,6 +1941,7 @@ function TestAction({
   gateRequired,
   hasPdf,
   printed,
+  stale,
   canViewPdf,
   kind,
   viewedCount,
@@ -1928,6 +1982,7 @@ function TestAction({
           sizeCls={sizeCls}
           size={size}
           printed={printed}
+          stale={stale}
         />
       );
     }
@@ -2082,6 +2137,7 @@ function TestAction({
             sizeCls={sizeCls}
             size={size}
             printed={printed}
+            stale={stale}
           />
         ) : (
           <span className={`${sizeCls} font-semibold text-emerald-700`}>
@@ -2131,11 +2187,13 @@ function ReleasedPdfActions({
   sizeCls,
   size,
   printed,
+  stale,
 }: {
   testRequestId: string;
   sizeCls: string;
   size: "default" | "compact";
   printed: PrintSummary | undefined;
+  stale?: StalePrint;
 }) {
   return (
     <div className="flex flex-col items-end gap-1">
@@ -2152,6 +2210,7 @@ function ReleasedPdfActions({
         View PDF →
       </a>
       <PrintedNote summary={printed} size={size} />
+      <StalePrintWarning stale={stale} />
     </div>
   );
 }
