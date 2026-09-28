@@ -1,7 +1,6 @@
 "use server";
 
 import { randomUUID } from "node:crypto";
-import Papa from "papaparse";
 import { revalidatePath } from "next/cache";
 
 import { createClient } from "@/lib/supabase/server";
@@ -9,8 +8,7 @@ import { requireAdminStaff } from "@/lib/auth/require-admin";
 import { isISODate } from "@/lib/dates/manila";
 import type { Json } from "@/types/database";
 import {
-  locateHeader,
-  parseAdSpendCsv,
+  parseAdSpendText,
   REJECT_REASON_LABEL,
   type AdSpendSaveResult,
 } from "@/lib/marketing/ad-spend-import";
@@ -47,16 +45,14 @@ export async function saveAdSpendAction(csvText: string): Promise<AdSpendSaveRes
   if (typeof csvText !== "string" || csvText.trim() === "") return { ok: false, error: "The file is empty." };
   if (csvText.length > MAX_CSV_CHARS) return { ok: false, error: "The file is larger than 5 MB — export a shorter date range." };
 
-  const parsed = Papa.parse<Record<string, string>>(locateHeader(csvText), { header: true, skipEmptyLines: true });
-  // Codex #2: PapaParse's own structural errors (TooManyFields, TooFewFields,
-  // quote errors) point at a row whose columns shifted — e.g. an unquoted
-  // comma inside "1,234.50" — so that row's values (including spend) must
-  // never reach the saved data.
-  const malformedRows = new Set(
-    parsed.errors.map((e) => e.row).filter((row): row is number => typeof row === "number"),
-  );
-  const result = parseAdSpendCsv(parsed.data, parsed.meta.fields ?? [], malformedRows);
+  // Codex recheck #2: the whole locateHeader + Papa.parse + error-mapping
+  // pipeline lives in ad-spend-import.ts's parseAdSpendText, so this action
+  // never re-derives a row-index set that can drift from PapaParse's real
+  // behaviour (a Quotes-type error's row index does not point into
+  // parsed.data the way a FieldMismatch error's does).
+  const result = parseAdSpendText(csvText);
   if (!result.ok) return { ok: false, error: result.error };
+  const rejectedTotal = result.rejected.reduce((s, r) => s + r.count, 0);
   const rejected = result.rejected.map((r) => ({ reason: REJECT_REASON_LABEL[r.reason], count: r.count }));
   if (result.rows.length === 0) {
     return { ok: true, data: { inserted: 0, replaced: 0, days: 0, currencyAssumed: result.currencyAssumed, rejected } };
@@ -66,9 +62,20 @@ export async function saveAdSpendAction(csvText: string): Promise<AdSpendSaveRes
   const { data, error } = await supabase.rpc("ad_spend_import", {
     p_upload_id: randomUUID(),
     p_rows: result.rows as unknown as Json,
+    p_rejected_count: rejectedTotal,
   });
   if (error || !data) {
     console.error("[ad-spend] import failed", error?.code);
+    // Codex recheck #1 (DB half): the RPC refuses a representation change
+    // (campaign total <-> per ad) when the file also had rejected rows —
+    // map its tagged message to clean user text rather than showing raw PG
+    // text or the generic failure below.
+    if (error?.code === "22023" && error.message?.includes("[breakdown change]")) {
+      return {
+        ok: false,
+        error: "This file changes how saved spend is broken down (campaign total vs per ad) but some rows were rejected — fix them and upload again. Nothing was saved.",
+      };
+    }
     return { ok: false, error: "Couldn't save the ad spend. Nothing was saved — try again." };
   }
   const counts = data as { inserted: number; replaced: number; days: number };

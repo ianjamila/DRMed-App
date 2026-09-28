@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { describeAdSpendSave, locateHeader, parseAdSpendCsv, parseDateCell } from "./ad-spend-import";
+import { describeAdSpendSave, locateHeader, parseAdSpendCsv, parseAdSpendText, parseDateCell } from "./ad-spend-import";
 
 const meta = (rows: Record<string, string>[]) =>
   parseAdSpendCsv(rows, Object.keys(rows[0] ?? {}));
@@ -178,7 +178,17 @@ describe("parseAdSpendCsv", () => {
       ],
       ["Date", "Platform", "Campaign", "Ad name", "Spend"],
     );
-    expect(r).toEqual({ ok: false, error: expect.stringMatching(/mixes campaign totals and per-ad rows/) });
+    expect(r).toEqual({ ok: false, error: expect.stringMatching(/mixes more than one ad-spend breakdown/) });
+  });
+  it("refuses a file that mixes per-ad-by-name and per-ad-by-ID rows for the same campaign and day (Codex recheck #1, parser half)", () => {
+    const r = parseAdSpendCsv(
+      [
+        { Date: "2026-09-01", Platform: "Facebook", Campaign: "C", "Ad name": "Video A", "Ad ID": "", Spend: "60" },
+        { Date: "2026-09-01", Platform: "Facebook", Campaign: "C", "Ad name": "", "Ad ID": "123", Spend: "40" },
+      ],
+      ["Date", "Platform", "Campaign", "Ad name", "Ad ID", "Spend"],
+    );
+    expect(r).toEqual({ ok: false, error: expect.stringMatching(/mixes more than one ad-spend breakdown/) });
   });
   it("allows per-ad rows alone, and campaign-total rows alone, for the same campaign/day", () => {
     const perAd = parseAdSpendCsv(
@@ -194,6 +204,43 @@ describe("parseAdSpendCsv", () => {
       ["Date", "Platform", "Campaign", "Ad name", "Spend"],
     );
     expect(total).toMatchObject({ ok: true, rejected: [] });
+  });
+});
+
+describe("parseAdSpendText (through real PapaParse — Codex recheck #2)", () => {
+  it("refuses the whole file on an unterminated quote (Quotes-type error), never keeping the merged record", () => {
+    // Codex's exact probe: PapaParse swallows the rest of the file into the
+    // Cost field's value instead of erroring on the specific row, so the
+    // error's `row` index does not point at a usable record — the previous
+    // fix (mapping every error's `row` into parsed.data) accepted this as a
+    // clean ₱100 row with no rejection.
+    const text = 'Day,Campaign,Cost\n2026-09-01,Brand,"100\n2026-09-02,Brand,50\n';
+    expect(parseAdSpendText(text)).toEqual({
+      ok: false,
+      error: expect.stringMatching(/broken quote/),
+    });
+  });
+  it("refuses the whole file on an InvalidQuotes error the same way", () => {
+    // A quoted field with trailing text before its delimiter ("Brand"x,50) —
+    // PapaParse reports InvalidQuotes (plus a cascading MissingQuotes and
+    // TooFewFields on the same mangled row).
+    const text = 'Day,Campaign,Cost\n2026-09-01,"Brand"x,50\n';
+    const r = parseAdSpendText(text);
+    expect(r).toEqual({ ok: false, error: expect.stringMatching(/broken quote/) });
+  });
+  it("still rejects only the row with an unquoted comma as malformed_row, keeping the other row (regression)", () => {
+    const text = "Day,Campaign,Cost\n2026-09-01,Brand,1,234.50\n2026-09-02,Brand,50\n";
+    const r = parseAdSpendText(text);
+    expect(r).toMatchObject({ ok: true, rejected: [{ reason: "malformed_row", count: 1 }] });
+    if (!r.ok) throw new Error();
+    expect(r.rows).toEqual([expect.objectContaining({ spend_date: "2026-09-02", spend_php: 50 })]);
+  });
+  it("parses a normal Google export end to end, dropping the title lines and BOM", () => {
+    const text = "﻿Campaign report\nSeptember 1, 2026 - September 30, 2026\nDay,Campaign,Cost,Impr.,Clicks,Currency code\n2026-09-01,Search - Lab,250,40,4,PHP\n";
+    const r = parseAdSpendText(text);
+    expect(r).toMatchObject({ ok: true, rejected: [] });
+    if (!r.ok) throw new Error();
+    expect(r.rows).toEqual([expect.objectContaining({ spend_date: "2026-09-01", campaign_key: "search lab", spend_php: 250 })]);
   });
 });
 

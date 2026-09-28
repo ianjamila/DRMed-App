@@ -8,6 +8,7 @@
  * whole file is refused; a currency that is present and not PHP refuses the
  * file; duplicates of (date, platform, campaign, ad) are summed.
  */
+import Papa from "papaparse";
 import { daysInMonth } from "@/lib/dates/manila";
 import { normaliseCampaignName } from "@/lib/marketing/campaign-results";
 
@@ -21,6 +22,17 @@ export const REJECT_REASON_LABEL: Record<AdSpendRejectReason, string> = {
   bad_spend: "Spend is blank or not a valid amount",
   malformed_row: "Row has extra or missing columns — amounts with commas must be quoted",
 };
+
+// A row's representation KIND — must stay in sync with the SQL CASE in
+// 0189's ad_spend_import (public.ad_spend_import: "(campaign)" -> 'total',
+// "id:%" -> 'id', else 'name'), which drives the DB's partial-vs-replace
+// decision (Codex recheck #1).
+export type AdKeyKind = "total" | "id" | "name";
+export function adKeyKind(adKey: string): AdKeyKind {
+  if (adKey === "(campaign)") return "total";
+  if (adKey.startsWith("id:")) return "id";
+  return "name";
+}
 
 export interface AdSpendRow {
   spend_date: string;
@@ -243,21 +255,24 @@ export function parseAdSpendCsv(
     }
   }
 
-  // Codex #1 (parser half): within ONE file, a campaign-day that carries both
-  // a campaign-total row (ad_key "(campaign)") and per-ad rows would upsert
-  // under different ad_keys and double-count when saved — refuse the whole
-  // file rather than silently keep both granularities.
-  const groupHasTotal = new Set<string>();
-  const groupHasPerAd = new Set<string>();
+  // Codex #1 (parser half; recheck extended it to all three kinds): within
+  // ONE file, a campaign-day that carries more than one KIND of ad_key — a
+  // campaign total ("(campaign)"), a per-ad-by-name row, or a per-ad-by-ID
+  // row — would save under different ad_keys and double-count (or the DB's
+  // representation-change guard would have to guess which one is "right").
+  // Refuse the whole file rather than silently keep more than one breakdown.
+  const groupKinds = new Map<string, Set<AdKeyKind>>();
   for (const row of rows.values()) {
     const groupKey = `${row.spend_date}|${row.platform}|${row.campaign_key}`;
-    (row.ad_key === "(campaign)" ? groupHasTotal : groupHasPerAd).add(groupKey);
+    const kinds = groupKinds.get(groupKey) ?? new Set<AdKeyKind>();
+    kinds.add(adKeyKind(row.ad_key));
+    groupKinds.set(groupKey, kinds);
   }
-  for (const groupKey of groupHasTotal) {
-    if (groupHasPerAd.has(groupKey)) {
+  for (const kinds of groupKinds.values()) {
+    if (kinds.size > 1) {
       return {
         ok: false,
-        error: "This file mixes campaign totals and per-ad rows for the same campaign and day — export one level only.",
+        error: "This file mixes more than one ad-spend breakdown (campaign total, per ad name, per ad ID) for the same campaign and day — export one level only.",
       };
     }
   }
@@ -268,6 +283,39 @@ export function parseAdSpendCsv(
     rejected: [...rejected.entries()].map(([reason, n]) => ({ reason, count: n })),
     currencyAssumed: !headerCurrency && !currencyCol,
   };
+}
+
+/**
+ * Locates the header, runs real PapaParse, classifies its own errors, and
+ * hands the result to parseAdSpendCsv — the ONE place that owns this
+ * pipeline (Codex recheck #2), so the server action never re-derives it with
+ * a manually built row-index set that can drift from PapaParse's real
+ * behaviour.
+ *
+ * PapaParse's `row` index on a FieldMismatch error (TooManyFields /
+ * TooFewFields — an unquoted comma shifts that one row's columns) reliably
+ * points into `parsed.data`, so that row alone is rejected as
+ * `malformed_row`. A Quotes-type error (MissingQuotes / InvalidQuotes — an
+ * unterminated quote) does NOT: PapaParse can swallow every following line
+ * into ONE field's value, collapsing many source rows into a single record
+ * whose `row` index no longer corresponds to anything in `parsed.data` —
+ * confirmed with a real probe (`Day,Campaign,Cost\n2026-09-01,Brand,"100`
+ * merges the next line into the Cost value instead of erroring on it). A
+ * truncated/broken file could otherwise silently overwrite saved spend, so
+ * ANY Quotes-type error refuses the whole file.
+ */
+export function parseAdSpendText(csvText: string): AdSpendParse {
+  const parsed = Papa.parse<Record<string, string>>(locateHeader(csvText), { header: true, skipEmptyLines: true });
+  if (parsed.errors.some((e) => e.type === "Quotes")) {
+    return { ok: false, error: "The file has a broken quote mark — export it again." };
+  }
+  const malformedRows = new Set(
+    parsed.errors
+      .filter((e) => e.type === "FieldMismatch")
+      .map((e) => e.row)
+      .filter((row): row is number => typeof row === "number"),
+  );
+  return parseAdSpendCsv(parsed.data, parsed.meta.fields ?? [], malformedRows);
 }
 
 export function describeAdSpendSave(res: AdSpendSaveResult): string {
