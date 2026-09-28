@@ -336,3 +336,22 @@ sections above; listed here for a single audit trail against `00-context.md`.
   the people list writes `patient_sources.viewed`; the CSVs write `report.*.exported`.
 - **P21** — `resolvePeriod` rejects impossible calendar dates (e.g. `2026-02-30`), not just malformed strings, so
   a crafted URL never reaches SQL (Codex plan review P3).
+
+## 9. PR 2 review log (2026-09-28)
+
+| Review | Finding | Outcome |
+|---|---|---|
+| Sonnet, migration quality | `patient_sources_referrers` re-ran the survivor walk + a sheet scan per new customer (correlated subquery) | Fixed — sheet referrer computed once per survivor (`surv as materialized` + `distinct on`); EXPLAIN shows one survivor scan |
+| Sonnet, migration quality | No index for the people list's unlinked-name lookup | Fixed — partial index `sheet_encounter_lines (loose_key, service_date, id) where patient_id is null` |
+| Sonnet, migration quality | Post-conditions never asserted RLS on `ad_spend_daily` | Fixed — `relrowsecurity` assert |
+| Sonnet, Task 16 | Referral select lost the answer when the visit form returned an error (React 19 form reset) | Fixed — `ResetSafeSelect`, like its sibling selects |
+| Sonnet, Task 17 | Guard exempted the whole people-CSV route; backtick names not caught | Fixed — narrow audit-key strip; backticks scanned |
+| Sonnet, whole branch | A campaign name that normalises to "" failed the whole all-or-nothing upload | Fixed — rejected as `no_campaign` |
+| Codex astra/high (session 01a0e6f2-bb18-7680-9cb9-5910244bf187) #1 | Uploads at different breakdowns (campaign total / ad name / ad id) stacked → spend counted 2–3× | Fixed (after recheck) — same-kind uploads update only their ads (siblings kept, §2.1); a breakdown change replaces the group's other-kind rows and is refused when the file had rejected rows; a file mixing kinds in one group is refused; imports/removals serialised by an advisory lock |
+| Codex #2 | PapaParse structural errors ignored (unquoted `1,234.50` saved as ₱1) | Fixed (after recheck) — field-count errors reject the row (`malformed_row`); any broken-quote error refuses the file; parsed through real PapaParse in one pure function |
+| Codex #3 | ISO date with trailing text (`2026-09-01 to 2026-09-30`) saved as one day | Fixed — only a time suffix accepted; `A to B` rejected as a range |
+| Codex uncertainty (P5) | Old visitor with a later registration date counted as New | **Owner decision 2026-09-28:** never New — `before_window` outranks registration; proof check 24 |
+| Sonnet, whole branch (Minor, kept) | Unconfirmed-referrer lookup counts all Customers rows sharing the loose key | Kept — same "ONE Customers row with that loose key" rule the name-identity channel uses (§1) |
+| Sonnet, whole branch (Minor, kept) | `2026-05-26` mirror-window fallback repeated in two helpers | Kept — PR 1 always sets the setting; noted for the next 0189-area migration |
+
+Evidence at the end of review: npm test 3,974; typecheck/lint clean; `patient-sources:db-proof` 26/26 with controls A–L each proven to bite; `sheet-sync:db-proof` 41/41; real-sheet identity core ~180 ms; CSV paging 1,598 rows = SQL.
