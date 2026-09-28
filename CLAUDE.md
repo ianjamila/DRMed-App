@@ -18,7 +18,7 @@ Key reference artifacts:
 - `IMPLEMENTATION_PLAN.md` — original phase plan (historical; cross-check before relying on it)
 - `README.md` — operational setup
 - `.env.example` — env-var inventory
-- `docs/drmed-user-guide.html` — the staff + patient user guide (v2.38, 28 Sep 2026): every
+- `docs/drmed-user-guide.html` — the staff + patient user guide (v2.39, 28 Sep 2026): every
   screen, label and blocked-message the app shows, checked against the code. Update it in the
   PR that changes a flow it describes.
 - `docs/superpowers/specs/` and `docs/superpowers/audits/` — design specs and audits for
@@ -154,8 +154,15 @@ logic only (no DB / no RSC) — modules under test must not `import "server-only
 `*.test.tsx` is also picked up, for the few *client* components worth asserting
 markup on (e.g. the staff sidebar's collapsed-by-default sections): render them
 with `react-dom/server`'s `renderToStaticMarkup` and stub their browser hooks —
-still no DOM, still no RSC. The smoke scripts above still cover the render
-pipeline + integration paths.
+still no DOM, still no RSC. When the behaviour worth pinning is
+interactive (type, tick, save, the page re-rendering with a newer version),
+opt that one file into a DOM with a `// @vitest-environment jsdom` first line
+and drive it with `@testing-library/react` + `@testing-library/user-event` — the
+result edit forms (`queue/[id]/amend-form.test.tsx`, the consolidated
+`report-edit-form.test.tsx`) are the model; `rerender` with new props stands in for
+a Server Action's revalidation. jsdom quirk: a `required` file input reads as
+empty even with a file attached, so submit that form with `fireEvent.submit`. The
+smoke scripts above still cover the render pipeline + integration paths.
 
 ## Architecture — the things that aren't obvious from file structure
 

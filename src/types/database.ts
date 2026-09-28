@@ -7466,6 +7466,7 @@ export type Database = {
           notified_at: string
           notified_channels: string[]
           notify_failed: boolean
+          notify_problem: string
           patient_id: string
           patient_name: string
           phone: string
@@ -7479,6 +7480,15 @@ export type Database = {
       result_record_patient_notify: {
         Args: { p_amendment_id: string; p_channels: string[]; p_error: string }
         Returns: undefined
+      }
+      result_retry_patient_notify: {
+        Args: { p_amendment_id: string }
+        Returns: {
+          amendment_seq: number
+          anchor_test_request_id: string
+          patient_id: string
+          result_id: string
+        }[]
       }
       result_finalise_commit: {
         Args: {

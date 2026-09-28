@@ -72,6 +72,10 @@ interface Args {
   /** The visit's patient (0167) — checked BEFORE the claim so a deleted or
    * merged record never consumes the once-only send slot. */
   patientId: string;
+  /** 0188: a reception/admin "Retry notice" from Result Follow-ups — claims
+   * through result_retry_patient_notify, which only re-opens a slot whose
+   * earlier attempt reached nobody because of a send error. */
+  retry?: boolean;
 }
 
 type ClaimRow = {
@@ -103,6 +107,7 @@ export async function notifyResultCorrected({
   testName,
   actorId,
   patientId,
+  retry = false,
 }: Args): Promise<NotifyOutcome> {
   if (amendmentId === null) {
     await reportError({
@@ -153,7 +158,7 @@ export async function notifyResultCorrected({
   let claim: ClaimRow | undefined;
   try {
     const { data: claimed, error: claimErr } = await admin.rpc(
-      "result_claim_patient_notify",
+      retry ? "result_retry_patient_notify" : "result_claim_patient_notify",
       { p_amendment_id: amendmentId },
     );
     if (claimErr) throw new Error(claimErr.message);
@@ -168,7 +173,7 @@ export async function notifyResultCorrected({
   }
   if (!claim) return "already";
 
-  let channels: string[] = [];
+  const channels: string[] = [];
   let error: string | null = null;
   let notSetUp = false;
   let smsMeta: unknown = null;
@@ -204,6 +209,13 @@ export async function notifyResultCorrected({
           }),
     ]);
 
+    // 0188: record what was DELIVERED before anything else can throw — a
+    // failure in the reporting below must never erase a real delivery, or
+    // the row would read as a send error and "Retry notice" would message a
+    // patient who already got it.
+    if (smsResult.ok) channels.push("sms");
+    if (emailResult.ok) channels.push("email");
+
     if (!smsResult.ok && smsResult.kind === "error") {
       await reportError({
         scope: "notify/result-corrected:sms",
@@ -230,8 +242,6 @@ export async function notifyResultCorrected({
         ? { ok: false, skipped: true, reason: emailResult.reason }
         : { ok: false, error: emailResult.error, to: patient?.email };
 
-    if (smsResult.ok) channels.push("sms");
-    if (emailResult.ok) channels.push("email");
     if (channels.length === 0) {
       ({ error, notSetUp } = describeSendFailure(smsResult, emailResult));
     }
@@ -241,8 +251,10 @@ export async function notifyResultCorrected({
       error: e,
       metadata: { amendment_id: amendmentId },
     });
-    channels = [];
-    error = "internal error while sending";
+    // Keep any channel that already delivered (see above): only a throw
+    // before anything was sent is a failure a retry may repeat.
+    notSetUp = false;
+    error = channels.length === 0 ? "internal error while sending" : null;
   }
 
   // The claim already succeeded, so this amendment will never be retried by
@@ -279,6 +291,7 @@ export async function notifyResultCorrected({
       resource_id: claim.anchor_test_request_id,
       metadata: {
         kind: "corrected",
+        ...(retry ? { retry: true } : {}),
         result_id: claim.result_id,
         amendment_id: amendmentId,
         amendment_seq: claim.amendment_seq,

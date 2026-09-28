@@ -247,7 +247,7 @@
 <div class="layout">
 <nav class="toc" aria-label="Contents">
   <p class="toc-brand">drmed<span>.</span>ph</p>
-  <p class="toc-tag">User guide · v2.38</p>
+  <p class="toc-tag">User guide · v2.39</p>
   <div class="filter" role="group" aria-label="Show chapters for">
     <button type="button" data-filter="all" aria-pressed="true">All roles</button>
     <button type="button" data-filter="reception">Reception</button>
@@ -793,11 +793,11 @@
     <h3>3.13 Result follow-ups</h3>
     <div class="screen"><div class="where">Sidebar › Front Desk › <kbd class="ui">Result Follow-ups</kbd> · <code class="route">/staff/result-follow-ups</code> · Reception and Admin</div>
       <dl><dt>Shows</dt><dd>every patient who downloaded a result from the portal, or was handed a printed copy, before the lab corrected it</dd>
-      <dt>Row action</dt><dd><kbd class="ui">Mark as contacted</kbd></dd>
-      <dt>Toggle</dt><dd><kbd class="ui">Show already contacted</kbd>, top of the list</dd></dl></div>
-    <p>A correction doesn&apos;t reach the patient on its own — this list is the call list. Once you&apos;ve reached them, or decided how you&apos;ll handle it at the counter, click <kbd class="ui">Mark as contacted</kbd> and the row drops off the default view (the toggle brings it back). Reasons for the correction are never shown here, only that one happened. Deleted or merged patient records never appear on this list — there is no one left to call.</p>
+      <dt>Row actions</dt><dd><kbd class="ui">Mark as contacted</kbd>; <kbd class="ui">Retry notice</kbd> after a send error</dd>
+      <dt>Toggle</dt><dd><kbd class="ui">Show followed-up</kbd> / <kbd class="ui">Hide followed-up</kbd>, top of the list</dd></dl></div>
+    <p>A correction doesn&apos;t reach the patient on its own — this list is the call list. Once you&apos;ve reached them, or decided how you&apos;ll handle it at the counter, click <kbd class="ui">Mark as contacted</kbd> and the row drops off the default view (the toggle brings it back). The <b>Status</b> column shows <q>Not contacted</q>, <q>Notified by SMS and email</q> (or just one of them) (when the lab ticked <q>Let the patient know</q> and it went through), <q>Send failed — call the patient</q> or <q>Contacted by …</q>. Under a failed send, a short line says why: <q>No phone or email on file.</q>, <q>The email or text didn&apos;t go through.</q> or <q>Email and text notices aren&apos;t set up — tell an admin.</q> If email or text sending isn&apos;t set up at all, a note above the list says so (for example <q>Text-message notices aren&apos;t set up here — patients with only a mobile number won&apos;t get one. Tell an admin.</q>); admins get a link to <b>Email Alerts</b>. When the cause was a send error, the row also has <kbd class="ui">Retry notice</kbd>: it tries the same email/text once more (a second click can&apos;t send twice), and a line at the top of the list says how it went — <q>Retry notice: Sent.</q> takes the row off the list; <q>Still couldn&apos;t send — call the patient.</q> leaves it there. Reasons for the correction are never shown here, only that one happened. Deleted or merged patient records never appear on this list — there is no one left to call.</p>
     <p>The same warning follows the patient&apos;s copy wherever it shows up, not just here: the visit page marks the test with a note like <q>Patient has an older copy (portal download)</q> so you can see it at a glance even outside this list — that note is a history marker and does not hide deleted or merged patients the way this list does. And if someone asks for a fresh printout of an already-corrected result, the print button shows <q>Printed copy is v<i>N</i> — the current version is v<i>M</i>. Reprint before handing over.</q> so you don&apos;t hand out the old paper by mistake.</p>
-    <div class="note tip"><span class="k">Dashboard card</span><div><p>The <b>Result follow-ups</b> card on your dashboard counts the open rows on this list and opens it directly.</p></div></div>
+    <div class="note tip"><span class="k">Dashboard card</span><div><p>The <b>Patients with an out-of-date copy</b> card on your dashboard counts the open rows on this list and opens it directly. It only appears when there is someone to call (or when the count couldn&apos;t be loaded).</p></div></div>
   </section>
 </section>
 
@@ -1020,6 +1020,7 @@
     <h3>5.2 Email Alerts</h3>
     <div class="screen"><div class="where">Admin › Admin Tools › <kbd class="ui">Email Alerts</kbd> · <code class="route">/staff/admin/settings/alerts</code> · Admin only</div></div>
     <p class="intro">Choose who gets the clinic's alert emails — new website messages, new online bookings, payments removed after work was completed, bookings not acted on, result-template problems and possible duplicate patients. Switch each alert on or off, pick staff one by one, or add a shared inbox. Every change here is recorded in the audit log.</p>
+    <p>At the top, <b>Sending status</b> says whether this site can send <b>Email</b> (used for these alerts and patient notices) and <b>Text messages (SMS)</b> (patient notices) at all: <q>Ready</q>, <q>Switched off here — this isn&apos;t the live site, so nothing is sent.</q>, or <q>Not set up — …</q> naming the missing Resend or Semaphore setting in the site settings (Vercel). It is the same check every send makes, so if it says not set up, alerts or patient notices on that channel are being skipped.</p>
     <p>One card per alert — six in all:</p>
     <dl class="defs">
       <dt>New website message</dt><dd>Sent the moment someone writes in through the Contact page on drmed.ph. It shows the sender's first name and subject only — staff sign in to read the message. Goes by default to <b>Reception</b> and <b>Admin</b>.</dd>
@@ -1331,7 +1332,7 @@
 </section>
 
 <footer class="end">
-  <p>drmed.ph User Guide · v2.38 · 28 September 2026 · Matches the production release at migration 0186, plus 0187 (View-as follow-ups), 0190 (claim-holder guard and End now), 0183 (waived balance in the books), 0182, 0179 (corrected-result follow-ups), 0176 and 0170 (applied out of order) and 0167 (patient delete and restore). Every label in this guide was checked against the application code on that date. Print with <b>Ctrl/Cmd + P</b>; each chapter starts on a new page.</p>
+  <p>drmed.ph User Guide · v2.39 · 28 September 2026 · Matches the production release at migration 0186, plus 0187 (View-as follow-ups), 0190 (claim-holder guard and End now), 0188 (why a patient notice failed, Retry notice), 0183 (waived balance in the books), 0182, 0179 (corrected-result follow-ups), 0176 and 0170 (applied out of order) and 0167 (patient delete and restore). Every label in this guide was checked against the application code on that date. Print with <b>Ctrl/Cmd + P</b>; each chapter starts on a new page.</p>
 </footer>
 </main>
 </div>
