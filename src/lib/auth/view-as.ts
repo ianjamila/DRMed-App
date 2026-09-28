@@ -49,12 +49,40 @@ export function effectiveRole(profile: ViewAsColumns, now: Date = new Date()): S
   return (activeViewAs(profile, now)?.role ?? profile.role) as StaffSession["role"];
 }
 
-/** "3h 40m" / "12m" / "under a minute" — rendered server-side in the banner. */
-export function formatRemaining(untilIso: string, now: Date = new Date()): string {
-  const ms = Date.parse(untilIso) - now.getTime();
+/** "3h 40m" / "12m" / "under a minute". */
+export function formatRemainingMs(ms: number): string {
   const minutes = Math.floor(ms / 60_000);
   if (!Number.isFinite(minutes) || minutes < 1) return "under a minute";
   const h = Math.floor(minutes / 60);
   const m = minutes % 60;
   return h > 0 ? `${h}h ${m}m` : `${m}m`;
+}
+
+/** Server-side label from an ISO expiry. */
+export function formatRemaining(untilIso: string, now: Date = new Date()): string {
+  return formatRemainingMs(Date.parse(untilIso) - now.getTime());
+}
+
+/** Delay before the banner asks the server whether the override has ended:
+ *  the server-computed remaining time plus 1s, so the server's strict
+ *  `until > now()` is already false. Never below 1s (no hot loop). */
+export function expiryRefreshDelay(remainingMs: number): number {
+  return Math.max(remainingMs, 0) + 1_000;
+}
+
+/** An admin row still storing an override that has run out — the case the
+ *  lazy `view_as_expire` cleanup (0187) exists for. */
+export function hasStaleViewAs(profile: ViewAsColumns, now: Date = new Date()): boolean {
+  return profile.role === "admin" && profile.view_as_role !== null && activeViewAs(profile, now) === null;
+}
+
+/** Identity of a View-as state; changes on every start/switch/exit. Used as a
+ *  React key (reset the picker) and to close the mobile drawer. */
+export function viewAsStateKey(v: ActiveViewAs | null): string {
+  return v ? `${v.role}@${v.until}` : "none";
+}
+
+/** What the View-as Server Actions return to `useActionState`. */
+export interface ViewAsActionState {
+  error: string | null;
 }
