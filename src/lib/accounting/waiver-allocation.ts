@@ -46,12 +46,21 @@ export function allocateWaiver(remainderPhp: number, lines: readonly WaiverLine[
   const sum = pool.reduce((s, l) => s + toC(l.pricePhp), 0);
   if (sum === 0) throw new Error("No priced lines to allocate the waiver over.");
   if (rem > sum) throw new Error("This visit's total is more than its lines add up to; fix the lines first.");
+  // BigInt: centavos × centavos passes 2^53 around ₱9.5M × ₱9.5M, where a
+  // double would round the quotient and the SQL (numeric) would not.
+  const remB = BigInt(rem);
+  const sumB = BigInt(sum);
   const shares = pool.map((l) => {
-    const p = toC(l.pricePhp);
-    return { id: l.id, account: discountAccountFor(l.kind), share: Math.floor((rem * p) / sum), frac: (rem * p) % sum };
+    const p = BigInt(toC(l.pricePhp));
+    return {
+      id: l.id,
+      account: discountAccountFor(l.kind),
+      share: Number((remB * p) / sumB),
+      frac: (remB * p) % sumB,
+    };
   });
   let left = rem - shares.reduce((s, x) => s + x.share, 0);
-  const order = [...shares].sort((a, b) => b.frac - a.frac || byId(a.id, b.id));
+  const order = [...shares].sort((a, b) => (b.frac > a.frac ? 1 : b.frac < a.frac ? -1 : byId(a.id, b.id)));
   for (const x of order) {
     if (left === 0) break;
     x.share += 1;

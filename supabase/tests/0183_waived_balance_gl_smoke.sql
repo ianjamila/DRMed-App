@@ -428,6 +428,17 @@ begin
       + pg_temp.dr(v_je_rev, '1100') - pg_temp.cr(v_je_rev, '1100')) <> 0 then
     raise exception 'C2 FAIL: 1100 net for the consult''s own entries is not 0';
   end if;
+  -- A line cancelled AFTER the waive can never be brought back either (its
+  -- share was reversed and there is no un-cancel path in the app) [CR-13].
+  begin
+    update public.test_requests set status = 'requested' where id = v_cons;
+    raise exception 'C2 FAIL: reactivating a post-waive-cancelled line was not refused';
+  exception when others then
+    if sqlstate <> 'P0070' then raise; end if;
+  end;
+  if (select status from public.test_requests where id = v_cons) <> 'cancelled' then
+    raise exception 'C2 FAIL: the cancelled consult changed status';
+  end if;
   raise notice 'PASS C2';
 
   -- =============================================================================
@@ -864,6 +875,38 @@ begin
    where visit_id = v_visit and test_request_id = v_header;
   if v_amt <> 5888 then raise exception 'H2 FAIL: header allocation should be 5888, got %', v_amt; end if;
   raise notice 'PASS H2';
+
+  -- ---- H3: arithmetic boundary — centavos × centavos past bigint ------------
+  -- One ₱40,000,000 line: 4e9 × 4e9 centavos overflows bigint; the split uses
+  -- numeric intermediates so the waiver still lands at exactly 40,000,000.00.
+  insert into public.visits (patient_id, total_php, paid_php, payment_status)
+  values (k_patient, 40000000, 0, 'unpaid') returning id into v_visit;
+  insert into public.test_requests (visit_id, service_id, status, requested_by, base_price_php, final_price_php)
+  values (v_visit, k_lab_svc, 'in_progress', k_admin, 40000000, 40000000);
+  perform public.waive_visit_balance(v_visit, k_admin, 'H3 smoke: ₱40M boundary');
+  select sum(amount_php), count(*) into v_amt, v_n from public.visit_waiver_allocations where visit_id = v_visit;
+  if v_n <> 1 or v_amt <> 40000000 then
+    raise exception 'H3 FAIL: expected one allocation of 40,000,000.00, got % row(s) summing %', v_n, v_amt;
+  end if;
+  -- Two big lines with a partial payment: shares must sum exactly and each
+  -- stay within its own line.
+  insert into public.visits (patient_id, total_php, paid_php, payment_status)
+  values (k_patient, 70000000, 0, 'unpaid') returning id into v_visit;
+  insert into public.test_requests (visit_id, service_id, status, requested_by, base_price_php, final_price_php)
+  values (v_visit, k_lab_svc, 'in_progress', k_admin, 40000000, 40000000),
+         (v_visit, k_lab_svc, 'in_progress', k_admin, 30000000, 30000000);
+  insert into public.payments (visit_id, amount_php, method, received_by)
+  values (v_visit, 10000000, 'cash', k_admin);
+  perform public.waive_visit_balance(v_visit, k_admin, 'H3 smoke: ₱60M split');
+  select sum(amount_php), count(*) into v_amt, v_n from public.visit_waiver_allocations where visit_id = v_visit;
+  if v_n <> 2 or v_amt <> 60000000 then
+    raise exception 'H3 FAIL: expected two allocations summing 60,000,000.00, got % row(s) summing %', v_n, v_amt;
+  end if;
+  if exists (select 1 from public.visit_waiver_allocations wa join public.test_requests tr on tr.id = wa.test_request_id
+              where wa.visit_id = v_visit and wa.amount_php > tr.final_price_php) then
+    raise exception 'H3 FAIL: a share exceeds its own line';
+  end if;
+  raise notice 'PASS H3';
 
   raise notice 'PASS H';
 end

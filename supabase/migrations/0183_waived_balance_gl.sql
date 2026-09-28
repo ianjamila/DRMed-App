@@ -231,9 +231,12 @@ create trigger trg_payments_waived_visit_guard
 -- reparent or a move to another visit would leave a line with no share that
 -- still releases at full AR.  [CR-4]  Status changes (release / undo / cancel)
 -- of a line the allocation saw stay allowed — the bridges handle the share —
--- but a line that was CANCELLED at waive time was excluded from the split, so
--- bringing it back (cancelled → anything else) would release at full AR with
--- no share: refused.  [CR-13]  Provenance is frozen: marking a live line
+-- but a CANCELLED line is never brought back (cancelled → anything else is
+-- refused): one cancelled before the waive was excluded from the split and
+-- would release at full AR with no share; one cancelled after the waive had
+-- its share reversed and its allocation left unrecognised, and the app has no
+-- un-cancel path at all — a future one must go through a waiver-aware RPC.
+-- [CR-13]  Provenance is frozen: marking a live line
 -- imported would skip its release JE (0159's legacy early return) and strand
 -- the allocation; clearing an imported line's provenance would post full AR
 -- with no allocation.  [CR-12]  Soft-delete is already impossible on a
@@ -540,8 +543,10 @@ begin
     drop table if exists tmp_waiver_alloc;
     create temp table tmp_waiver_alloc on commit drop as
       select tr.id as test_request_id,
-             (v_rem_c * round(tr.final_price_php * 100)::bigint) / v_sum_c as share_c,
-             (v_rem_c * round(tr.final_price_php * 100)::bigint) % v_sum_c as frac,
+             -- numeric intermediates: centavos × centavos overflows bigint past
+             -- ₱9.2M × ₱9.2M, well inside numeric(10,2)'s range.
+             floor((v_rem_c::numeric * round(tr.final_price_php * 100)) / v_sum_c)::bigint as share_c,
+             mod(v_rem_c::numeric * round(tr.final_price_php * 100), v_sum_c)::bigint        as frac,
              case when s.kind in ('doctor_consultation', 'doctor_procedure') then '4920' else '4910' end as acct,
              tr.status
         from public.test_requests tr

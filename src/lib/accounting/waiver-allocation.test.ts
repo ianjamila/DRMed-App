@@ -44,6 +44,15 @@ describe("allocateWaiver (mirror of waive_visit_balance's split, 0183)", () => {
   it("refuses a remainder bigger than the lines add up to (visit total out of step)", () => {
     expect(() => allocateWaiver(700, [line("a", 500)])).toThrow(/more than its lines/);
   });
+  it("stays exact past 2^53 centavos² (a ₱40M line; the SQL uses numeric intermediates)", () => {
+    expect(allocateWaiver(40_000_000, [line("a", 40_000_000)])).toEqual([
+      { id: "a", amountPhp: 40_000_000, account: "4910" },
+    ]);
+    const out = allocateWaiver(60_000_000, [line("a", 40_000_000), line("b", 30_000_000)]);
+    expect(out.reduce((s, o) => s + Math.round(o.amountPhp * 100), 0)).toBe(6_000_000_000);
+    expect(out.every((o) => o.amountPhp <= 40_000_000)).toBe(true);
+    expect(out.map((o) => o.amountPhp)).toEqual([34_285_714.29, 25_714_285.71]);
+  });
   it("preview refuses a visit total out of step with its lines in EITHER direction (0183 [CR-6])", () => {
     // total 1,000, one ₱900 line, ₱200 paid → remainder 800 fits under the
     // lines, so allocateWaiver alone would happily split it; the RPC refuses.
