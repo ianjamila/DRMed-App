@@ -107,6 +107,8 @@ The home dashboard at `/staff` routes by role to a `_dashboards/*-dashboard.tsx`
 
 No migration is required — absence of a prefs row means visible.
 
+**Revenue by classification** (`admin.revenue_by_class`) is not a `StatCard` but the shared collapsed dropdown `src/components/staff/revenue-by-class.tsx` (`RevenueByClass`), also used on Visit Records — admin-only on both, closed by default. One-click ranges come from `src/lib/visits/revenue-presets.ts`; its own links keep it open (`/staff?revenue=<preset>` on the dashboard, `rev=1` on Visit Records), every other arrival starts it closed. A closed range also fetches the same dates one year earlier (`priorYearRange`) for the per-card "same dates last year" line (`yearOnYearChange`) and links Expenses & P&L over the range. The component builds the preset links itself from a `presetHref` function — an `{ href, label }` object literal in a `_dashboards/*-dashboard.tsx` file trips the quicklink guard in `staff-nav-config.test.ts`.
+
 **0179 cards:** `reception.result_followups` and `admin.result_followups` (group `attention`) both link to `/staff/result-follow-ups` and count its open rows; `lab.updated_7d` (group `snapshot`, roles `medtech`/`pathologist`/`xray_technician`, label "Updated (last 7 days)") counts results corrected in the last 7 days. The list logic and `StalePrintWarning` (`src/components/staff/stale-print-warning.tsx`) — the small print-chrome piece flagging a printed copy behind the current version — are documented in `drmed-result-templates`.
 
 ## 4 · List pages — header, filter chips, paging

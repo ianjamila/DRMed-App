@@ -10,6 +10,9 @@ import { paymentStatusLabel } from "@/lib/ui/payment-status";
 import { formatPatientName } from "@/lib/patients/format-name";
 import { Panel } from "@/components/ui/panel";
 import { ExportCsvLink } from "@/components/staff/export-csv-link";
+import { CLASS_BADGE, RevenueByClass } from "@/components/staff/revenue-by-class";
+import { buildRevenuePresets, matchRevenuePreset } from "@/lib/visits/revenue-presets";
+import { priorYearRange } from "@/lib/reports/period-presets";
 import { PageHeader } from "@/components/staff/page-header";
 import { sectionTabClass } from "@/components/staff/section-tabs-style";
 import {
@@ -43,7 +46,6 @@ import {
   VISIT_CLASS_LABEL,
   VISIT_VIEWS,
   VISIT_VIEW_LABEL,
-  type ClassSummaryRow,
   type VisitClass,
 } from "@/lib/visits/classification";
 
@@ -68,31 +70,11 @@ const PHP = new Intl.NumberFormat("en-PH", {
   currency: "PHP",
 });
 
-const PHP_COMPACT = new Intl.NumberFormat("en-PH", {
-  style: "currency",
-  currency: "PHP",
-  maximumFractionDigits: 0,
-});
-
 const STATUS_BADGE: Record<string, string> = {
   paid: "bg-green-50 text-green-700 border-green-200",
   partial: "bg-amber-50 text-amber-700 border-amber-200",
   unpaid: "bg-red-50 text-red-700 border-red-200",
   waived: "bg-blue-50 text-blue-700 border-blue-200",
-};
-
-// Classification colours deliberately avoid green/amber/red/blue — those read
-// as payment status one column over.
-const CLASS_BADGE: Record<VisitClass, string> = {
-  lab: "border-sky-200 bg-sky-50 text-sky-800",
-  consult: "border-violet-200 bg-violet-50 text-violet-800",
-  procedure: "border-fuchsia-200 bg-fuchsia-50 text-fuchsia-800",
-};
-
-const CLASS_ACCENT: Record<VisitClass, string> = {
-  lab: "text-sky-800",
-  consult: "text-violet-800",
-  procedure: "text-fuchsia-800",
 };
 
 interface SearchProps {
@@ -107,6 +89,7 @@ interface SearchProps {
     kind?: string;
     view?: string;
     sample?: string;
+    rev?: string;
   }>;
 }
 
@@ -124,6 +107,9 @@ export default async function VisitsIndexPage({ searchParams }: SearchProps) {
   const classes = parseVisitClasses(params.kind);
   const view = isVisitView(params.view) ? params.view : "active";
   const sampleOnly = parseSampleFilter(params.sample);
+  // Keeps the admin revenue dropdown open across a click on one of its own
+  // cards (which reloads the page) — it is otherwise closed by default.
+  const revenueOpen = params.rev === "1";
   const sort = parseSort(params.sort, params.dir, ARCHIVE_SORT_COLUMNS, DEFAULT_ARCHIVE_SORT);
   const size = parsePageSize(params.size);
   const page = parsePage(params.page);
@@ -131,21 +117,36 @@ export default async function VisitsIndexPage({ searchParams }: SearchProps) {
 
   const supabase = await createClient();
   const filters = { start, end, classes, view, q: query, sampleOnly };
+  const isAdmin = session.role === "admin";
 
   // The strip breaks down BY class, so it deliberately ignores the class chips
   // (applying them would zero every column the reader is trying to compare)
-  // while tracking the date range and the deleted view.
-  const [{ rows, count }, summaryRes] = await Promise.all([
+  // while tracking the date range and the deleted view. Admin-only: the strip
+  // is not rendered for anyone else, so the RPC is skipped for them too.
+  // Same dates one year earlier, for the dropdown's comparison line — only
+  // for a closed range (there is no "last year" of an open-ended one).
+  const prior = start && end ? priorYearRange(start, end) : null;
+  const [{ rows, count }, summaryRes, priorRes] = await Promise.all([
     fetchArchiveWindow(supabase, filters, sort, offset, size),
-    supabase.rpc("visits_classification_summary", {
-      p_start: start || undefined,
-      p_end: end || undefined,
-      p_deleted: view,
-    }),
+    isAdmin
+      ? supabase.rpc("visits_classification_summary", {
+          p_start: start || undefined,
+          p_end: end || undefined,
+          p_deleted: view,
+        })
+      : Promise.resolve({ data: null, error: null }),
+    isAdmin && prior
+      ? supabase.rpc("visits_classification_summary", {
+          p_start: prior.start,
+          p_end: prior.end,
+          p_deleted: view,
+        })
+      : Promise.resolve({ data: null, error: null }),
   ]);
 
   const summary = summariseClasses(summaryRes.data);
   const totals = summaryTotals(summary);
+  const priorSummary = prior && !priorRes.error ? summariseClasses(priorRes.data) : null;
 
   // Paging counts VISITS, not folded encounters — a distinct count over
   // coalesce(visit_group_id, id) isn't expressible through PostgREST. Split
@@ -155,7 +156,6 @@ export default async function VisitsIndexPage({ searchParams }: SearchProps) {
   const totalPages = pageCount(count, size);
   const safePage = Math.min(page, totalPages);
   const splitCount = rows.filter((r) => r.split).length;
-  const isAdmin = session.role === "admin";
 
   const isDefaultSort = sort.key === DEFAULT_ARCHIVE_SORT.key && sort.dir === DEFAULT_ARCHIVE_SORT.dir;
 
@@ -171,6 +171,7 @@ export default async function VisitsIndexPage({ searchParams }: SearchProps) {
     kind: serialiseVisitClasses(classes) || null,
     view: view === "active" ? null : view,
     sample: sampleOnly ? "1" : null,
+    rev: revenueOpen ? "1" : null,
     size: size === DEFAULT_PAGE_SIZE ? null : String(size),
     sort: isDefaultSort ? null : sort.key,
     dir: isDefaultSort ? null : sort.dir,
@@ -237,6 +238,16 @@ export default async function VisitsIndexPage({ searchParams }: SearchProps) {
           .map((c) => VISIT_CLASS_LABEL[c])
           .join(" + ");
 
+  const revenuePresets = buildRevenuePresets(todayManilaISODate());
+  const activePreset = matchRevenuePreset(revenuePresets, start, end);
+  const revenueRangeLabel = [
+    activePreset && activePreset.key !== "all" ? activePreset.label : null,
+    rangeLabel,
+    view !== "active" ? view : null,
+  ]
+    .filter(Boolean)
+    .join(" · ");
+
   const hasFilters = Boolean(
     query || start || end || chipLabel || view !== "active" || sampleOnly,
   );
@@ -300,20 +311,41 @@ export default async function VisitsIndexPage({ searchParams }: SearchProps) {
 
       <div className="mb-6"><VisitsTabs /></div>
 
-      {query ? <p className="mb-2 text-xs text-[color:var(--color-brand-text-soft)]">Revenue overview includes all patients and visit numbers in this date range.</p> : null}
-      <RevenueStrip
-        rows={summary}
-        totals={totals}
-        rangeLabel={rangeLabel}
-        view={view}
-        selected={classes}
-        hrefFor={(c) =>
-          buildHref({
-            kind: serialiseVisitClasses(toggleVisitClass(classes, c)) || null,
-            page: null,
-          })
-        }
-      />
+      {isAdmin ? (
+        <RevenueByClass
+          rows={summary}
+          totals={totals}
+          rangeLabel={revenueRangeLabel}
+          open={revenueOpen}
+          error={Boolean(summaryRes.error)}
+          selected={classes}
+          // Each preset sets the page's own date range, so the list below
+          // follows it too — one click instead of two date pickers + Apply.
+          presets={revenuePresets}
+          activePreset={activePreset?.key}
+          presetHref={(p) =>
+            buildHref({ start: p.start || null, end: p.end || null, page: null, rev: "1" })
+          }
+          cardHref={(c) =>
+            buildHref({
+              kind: serialiseVisitClasses(toggleVisitClass(classes, c)) || null,
+              page: null,
+              rev: "1",
+            })
+          }
+          prior={
+            priorSummary ? { rows: priorSummary, totals: summaryTotals(priorSummary) } : null
+          }
+          pnlHref={start && end ? `/staff/admin/operations/expenses?from=${start}&to=${end}` : null}
+          notes={
+            query ? (
+              <p className="mb-2 text-xs text-[color:var(--color-brand-text-soft)]">
+                Revenue overview includes all patients and visit numbers in this date range.
+              </p>
+            ) : null
+          }
+        />
+      ) : null}
 
       <form
         className="mb-6 flex flex-wrap items-end gap-3 rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white p-4"
@@ -618,89 +650,6 @@ function VisitNumbers({ row }: { row: ArchiveRow }) {
         </span>
       ) : null}
     </>
-  );
-}
-
-function RevenueStrip({
-  rows,
-  totals,
-  rangeLabel,
-  view,
-  selected,
-  hrefFor,
-}: {
-  rows: ClassSummaryRow[];
-  totals: { lines: number; revenuePhp: number };
-  rangeLabel: string;
-  view: string;
-  selected: ReadonlySet<VisitClass>;
-  hrefFor: (c: VisitClass) => string;
-}) {
-  return (
-    <section
-      aria-label="Revenue by classification"
-      className="mb-6 rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white p-4"
-    >
-      <div className="mb-3 flex flex-wrap items-baseline justify-between gap-2">
-        <h2 className="text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
-          Revenue by classification · {rangeLabel}
-          {view !== "active" ? ` · ${view}` : null}
-        </h2>
-        <p className="text-xs text-[color:var(--color-brand-text-soft)]">
-          {totals.lines} billed line{totals.lines === 1 ? "" : "s"} ·{" "}
-          <span className="font-mono font-semibold text-[color:var(--color-brand-navy)]">
-            {PHP.format(totals.revenuePhp)}
-          </span>
-        </p>
-      </div>
-      <div className="grid gap-3 sm:grid-cols-3">
-        {rows.map((r) => {
-          const share =
-            totals.revenuePhp > 0 ? (r.revenuePhp / totals.revenuePhp) * 100 : 0;
-          return (
-            <Link
-              key={r.class}
-              href={hrefFor(r.class)}
-              aria-pressed={selected.has(r.class)}
-              className={`rounded-lg border p-3 transition-colors hover:border-[color:var(--color-brand-cyan)] ${
-                selected.has(r.class)
-                  ? CLASS_BADGE[r.class]
-                  : "border-[color:var(--color-brand-bg-mid)] bg-white"
-              }`}
-            >
-              <p
-                className={`text-xs font-bold uppercase tracking-wider ${CLASS_ACCENT[r.class]}`}
-              >
-                {VISIT_CLASS_LABEL[r.class]}
-              </p>
-              <p className="mt-1 font-heading text-xl font-extrabold text-[color:var(--color-brand-navy)]">
-                {PHP_COMPACT.format(r.revenuePhp)}
-              </p>
-              <p className="mt-0.5 text-xs text-[color:var(--color-brand-text-soft)]">
-                {r.visits} visit{r.visits === 1 ? "" : "s"} · {r.lines} line
-                {r.lines === 1 ? "" : "s"} · {share.toFixed(0)}%
-              </p>
-              {/* Proportion bar — the same number as the percentage, so it is
-                  decorative and hidden from assistive tech. */}
-              <span
-                aria-hidden="true"
-                className="mt-2 block h-1 rounded-full bg-[color:var(--color-brand-bg-mid)]"
-              >
-                <span
-                  className="block h-1 rounded-full bg-[color:var(--color-brand-cyan)]"
-                  style={{ width: `${Math.min(100, share)}%` }}
-                />
-              </span>
-            </Link>
-          );
-        })}
-      </div>
-      <p className="mt-3 text-xs text-[color:var(--color-brand-text-soft)]">
-        Counts billed lines only — items inside a package are covered by the
-        package price. A visit with both lab and doctor work is counted under
-        both classifications, so the visit counts overlap.
-      </p>
-    </section>
   );
 }
 
