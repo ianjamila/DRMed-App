@@ -22,16 +22,20 @@
 | P2 | Survivor resolution is a SQL helper `_ps_survivors()` — a recursive walk of `patients.merged_into_id` capped at 10 hops, like `buildPatientIndex().survivor`. A chain longer than 10 (or a cycle) yields no survivor, so that patient's rows drop out rather than being mis-attributed. | Spec §1.1. |
 | P3 | The **loose key of a confirmed patient** (needed for the §1.3 suppression rule) is computed in SQL by `_ps_loose_key(last, first)`, the twin of `looseKeyOf` + `normalizeName` (`src/lib/sheet-sync/names.ts`, `src/lib/legacy-import/normalize-name.ts`). Parity is proven in the DB proof against the TS function on a case table. The loose keys of the patient's linked Customers rows are also used. | No SQL twin exists (0170 stores keys computed in TS). |
 | P4 | **Returning** is read from `patient_acquisition_facts` only: the `sheet_new_repeat` of the group's earliest-dated fact (tie → `repeat`); when no fact in the group has a date, any `repeat` wins. Name identities are never "Returning". | Spec §1.1/§1.3 define Returning on facts; the conservative tie rule extended to undated facts. |
-| P5 | **Undated** = a confirmed or name identity with no encounter since 2023-12-01, no registration date, and (for confirmed) no live visit **before** 2023-12-01. A patient who only visited before Dec 2023 is an old customer, not an undated registration — it is counted nowhere (`basis = 'before_window'`). Footnote wording: "U people registered with no date and no recorded visit — not on any day." Expect U < 962 on prod after unpause: the 962 figure counted Customers rows, many of which have a dated visit. | Spec §3.2's footnote exists so undated registrations are never put on a day; counting visitors-with-a-date there would misreport them. |
-| P6 | Unlinked Customers rows (`patient_id is null` — the review holds, ~84 on prod) are **unconfirmed name identities** `name:<loose_key>`; with no encounter they count on `min(registered_on)`. | Spec §1.1 "name identities stay as they are: unconfirmed". |
+| P5 | **Undated** = a confirmed or name identity with no encounter since 2023-12-01, no registration date, and (for confirmed) no live visit **before** 2023-12-01. A patient who only visited before Dec 2023 is an old customer, not an undated registration — it is counted nowhere (`basis = 'before_window'`). Footnote wording: "U people registered with no date and no recorded visit — not on any day." Expect U < 962 on prod after unpause: the 962 figure counted Customers rows, many of which have a dated visit. **User-approved exception to spec §1.2's "ignored everywhere" (2026-09-28, after Codex plan review #9):** a pre-Dec-2023 visit never dates anyone, but it does keep an old customer out of the undated note. | Spec §3.2's footnote exists so undated registrations are never put on a day; counting old customers there would read as thousands of "missing registrations". |
+| P6 | Unlinked Customers rows (`patient_id is null` — the review holds, ~84 on prod) are **unconfirmed name identities** `name:<loose_key>`; with no encounter they count on `min(registered_on)` across the rows sharing that key, and are undated when none has a date. Proof check 23 covers dated, undated and two-rows-one-key cases. | Spec §1.1 names unlinked encounter lines as name identities; this extends the same label to Customers-only rows (a registration nobody has confirmed) — Codex plan review, uncertainty 1. |
+| P18 | **Registration date of a confirmed (merged) group** = the earliest `registered_on` among the group's facts rows when any of them has a date; otherwise the earliest Manila `created_at` date among the group's app-native members; otherwise undated. So a sheet date always wins, and a real app sign-up is never lost just because the sheet row has no timestamp. **User-approved 2026-09-28** (Codex plan review #1). | Spec §1.1/§1.3 give facts priority and reserve `created_at` for app-native patients; the one edge the spec does not settle (app-native patient whose linked sheet row is undated) falls back to the app day instead of dropping a real registration. |
+| P19 | **Sheet banner** has three states read from the summary (`sheet_rows_present`, `sync_paused`, `last_run_status`): nothing loaded yet → "Sheet data is not included yet … Showing app records only."; loaded but paused → "The sheet sync is paused — sheet data is included up to the dates below and is not being refreshed."; last run partial/failed → "The last sheet sync did not finish every tab …". Pausing never hides data that is already in the mirror. | Codex plan review #10: the sync commits tabs independently (`run.ts`), so "paused" and "partial" do not mean "no sheet data". Supersedes spec §3.2.2's single sentence. |
 | P7 | `patient_sources_series` also accepts `p_grain = 'period'` (one bucket = the whole period, `bucket_start = p_from`). The per-channel table, the previous-period comparison and the CSV use it. | "All customers served" is distinct over the period; summing day buckets would count a person served twice twice. |
-| P8 | `patient_sources_summary` returns two more columns than the spec lists — `sync_paused boolean`, `last_synced_at timestamptz` — for the §3.2 banner, so the page makes one read. | One definition, one call. |
+| P8 | `patient_sources_summary` returns four more columns than the spec lists — `sync_paused boolean`, `last_synced_at timestamptz`, `sheet_rows_present boolean`, `last_run_status text` — for the banner (P19), so the page makes one read. | One definition, one call. |
 | P9 | `patient_sources_overlaps` also returns `drm_id`; `patient_sources_people` also returns `identity` and `total_count`, and accepts `p_mode = 'returning'` (the Returning card links to it). | The panel shows DRM-ID (spec §3.2.7); the pager needs a total (CLAUDE.md "no silent caps"). |
 | P10 | Two small admin-gated functions the spec implies but does not name: `ad_spend_daily_totals(p_from, p_to)` (per day × platform) and `ad_spend_coverage()` (per platform: first/last date, days, total) — PostgREST cannot aggregate. | CLAUDE.md "PostgREST limits". |
 | P11 | The **referrer normaliser** lives in SQL (`_ps_doctor_norm`) because the grouping happens there; its case table is in the DB proof. A TS twin would be dead code. It also drops placeholder answers (`none`, `n a`, `na`, `no`, `nil`, `self`). | Spec §5 listed it under vitest; moved, not dropped. |
 | P12 | CSV routes follow the repo pattern: `/api/admin/reports/patient-sources.csv` (counts) and `/api/admin/reports/patient-sources-people.csv` (names), through `reportCsvResponse` → audit actions `report.patient_sources.exported` and `report.patient_sources_people.exported`. | Spec §3.4 says "report-CSV pattern"; this is that pattern's path and naming. |
 | P13 | Period presets on both Marketing report pages: **Today, Yesterday, Last 7 days, This month, Last month** (spec) **+ Year-to-date, Last 12 months, Last year** (kept from Booking Sources so nothing regresses) + **Custom**. "This year (2026)" is dropped: for these reports it shows exactly the same data as Year-to-date. | User rule 1 (no silent regression); max span 400 days still holds for every preset. |
-| P14 | The Ad Performance upload is **re-parsed on the server** from the raw CSV text (≤ 5 MB); rows computed in the browser are never trusted. Google's two title lines above the header row and a UTF-8 BOM are skipped; Google "Total:" rows are ignored, not rejected. Ambiguous numeric dates follow the in-browser view (month first unless the first number is > 12). | Spec §2.2; the RPC is all-or-nothing. |
+| P14 | The Ad Performance upload is **re-parsed on the server** from the raw CSV text (≤ 5 MB); rows computed in the browser are never trusted. Google's two title lines above the header row and a UTF-8 BOM are skipped; Google "Total:" rows are ignored, not rejected. Ambiguous numeric dates follow the in-browser view (month first unless the first number is > 12). A file with **no spend column** is refused; a row whose spend cell is **blank** is rejected ("spend missing"); an **explicit 0** is kept, so a correction upload can zero a day. **Any row whose platform is not Meta or Google refuses the whole file** (spec §2.2) — the in-browser view still loads it. | Spec §2.2; the RPC is all-or-nothing. Codex plan review #7 (a missing column must never overwrite saved spend with zero; a real zero must be able to) and #8. |
+| P20 | **Every disclosure is audited.** The Patient Sources page writes `patient_sources.overlaps_viewed` (`{ from, to, count }`, no names or amounts) whenever the Possible double entry panel carries rows — the DRM-IDs and amounts reach the browser even while the panel is collapsed. The people list writes `patient_sources.viewed`; the CSVs write `report.*.exported`. | CLAUDE.md "every print or export that discloses patient data"; `drmed-rls-and-auth` skill. Codex plan review #2. |
+| P21 | `resolvePeriod` rejects impossible calendar dates (e.g. `2026-02-30`), not just malformed strings, so a crafted URL never reaches SQL. | Codex plan review P3. |
 | P15 | Reception prompt: the patient update uses the RLS server client, is conditional on `referral_source is null`, never blocks the visit, and is audited `patient.referral_source_recorded` (`{ referral_source, via: 'new_visit' }`). It sits inside `createVisitAction`, whose own `assertPatientActive(` call already satisfies `write-guards.test.ts`. | Spec §3.7; RLS policy `patients: staff full` allows reception UPDATE; 0170's trigger stamps origin `staff` when `app.referral_origin` is unset. |
 | P16 | Cost per new patient maps Meta → `online_facebook` and Google → `online_google` only (spec). Instagram/TikTok are not attributed to Meta spend; the card says so. | Spec §2.3. |
 | P17 | `has_role` follows View-as (0182): an admin viewing as reception is refused by every report function. That is the spec's access matrix, not a bug. | Spec §5. |
@@ -40,7 +44,7 @@
 
 - **Encounter** (since 2023-12-01; mirror mode only): (a) a live app visit (`visits.deleted_at is null`) whose date is before `sheet_sync_settings.mirror_window_start` **or** whose `legacy_import_run_id is null`; (b) a `sheet_encounter_lines` row. The patient on either is resolved to its live survivor (P2); a deleted survivor drops the row. A mirror line with `patient_id is null` belongs to `name:<loose_key>`.
 - **Identity**: `patient:<survivor uuid>` (confirmed) or `name:<loose_key>` (unconfirmed).
-- **First date** per identity over the whole history: first encounter → else registration date (not suppressed) → else undated / before_window. Registration date of a confirmed group = min over members of (facts `registered_on` when a facts row exists, else Manila `created_at` date when app-native, else nothing). Suppressed = no encounter and a `name:` identity with one of the patient's loose keys has an encounter.
+- **First date** per identity over the whole history: first encounter → else registration date (not suppressed) → else undated / before_window. Registration date of a confirmed group (P18) = earliest facts `registered_on` in the group, else earliest Manila `created_at` date of the group's app-native members, else nothing. Suppressed = no encounter and a `name:` identity with one of the patient's loose keys has an encounter.
 - **New in [from, to]** = identities with basis `encounter`/`registration`, not Returning, first date in range. **Returning** = confirmed, Returning (P4), first date in range. **Served** = distinct identities with an encounter in range.
 - **Channel**: confirmed → survivor `referral_source` else `not_recorded`; name → the mapped `referral_source_id` of the ONE Customers row with that loose key, else `not_recorded`.
 - **Revenue**: live `test_requests.final_price_php` of stream-(a) visits in range (both deleted filters) + `sheet_encounter_lines.revenue_php` in range, except mirror lines whose (survivor, date) also has a stream-(a) visit — those are listed by `patient_sources_overlaps` instead.
@@ -86,6 +90,7 @@
 | `src/lib/sheet-sync/mirror-readers.test.ts` | allow 0189 + the proof script |
 | `src/types/database.ts` | `npm run db:types` |
 | `package.json` | `"patient-sources:db-proof"` script |
+| `supabase/seed.sql` | re-revoke `ad_spend_daily` after the blanket local grants (seed-grant parity) |
 | `docs/drmed-user-guide.html`, `CLAUDE.md`, `.claude/skills/drmed-staff-ui/SKILL.md`, `.claude/skills/drmed-migrations/SKILL.md`, the PR 2 spec | docs |
 
 ---
@@ -121,7 +126,7 @@ Expected: `supabase_db_DRMed public.ecr.aws/supabase/postgres:17.6.1.167`. If it
 -- 0189_patient_sources.sql — Sheet Sync PR 2: Marketing › Patient Sources
 -- =============================================================================
 -- Spec: docs/superpowers/specs/2026-09-28-patient-sources-pr2-design.md
--- (supersedes §6 of the 2026-09-24 sheet-sync spec). Plan decisions P1–P17 in
+-- (supersedes §6 of the 2026-09-24 sheet-sync spec). Plan decisions P1–P21 in
 -- docs/superpowers/plans/2026-09-28-patient-sources-pr2.md.
 --
 -- Additive only: private helpers (no grants), seven admin-gated report
@@ -325,11 +330,11 @@ as $$
   ),
   member as (
     select s.survivor_id,
-           case when f.patient_id is not null then f.registered_on
-                when p.legacy_import_run_id is null then (p.created_at at time zone 'Asia/Manila')::date
-           end as reg_on,
            f.registered_on as fact_on,
-           f.sheet_new_repeat
+           f.sheet_new_repeat,
+           -- An imported patient's created_at is the import night, never a registration day.
+           case when p.legacy_import_run_id is null
+                then (p.created_at at time zone 'Asia/Manila')::date end as app_on
     from surv s
     join public.patients p on p.id = s.patient_id
     left join public.patient_acquisition_facts f on f.patient_id = s.patient_id
@@ -339,7 +344,9 @@ as $$
   ),
   confirmed_reg as (
     select m.survivor_id,
-           min(m.reg_on) as reg_on,
+           -- P18, decided per GROUP: a sheet date wins; else the earliest app-native
+           -- sign-up; imported-only groups with no sheet date stay undated.
+           coalesce(min(m.fact_on), min(m.app_on)) as reg_on,
            case when bool_or(m.fact_on is not null)
                 then coalesce(bool_or(m.sheet_new_repeat = 'repeat') filter (where m.fact_on = m.min_fact_on), false)
                 else coalesce(bool_or(m.sheet_new_repeat = 'repeat'), false)
@@ -522,7 +529,9 @@ returns table (
   source_total             int,
   sheet_last_dates         jsonb,
   sync_paused              boolean,
-  last_synced_at           timestamptz
+  last_synced_at           timestamptz,
+  sheet_rows_present       boolean,
+  last_run_status          text
 )
 language plpgsql
 stable
@@ -566,7 +575,13 @@ begin
                from public.sheet_customer_rows c having count(*) > 0) t),
     (select s.paused from public.sheet_sync_settings s where s.id),
     (select max(r.ended_at) from public.sheet_sync_runs r
-      where r.status = 'succeeded' and not r.dry_run and r.trigger in ('cron', 'manual', 'cli'));
+      where r.status in ('succeeded', 'partial') and not r.dry_run and r.trigger in ('cron', 'manual', 'cli')),
+    (exists (select 1 from public.sheet_encounter_lines) or exists (select 1 from public.sheet_customer_rows)),
+    (select r.status from public.sheet_sync_runs r
+      where not r.dry_run and r.trigger in ('cron', 'manual', 'cli')
+        and r.status in ('succeeded', 'partial', 'failed')
+      order by r.started_at desc, r.id desc
+      limit 1);
 end;
 $$;
 
@@ -827,14 +842,13 @@ end;
 $$;
 ```
 
-- [ ] **Step 3: Apply and smoke as an admin JWT.** Re-run the whole file (every statement is `create or replace`, so it is re-runnable until the table in Task 4 exists; Task 4 adds `if not exists` where needed).
+- [ ] **Step 3: Apply and confirm the functions exist.** Re-run the whole file (every statement is `create or replace`, so it is re-runnable; Task 4 uses `if not exists` for the table). Do NOT call the report functions as `authenticated` yet: 0119 strips default function grants and the EXECUTE grants arrive in Task 4, so a call here would return `42501` (Codex plan review #4). The admin-JWT smoke is Task 4 Step 4.
 
 ```bash
 $PSQL "$DB" -v ON_ERROR_STOP=1 -f supabase/migrations/0189_patient_sources.sql
-ADMIN=$($PSQL "$DB" -Atc "select id from public.staff_profiles where role='admin' and is_active limit 1")
-$PSQL "$DB" -v ON_ERROR_STOP=1 -c "begin; set local role authenticated; select set_config('request.jwt.claims', json_build_object('sub','$ADMIN','role','authenticated')::text, true); select * from public.patient_sources_summary('2026-06-01','2026-09-28'); select count(*) from public.patient_sources_series('2026-06-01','2026-09-28','week','served'); rollback;"
+$PSQL "$DB" -Atc "select proname from pg_proc where proname like 'patient_sources_%' order by 1"
 ```
-Expected: one summary row, a series count, no error. If there is no local admin, create one the way the proof does (Task 5 `setupFixtures`).
+Expected: `patient_sources_overlaps`, `_people`, `_referrers`, `_revenue`, `_series`, `_summary`.
 
 - [ ] **Step 4: Commit** — `git commit -am "feat(db): 0189 patient sources report functions"`
 
@@ -1096,16 +1110,28 @@ end;
 $$;
 ```
 
-- [ ] **Step 3: Apply, regenerate types, run the SQL-reading repo guards.**
+- [ ] **Step 3: Re-revoke in `supabase/seed.sql`** (Codex plan review #3). A local reset runs `seed.sql`, whose blanket `grant all on all tables … to anon, authenticated` would hand the new table back to both roles, and `seed-grant-parity.test.ts` fails on any migration revoke the seed does not repeat. Append after the 0170 block (≈ line 129–133), in the same style:
+
+```sql
+-- 0189: ad_spend_daily is admin-read (RLS) and written only through the
+-- ad_spend_import / ad_spend_delete RPCs; never reachable by anon.
+revoke all on public.ad_spend_daily from anon;
+revoke all on public.ad_spend_daily from authenticated;
+grant select on public.ad_spend_daily to authenticated;
+```
+
+- [ ] **Step 4: Apply, regenerate types, smoke as an admin JWT, run the SQL-reading repo guards.**
 
 ```bash
 $PSQL "$DB" -v ON_ERROR_STOP=1 -f supabase/migrations/0189_patient_sources.sql
 npm run db:types
+ADMIN=$($PSQL "$DB" -Atc "select id from public.staff_profiles where role='admin' and is_active limit 1")
+$PSQL "$DB" -v ON_ERROR_STOP=1 -c "begin; set local role authenticated; select set_config('request.jwt.claims', json_build_object('sub','$ADMIN','role','authenticated')::text, true); select * from public.patient_sources_summary('2026-06-01','2026-09-28'); select count(*) from public.patient_sources_series('2026-06-01','2026-09-28','week','served'); rollback;"
 npx vitest run src/lib/accounting/pg-error-coverage.test.ts src/lib/supabase src/lib/sheet-sync/mirror-readers.test.ts
 ```
-Expected: pg-error-coverage and the `src/lib/supabase` guards PASS (seed-grant parity, hardened views). `mirror-readers` FAILS with `0189_patient_sources.sql` as an offender — that is fixed in Step 4.
+Expected: one summary row and a series count (if there is no local admin, create one the way the proof does — Task 5 `setupFixtures`); pg-error-coverage and the `src/lib/supabase` guards PASS (seed-grant parity, hardened views). `mirror-readers` FAILS with `0189_patient_sources.sql` as an offender — that is fixed in Step 5.
 
-- [ ] **Step 4: Allow 0189 in the mirror guard.** In `src/lib/sheet-sync/mirror-readers.test.ts`, replace the third test's body filter so the Patient Sources migration is an explicit, named reader:
+- [ ] **Step 5: Allow 0189 in the mirror guard.** In `src/lib/sheet-sync/mirror-readers.test.ts`, replace the third test's body filter so the Patient Sources migration is an explicit, named reader:
 
 ```ts
   it("no migration other than the sheet sync foundation and Patient Sources mentions the mirror tables", () => {
@@ -1126,7 +1152,7 @@ Expected: pg-error-coverage and the `src/lib/supabase` guards PASS (seed-grant p
 ```
 and add `"scripts/patient-sources-db-proof.ts", // Patient Sources local proof (seeds mirror rows)` to `ALLOWED`. Run `npx vitest run src/lib/sheet-sync/mirror-readers.test.ts` → PASS.
 
-- [ ] **Step 5: Commit** — `git add -A supabase/migrations/0189_patient_sources.sql src/types/database.ts src/lib/sheet-sync/mirror-readers.test.ts && git commit -m "feat(db): 0189 ad_spend_daily, ad spend RPCs, ACLs and post-conditions"`
+- [ ] **Step 6: Commit** — `git add -A supabase/migrations/0189_patient_sources.sql supabase/seed.sql src/types/database.ts src/lib/sheet-sync/mirror-readers.test.ts && git commit -m "feat(db): 0189 ad_spend_daily, ad spend RPCs, ACLs and post-conditions"`
 
 ### Task 5: Local DB proof (hand-run)
 
@@ -1134,7 +1160,11 @@ and add `"scripts/patient-sources-db-proof.ts", // Patient Sources local proof (
 - Create: `scripts/patient-sources-db-proof.ts`
 - Modify: `package.json` (`"patient-sources:db-proof": "tsx scripts/patient-sources-db-proof.ts"`)
 
-**Structure — copy from `scripts/sheet-sync-db-proof.ts`**, verbatim: the imports + `requireLocalOrExplicitProd` + `DB_URL` + non-local refusal block (lines 208–230; change the script name to `patient-sources:db-proof`), the `Json`/`DbRole`/`Claims`/`CheckResult` types, and inside `main()` the helpers `q`, `describeError`, `assert`, `setRole`, `expectPgError`, `expectOk`, `check` (lines 250–353), the `begin … rollback` frame and the final PASS/FAIL tally. Also copy the three `auth.users` + `staff_profiles` inserts from `setupFixtures` (lines 380–397) with emails `patient-sources-proof-*@example.test`. Add at top: `import { looseKeyOf } from "../src/lib/sheet-sync/names";` (relative import — the CLI already loads this module).
+**Structure — copy from `scripts/sheet-sync-db-proof.ts`**, verbatim: the imports + `requireLocalOrExplicitProd` + `DB_URL` + non-local refusal block (lines 208–230; change the script name to `patient-sources:db-proof`), the `Json`/`DbRole`/`Claims`/`CheckResult` types, and inside `main()` the helpers `q`, `describeError`, `assert`, `setRole`, `expectPgError`, `expectOk`, `scoped`, `check` (lines 250–353), the `begin … rollback` frame and the final PASS/FAIL tally.
+
+**Isolation rule (Codex plan review #5).** The copied `check()` RELEASES its savepoint on success, so a passing check's inserts and updates persist into every later check. In this proof **every check body runs inside `scoped(async () => { … })`**, which always rolls back, so each check starts from the same state: the shared fixtures built once in `setupFixtures` (staff trio, the proof service, the sheet run, `converted_at = null`) and nothing else. Checks never rely on another check's rows (check 20 seeds its own names). The View-as update (check 1) and `converted_at` (check 18) therefore cannot leak.
+
+Also copy the three `auth.users` + `staff_profiles` inserts from `setupFixtures` (lines 380–397) with emails `patient-sources-proof-*@example.test`. Add at top: `import { looseKeyOf } from "../src/lib/sheet-sync/names";` (relative import — the CLI already loads this module).
 
 **Fixture helpers to add (inside `main()`):**
 
@@ -1142,22 +1172,24 @@ and add `"scripts/patient-sources-db-proof.ts", // Patient Sources local proof (
   const JUNE = { from: "2026-06-01", to: "2026-06-30" };
   const asAdmin = () => setRole("authenticated", { sub: fx.adminId, role: "authenticated" });
 
-  interface Summary {
-    new_confirmed: number; new_unconfirmed: number; returning_first_recorded: number;
-    served_confirmed: number; served_unconfirmed: number; undated_registrations: number;
-    source_recorded: number; source_total: number;
-  }
+  // The COUNT columns only — sheet_last_dates (jsonb), timestamps and booleans are
+  // not deltas (Codex plan review #6); check them separately where a check needs to.
+  const COUNT_FIELDS = [
+    "new_confirmed", "new_unconfirmed", "returning_first_recorded", "served_confirmed",
+    "served_unconfirmed", "undated_registrations", "source_recorded", "source_total",
+  ] as const;
+  type Summary = Record<(typeof COUNT_FIELDS)[number], number>;
   async function summary(from = JUNE.from, to = JUNE.to): Promise<Summary> {
     await asAdmin();
-    const r = await q<Summary>(`select * from public.patient_sources_summary($1, $2)`, [from, to]);
+    const r = await q<Record<string, string>>(
+      `select ${COUNT_FIELDS.join(", ")} from public.patient_sources_summary($1, $2)`, [from, to]);
     await setRole("postgres", null);
-    return r.rows[0];
+    return Object.fromEntries(COUNT_FIELDS.map((k) => [k, Number(r.rows[0][k])])) as Summary;
   }
-  function delta(before: Summary, after: Summary): Record<keyof Summary, number> {
-    const out = {} as Record<keyof Summary, number>;
-    for (const k of Object.keys(before) as (keyof Summary)[]) out[k] = Number(after[k]) - Number(before[k]);
-    return out;
+  function delta(before: Summary, after: Summary): Summary {
+    return Object.fromEntries(COUNT_FIELDS.map((k) => [k, after[k] - before[k]])) as Summary;
   }
+  const allZero = (d: Summary) => COUNT_FIELDS.every((k) => d[k] === 0);
   async function patient(last: string, first: string, opts: { source?: string; createdAt?: string; imported?: boolean } = {}): Promise<string> {
     const runId = opts.imported
       ? (await q<{ id: string }>(`insert into public.legacy_import_runs (source) values ('patient-sources-proof') returning id`)).rows[0].id
@@ -1222,17 +1254,18 @@ and add `"scripts/patient-sources-db-proof.ts", // Patient Sources local proof (
 ```
 Fixture setup adds: `fx.serviceId` from `insert into public.services (code, name, price_php) values ('PS-PROOF', 'Proof test', 500) returning id` (if a later migration added a NOT NULL column without a default, `\d public.services` names it — add that column with any valid value), `fx.runId` from `insert into public.sheet_sync_runs (trigger, status, ended_at) values ('manual','succeeded', now()) returning id`, and `update public.sheet_sync_settings set converted_at = null where id`. If `delete_reason = 'duplicate'` fails a check, use a value from 0167's `delete_reason` check. Use surnames starting `Zzproof` so no local row shares a loose key.
 
-**Checks** (each inside `check(name, async () => { … })`; baseline with `const b = await summary()` BEFORE inserting, then `delta(b, await summary())`):
+**Checks** (each `check(name, () => scoped(async () => { … }))`; baseline with `const b = await summary()` BEFORE inserting, then `delta(b, await summary())`):
 
 1. **ACL matrix — functions.** For each of the 10 public functions with valid args (`'2026-06-01'`, `'2026-06-30'`, `'day'`, `'new'`, `20`, `null` channel, `50`, `0`; `ad_spend_import` with `gen_random_uuid()` and `'[{"spend_date":"2026-06-01","platform":"meta","campaign_key":"c","ad_key":"a","campaign_label":"C","spend_php":1}]'`; `ad_spend_delete('meta','2026-06-01','2026-06-01')`): anon → `42501`; portal patient (`anon` + `{ role: "anon", patient_id: <any patient id> }`) → `42501`; reception → `42501`; inactive admin → `42501`; admin → OK; **admin viewing as reception** (`update public.staff_profiles set view_as_role = 'reception', view_as_until = now() + interval '1 hour' where id = <admin>` as postgres first) → `42501`. For each of the 10 helpers: authenticated admin → `42501` (no EXECUTE).
 2. **ACL matrix — table.** As postgres insert one `ad_spend_daily` row. Admin `select count(*)` > 0; reception = 0; anon → `42501`; admin `insert into public.ad_spend_daily …` → `42501`.
 3. **Name-key parity.** For each of `[["Dela Cruz","Juan Santos"],["O'Brian","Ma. Luisa"],["Peñafrancia","José Mari"],["  de  la  PAZ ","ana-marie"],["Nuñez","Ñiño"],["", ""]]`: `select public._ps_loose_key($1,$2)` (as postgres) equals `looseKeyOf({ last, first, middle: null })`.
 4. **Doctor normaliser.** `_ps_doctor_norm` of `'Dr. Juan Santos'`, `'dra juan santos'`, `'DOC Juan  Santos'`, `'Doctor Juan Santos.'` all = `'juan santos'`; `'N/A'`, `'none'`, `' '`, `'Dr.'` → NULL.
 5. **Merged A→B, same day.** A (`Zzproofa`), B (`Zzproofb`); `update patients set merged_into_id = B where id = A`; B app-native visit 2026-06-10 with ₱300; sheet line on A 2026-06-10 with revenue ₱250. Δ `served_confirmed` = 1, Δ `new_confirmed` = 1 (B counted once). `patient_sources_overlaps(JUNE)` has exactly one row for B on 2026-06-10 with `app_php = 300`, `sheet_php = 250`. Revenue for B's channel increased by exactly 300 (the ₱250 is excluded).
-6. **Deleted survivor drops out.** C with app-native visit 2026-06-11 ₱100 and a sheet line (patient C) 2026-06-12; `softDelete(C)`. Δ of every summary field = 0 versus the baseline taken before C was created; revenue unchanged; `patient_sources_people(JUNE,'served',…)` has no row for C and no `name:` row for C's loose key.
+6. **Deleted survivor drops out.** C with app-native visit 2026-06-11 ₱100 and a sheet line (patient C) 2026-06-12; C2 app-native, created `2026-06-15T02:00:00Z`, **no visit** (a registration-only patient inside June — without it, removing the identity core's deletion filter changes no June count, because the encounter stream filters deleted survivors on its own: Codex plan review #6). `softDelete(C)`, `softDelete(C2)`. `allZero(delta(baseline, after))` versus the baseline taken before C and C2 were created; revenue unchanged; `patient_sources_people(JUNE,'served',…)` and `(JUNE,'new',…)` have no row for C or C2 and no `name:` row for their loose keys.
 7. **Repeat → Returning.** R with facts `('2026-06-05','repeat')` and a visit 2026-06-13: Δ `returning_first_recorded` = 1, Δ `new_confirmed` = 0.
 8. **Merged-group facts rule.** S (facts `2026-06-10`,`new`), M (facts `2026-06-05`,`repeat`), M merged into S, no visits → Δ `returning_first_recorded` = 1. Then change M's date to `2026-06-10` (tie) → still Returning. Then set M `2026-06-20` → Δ `new_confirmed` = 1 on 2026-06-10.
-9. **Undated imported registration.** U imported (`imported: true`), no facts, no visits → Δ `undated_registrations` = 1 and Δ of every June field = 0; also `patient_sources_series('2026-01-01','2026-12-31','day','new')` has no row whose total changed on U's `created_at` date. Control: give U a visit on 2023-10-01 → Δ `undated_registrations` = 0 (before_window).
+8b. **Group registration date (P18).** (i) App-native A1 created `2026-06-01T02:00:00Z`, no facts, merged into imported I1 whose facts say `2026-06-10`/`new`, no visits → the day series shows +1 on **2026-06-10**, nothing on 06-01 (a sheet date wins). (ii) App-native A2 created `2026-06-04T02:00:00Z` with a facts row whose `registered_on` is NULL, no visits → +1 on **2026-06-04** (app sign-up kept). (iii) Imported I2 with a facts row whose `registered_on` is NULL, merged with imported I3 (no facts), no visits → Δ `undated_registrations` = 1 and no June day changes.
+9. **Undated imported registration.** U imported (`imported: true`), no facts, no visits → Δ `undated_registrations` = 1 and every other June count unchanged; also `patient_sources_series('2026-01-01','2026-12-31','day','new')` has no row whose total changed on U's `created_at` date. Control: give U a visit on 2023-10-01 → Δ `undated_registrations` = 0 (before_window).
 10. **App-native registration, Manila date.** N created `2026-06-15T20:00:00Z` (= 16 June in Manila), no visit → `patient_sources_series('2026-06-15','2026-06-16','day','new')` shows +1 on `2026-06-16`, nothing on `2026-06-15`.
 11. **Restatement.** N2 created `2026-06-10T02:00:00Z`, no visit → +1 on 2026-06-10. Add a visit 2026-06-20 → the +1 moves to 2026-06-20 (series day), 2026-06-10 back to baseline.
 12. **Suppression.** S2 (`Zzproofs`, `Maria`) app-native created 2026-06-11, no visit; unlinked sheet line `looseKey = 'zzproofs|maria'` on 2026-06-12 → Δ `new_confirmed` = 0, Δ `new_unconfirmed` = 1.
@@ -1243,19 +1276,22 @@ Fixture setup adds: `fx.serviceId` from `insert into public.services (code, name
 17. **Referrers.** Three new confirmed patients in June with `referred_by_doctor` `'Dr. Juan Santos'`, `'Dr. Juan Santos'`, `'dra juan santos'` and visits → one referrer row labelled `Dr. Juan Santos` with `new_confirmed` = 3.
 18. **Converted mode.** `update sheet_sync_settings set converted_at = now() where id` → each of the six `patient_sources_*` functions as admin raises `0A000`.
 19. **Bad args.** Admin: `series(JUNE,'year','new')`, `series(JUNE,'day','all')`, `summary('2026-06-30','2026-06-01')`, `summary('2025-01-01','2026-06-30')` (> 400 days), `people(JUNE,'everyone',null,50,0)` → all `22023`.
-20. **People list.** With the check-15 1,200 names present: `people(JUNE,'new',null,50,0)` returns 50 rows, `total_count` ≥ 1200, and pages 0/50/100 concatenated have no duplicate `identity` and are sorted by `(first_date, identity)`. Name rows show the typed name; confirmed rows `Last, First`.
-21. **Ad spend import/replace/delete.** Import rows `(06-01, meta, c1, a1, ₱100)`, `(06-01, meta, c1, a1, ₱50)` (duplicate → summed), `(06-01, meta, c1, a2, ₱10)` → `{inserted: 2, replaced: 0, days: 1}` and a1 = ₱150. Re-import only `(06-01, meta, c1, a2, ₱20)` → `{inserted: 0, replaced: 1}`, a1 still ₱150 (partial upload never overwrites a campaign total). Import containing a row with `spend_php: -1` → `23514` and the table is unchanged (all-or-nothing). `audit_log` has an `ad_spend.imported` row whose metadata keys are exactly `inserted, replaced, days`. `ad_spend_delete('meta','2026-06-01','2026-06-01')` returns 2 and writes `ad_spend.deleted`. `ad_spend_delete('tiktok',…)` → `22023`.
+20. **People list.** Seed 120 unlinked sheet lines on 2026-06-03 (keys `'zzproofp|' || g`) inside this check, then: `people(JUNE,'new',null,50,0)` returns 50 rows, `total_count` ≥ 120, and pages 0/50/100 concatenated have no duplicate `identity` and are sorted by `(first_date, identity)`. Name rows show the typed name; confirmed rows `Last, First`. `people(JUNE,'new',null,50,5000)` (past the end) returns 0 rows — the loader (Task 9) must still report the true total.
+21. **Ad spend import/replace/delete.** Import rows `(06-01, meta, c1, a1, ₱100)`, `(06-01, meta, c1, a1, ₱50)` (duplicate → summed), `(06-01, meta, c1, a2, ₱10)` → `{inserted: 2, replaced: 0, days: 1}` and a1 = ₱150. Re-import only `(06-01, meta, c1, a2, ₱20)` → `{inserted: 0, replaced: 1}`, a1 still ₱150 (partial upload never overwrites a campaign total). Import containing a row with `spend_php: -1` → `23514` and the table is unchanged (all-or-nothing). `audit_log` has an `ad_spend.imported` row whose metadata keys are exactly `inserted, replaced, days`. `ad_spend_delete('meta','2026-06-01','2026-06-01')` returns 2 and writes `ad_spend.deleted`. `ad_spend_delete('tiktok',…)` → `22023`. **Zero correction** (Codex plan review #7): with a1 at ₱150, import `(06-01, meta, c1, a1, ₱0, impressions 0, clicks 0)` → `{replaced: 1}` and a1 = ₱0.00.
+22. **Whole history, not the period** (Codex plan review, uncertainty 3). W with an app-native visit 2026-05-20 and another 2026-06-18 → for JUNE: Δ `served_confirmed` = 1, Δ `new_confirmed` = 0; for May: Δ `new_confirmed` = 1.
+23. **Customers-only name identities (P6).** (i) One unlinked Customers row `zzproofk|dated`, `registered_on = 2026-06-08`, no line → Δ `new_unconfirmed` = 1 on 06-08. (ii) One unlinked row `zzproofk|undated`, no date, no line → Δ `undated_registrations` = 1. (iii) Two unlinked rows sharing `zzproofk|two` (dates 06-09 and 06-12, sources google and walk_in) → one identity, +1 on **06-09**, channel `not_recorded`.
 
 - [ ] **Step 1: Write the script** (checks above; ~600 lines). Add the npm script.
 - [ ] **Step 2: Run** `npm run patient-sources:db-proof` → every line PASS, exit 0. A FAIL means fix the **migration** (re-apply with `psql -f`), not the check — unless the check contradicts the spec, in which case stop and say so.
 - [ ] **Step 3: Controls — prove the checks bite** (memory `vacuous-assertions-trap`). One at a time: edit the migration, `psql -f` it, run the proof, confirm the named check FAILS, revert, re-apply, confirm all PASS.
   - A. In `_patient_sources_encounters`, replace `'patient:' || s.survivor_id::text` (sheet branch) with `'patient:' || l.patient_id::text` → check 5 FAILS.
-  - B. In the `surv` CTE of `_patient_sources_identities`, drop `where sp.deleted_at is null` → check 6 FAILS.
+  - B. In the `surv` CTE of `_patient_sources_identities`, drop `where sp.deleted_at is null` → check 6 FAILS (via C2, the registration-only deleted patient).
+  - G. In `confirmed_reg`, swap `coalesce(min(m.fact_on), min(m.app_on))` for `least(min(m.fact_on), min(m.app_on))` → check 8b(i) FAILS.
   - C. In `confirmed_reg`, change `bool_or(m.sheet_new_repeat = 'repeat') filter (…)` to `bool_and(…)` → check 8 (tie) FAILS.
   - D. Delete the `has_role` check from `patient_sources_summary` → check 1 FAILS.
   - E. Drop `or v.legacy_import_run_id is null` … replace the stream-(a) predicate with `true` → check 14 FAILS.
   - F. In `member`, replace the Manila cast with `p.created_at::date` → check 10 FAILS.
-  Record the six outcomes in the PR body.
+  Record the seven outcomes in the PR body.
 - [ ] **Step 4:** `npx vitest run scripts/lib/guard-coverage.test.ts src/lib/sheet-sync/mirror-readers.test.ts` → PASS.
 - [ ] **Step 5: Commit** — `git add scripts/patient-sources-db-proof.ts package.json && git commit -m "test(db): hand-run local proof for Patient Sources counting rules, ACLs and ad spend"`
 
@@ -1328,6 +1364,9 @@ describe("resolvePeriod", () => {
       from: "2026-07-03", to: "2026-08-14", presetKey: null, error: null,
     });
   });
+  it("accepts a real leap day", () => {
+    expect(resolvePeriod({ from: "2028-02-29", to: "2028-03-01" }, "2028-03-02").error).toBeNull();
+  });
   it("recognises a preset range", () => {
     expect(resolvePeriod({ from: "2026-09-27", to: "2026-09-27" }, today).presetKey).toBe("yesterday");
   });
@@ -1337,6 +1376,8 @@ describe("resolvePeriod", () => {
       { from: "2026-9-1", to: "2026-09-10" },
       { from: "2025-01-01", to: "2026-09-10" },
       { from: "2026-09-01" },
+      { from: "2026-02-30", to: "2026-03-05" },
+      { from: "2027-02-29", to: "2027-03-01" },
     ]) {
       const r = resolvePeriod(bad, today);
       expect(r.from).toBe("2026-09-01");
@@ -1392,7 +1433,7 @@ Create `src/lib/marketing/period.ts`:
  * read back in the runtime's zone (the M2 lesson in period-presets.ts).
  */
 import { buildPeriodPresets, type PeriodPreset } from "@/lib/reports/period-presets";
-import { daysBetweenISO, isISODate, shiftISODate } from "@/lib/dates/manila";
+import { daysBetweenISO, daysInMonth, isISODate, isoDateParts, shiftISODate } from "@/lib/dates/manila";
 
 /** The report functions refuse longer periods (0189 _ps_check_period). */
 export const MAX_PERIOD_DAYS = 400;
@@ -1430,14 +1471,21 @@ export function resolvePeriod(sp: { from?: string; to?: string }, todayISO: stri
     return { from: thisMonth.start, to: thisMonth.end, presetKey: "this-month", error: null };
   }
   const valid =
-    isISODate(sp.from) &&
-    isISODate(sp.to) &&
+    isCalendarDate(sp.from) &&
+    isCalendarDate(sp.to) &&
     sp.from <= sp.to &&
     daysBetweenISO(sp.from, sp.to) <= MAX_PERIOD_DAYS;
   if (!valid) {
     return { from: thisMonth.start, to: thisMonth.end, presetKey: "this-month", error: PERIOD_ERROR };
   }
   return { from: sp.from!, to: sp.to!, presetKey: match(sp.from!, sp.to!), error: null };
+}
+
+/** A YYYY-MM-DD that is also a real day — isISODate checks the shape only (P21). */
+function isCalendarDate(v: string | undefined): v is string {
+  if (!isISODate(v)) return false;
+  const { year, month, day } = isoDateParts(v);
+  return month >= 1 && month <= 12 && day >= 1 && day <= daysInMonth(year, month);
 }
 
 /** `pathname?…` keeping `current` params, overridden by `patch`; null deletes. */
@@ -1477,7 +1525,7 @@ export function firstParam(v: string | string[] | undefined): string | undefined
 import { describe, expect, it } from "vitest";
 import {
   NOT_RECORDED, bucketLabel, channelLabel, channelTable, chartData, classifyReportError,
-  costPerNewPatient, formatNewToday, parseGrain, parseMode, previousPeriod, seriesCsvRows,
+  costPerNewPatient, formatNewToday, parseGrain, parseMode, previousPeriod, seriesCsvRows, sheetBanner,
   type SeriesRow, type SummaryRow,
 } from "./patient-sources";
 
@@ -1578,6 +1626,15 @@ describe("formatNewToday", () => {
   });
 });
 
+describe("sheetBanner", () => {
+  it("covers never-loaded, partial, paused-with-data and current", () => {
+    expect(sheetBanner({ sheet_rows_present: false, sync_paused: true, last_run_status: null })).toMatch(/app records only/);
+    expect(sheetBanner({ sheet_rows_present: true, sync_paused: false, last_run_status: "partial" })).toMatch(/did not finish every tab/);
+    expect(sheetBanner({ sheet_rows_present: true, sync_paused: true, last_run_status: "succeeded" })).toMatch(/paused — sheet data is included/);
+    expect(sheetBanner({ sheet_rows_present: true, sync_paused: false, last_run_status: "succeeded" })).toBeNull();
+  });
+});
+
 describe("classifyReportError", () => {
   it("maps the report SQLSTATEs", () => {
     expect(classifyReportError({ code: "0A000", message: "x" }).kind).toBe("converted");
@@ -1594,6 +1651,7 @@ describe("seriesCsvRows", () => {
       new_confirmed: 3, new_unconfirmed: 1, returning_first_recorded: 2, served_confirmed: 9,
       served_unconfirmed: 4, undated_registrations: 7, source_recorded: 3, source_total: 4,
       sheet_last_dates: {}, sync_paused: true, last_synced_at: null,
+      sheet_rows_present: false, last_run_status: null,
     } satisfies SummaryRow;
     const rows = seriesCsvRows({ from: "2026-09-01", to: "2026-09-30", mode: "new", grain: "day" }, summary,
       [row("2026-09-01", "walk_in", 3, 1)]);
@@ -1637,6 +1695,8 @@ export interface SummaryRow {
   sheet_last_dates: Record<string, string | null>;
   sync_paused: boolean | null;
   last_synced_at: string | null;
+  sheet_rows_present: boolean;
+  last_run_status: "succeeded" | "partial" | "failed" | null;
 }
 export interface SeriesRow { bucket_start: string; channel: string; confirmed: number; unconfirmed: number }
 export interface RevenueRow { channel: string; confirmed_php: number; unconfirmed_php: number }
@@ -1821,6 +1881,22 @@ export function costPerNewPatient(spend: readonly SpendTotalRow[], newByDay: rea
   });
 }
 
+/** P19: what the page says about sheet data — null when it is included and current. */
+export function sheetBanner(
+  s: Pick<SummaryRow, "sheet_rows_present" | "sync_paused" | "last_run_status">,
+): string | null {
+  if (!s.sheet_rows_present) {
+    return "Sheet data is not included yet — the sheet sync has not loaded anything. Showing app records only.";
+  }
+  if (s.last_run_status === "partial" || s.last_run_status === "failed") {
+    return "The last sheet sync did not finish every tab — some sheet data may be out of date. Check “Sheet last updated” below and Admin Tools › Sheet Sync.";
+  }
+  if (s.sync_paused) {
+    return "The sheet sync is paused — sheet data is included up to the dates below and is not being refreshed.";
+  }
+  return null;
+}
+
 /** Admin dashboard tile: "5 Walk-in · 3 Facebook · … · N more (M unconfirmed)". */
 export function formatNewToday(rows: readonly SeriesRow[]): { total: number; unconfirmed: number; hint: string } {
   const totals = [...totalsByChannel(rows).entries()]
@@ -1943,13 +2019,40 @@ describe("parseAdSpendCsv", () => {
     const r = parseAdSpendCsv(
       [
         { Date: "2026-09-01", Platform: "Facebook", Campaign: "C", "Ad name": "A", Spend: "10" },
-        { Date: "2026-09-01", Platform: "TikTok", Campaign: "C", "Ad name": "A", Spend: "10" },
+        { Date: "2026-09-01", Platform: "Google Ads", Campaign: "D", "Ad name": "", Spend: "5" },
       ],
       ["Date", "Platform", "Campaign", "Ad name", "Spend"],
     );
-    expect(r).toMatchObject({ ok: true, currencyAssumed: true, rejected: [{ reason: "unknown_platform", count: 1 }] });
+    expect(r).toMatchObject({ ok: true, currencyAssumed: true, rejected: [] });
     if (!r.ok) throw new Error();
-    expect(r.rows[0]).toMatchObject({ platform: "meta", ad_key: "a" });
+    expect(r.rows.map((x) => [x.platform, x.ad_key])).toEqual([["meta", "a"], ["google", "(campaign)"]]);
+  });
+  it("refuses the whole file when any row is not Meta or Google (spec §2.2)", () => {
+    expect(parseAdSpendCsv(
+      [
+        { Date: "2026-09-01", Platform: "Facebook", Campaign: "C", Spend: "10" },
+        { Date: "2026-09-01", Platform: "TikTok", Campaign: "C", Spend: "10" },
+      ],
+      ["Date", "Platform", "Campaign", "Spend"],
+    )).toEqual({ ok: false, error: expect.stringMatching(/TikTok/) });
+  });
+  it("refuses a file with no spend column instead of saving zeros", () => {
+    expect(parseAdSpendCsv(
+      [{ "Day": "2026-09-01", "Campaign name": "C", "Reporting starts": "2026-09-01", "Impressions": "900" }],
+      ["Day", "Campaign name", "Reporting starts", "Impressions"],
+    )).toEqual({ ok: false, error: expect.stringMatching(/spend column/) });
+  });
+  it("keeps an explicit zero (a correction) but rejects a blank spend cell", () => {
+    const r = parseAdSpendCsv(
+      [
+        { Day: "2026-09-01", Campaign: "C", Cost: "0", "Impr.": "0", Clicks: "0" },
+        { Day: "2026-09-02", Campaign: "C", Cost: "", "Impr.": "40", Clicks: "4" },
+      ],
+      ["Day", "Campaign", "Cost", "Impr.", "Clicks"],
+    );
+    expect(r).toMatchObject({ ok: true, rejected: [{ reason: "bad_spend", count: 1 }] });
+    if (!r.ok) throw new Error();
+    expect(r.rows).toEqual([expect.objectContaining({ spend_date: "2026-09-01", spend_php: 0 })]);
   });
   it("refuses a file that is neither Meta nor Google", () => {
     expect(parseAdSpendCsv([{ a: "1" }], ["a"])).toEqual({ ok: false, error: expect.stringMatching(/Meta or Google/) });
@@ -1998,14 +2101,13 @@ import { daysInMonth } from "@/lib/dates/manila";
 import { normaliseCampaignName } from "@/lib/marketing/campaign-results";
 
 export type AdPlatform = "meta" | "google";
-export type AdSpendRejectReason = "date_range" | "bad_date" | "no_campaign" | "bad_spend" | "unknown_platform";
+export type AdSpendRejectReason = "date_range" | "bad_date" | "no_campaign" | "bad_spend";
 
 export const REJECT_REASON_LABEL: Record<AdSpendRejectReason, string> = {
   date_range: "covers more than one day — export with a 1-day breakdown",
   bad_date: "date not readable",
   no_campaign: "no campaign name",
-  bad_spend: "spend not a number of zero or more",
-  unknown_platform: "platform is not Meta or Google",
+  bad_spend: "spend missing or not a number of zero or more",
 };
 
 export interface AdSpendRow {
@@ -2091,9 +2193,10 @@ export function locateHeader(text: string): string {
 
 const h = (s: string) => s.toLowerCase().replace(/\s+/g, " ").trim();
 
+/** Blank → null (missing, rejected); "0" → 0 (a real zero, kept — P14). */
 function money(v: string | undefined): number | null {
   const s = String(v ?? "").replace(/[₱,\s]|php/gi, "");
-  if (s === "") return 0;
+  if (s === "") return null;
   if (!/^-?\d+(\.\d+)?$/.test(s)) return null;
   return Number(s);
 }
@@ -2135,6 +2238,9 @@ export function parseAdSpendCsv(records: readonly Record<string, string>[], head
   const spendCol = metaSpendCol ?? col("cost", "spend", "amount");
   const imprCol = col("impressions", "impr.", "impr");
   const clickCol = col("link clicks", "clicks");
+  if (!spendCol) {
+    return { ok: false, error: "This file has no spend column (Amount spent, Cost or Spend) — nothing was saved." };
+  }
 
   const rejected = new Map<AdSpendRejectReason, number>();
   const reject = (r: AdSpendRejectReason) => rejected.set(r, (rejected.get(r) ?? 0) + 1);
@@ -2149,7 +2255,13 @@ export function parseAdSpendCsv(records: readonly Record<string, string>[], head
       const v = String(r[platformCol] ?? "");
       if (/face|meta|insta|\big\b/i.test(v)) platform = "meta";
       else if (/google|search|goog|adwords/i.test(v)) platform = "google";
-      else { reject("unknown_platform"); continue; }
+      else {
+        // Spec §2.2: an unrecognised platform refuses the whole file.
+        return {
+          ok: false,
+          error: `A row's platform is "${v.trim() || "blank"}" — only Meta and Google spend can be saved. Remove the other rows and upload again.`,
+        };
+      }
     } else {
       platform = isMeta ? "meta" : "google";
     }
@@ -2168,11 +2280,10 @@ export function parseAdSpendCsv(records: readonly Record<string, string>[], head
     }
 
     if (!campaign) { reject("no_campaign"); continue; }
-    const spend = money(spendCol ? r[spendCol] : undefined);
+    const spend = money(r[spendCol]);
     if (spend === null || spend < 0) { reject("bad_spend"); continue; }
     const impressions = imprCol ? count(r[imprCol]) : null;
     const clicks = clickCol ? count(r[clickCol]) : null;
-    if (spend === 0 && !impressions && !clicks) continue; // an empty row, not an error
 
     const adId = adIdCol ? String(r[adIdCol] ?? "").trim() : "";
     const adName = adNameCol ? normaliseCampaignName(String(r[adNameCol] ?? "")) : "";
@@ -2316,7 +2427,13 @@ export async function loadPeoplePage(
   });
   if (error) return fail("people", error);
   const rows = (data ?? []) as unknown as PeopleRow[];
-  return { ok: true, data: { rows, total: rows.length > 0 ? Number(rows[0].total_count) : 0 } };
+  if (rows.length > 0) return { ok: true, data: { rows, total: Number(rows[0].total_count) } };
+  if (offset === 0) return { ok: true, data: { rows, total: 0 } };
+  // Past the end (a bookmarked page after a merge/delete/restatement): the
+  // window count only travels with rows, so ask for the first row to learn the
+  // real total instead of reporting "0 of 0" (Codex plan review #11).
+  const first = await loadPeoplePage(supabase, q, 1, 0);
+  return first.ok ? { ok: true, data: { rows: [], total: first.data.total } } : first;
 }
 
 /** Every person for the CSV, 1,000 at a time via the function's own limit/offset (its order is total). */
@@ -2751,7 +2868,11 @@ export function CostSection({ costs, coverage, from, to }: {
   );
 }
 
-export function RevenueSection({ revenue, overlaps }: { revenue: RevenueRow[] | null; overlaps: OverlapRow[] | null }) {
+export function RevenueSection({ revenue, overlaps }: {
+  revenue: RevenueRow[] | null;
+  /** null = the double-entry check failed to load (never shown as "none"). */
+  overlaps: { rows: OverlapRow[]; truncated: boolean } | null;
+}) {
   return (
     <section className="mt-6">
       <h2 className={h2}>Channel revenue — billed (clinic share)</h2>
@@ -2783,9 +2904,22 @@ export function RevenueSection({ revenue, overlaps }: { revenue: RevenueRow[] | 
         What was billed on the service date — app lab lines at their final price, consultations at the clinic fee — not
         what was collected.
       </p>
-      {overlaps && overlaps.length > 0 ? (
+      {overlaps === null ? (
+        <p className="mt-3 text-sm text-amber-700" role="alert">
+          Couldn&apos;t load the double-entry check. The revenue above still leaves out sheet lines that match an app
+          visit on the same day, but the list of them is unknown — reload the page.
+        </p>
+      ) : null}
+      {overlaps && overlaps.rows.length > 0 ? (
         <details className="mt-3">
-          <summary className="cursor-pointer text-sm font-bold">Possible double entry ({overlaps.length})</summary>
+          <summary className="cursor-pointer text-sm font-bold">
+            Possible double entry ({overlaps.rows.length.toLocaleString("en-PH")}{overlaps.truncated ? "+" : ""})
+          </summary>
+          {overlaps.truncated ? (
+            <p className="mt-1 text-sm text-amber-700">
+              Only the first {overlaps.rows.length.toLocaleString("en-PH")} are listed — pick a shorter period to see them all.
+            </p>
+          ) : null}
           <p className={note}>
             The same patient on the same day has an app visit and sheet lines. The sheet amount is left out of the revenue
             above; check which record is right.
@@ -2801,7 +2935,7 @@ export function RevenueSection({ revenue, overlaps }: { revenue: RevenueRow[] | 
                 </tr>
               </thead>
               <tbody>
-                {overlaps.map((o) => (
+                {overlaps.rows.map((o) => (
                   <tr key={`${o.patient_id}|${o.service_date}`} className="border-t">
                     <td className={th}><Link className="underline" href={`/staff/patients/${o.patient_id}`}>{o.drm_id}</Link></td>
                     <td className={th}>{manilaDate(o.service_date)}</td>
@@ -2863,11 +2997,13 @@ import { ROUTE_NAME, SECTION_NAME } from "@/lib/staff/route-names";
 import { requireAdminStaff } from "@/lib/auth/require-admin";
 import { PageHeader } from "@/components/staff/page-header";
 import { createClient } from "@/lib/supabase/server";
+import { audit } from "@/lib/audit/log";
+import { ipAndAgent } from "@/lib/server/action-helpers";
 import { manilaDate, manilaDateTime, todayManilaISODate } from "@/lib/dates/manila";
 import { firstParam, periodHref, resolvePeriod } from "@/lib/marketing/period";
 import {
   GRAIN_LABEL, MODE_LABEL, channelTable, chartData, costPerNewPatient, parseGrain, parseMode, previousPeriod,
-  type Grain, type Mode,
+  sheetBanner, type Grain, type Mode,
 } from "@/lib/marketing/patient-sources";
 import {
   loadAdSpendCoverage, loadAdSpendTotals, loadPatientSourcesOverlaps, loadPatientSourcesReferrers,
@@ -2889,7 +3025,7 @@ export default async function PatientSourcesPage({
 }: {
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
-  await requireAdminStaff();
+  const staff = await requireAdminStaff();
   const sp = await searchParams;
   const todayISO = todayManilaISODate();
   const period = resolvePeriod({ from: firstParam(sp.from), to: firstParam(sp.to) }, todayISO);
@@ -2930,7 +3066,22 @@ export default async function PatientSourcesPage({
       </div>
     );
   }
+  if (overlaps.ok && overlaps.data.rows.length > 0) {
+    // P20 / RA 10173: the double-entry panel sends DRM-IDs, dates and amounts to
+    // the browser even while collapsed. Audit the disclosure — counts only.
+    const { ip, ua } = await ipAndAgent();
+    await audit({
+      actor_id: staff.user_id,
+      actor_type: "staff",
+      action: "patient_sources.overlaps_viewed",
+      resource_type: "report",
+      metadata: { from: period.from, to: period.to, count: overlaps.data.rows.length, truncated: overlaps.data.truncated },
+      ip_address: ip,
+      user_agent: ua,
+    });
+  }
   const s = summary.data;
+  const banner = sheetBanner(s);
   const lastDates = Object.entries(s.sheet_last_dates ?? {}).filter(([, d]) => d);
   const toggle = (patch: Record<string, string>, label: string, on: boolean) => (
     <Link
@@ -2964,10 +3115,8 @@ export default async function PatientSourcesPage({
           href={periodHref("/api/admin/reports/patient-sources.csv", params, {})}>Download CSV</a>
       </div>
 
-      {s.sync_paused !== false || s.last_synced_at === null ? (
-        <p className="mb-4 rounded border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
-          Sheet data is not included yet — the sheet sync is paused. Showing app records only.
-        </p>
+      {banner ? (
+        <p className="mb-4 rounded border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">{banner}</p>
       ) : null}
 
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
@@ -3015,7 +3164,7 @@ export default async function PatientSourcesPage({
           peopleHref={(channel) => peopleHref(mode === "served" ? "served" : "new", channel)} />
       )}
       <CostSection costs={costs} coverage={coverage.ok ? coverage.data : null} from={period.from} to={period.to} />
-      <RevenueSection revenue={revenue.ok ? revenue.data : null} overlaps={overlaps.ok ? overlaps.data.rows : null} />
+      <RevenueSection revenue={revenue.ok ? revenue.data : null} overlaps={overlaps.ok ? overlaps.data : null} />
       <ReferrersSection rows={referrers.ok ? referrers.data : null} />
 
       <section className="mt-8 text-sm text-[color:var(--color-brand-text-soft)]">
@@ -3127,7 +3276,11 @@ export default async function PatientSourcesPeoplePage({
               </thead>
               <tbody>
                 {res.data.rows.length === 0 ? (
-                  <tr><td colSpan={4} className="px-4 py-6 text-center text-[color:var(--color-brand-text-soft)]">Nobody here for this period.</td></tr>
+                  <tr><td colSpan={4} className="px-4 py-6 text-center text-[color:var(--color-brand-text-soft)]">
+                    {res.data.total > 0 ? (
+                      <>This page is past the end of the list. <Link className="underline" href={periodHref(PATHNAME, params, { page: "1" })}>Go to page 1</Link></>
+                    ) : "Nobody here for this period."}
+                  </td></tr>
                 ) : (
                   res.data.rows.map((r) => (
                     <tr key={r.identity} className="border-t">
@@ -3145,7 +3298,7 @@ export default async function PatientSourcesPeoplePage({
           </Panel>
           <div className="mt-3 flex items-center justify-between text-sm">
             <span>
-              {res.data.total === 0 ? "0" : `${(page - 1) * PAGE + 1}–${(page - 1) * PAGE + res.data.rows.length}`} of {res.data.total.toLocaleString("en-PH")}
+              {res.data.rows.length === 0 ? "0" : `${(page - 1) * PAGE + 1}–${(page - 1) * PAGE + res.data.rows.length}`} of {res.data.total.toLocaleString("en-PH")}
             </span>
             <span className="flex gap-3">
               {page > 1 ? <Link className="underline" href={periodHref(PATHNAME, params, { page: String(page - 1) })}>← Previous</Link> : null}
@@ -3528,7 +3681,7 @@ describe("Patient Sources has one definition and one caller", () => {
 - [ ] **CLAUDE.md:** guide version line → the same version as the guide; migration ledger: add 0189 (`patient_sources`) in the same style once applied (Task 21 fills the date); "Where things live" row: `Patient Sources (Marketing): SQL counting in 0189 (admin-gated report functions over an identity core); the one RPC caller src/lib/marketing/patient-sources.server.ts; pure helpers patient-sources.ts, period.ts, ad-spend-import.ts; pages marketing/patients(/people); CSVs /api/admin/reports/patient-sources*.csv`.
 - [ ] **drmed-staff-ui skill:** `grep -n "period-chips\|Booking Sources\|marketing" .claude/skills/drmed-staff-ui/SKILL.md` — point any `period-chips` citation at `marketing/_components/period-controls.tsx`; add the Patient Sources tab and the `admin.new_patients_today` card.
 - [ ] **drmed-migrations skill:** add a 0189 line (additive; report functions `security definer` + `has_role(array['admin'])` gate + `#variable_conflict use_column`; helpers revoked from every role; `ad_spend_daily` writes only via RPC).
-- [ ] **Spec:** append "§8 Planning refinements (2026-09-28)" with P1–P17, one line each.
+- [ ] **Spec:** append "§8 Planning refinements (2026-09-28)" with P1–P21, one line each.
 - [ ] Commit — `git commit -am "docs(patient-sources): user guide, CLAUDE.md, skills, spec refinements"`
 
 ### Task 19: End-to-end verification on the local stack
@@ -3536,8 +3689,9 @@ describe("Patient Sources has one definition and one caller", () => {
 - [ ] **Step 1: Full replay.** Check the stack is not in use by another session (Task 1 Step 2). `supabase db reset` from this worktree → all migrations apply, including 0189's post-conditions. Then `npm run patient-sources:db-proof` → all PASS; `npm run sheet-sync:db-proof` → all PASS (0189 must not disturb PR 1).
 - [ ] **Step 2: Gate.** `npm test && npm run typecheck && npm run lint && npm run build` (capture to the scratchpad, read only failures). `build` needs Supabase env (memory: main's `/all-services` prerender) — use the local stack's env, never the main checkout's `.env.local` (it points at PROD).
 - [ ] **Step 3: Seed a realistic local picture.** With the sync still paused, unpause locally and run the real sheet into the local DB (`npm run sheet:sync -- --commit --confirm=local` after the PR 1 env setup in memory `drmed-sheet-sync`), so the mirror holds ~21k lab / ~9k consult lines. Time `select count(*) from public._patient_sources_identities()` as postgres with `\timing` — **must be < 2 s**; the page makes ten report calls in parallel. If slower, profile (`explain (analyze, buffers)`) and fix before continuing (likely an index on `patients (merged_into_id)` already exists from 0025; check `sheet_customer_rows (patient_id)` / `(loose_key)` usage).
-- [ ] **Step 4: Browser pass** (Playwright MCP, text-first; sign in as admin on port 4000 per CLAUDE.md, or the cookie-injection recipe): Patient Sources renders with the banner state right; every preset and Custom keep `mode`/`grain`; Day/Week/Month and New/Served toggle; a channel link opens the people list and pages; both CSVs download (check the audit rows with psql: `report.patient_sources.exported`, `report.patient_sources_people.exported`, `patient_sources.viewed`); Booking Sources card equals Patient Sources' New card for the same period; the dashboard tile's total equals Patient Sources for Today; upload a small Meta daily CSV on Ad Performance → "Saved to clinic records: …" and the cost card fills; upload a range export → rejected count shown; remove saved spend (two-step confirm); on a new visit for a patient with no source, pick a channel → the patient's `referral_source_origin` is `staff` and a `patient.referral_source_recorded` audit row exists; a patient WITH a source shows no prompt; as an admin in View-as reception, Patient Sources is not reachable. `browser_console_messages` clean. At most one screenshot (the Patient Sources page).
-- [ ] **Step 5:** Fix anything found — each fix its own commit.
+- [ ] **Step 4: Browser pass** (Playwright MCP, text-first; sign in as admin on port 4000 per CLAUDE.md, or the cookie-injection recipe): Patient Sources renders with the banner state right; every preset and Custom keep `mode`/`grain`; Day/Week/Month and New/Served toggle; a channel link opens the people list and pages; both CSVs download (check the audit rows with psql: `report.patient_sources.exported`, `report.patient_sources_people.exported`, `patient_sources.viewed`, and `patient_sources.overlaps_viewed` when the Possible double entry panel has rows — none of their metadata holds a name or an amount); the sheet banner matches each state (pause the sync locally → "paused — sheet data is included"; mark the latest run `partial` in a rolled-back psql transaction is not visible to the app, so instead check the three wordings via the `sheetBanner` unit test and eyeball the live one); Booking Sources card equals Patient Sources' New card for the same period; the dashboard tile's total equals Patient Sources for Today; upload a small Meta daily CSV on Ad Performance → "Saved to clinic records: …" and the cost card fills; upload a range export → rejected count shown; remove saved spend (two-step confirm); on a new visit for a patient with no source, pick a channel → the patient's `referral_source_origin` is `staff` and a `patient.referral_source_recorded` audit row exists; a patient WITH a source shows no prompt; as an admin in View-as reception, Patient Sources is not reachable. `browser_console_messages` clean. At most one screenshot (the Patient Sources page).
+- [ ] **Step 5: The loaders really page past 1,000 rows** (Codex plan review, uncertainty 2 — the proof talks to Postgres directly, so it cannot show this). With the real-sheet data from Step 3 and the dev server running, fetch as the signed-in admin `/api/admin/reports/patient-sources.csv?from=<today−400>&to=<today>&mode=served&grain=day` (from the authed Playwright page with `browser_evaluate` + `fetch`, returning only the line count). Data rows = lines after the `Period start,Channel,…` header. Compare with psql as the admin JWT: `select count(*) from public.patient_sources_series(<same args>)`. They must be **equal and > 1000**. If the local data gives ≤ 1000 cells, insert 1,200 temporary unlinked lines on distinct days with the proof's check-15 pattern under a dedicated `sheet_sync_runs` row, commit, run the comparison, then delete those lines and that run by id (it is the shared local DB — clean up the same session).
+- [ ] **Step 6:** Fix anything found — each fix its own commit.
 
 ### Task 20: Reviews — Sonnet code review, then Codex
 
@@ -3551,7 +3705,7 @@ Order: migration on prod **before** the merge (CLAUDE.md). 0189 is additive (new
 
 - [ ] **Step 1: Re-check the number and main.** `git fetch origin && git merge origin/main`; `npm run claim -- list` shows 0189 as ours; the open-branch scan from memory `drmed-migration-number-collision` shows no other 0189. Re-run the Task 19 Step 2 gate. If main moved the guide version, bump to the next one.
 - [ ] **Step 2: Ask the user once** before the outward steps: push the branch (public repo — the diff holds no personal data; the proof uses invented `Zzproof*` names), open the PR, `supabase db push` 0189 to prod, merge. Then proceed.
-- [ ] **Step 3: Push + PR** (`gh`, PATH fix first). Body: what it does in plain words; P1–P17; the A′ change on Booking Sources; the reception prompt; the ad-spend contract ("daily exports only"); verification evidence (test counts, proof N/N PASS, six controls, identity-core timing, browser pass, review outcomes); post-merge checklist. End with `🤖 Generated with [Claude Code](https://claude.com/claude-code)`. Mark ready immediately (memory: ready-for-review cancel trap).
+- [ ] **Step 3: Push + PR** (`gh`, PATH fix first). Body: what it does in plain words; P1–P21; the A′ change on Booking Sources; the reception prompt; the ad-spend contract ("daily exports only"); verification evidence (test counts, proof N/N PASS, six controls, identity-core timing, browser pass, review outcomes); post-merge checklist. End with `🤖 Generated with [Claude Code](https://claude.com/claude-code)`. Mark ready immediately (memory: ready-for-review cancel trap).
 - [ ] **Step 4: Apply 0189 to prod** (owner-authorised Claude pushes, memory `feedback-drmed-apply-migrations-yourself`). From this worktree on current main with `supabase/.temp/{project-ref,linked-project.json,pooler-url}` copied in: `supabase db push --dry-run` must list **only** 0189 (add `--include-all` only if the dry run says a lower number is missing and it is 0184's known gap — then it must still list only 0189). `supabase db push`. **Verify by object** (MCP `execute_sql`, read-only): ledger has `0189`; `to_regclass('public.ad_spend_daily')` not null with RLS on; `has_function_privilege('anon','public.patient_sources_summary(date,date)','execute')` = false and `'authenticated'` = true; `has_function_privilege('authenticated','public._patient_sources_identities()','execute')` = false. Timing on prod data (counts only, no names): `explain (analyze) select count(*) from public._patient_sources_identities()` → record the time.
 - [ ] **Step 5: Merge**, then confirm the Vercel production deploy is READY (merge ≠ deploy). Smoke on prod as admin (Playwright on the deployed URL if authable, else ask the user to open it): Patient Sources shows the paused banner and app-only numbers; Booking Sources' card matches it.
 - [ ] **Step 6: Wrap-up** per CLAUDE.md: plain-English summary, next step (owner decides the sync unpause; then PR 3 small tabs), context-hygiene check. Update memory `drmed-sheet-sync` (PR 2 merged, 0189 on prod, P-decisions worth keeping) and its `MEMORY.md` line; update CLAUDE.md's ledger paragraph with the applied date.
@@ -3563,3 +3717,24 @@ Order: migration on prod **before** the merge (CLAUDE.md). 0189 is additive (new
 - **Spec coverage.** §0 S1–S4: whole scope in one PR (all tasks), A′ card + table removed (T10), #244 card replaced (T10), no `/register` change (only T16). §1.1 survivors/deleted/facts group rule (T2, proof 5–8). §1.2 encounters, converted raise, 2023-12-01 floor (T2, proof 14, 18). §1.3 whole-history first encounter, Returning, registration fallbacks, undated, suppression, restatement note (T2, T12, proof 7–12). §1.4 served once (T3, proof 5). §1.5 channel (T2, proof 13). §1.6 revenue + overlaps + label (T2–T3, T12, proof 5, 14). §1.7 five functions + gate + grants + bucket rules (T3–T4, proof 1, 16, 19). §2.1 table (T4). §2.2 parser + RPC + audit + delete (T4, T8, T12, T14, proof 21). §2.3 upload note + cost card (T12, T14). §3.1 shared controls with presets/custom/param-keeping (T6, T10). §3.2 page order 1–9 (T12). §3.3 people + audit (T13). §3.4 two CSVs (T13, P12). §3.5 Booking Sources (T10). §3.6 tile (T15). §3.7 reception prompt (T16). §3.8 wiring: route names/tabs (T11), mirror-readers (T4), guide/glossary (T18), staff-ui skill (T18). §4 errors (T7 classifier, T12). §5 tests: TS units (T6–T8, T15–T16), proof incl. >1,000 rows and the access matrix on .167 (T1, T5), equality (T17 + proof 16), repo gates (T19). §6 deploy (T21). §7 out-of-scope stays out.
 - **Placeholders.** None left as TBD. Three spots tell the implementer to confirm a path/helper name against the repo before use (`formatPeso` import path, the staff patient page URL, `services` NOT NULL columns) — each names the exact grep.
 - **Type consistency.** `SeriesRow`/`SummaryRow`/`PeopleRow`/`ReportResult` (T7) are what the loaders return (T9) and the pages consume (T12–T15). `AdSpendSaveResult` is defined in T8 and returned by `saveAdSpendAction` (T14). `PeopleQuery.mode` = `new | returning | served` matches `patient_sources_people`'s check (T3). Grain `'period'` is accepted by the SQL (T3) and by `loadPatientSourcesSeries` (T9) but never by `parseGrain` (T7), so the URL cannot select it.
+
+## Codex plan review log (astra/high, 2026-09-28, session 01a0e632-b334-71a3-808f-4b88e03ab3e3)
+
+| # | Finding | Resolution |
+|---|---|---|
+| 1 (P1) | Registration fallback mixed per member; an app-native `created_at` could beat a sheet date, and undated facts could be dated | Decided per merged GROUP: sheet date wins, else earliest app-native sign-up, else undated — **P18, user-approved**. Task 2 `member`/`confirmed_reg`; proof 8b + control G. |
+| 2 (P1) | Double-entry panel discloses DRM-IDs/amounts without an audit row | Page audits `patient_sources.overlaps_viewed` (counts only) — **P20**. Task 12. |
+| 3 (P1) | `seed.sql` re-grants the new table on a local reset; seed-grant parity fails | Task 4 Step 3 re-revokes in `seed.sql`; file map updated. |
+| 4 (P2) | Task 3 smoke called RPCs before their EXECUTE grants existed | Smoke moved to Task 4 Step 4; Task 3 only checks the functions exist. |
+| 5 (P2) | Proof `check()` keeps successful mutations (View-as, `converted_at` leak) | Every check body runs in `scoped()`; checks never share rows. |
+| 6 (P2) | `delta()` subtracted jsonb/booleans; control B could not bite | Explicit `COUNT_FIELDS`; check 6 adds a deleted registration-only patient inside June. |
+| 7 (P1) | Missing spend column → zeros overwrite saved spend; explicit zero correction discarded | No spend column refuses the file; blank cell rejected; explicit 0 kept — **P14**; parser tests + proof 21 zero correction. |
+| 8 (P2) | Unknown platform rejected per row, spec says whole file | Whole file refused — **P14**; test updated. |
+| 9 (P2) | P5 contradicts "pre-Dec-2023 ignored everywhere" | Kept as a written exception — **P5, user-approved**. |
+| 10 (P2) | Paused/partial banner said "app records only" even with sheet data present | Three-state `sheetBanner` from new summary columns — **P8, P19**; unit test. |
+| 11 (P2) | Past-the-end people page reported "0 of 0" | Loader re-reads the total; page offers "Go to page 1". |
+| 12 (P2) | Overlap truncation/failure hidden | `RevenueSection` shows load failure and truncation. |
+| P3 | Impossible calendar dates reached SQL | `resolvePeriod` checks real days — **P21**; tests incl. leap days. |
+| U1 | P6 not established by the spec | Documented in **P6**; proof check 23. |
+| U2 | >1,000 proven only in SQL, not through the loaders | Task 19 Step 5 compares the CSV through PostgREST with SQL. |
+| U3 | No whole-history "served, not new" fixture | Proof check 22. |
