@@ -545,11 +545,16 @@ export async function attachPatientToAppointmentAction(
     if (siblings && siblings.length > 0) ids = siblings.map((r) => r.id);
   }
 
-  const { data: updated, error: updErr } = await supabase
-    .from("appointments")
-    .update({ patient_id: patientId })
-    .in("id", ids)
-    .select("id");
+  // One atomic UPDATE — retried once on a lost lifecycle race. The patient
+  // resolution above (resolvePatient / the existing-patient lookup) must stay
+  // outside the retry: it is not part of this statement.
+  const { data: updated, error: updErr } = await withLifecycleRetry(() =>
+    supabase
+      .from("appointments")
+      .update({ patient_id: patientId })
+      .in("id", ids)
+      .select("id"),
+  );
   if (updErr) return { ok: false, error: updErr.message };
 
   const h = await headers();
@@ -604,13 +609,18 @@ async function deleteGroups(batch: ReadonlyArray<BatchEntry>): Promise<ApptResul
   // one removed. With an expected status (bulk) a booking that changed since
   // selection is left alone and reported as unchanged. Chunked at ID_CHUNK
   // per `from` bucket, same reasoning as transitionGroups above.
+  // Each chunk is one atomic DELETE (its own PostgREST transaction) — retried
+  // once on a lost lifecycle race, built fresh inside the closure so a retry
+  // never re-awaits an already-mutated builder.
   const writes = await Promise.all(
     [...idsByFrom].flatMap(([from, groupIds]) =>
-      chunkIds(groupIds, ID_CHUNK).map((chunk) => {
-        let query = supabase.from("appointments").delete().in("id", chunk);
-        if (from !== null) query = query.eq("status", from);
-        return query.select("id, patient_id, status, scheduled_at");
-      }),
+      chunkIds(groupIds, ID_CHUNK).map((chunk) =>
+        withLifecycleRetry(() => {
+          let query = supabase.from("appointments").delete().in("id", chunk);
+          if (from !== null) query = query.eq("status", from);
+          return query.select("id, patient_id, status, scheduled_at");
+        }),
+      ),
     ),
   );
   const failed = writes.find((w) => w.error);
