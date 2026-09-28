@@ -7361,7 +7361,7 @@ export type Database = {
         Returns: number
       }
       ad_spend_import: {
-        Args: { p_rows: Json; p_upload_id: string }
+        Args: { p_rejected_count?: number; p_rows: Json; p_upload_id: string }
         Returns: Json
       }
       admin_delete_result_template: {

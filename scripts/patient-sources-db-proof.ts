@@ -74,22 +74,39 @@
 //      the UTC day instead of the Manila day).
 //        then (p.created_at at time zone 'Asia/Manila')::date end as app_on
 //        -> then p.created_at::date end as app_on
-//   H. ad_spend_import (Codex #1, DB half, 2026-09-28 fix): drop the
-//      delete-before-insert step and restore the original single `with src
-//      as (...), up as (insert ... on conflict (spend_date, platform,
-//      campaign_key, ad_key) do update ... returning (xmax = 0) as inserted)
-//      select count(*) filter (...) into v_inserted, v_replaced, ... from up`
-//      shape (no DELETE statement, no distinct-groups CTE). Expect: FAIL Ad
-//      spend import/replace/zero/delete — confirmed 2026-09-28 (reverted this
-//      function to the old body via psql, reran the proof, restored the
-//      fixed migration file, reran again):
-//        FAIL Ad spend import/replace/zero/delete — cx per-ad upload:
-//        expected replaced 1 (the old campaign-total row), got
-//        {"days":1,"inserted":2,"replaced":0}
-//      (the old ad_key "(campaign)"=100 row is never removed, so cxTotal()
-//      would go on to read 200, then 300 after the per-ad-ID upload, had the
-//      check not already failed on the replaced count first).
-//
+//   H. (2026-09-28 Codex recheck superseded this — see I/J/K/L below. Its
+//      original mechanism, "delete every saved row in a touched campaign/day
+//      regardless of kind", is EXACTLY control I's regression now — H is kept
+//      here only as a pointer, not a separate round.)
+//   I. ad_spend_import (Codex recheck #1, partial-preserve fix, 2026-09-28):
+//      replace the kind-aware delete with an unconditional whole-group
+//      delete (the prior round's bug — deletes every ad in the group, not
+//      just the ones of a different kind):
+//        delete from public.ad_spend_daily a
+//        using ( select r.spend_date, r.platform, r.campaign_key, min(case …) as kind from … group by … ) g
+//        where a.spend_date = g.spend_date and a.platform = g.platform and a.campaign_key = g.campaign_key
+//          and (case …) <> g.kind;
+//        -> delete from public.ad_spend_daily a
+//           using ( select distinct r.spend_date, r.platform, r.campaign_key from … ) g
+//           where a.spend_date = g.spend_date and a.platform = g.platform and a.campaign_key = g.campaign_key;
+//      Expect: FAIL Ad spend import/replace/zero/delete. Confirmed 2026-09-28:
+//        FAIL … — cz partial re-upload: expected replaced 1 (A's own prior
+//        row), got {"days":1,"inserted":1,"replaced":2}
+//      (the sibling ad B is wiped by a partial upload that only mentions A).
+//   J. ad_spend_import (Codex recheck #1, incomplete-file guard, 2026-09-28):
+//      delete the `if v_kind_changed and p_rejected_count > 0 then raise …`
+//      block. Expect: FAIL Ad spend import/replace/zero/delete. Confirmed
+//      2026-09-28:
+//        FAIL … — kind change refused when the file had rejected rows:
+//        expected error 22023, but the call succeeded
+//      (a representation change from an incomplete file is silently allowed).
+//   K. ad_spend_import (Codex recheck #3, concurrency, 2026-09-28): delete the
+//      `perform pg_advisory_xact_lock(hashtext('ad_spend_import'));` line
+//      (the FIRST occurrence, inside ad_spend_import). Expect: FAIL Ad spend
+//      import: concurrent writes serialize. Confirmed 2026-09-28:
+//        FAIL … — expected connection B to be REFUSED the ad_spend_import
+//        lock while connection A's transaction is still open, got
+//        {"got":true}
 //   L. _patient_sources_identities, `confirmed` CASE (owner decision
 //      2026-09-28): put registration back ahead of before_window:
 //        when sup.survivor_id is not null then null
@@ -1169,6 +1186,51 @@ async function main() {
       const cyAfter = await q<{ php: string }>(`select spend_php::text as php from public.ad_spend_daily where campaign_key='cy' and spend_date='2026-06-05'`);
       assert(Number(cyAfter.rows[0].php) === 77, `sibling campaign cy: expected untouched at 77, got ${cyAfter.rows[0].php}`);
 
+      // -- Codex recheck #1: a SAME-KIND partial upload (still per-ad-by-name)
+      // keeps the sibling ad it doesn't mention (spec §2.1 lines 108–111) —
+      // only a representation CHANGE replaces the whole group. --
+      const czRow = async (adKey: string): Promise<number | null> => {
+        const r = await q<{ php: string }>(
+          `select spend_php::text as php from public.ad_spend_daily where campaign_key='cz' and ad_key=$1`, [adKey]);
+        return r.rows[0] ? Number(r.rows[0].php) : null;
+      };
+      const uploadG = (await q<{ id: string }>(`select gen_random_uuid() as id`)).rows[0].id;
+      const rG = await expectOk("cz first upload (A=60, B=40)", () =>
+        q<{ ad_spend_import: Json }>(`select public.ad_spend_import($1::uuid, $2::jsonb) as ad_spend_import`, [
+          uploadG,
+          JSON.stringify([
+            { spend_date: "2026-06-06", platform: "meta", campaign_key: "cz", ad_key: "a", campaign_label: "CZ", spend_php: 60 },
+            { spend_date: "2026-06-06", platform: "meta", campaign_key: "cz", ad_key: "b", campaign_label: "CZ", spend_php: 40 },
+          ]),
+        ]));
+      assert(rG.rows[0].ad_spend_import.replaced === 0, `cz first upload: expected replaced 0, got ${JSON.stringify(rG.rows[0].ad_spend_import)}`);
+
+      const uploadH = (await q<{ id: string }>(`select gen_random_uuid() as id`)).rows[0].id;
+      const rH = await expectOk("cz partial re-upload (A only, same kind)", () =>
+        q<{ ad_spend_import: Json }>(`select public.ad_spend_import($1::uuid, $2::jsonb) as ad_spend_import`, [
+          uploadH,
+          JSON.stringify([{ spend_date: "2026-06-06", platform: "meta", campaign_key: "cz", ad_key: "a", campaign_label: "CZ", spend_php: 70 }]),
+        ]));
+      assert(rH.rows[0].ad_spend_import.replaced === 1, `cz partial re-upload: expected replaced 1 (A's own prior row), got ${JSON.stringify(rH.rows[0].ad_spend_import)}`);
+      assert((await czRow("a")) === 70, `cz/a after the partial re-upload: expected 70, got ${await czRow("a")}`);
+      assert((await czRow("b")) === 40, `cz/b — a SIBLING ad the partial upload didn't mention — must be PRESERVED at 40, got ${await czRow("b")}`);
+
+      // -- Codex recheck #1: a representation CHANGE (kind differs from what
+      // is saved) is refused OUTRIGHT when the file also had rejected rows —
+      // an incomplete file must never be trusted to replace a full
+      // breakdown. Nothing changes. --
+      const beforeCzCount = await q<{ n: string }>(`select count(*)::text as n from public.ad_spend_daily where campaign_key='cz'`);
+      const uploadI = (await q<{ id: string }>(`select gen_random_uuid() as id`)).rows[0].id;
+      await expectPgError("kind change refused when the file had rejected rows", "22023", () =>
+        q(`select public.ad_spend_import($1::uuid, $2::jsonb, $3::int)`, [
+          uploadI,
+          JSON.stringify([{ spend_date: "2026-06-06", platform: "meta", campaign_key: "cz", ad_key: "(campaign)", campaign_label: "CZ", spend_php: 999 }]),
+          3,
+        ]));
+      const afterCzCount = await q<{ n: string }>(`select count(*)::text as n from public.ad_spend_daily where campaign_key='cz'`);
+      assert(afterCzCount.rows[0].n === beforeCzCount.rows[0].n, `a refused breakdown-change upload must leave the group's row count unchanged, before=${beforeCzCount.rows[0].n} after=${afterCzCount.rows[0].n}`);
+      assert((await czRow("a")) === 70 && (await czRow("b")) === 40, `cz group must be unchanged after the refused upload (a=${await czRow("a")}, b=${await czRow("b")})`);
+
       // -- Explicit zero is kept as a real value, not treated as missing
       // (P14); a same-key re-upload replaces the one prior row. --
       const uploadD = (await q<{ id: string }>(`select gen_random_uuid() as id`)).rows[0].id;
@@ -1215,6 +1277,40 @@ async function main() {
       assert(Number(delAudit.rows[0].n) >= 1, "expected an ad_spend.deleted audit row");
 
       await expectPgError("delete unknown platform", "22023", () => q(`select public.ad_spend_delete('tiktok','2026-06-01','2026-06-01')`));
+    }));
+
+    // 21b. Ad spend import: concurrent writes serialize (Codex recheck #3) ---
+    // ad_spend_import takes pg_advisory_xact_lock(hashtext('ad_spend_import'))
+    // right after its admin check, so two concurrent uploads (or an upload
+    // racing a removal) can never both observe an empty/stale group and both
+    // insert different representations for it. Proven with a SECOND, real
+    // connection: this proof's own connection never commits mid-check, so
+    // once its ad_spend_import call returns, the xact-scoped lock is still
+    // held for the rest of the (open) transaction — a second session must be
+    // refused the same lock.
+    await check("Ad spend import: concurrent writes serialize", () => scoped(async () => {
+      await setRole("postgres", null);
+      await setRole("authenticated", { sub: fx.adminId, role: "authenticated" });
+
+      const uploadJ = (await q<{ id: string }>(`select gen_random_uuid() as id`)).rows[0].id;
+      await expectOk("import (connection A)", () =>
+        q(`select public.ad_spend_import($1::uuid, $2::jsonb)`, [
+          uploadJ,
+          JSON.stringify([{ spend_date: "2026-06-07", platform: "meta", campaign_key: "cc", ad_key: "(campaign)", campaign_label: "CC", spend_php: 10 }]),
+        ]));
+
+      const db2 = new Client({ connectionString: DB_URL });
+      await db2.connect();
+      try {
+        const r = await db2.query<{ got: boolean }>(
+          `select pg_try_advisory_xact_lock(hashtext('ad_spend_import')) as got`);
+        assert(
+          r.rows[0].got === false,
+          `expected connection B to be REFUSED the ad_spend_import lock while connection A's transaction is still open, got ${JSON.stringify(r.rows[0])}`,
+        );
+      } finally {
+        await db2.end();
+      }
     }));
 
     // 22. Whole history, not the period --------------------------------------

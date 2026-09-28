@@ -735,9 +735,25 @@ drop policy if exists "ad_spend_daily: admin read" on public.ad_spend_daily;
 create policy "ad_spend_daily: admin read" on public.ad_spend_daily
   for select to authenticated using ((select public.has_role(array['admin'])));
 
--- (15) Import: all-or-nothing upsert; duplicate keys inside one call are summed
--- (the parser already sums them — this keeps ON CONFLICT from touching a row twice).
-create or replace function public.ad_spend_import(p_upload_id uuid, p_rows jsonb)
+-- (15) Import: a partial upload that keeps the SAME representation (campaign
+-- total vs per-ad-by-name vs per-ad-by-id) for a (spend_date, platform,
+-- campaign_key) group only touches the ad_keys it mentions — sibling ads
+-- already saved for that campaign/day are preserved (spec §2.1, §2.2 lines
+-- 108–111). Only a REPRESENTATION CHANGE (e.g. a campaign total superseding
+-- per-ad rows) replaces everything already saved for that group, and only
+-- when the whole file had no rejected rows (p_rejected_count = 0) — a file
+-- with rejections is an incomplete view of that campaign and must never be
+-- trusted to replace a full breakdown (Codex recheck #1). Duplicate keys
+-- inside one call are summed (the parser already sums them — this keeps ON
+-- CONFLICT from touching a row twice). Serialized against every other
+-- import/removal via an advisory lock (Codex recheck #3) so two concurrent
+-- uploads can never both see an empty/stale group and both insert different
+-- representations for it.
+-- Signature change (added p_rejected_count): CREATE OR REPLACE cannot change
+-- a function's argument types, so drop the old 2-arg overload first — 0189 is
+-- not on prod yet, so this is safe and the file stays re-runnable.
+drop function if exists public.ad_spend_import(uuid, jsonb);
+create or replace function public.ad_spend_import(p_upload_id uuid, p_rows jsonb, p_rejected_count int default 0)
 returns jsonb
 language plpgsql
 security definer
@@ -746,41 +762,87 @@ as $$
 declare
   v_inserted int := 0;
   v_replaced int := 0;
+  v_deleted int := 0;
   v_days int := 0;
   v_n int;
+  v_kind_changed boolean;
 begin
   if not public.has_role(array['admin']) then
     raise exception 'Only admins can save ad spend' using errcode = '42501';
   end if;
+  -- Codex recheck #3: serialize every import/removal so two concurrent
+  -- uploads can never both observe an empty/stale group and both insert.
+  perform pg_advisory_xact_lock(hashtext('ad_spend_import'));
+
   if p_upload_id is null or p_rows is null or jsonb_typeof(p_rows) <> 'array' then
     raise exception 'Ad spend import needs an upload id and a list of rows' using errcode = '22023';
+  end if;
+  if p_rejected_count is null or p_rejected_count < 0 then
+    raise exception 'Ad spend import needs a non-negative rejected row count' using errcode = '22023';
   end if;
   v_n := jsonb_array_length(p_rows);
   if v_n = 0 or v_n > 20000 then
     raise exception 'Ad spend import takes 1 to 20,000 rows, got %', v_n using errcode = '22023';
   end if;
 
-  -- Replace-per-campaign-day (fix, Codex #1): an upload REPLACES everything
-  -- already saved for each (spend_date, platform, campaign_key) it touches —
-  -- not just the exact (…, ad_key) rows it repeats. Otherwise uploading the
-  -- same spend once as a campaign total, once per ad name and once per ad ID
-  -- keeps all three under different ad_keys (the unique key includes ad_key)
-  -- and multiplies the counted spend. Two separate statements (not one WITH
-  -- with two data-modifying CTEs on the same table, whose relative order is
-  -- unspecified) so the delete is guaranteed visible to the insert that
-  -- follows it, within the same transaction.
-  delete from public.ad_spend_daily a
-  where exists (
+  -- A row's KIND: "(campaign)" is a campaign total; "id:…" is a per-ad row
+  -- keyed by ad ID; anything else is a per-ad row keyed by ad name (the
+  -- parser refuses a file mixing more than one kind for the same group, so a
+  -- touched group's uploaded rows are homogeneous in practice). If any
+  -- touched group's kind differs from what is already saved for it — a
+  -- representation change — and the file had rejected rows, refuse the
+  -- whole upload: nothing is saved.
+  select exists (
     select 1
     from (
-      select distinct r.spend_date, r.platform, r.campaign_key
+      select r.spend_date, r.platform, r.campaign_key,
+             min(case when r.ad_key = '(campaign)' then 'total'
+                      when r.ad_key like 'id:%' then 'id'
+                      else 'name' end) as kind
       from jsonb_to_recordset(p_rows) as r(
         spend_date date, platform text, campaign_key text, ad_key text,
         campaign_label text, spend_php numeric, impressions int, clicks int)
+      group by r.spend_date, r.platform, r.campaign_key
     ) g
-    where g.spend_date = a.spend_date and g.platform = a.platform and g.campaign_key = a.campaign_key
-  );
-  get diagnostics v_replaced = row_count;
+    where exists (
+      select 1 from public.ad_spend_daily a
+      where a.spend_date = g.spend_date and a.platform = g.platform and a.campaign_key = g.campaign_key
+        and (case when a.ad_key = '(campaign)' then 'total'
+                  when a.ad_key like 'id:%' then 'id'
+                  else 'name' end) <> g.kind
+    )
+  ) into v_kind_changed;
+
+  if v_kind_changed and p_rejected_count > 0 then
+    -- [breakdown change] tags this specific message for the action to map to
+    -- clean user text (never raw PG text) — never confuse it with any other
+    -- 22023 raised above.
+    raise exception 'This file changes how saved spend is broken down (campaign total vs per ad) but % rows were rejected — fix them and upload again. Nothing was saved. [breakdown change]', p_rejected_count
+      using errcode = '22023';
+  end if;
+
+  -- Delete only rows of a DIFFERENT kind within each touched group. A
+  -- same-kind row is left alone here — ON CONFLICT below updates it in
+  -- place — so a sibling ad_key the upload doesn't mention survives. Two
+  -- separate statements (not one WITH with two data-modifying CTEs on the
+  -- same table, whose relative order is unspecified) so this delete is
+  -- guaranteed visible to the insert that follows it.
+  delete from public.ad_spend_daily a
+  using (
+    select r.spend_date, r.platform, r.campaign_key,
+           min(case when r.ad_key = '(campaign)' then 'total'
+                    when r.ad_key like 'id:%' then 'id'
+                    else 'name' end) as kind
+    from jsonb_to_recordset(p_rows) as r(
+      spend_date date, platform text, campaign_key text, ad_key text,
+      campaign_label text, spend_php numeric, impressions int, clicks int)
+    group by r.spend_date, r.platform, r.campaign_key
+  ) g
+  where a.spend_date = g.spend_date and a.platform = g.platform and a.campaign_key = g.campaign_key
+    and (case when a.ad_key = '(campaign)' then 'total'
+              when a.ad_key like 'id:%' then 'id'
+              else 'name' end) <> g.kind;
+  get diagnostics v_deleted = row_count;
 
   with src as (
     select r.spend_date, r.platform, r.campaign_key, r.ad_key,
@@ -792,19 +854,28 @@ begin
       spend_date date, platform text, campaign_key text, ad_key text,
       campaign_label text, spend_php numeric, impressions int, clicks int)
     group by r.spend_date, r.platform, r.campaign_key, r.ad_key
+  ),
+  up as (
+    insert into public.ad_spend_daily as a
+      (spend_date, platform, campaign_key, ad_key, campaign_label, spend_php,
+       impressions, clicks, uploaded_by, uploaded_at, upload_id)
+    select s.spend_date, s.platform, s.campaign_key, s.ad_key, s.campaign_label, s.spend_php,
+           s.impressions, s.clicks, auth.uid(), now(), p_upload_id
+    from src s
+    on conflict (spend_date, platform, campaign_key, ad_key) do update
+      set campaign_label = excluded.campaign_label,
+          spend_php      = excluded.spend_php,
+          impressions    = excluded.impressions,
+          clicks         = excluded.clicks,
+          uploaded_by    = excluded.uploaded_by,
+          uploaded_at    = excluded.uploaded_at,
+          upload_id      = excluded.upload_id
+    returning (xmax = 0) as inserted, a.spend_date
   )
-  insert into public.ad_spend_daily as a
-    (spend_date, platform, campaign_key, ad_key, campaign_label, spend_php,
-     impressions, clicks, uploaded_by, uploaded_at, upload_id)
-  select s.spend_date, s.platform, s.campaign_key, s.ad_key, s.campaign_label, s.spend_php,
-         s.impressions, s.clicks, auth.uid(), now(), p_upload_id
-  from src s;
-  get diagnostics v_inserted = row_count;
-
-  select count(distinct r.spend_date) into v_days
-  from jsonb_to_recordset(p_rows) as r(
-    spend_date date, platform text, campaign_key text, ad_key text,
-    campaign_label text, spend_php numeric, impressions int, clicks int);
+  select count(*) filter (where u.inserted), count(*) filter (where not u.inserted), count(distinct u.spend_date)
+    into v_inserted, v_replaced, v_days
+  from up u;
+  v_replaced := v_replaced + v_deleted;
 
   insert into public.audit_log (actor_id, actor_type, action, resource_type, resource_id, metadata)
   values (auth.uid(), 'staff', 'ad_spend.imported', 'ad_spend_upload', p_upload_id,
@@ -827,6 +898,9 @@ begin
   if not public.has_role(array['admin']) then
     raise exception 'Only admins can remove ad spend' using errcode = '42501';
   end if;
+  -- Codex recheck #3: same lock key as ad_spend_import, so an import and a
+  -- removal can never race each other either.
+  perform pg_advisory_xact_lock(hashtext('ad_spend_import'));
   if p_platform is null or p_platform not in ('meta', 'google') then
     raise exception 'Unknown ad platform %', coalesce(p_platform, '(none)') using errcode = '22023';
   end if;
@@ -910,7 +984,7 @@ revoke all on function public.patient_sources_revenue(date, date) from public, a
 revoke all on function public.patient_sources_overlaps(date, date) from public, anon;
 revoke all on function public.patient_sources_referrers(date, date, int) from public, anon;
 revoke all on function public.patient_sources_people(date, date, text, text, int, int) from public, anon;
-revoke all on function public.ad_spend_import(uuid, jsonb) from public, anon;
+revoke all on function public.ad_spend_import(uuid, jsonb, int) from public, anon;
 revoke all on function public.ad_spend_delete(text, date, date) from public, anon;
 revoke all on function public.ad_spend_daily_totals(date, date) from public, anon;
 revoke all on function public.ad_spend_coverage() from public, anon;
@@ -920,7 +994,7 @@ grant execute on function public.patient_sources_revenue(date, date) to authenti
 grant execute on function public.patient_sources_overlaps(date, date) to authenticated;
 grant execute on function public.patient_sources_referrers(date, date, int) to authenticated;
 grant execute on function public.patient_sources_people(date, date, text, text, int, int) to authenticated;
-grant execute on function public.ad_spend_import(uuid, jsonb) to authenticated;
+grant execute on function public.ad_spend_import(uuid, jsonb, int) to authenticated;
 grant execute on function public.ad_spend_delete(text, date, date) to authenticated;
 grant execute on function public.ad_spend_daily_totals(date, date) to authenticated;
 grant execute on function public.ad_spend_coverage() to authenticated;
@@ -937,7 +1011,7 @@ begin
     'public.patient_sources_overlaps(date,date)',
     'public.patient_sources_referrers(date,date,integer)',
     'public.patient_sources_people(date,date,text,text,integer,integer)',
-    'public.ad_spend_import(uuid,jsonb)',
+    'public.ad_spend_import(uuid,jsonb,integer)',
     'public.ad_spend_delete(text,date,date)',
     'public.ad_spend_daily_totals(date,date)',
     'public.ad_spend_coverage()'
