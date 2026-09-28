@@ -51,6 +51,7 @@ import { translatePgError } from "@/lib/accounting/pg-errors";
 import { resolveCorrectedNotifyOutcome, type CorrectedNotifyOutcome } from "@/lib/notifications/notify-corrected";
 import type { Json } from "@/types/database";
 import { assertPatientActive } from "@/lib/patients/require-active";
+import { withLifecycleRetry } from "@/lib/patients/lifecycle-retry";
 
 /** The edit forms' notify outcome — a real send outcome, or one of the
  * server's own "no"s when the client asked but the server-side re-check
@@ -296,10 +297,12 @@ async function saveDraftValues(
 ): Promise<{ ok: true } | { ok: false; error: string }> {
   if (rows.length === 0) return { ok: true };
   const admin = createAdminClient();
-  const { error } = await admin.rpc("result_save_draft", {
-    p_result_id: resultId,
-    p_values: rows as unknown as Json,
-  });
+  const { error } = await withLifecycleRetry(() =>
+    admin.rpc("result_save_draft", {
+      p_result_id: resultId,
+      p_values: rows as unknown as Json,
+    }),
+  );
   if (error) return { ok: false, error: translatePgError(error) };
   return { ok: true };
 }

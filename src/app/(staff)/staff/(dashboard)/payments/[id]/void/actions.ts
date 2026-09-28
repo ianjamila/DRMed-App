@@ -21,6 +21,7 @@ import { moneySettled } from "@/lib/visits/money-settled";
 import { loadCompletedWorkCounts } from "@/lib/visits/released-results";
 import { NO_RELEASED, releasedTotal, type ReleasedCounts } from "@/lib/visits/payment-edit";
 import { assertPaymentPatientActive } from "@/lib/patients/require-active";
+import { withLifecycleRetry } from "@/lib/patients/lifecycle-retry";
 
 // "Voided" is not a word staff see (the button says Delete), and the row may
 // equally have been edited or moved (both void it) by someone else. Not
@@ -83,16 +84,21 @@ export async function voidPaymentAction(
   // update failed — leaving the two accounts reversed while the payment
   // still stood, with the admin seeing only "day is closed". Voiding first
   // means nothing downstream is mutated until this write has succeeded.
-  const { data: voidedRows, error: voidErr } = await admin
-    .from("payments")
-    .update({
-      voided_at: new Date().toISOString(),
-      voided_by: session.user_id,
-      void_reason: voidReason,
-    })
-    .eq("id", paymentId)
-    .is("voided_at", null) // a second concurrent void matches no row…
-    .select("id");
+  // A single atomic UPDATE (its own PostgREST transaction) — safe to retry
+  // once on a lost lifecycle race (P0072/40P01/40001); nothing downstream has
+  // been written yet, so a retry can never double-void.
+  const { data: voidedRows, error: voidErr } = await withLifecycleRetry(() =>
+    admin
+      .from("payments")
+      .update({
+        voided_at: new Date().toISOString(),
+        voided_by: session.user_id,
+        void_reason: voidReason,
+      })
+      .eq("id", paymentId)
+      .is("voided_at", null) // a second concurrent void matches no row…
+      .select("id"),
+  );
   if (voidErr) return { ok: false, error: translatePgError(voidErr) };
   // …and neither does one racing an Edit or Move (correct_payment voided the
   // row between the read above and this update). Nothing was deleted here, so

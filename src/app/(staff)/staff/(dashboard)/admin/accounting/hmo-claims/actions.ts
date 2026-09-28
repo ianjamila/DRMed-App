@@ -118,7 +118,7 @@ export async function createClaimBatchAction(
     test_request_id: tr.id,
     billed_amount_php: tr.hmo_approved_amount_php as number,
   }));
-  const { error: iErr } = await admin.from("hmo_claim_items").insert(rows);
+  const { error: iErr } = await withLifecycleRetry(() => admin.from("hmo_claim_items").insert(rows));
   if (iErr) {
     // Best-effort cleanup of the empty batch.
     await admin.from("hmo_claim_batches").delete().eq("id", batch.id);
@@ -219,7 +219,7 @@ export async function addItemsToBatchAction(input: unknown): Promise<ActionResul
     test_request_id: tr.id,
     billed_amount_php: tr.hmo_approved_amount_php as number,
   }));
-  const { error: iErr } = await admin.from("hmo_claim_items").insert(rows);
+  const { error: iErr } = await withLifecycleRetry(() => admin.from("hmo_claim_items").insert(rows));
   if (iErr) return { ok: false, error: translatePgError(iErr) };
 
   const meta = await auditMeta();
@@ -266,10 +266,12 @@ export async function removeItemFromBatchAction(input: unknown): Promise<ActionR
     return { ok: false, error: "Only draft batches allow item removal." };
   }
 
-  const { error: dErr } = await admin
-    .from("hmo_claim_items")
-    .delete()
-    .eq("id", parsed.data.item_id);
+  const { error: dErr } = await withLifecycleRetry(() =>
+    admin
+      .from("hmo_claim_items")
+      .delete()
+      .eq("id", parsed.data.item_id),
+  );
   if (dErr) return { ok: false, error: translatePgError(dErr) };
 
   const meta = await auditMeta();
@@ -450,14 +452,16 @@ export async function updateItemHmoResponseAction(input: unknown): Promise<Actio
     .maybeSingle();
   if (!before) return { ok: false, error: "Item not found." };
 
-  const { error } = await admin
-    .from("hmo_claim_items")
-    .update({
-      hmo_response: parsed.data.hmo_response,
-      hmo_response_date: parsed.data.hmo_response_date,
-      hmo_response_notes: parsed.data.hmo_response_notes ?? null,
-    })
-    .eq("id", parsed.data.item_id);
+  const { error } = await withLifecycleRetry(() =>
+    admin
+      .from("hmo_claim_items")
+      .update({
+        hmo_response: parsed.data.hmo_response,
+        hmo_response_date: parsed.data.hmo_response_date,
+        hmo_response_notes: parsed.data.hmo_response_notes ?? null,
+      })
+      .eq("id", parsed.data.item_id),
+  );
   if (error) return { ok: false, error: translatePgError(error) };
 
   const meta = await auditMeta();
@@ -491,19 +495,22 @@ export async function bulkSetHmoResponseAction(
     .eq("batch_id", parsed.data.batch_id);
   const totalCount = totalItems ?? 0;
 
-  let query = admin
-    .from("hmo_claim_items")
-    .update({
-      hmo_response: parsed.data.response,
-      hmo_response_date: parsed.data.response_date,
-      hmo_response_notes: parsed.data.notes ?? null,
-    })
-    .eq("batch_id", parsed.data.batch_id);
-  if (parsed.data.scope === "pending_only") {
-    query = query.eq("hmo_response", "pending");
-  }
-
-  const { data: updatedRows, error } = await query.select("id");
+  // Built fresh inside the closure so a retry re-issues a brand-new UPDATE
+  // (never re-awaits an already-mutated builder).
+  const { data: updatedRows, error } = await withLifecycleRetry(() => {
+    let query = admin
+      .from("hmo_claim_items")
+      .update({
+        hmo_response: parsed.data.response,
+        hmo_response_date: parsed.data.response_date,
+        hmo_response_notes: parsed.data.notes ?? null,
+      })
+      .eq("batch_id", parsed.data.batch_id);
+    if (parsed.data.scope === "pending_only") {
+      query = query.eq("hmo_response", "pending");
+    }
+    return query.select("id");
+  });
   if (error) return { ok: false, error: translatePgError(error) };
 
   const items_updated = updatedRows?.length ?? 0;
@@ -548,17 +555,19 @@ export async function createResolutionAction(
   const active = await assertClaimItemsPatientsActive(admin, [parsed.data.item_id]);
   if (!active.ok) return { ok: false, error: active.error };
 
-  const { data: row, error } = await admin
-    .from("hmo_claim_resolutions")
-    .insert({
-      item_id: parsed.data.item_id,
-      destination: parsed.data.destination,
-      amount_php: parsed.data.amount_php,
-      resolved_by: session.user_id,
-      notes: parsed.data.notes ?? null,
-    })
-    .select("id")
-    .single();
+  const { data: row, error } = await withLifecycleRetry(() =>
+    admin
+      .from("hmo_claim_resolutions")
+      .insert({
+        item_id: parsed.data.item_id,
+        destination: parsed.data.destination,
+        amount_php: parsed.data.amount_php,
+        resolved_by: session.user_id,
+        notes: parsed.data.notes ?? null,
+      })
+      .select("id")
+      .single(),
+  );
   if (error || !row) {
     return { ok: false, error: translatePgError(error ?? { message: "insert failed" }) };
   }
@@ -602,17 +611,19 @@ export async function voidResolutionAction(input: unknown): Promise<ActionResult
   const active = await assertResolutionPatientActive(admin, parsed.data.resolution_id);
   if (!active.ok) return { ok: false, error: active.error };
 
-  const { data: row, error } = await admin
-    .from("hmo_claim_resolutions")
-    .update({
-      voided_at: new Date().toISOString(),
-      voided_by: session.user_id,
-      void_reason: parsed.data.void_reason,
-    })
-    .eq("id", parsed.data.resolution_id)
-    .is("voided_at", null)
-    .select("item_id")
-    .maybeSingle();
+  const { data: row, error } = await withLifecycleRetry(() =>
+    admin
+      .from("hmo_claim_resolutions")
+      .update({
+        voided_at: new Date().toISOString(),
+        voided_by: session.user_id,
+        void_reason: parsed.data.void_reason,
+      })
+      .eq("id", parsed.data.resolution_id)
+      .is("voided_at", null)
+      .select("item_id")
+      .maybeSingle(),
+  );
   if (error) return { ok: false, error: translatePgError(error) };
   if (!row) return { ok: false, error: "Resolution not found or already voided." };
 
@@ -734,7 +745,7 @@ export async function allocateExistingPaymentAction(input: unknown): Promise<Act
     item_id: a.item_id,
     amount_php: a.amount_php,
   }));
-  const { error } = await admin.from("hmo_payment_allocations").insert(rows);
+  const { error } = await withLifecycleRetry(() => admin.from("hmo_payment_allocations").insert(rows));
   if (error) return { ok: false, error: translatePgError(error) };
   // P0012 fires here on overshoot.
 
