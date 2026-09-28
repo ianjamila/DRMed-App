@@ -238,10 +238,14 @@ export function translatePgError(err: PgError): string {
     // 0187: view_as_transition — the caller is not an active admin.
     case "P0074":
       return "Only an admin can view the app as another role.";
-    // 0190: test_requests_claim_holder_guard — the incoming holder doesn't
-    // work this line's section, or isn't the section's single owner.
+    // 0190: test_requests_claim_holder_guard — two distinct messages under
+    // one code: the section-scope/inactive-holder refusal, and the
+    // single-owner-role refusal ("Only an X-ray Technician can hold this
+    // test.") — pass either through like P0066.
     case "P0075":
-      return "This staff member can't hold this test — only someone who works its section (an X-ray Technician for x-rays) can.";
+      return err.message
+        ? err.message
+        : "This staff member doesn't work this test's section, so they can't hold it.";
     // 0190: view_as_end_for — the caller isn't an admin, or is themselves
     // mid-simulation.
     case "P0076":

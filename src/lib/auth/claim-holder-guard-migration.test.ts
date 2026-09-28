@@ -88,6 +88,16 @@ describe("0190_claim_holder_guard_and_view_as_end_for.sql", () => {
     expect(fnBody("view_as_end_for")).toContain("errcode = 'P0076'");
   });
 
+  it("(f) P0075 carries two distinct messages: section-scope vs. single-owner", () => {
+    const body = fnBody("test_requests_claim_holder_guard");
+    // Section-scope / inactive-holder refusal — same sentence both places it fires.
+    const sectionMsg = "This staff member doesn''t work this test''s section, so they can''t hold it.";
+    expect(body.split(sectionMsg).length - 1).toBe(2);
+    // Single-owner refusal — names the actual role, not the generic reason.
+    expect(body).toContain("'Only an % can hold this test.'");
+    expect(body).toContain("when 'xray_technician' then 'X-ray Technician'");
+  });
+
   it("the trigger fires on INSERT and UPDATE OF assigned_to, and skips a null or unchanged holder", () => {
     expect(sql).toMatch(
       /create trigger test_requests_claim_holder_guard\s+before insert or update of assigned_to on public\.test_requests/,

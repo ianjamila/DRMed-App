@@ -85,7 +85,7 @@ begin
      and sp.deleted_at is null;
 
   if not found or v_active is not true then
-    raise exception 'This staff member can''t hold this test — only someone who works its section (an X-ray Technician for x-rays) can.'
+    raise exception 'This staff member doesn''t work this test''s section, so they can''t hold it.'
       using errcode = 'P0075';
   end if;
 
@@ -96,20 +96,26 @@ begin
   v_sections := public.lab_sections_for_role(v_role);
   if v_sections is not null
      and (v_section is null or not (v_section = any(v_sections))) then
-    raise exception 'This staff member can''t hold this test — only someone who works its section (an X-ray Technician for x-rays) can.'
+    raise exception 'This staff member doesn''t work this test''s section, so they can''t hold it.'
       using errcode = 'P0075';
   end if;
 
   -- Single-owner sections: a SQL mirror of CLAIM_OWNER_BY_SECTION
   -- (src/lib/auth/role-sections.ts). This narrows CLAIMING only, and applies
   -- even to a role the section scope above would otherwise let through
-  -- (an unrestricted admin/pathologist still cannot hold an x-ray line).
+  -- (an unrestricted admin/pathologist still cannot hold an x-ray line). The
+  -- message names the actual reason (single-owner role), not the generic
+  -- section-scope refusal above.
   v_owner := case v_section
     when 'imaging_xray' then 'xray_technician'
     else null
   end;
   if v_owner is not null and v_owner is distinct from v_role then
-    raise exception 'This staff member can''t hold this test — only someone who works its section (an X-ray Technician for x-rays) can.'
+    raise exception 'Only an % can hold this test.',
+      case v_owner
+        when 'xray_technician' then 'X-ray Technician'
+        else initcap(replace(v_owner, '_', ' '))
+      end
       using errcode = 'P0075';
   end if;
 

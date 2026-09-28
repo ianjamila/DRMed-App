@@ -10,17 +10,18 @@
 --     -v ON_ERROR_STOP=1 -f supabase/tests/0190_claim_holder_guard_smoke.sql
 --
 -- What it proves:
---   A. test_requests_claim_holder_guard (P0075):
+--   A. test_requests_claim_holder_guard (P0075, two distinct messages):
 --      1.  xray_technician may hold an x-ray line.
---      2.  medtech may NOT hold an x-ray line (section is worked by medtech's
---          list, but the single-owner rule still refuses).
+--      2.  medtech may NOT hold an x-ray line — medtech's section list does
+--          not include imaging_xray, so this is the SECTION-SCOPE message,
+--          same as reception's.
 --      3.  reception may NOT hold an x-ray line (reception's section scope is
---          empty).
---      4.  pathologist may NOT hold an x-ray line (unrestricted by section,
---          still refused by the owner rule).
+--          empty) — SECTION-SCOPE message.
+--      4.  pathologist may NOT hold an x-ray line — unrestricted by section,
+--          so this one reaches the single-OWNER-rule message.
 --      5.  a genuine admin (no active View-as override) may NOT hold an
---          x-ray line either — the owner rule is not lifted by being
---          unrestricted.
+--          x-ray line either — same OWNER message; the owner rule is not
+--          lifted by being unrestricted.
 --      6.  an admin VIEWING AS xray_technician MAY hold an x-ray line — the
 --          holder's EFFECTIVE role (0182) passes the owner check.
 --      7.  an INACTIVE xray_technician may not hold anything.
@@ -104,16 +105,32 @@ values ('e0000000-0000-4000-8000-000000000190', 'V-SMK190', 'd0000000-0000-4000-
         (now() at time zone 'Asia/Manila')::date, 'unpaid', 0, 0);
 
 -- helper: assert that inserting/updating test_requests with the given
--- holder raises P0075; fails the smoke run (raises) if it does NOT.
-create or replace function pg_temp.expect_p0075(p_label text, p_sql text) returns void
+-- holder raises P0075; fails the smoke run (raises) if it does NOT. When
+-- p_expect_msg is given, also asserts the exact message text — P0075 carries
+-- TWO distinct sentences (section-scope/inactive-holder vs. single-owner),
+-- and this is what tells them apart.
+create or replace function pg_temp.expect_p0075(p_label text, p_sql text, p_expect_msg text default null) returns void
 language plpgsql as $$
+declare
+  v_msg text;
 begin
   execute p_sql;
   raise exception '%: expected P0075, insert/update succeeded', p_label;
 exception
   when sqlstate 'P0075' then
-    raise notice '% ok: refused with P0075', p_label;
+    get stacked diagnostics v_msg = message_text;
+    if p_expect_msg is not null and v_msg is distinct from p_expect_msg then
+      raise exception '%: expected message [%], got [%]', p_label, p_expect_msg, v_msg;
+    end if;
+    raise notice '% ok: refused with P0075 (%)', p_label, v_msg;
 end $$;
+
+-- The section-scope / inactive-holder message, verbatim (single quotes are
+-- doubled here only because this is itself a SQL string literal).
+create or replace function pg_temp.section_scope_msg() returns text
+language sql immutable as $$
+  select 'This staff member doesn''t work this test''s section, so they can''t hold it.'
+$$;
 
 do $$
 declare
@@ -148,25 +165,33 @@ begin
   raise notice 'T1 ok: xray_technician holds an x-ray line';
 
   -- T2 -------------------------------------------------------------------------
+  -- medtech's section list has no imaging_xray, so this is the SECTION-SCOPE
+  -- message, same as reception's — never reaches the owner check.
   perform pg_temp.expect_p0075('T2 medtech/xray',
     format('insert into public.test_requests (visit_id, service_id, status, requested_by, assigned_to, base_price_php, final_price_php) values (%L, %L, %L, %L, %L, 100, 100)',
-           v_visit, s_xray, 'in_progress', k_admin_a, k_medtech));
+           v_visit, s_xray, 'in_progress', k_admin_a, k_medtech),
+    pg_temp.section_scope_msg());
 
   -- T3 -------------------------------------------------------------------------
   perform pg_temp.expect_p0075('T3 reception/xray',
     format('insert into public.test_requests (visit_id, service_id, status, requested_by, assigned_to, base_price_php, final_price_php) values (%L, %L, %L, %L, %L, 100, 100)',
-           v_visit, s_xray, 'in_progress', k_admin_a, k_reception));
+           v_visit, s_xray, 'in_progress', k_admin_a, k_reception),
+    pg_temp.section_scope_msg());
 
   -- T4 -------------------------------------------------------------------------
+  -- pathologist is UNRESTRICTED by section, so this one reaches the
+  -- single-owner-rule message and names the actual owner role.
   perform pg_temp.expect_p0075('T4 pathologist/xray',
     format('insert into public.test_requests (visit_id, service_id, status, requested_by, assigned_to, base_price_php, final_price_php) values (%L, %L, %L, %L, %L, 100, 100)',
-           v_visit, s_xray, 'in_progress', k_admin_a, k_patho));
+           v_visit, s_xray, 'in_progress', k_admin_a, k_patho),
+    'Only an X-ray Technician can hold this test.');
 
   -- T5 -------------------------------------------------------------------------
   perform pg_temp.expect_p0075('T5 genuine admin/xray',
     format('insert into public.test_requests (visit_id, service_id, status, requested_by, assigned_to, base_price_php, final_price_php) values (%L, %L, %L, %L, %L, 100, 100)',
-           v_visit, s_xray, 'in_progress', k_admin_a, k_admin_a));
-  raise notice 'T2-T5 ok: only xray_technician (real or effective) may hold an x-ray line';
+           v_visit, s_xray, 'in_progress', k_admin_a, k_admin_a),
+    'Only an X-ray Technician can hold this test.');
+  raise notice 'T2-T5 ok: only xray_technician (real or effective) may hold an x-ray line — the right message for each reason';
 
   -- T6 -------------------------------------------------------------------------
   update public.staff_profiles
@@ -180,7 +205,8 @@ begin
   -- T7 -------------------------------------------------------------------------
   perform pg_temp.expect_p0075('T7 inactive xray_technician',
     format('insert into public.test_requests (visit_id, service_id, status, requested_by, assigned_to, base_price_php, final_price_php) values (%L, %L, %L, %L, %L, 100, 100)',
-           v_visit, s_xray, 'in_progress', k_admin_a, k_xray_inact));
+           v_visit, s_xray, 'in_progress', k_admin_a, k_xray_inact),
+    pg_temp.section_scope_msg());
   raise notice 'T7 ok: an inactive xray_technician may not hold anything';
 
   -- T8 -------------------------------------------------------------------------
@@ -192,7 +218,8 @@ begin
   -- T9 -------------------------------------------------------------------------
   perform pg_temp.expect_p0075('T9 reception/chemistry',
     format('insert into public.test_requests (visit_id, service_id, status, requested_by, assigned_to, base_price_php, final_price_php) values (%L, %L, %L, %L, %L, 100, 100)',
-           v_visit, s_chem, 'in_progress', k_admin_a, k_reception));
+           v_visit, s_chem, 'in_progress', k_admin_a, k_reception),
+    pg_temp.section_scope_msg());
   raise notice 'T9 ok: reception may not hold a chemistry line';
 
   -- T10: unclaim is always allowed -------------------------------------------
@@ -218,21 +245,30 @@ begin
   raise notice 'T11 ok: changing another column on an already-disallowed holder does not raise';
 
   -- T12: reassigning that same (disallowed-holder) line to ANOTHER
-  -- disallowed holder still raises.
+  -- disallowed holder still raises — medtech's section list has no
+  -- imaging_xray, so this is the SECTION-SCOPE message again.
   perform pg_temp.expect_p0075('T12 reassign to disallowed holder',
-    format('update public.test_requests set assigned_to = %L where id = %L', k_medtech, v_tr_xray));
+    format('update public.test_requests set assigned_to = %L where id = %L', k_medtech, v_tr_xray),
+    pg_temp.section_scope_msg());
   raise notice 'T12 ok: reassigning to a disallowed holder raises';
 
   -- T13: the rule fires for service_role too. Reassign to a DIFFERENT
   -- disallowed holder than the line's current one (k_reception, left in
   -- place by T12's failed attempt) so the guard actually re-judges it.
+  -- k_patho is unrestricted by section, so this one is the OWNER message.
   set role service_role;
+  declare
+    v_msg13 text;
   begin
     update public.test_requests set assigned_to = k_patho where id = v_tr_xray;
     raise exception 'T13: expected P0075 under service_role, update succeeded';
   exception
     when sqlstate 'P0075' then
-      raise notice 'T13 ok: service_role is subject to the guard too';
+      get stacked diagnostics v_msg13 = message_text;
+      if v_msg13 is distinct from 'Only an X-ray Technician can hold this test.' then
+        raise exception 'T13: unexpected message %', v_msg13;
+      end if;
+      raise notice 'T13 ok: service_role is subject to the guard too (%)', v_msg13;
   end;
   reset role;
 
