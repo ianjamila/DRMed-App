@@ -75,6 +75,8 @@ export const ROUTE_NAME: Record<string, string> = {
   "/staff/admin/accounting/patient-ar": "Patient Receivables (Aging)",
   "/staff/marketing/ops": "Ops Tracker",
   "/staff/marketing/sources": "Booking Sources",
+  "/staff/marketing/patients": "Patient Sources",
+  "/staff/marketing/patients/people": "Patient Sources — People",
   "/staff/payments/petty-cash": "Petty Cash",
   "/staff/payments/eod": "End of Day",
   "/staff/visits/new": "New Visit",

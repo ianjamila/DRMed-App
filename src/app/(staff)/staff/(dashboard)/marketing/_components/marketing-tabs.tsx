@@ -9,6 +9,7 @@ const TABS = [
   { href: BASE, label: ROUTE_NAME["/staff/marketing"], exact: true },
   { href: `${BASE}/ops`, label: ROUTE_NAME["/staff/marketing/ops"] },
   { href: `${BASE}/sources`, label: ROUTE_NAME["/staff/marketing/sources"] },
+  { href: `${BASE}/patients`, label: ROUTE_NAME["/staff/marketing/patients"] },
 ];
 
 export function MarketingTabs() {
