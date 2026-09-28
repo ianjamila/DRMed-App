@@ -3,7 +3,7 @@ import { planCustomers } from "./customer-plan";
 import { buildPatientIndex } from "./patient-index";
 import { parseCustomersTab } from "./tabs/customers";
 import { applyOps, world, type World } from "./__fixtures__/customer-world";
-import type { CustomerOp, PatientRecord } from "./types";
+import type { CustomerOp, DeletedPatientEvidence, PatientRecord } from "./types";
 
 const TODAY = "2026-09-24";
 import { CUST_HEADER as HEADER } from "./__fixtures__/tab-headers";
@@ -594,14 +594,19 @@ describe("planCustomers — round 2 (order-independent run-2 check, per-key trus
     expect(() => applyOps([create(["h"], [])], w0)).toThrow(/hold/);
     expect(applyOps([create(["c"], ["c"])], w0).links.get("c")).toMatchObject({ decision: "link", method: "admin", patient_id: "new:c" });
   });
-  it("applyOps mirrors the SQL: a stale link/fill (row_version moved since the planner read) is skipped", () => {
+  it("applyOps mirrors the SQL: a stale link/fill/facts (row_version moved since the planner read) is skipped", () => {
     const p = patient({ email: null, row_version: 0 });
     const stale = applyOps([
       { op: "link", link_key: "k", patient_id: p.id, method: "auto_exact", expected_row_version: 1 },
       { op: "fill", patient_id: p.id, fields: { email: "stale@example.test" }, expected_row_version: 1 },
+      // review fix D: facts carries the same stale-read guard as its sibling link/fill ops.
+      { op: "facts", patient_id: p.id, registered_on: "2026-01-01", new_repeat: "new", source_ref: "s", expected_row_version: 1 },
     ], world([p]));
     expect(stale.links.has("k")).toBe(false);
     expect(stale.patients.find((x) => x.id === p.id)!.email).toBeNull();
+    expect(stale.facts.has(p.id)).toBe(false);
+    expect(stale.counts).toMatchObject({ linked: 0, filled: 0, facts: 0, stale: 3 });
+    expect(stale.stalePatientIds).toEqual([p.id]);
     // A vanished patient (not in the world at all) is stale too, not a throw.
     const gone = applyOps([{ op: "link", link_key: "k2", patient_id: "not-there", method: "auto_exact", expected_row_version: 0 }], world([p]));
     expect(gone.links.has("k2")).toBe(false);
@@ -626,6 +631,20 @@ describe("planCustomers — round 2 (order-independent run-2 check, per-key trus
     const dupe = applyOps([create("d1")], world([existing]));
     expect(dupe.patients).toHaveLength(1);
     expect(dupe.links.has("d1")).toBe(false);
+    expect(dupe.counts).toMatchObject({ created: 0, skipped_existing: 1 });
+    expect(dupe.skippedCreateKeys).toEqual(["d1"]);
+    expect(dupe.created).toEqual({});
+    // Review fix E: the same rule ALSO matches a DELETED patient — the sync
+    // must never silently re-create someone staff deleted.
+    const deletedExisting = { ...existing, id: "del1", deleted_at: "2026-09-01T00:00:00Z" };
+    const dupeDeleted = applyOps([create("d1b")], world([deletedExisting]));
+    expect(dupeDeleted.counts).toMatchObject({ created: 0, skipped_existing: 1 });
+    expect(dupeDeleted.skippedCreateKeys).toEqual(["d1b"]);
+    expect(dupeDeleted.patients).toHaveLength(1);
+    // ...but an ADMIN create over the same deleted identity is never second-guessed.
+    const adminOverDeleted = applyOps([{ ...create("d1c"), method: "admin", admin_link_keys: ["d1c"] }], world([deletedExisting]));
+    expect(adminOverDeleted.counts).toMatchObject({ created: 1, skipped_existing: 0 });
+    expect(adminOverDeleted.patients).toHaveLength(2);
     // Same normalized name, no DOB on the op, same normalized phone.
     const withPhone = { ...existing, phone: "+639171234567" };
     const dupePhone = applyOps([create("d2", { birthdate: null, phone: "09171234567" })], world([withPhone]));
@@ -697,5 +716,45 @@ describe("planCustomers — round 2 (order-independent run-2 check, per-key trus
     const after = planIn(rows, world([p, staffRegistered], [held]));
     expect(after.ops).toEqual([]);
     expect(cands(after)).toEqual([p.id, staffRegistered.id].sort());
+  });
+});
+
+describe("deleted-patient-match hold (review fix E, owner decision 2026-09-25)", () => {
+  const deletedOf = (over: Partial<DeletedPatientEvidence> = {}): DeletedPatientEvidence => ({
+    id: "deleted-1", first_name: "Ana", middle_name: null, last_name: "Reyes", birthdate: "1990-01-01", phone: null, ...over,
+  });
+
+  it("a would-be create matching a DELETED patient by name+DOB is held, not created", () => {
+    const out = plan(rowsOf({ name: "Reyes, Ana", dob: 32874 }), [], { deletedPatients: [deletedOf()] });
+    expect(out.ops.some((o) => o.op === "create")).toBe(false);
+    expect(out.ops.filter((o) => o.op === "hold")).toHaveLength(1);
+    expect(out.review).toHaveLength(1);
+    expect(out.review[0].kind).toBe("possible_existing_patient");
+    expect(out.review[0].payload).toMatchObject({ deleted_patient_id: "deleted-1", held_because: "matches_deleted_patient" });
+  });
+
+  it("a would-be create matching a DELETED patient by name+phone (no DOB) is held, not created", () => {
+    const out = plan(rowsOf({ name: "Reyes, Ana", phone: "09171112222" }), [],
+      { deletedPatients: [deletedOf({ birthdate: null, phone: "+639171112222" })] });
+    expect(out.ops.some((o) => o.op === "create")).toBe(false);
+    expect(out.review[0].payload).toMatchObject({ deleted_patient_id: "deleted-1" });
+  });
+
+  it("a LIVE match takes priority — an active patient with the same identity is linked, never held for the deleted evidence", () => {
+    const live = patient({ first_name: "Ana", middle_name: null, last_name: "Reyes", birthdate: "1990-01-01" });
+    const out = plan(rowsOf({ name: "Reyes, Ana", dob: 32874 }), [live], { deletedPatients: [deletedOf()] });
+    expect(out.ops).toContainEqual({ op: "link", link_key: "reyes|ana#1990-01-01", patient_id: live.id, method: "auto_exact" });
+    expect(out.review).toHaveLength(0);
+  });
+
+  it("an admin's saved create decision over the same identity is never second-guessed by the deleted match", () => {
+    const key = "reyes|ana#1990-01-01";
+    const links = new Map([[key, { link_key: key, patient_id: null, decision: "create" as const, method: "admin" as const }]]);
+    const out = planCustomers({
+      rows: rowsOf({ name: "Reyes, Ana", dob: 32874 }), index: buildPatientIndex([]), links, facts: new Map(),
+      prevRows: [], deletedPatients: [deletedOf()],
+    });
+    const create = out.ops.find((o) => o.op === "create");
+    expect(create).toMatchObject({ op: "create", link_keys: [key] });
   });
 });

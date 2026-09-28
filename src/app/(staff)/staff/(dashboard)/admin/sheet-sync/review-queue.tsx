@@ -21,6 +21,7 @@ import { manilaDate, manilaDateTime } from "@/lib/dates/manila";
 import type { ReviewKind, TabKey } from "@/lib/sheet-sync/types";
 import { KIND_LABEL, TAB_LABEL, resolutionSummary, isAutoResolution, isKeptUndoneActionable } from "./format";
 import {
+  DeletedPatientMatchControls,
   IdentityItemControls,
   SimpleDismissControls,
   UnmappedItemControls,
@@ -49,6 +50,13 @@ interface IdentityPayload {
   reason: string;
   detail?: string;
   held_because?: string;
+  /** Present only for a deleted-patient-match hold (review fix E) — the deleted patient's id, never a name. */
+  deleted_patient_id?: string;
+}
+
+/** A deleted-patient-match hold's payload carries no other identity kind's — the id alone tells it apart. */
+function isDeletedPatientMatch(payload: IdentityPayload): boolean {
+  return typeof payload.deleted_patient_id === "string";
 }
 
 interface UnmappedPayload {
@@ -384,6 +392,21 @@ function ReviewItemCard({
 
   if (IDENTITY_KINDS.has(item.kind)) {
     const payload = item.payload as unknown as IdentityPayload;
+    if (isDeletedPatientMatch(payload)) {
+      return (
+        <ItemShell kind={item.kind}>
+          <p className="mt-1 text-sm font-semibold text-[color:var(--color-brand-navy)]">
+            Matches a deleted patient record
+          </p>
+          <p className="text-xs text-[color:var(--color-brand-text-soft)]">
+            This row&rsquo;s name and date of birth (or phone, when there is no date of birth) match a patient record
+            that was deleted. The sync will never re-create that person on its own.
+          </p>
+          <EvidenceTable rows={payload.rows} />
+          <DeletedPatientMatchControls itemId={item.id} rowLabel={rowLabel} />
+        </ItemShell>
+      );
+    }
     const holdState = holdStateFor(payload, holdMap, holdsFailed);
     return (
       <ItemShell kind={item.kind}>
@@ -512,7 +535,7 @@ function HandledRows({ item, resolverNames }: { item: ReviewItemRow; resolverNam
       <tr className={actionable ? "" : "border-b border-[color:var(--color-brand-bg-mid)] last:border-0"}>
         <td className="px-3 py-2 whitespace-nowrap">{KIND_LABEL[item.kind]}</td>
         <td className="px-3 py-2">{itemSummary(item)}</td>
-        <td className="px-3 py-2">{resolutionSummary(item.resolution)}</td>
+        <td className="px-3 py-2">{resolutionSummary(item.resolution, item.payload)}</td>
         <td className="px-3 py-2 whitespace-nowrap">
           {isAutoResolution(item.resolution)
             ? "Automatic"
@@ -524,7 +547,18 @@ function HandledRows({ item, resolverNames }: { item: ReviewItemRow; resolverNam
           {item.resolved_at ? manilaDateTime(item.resolved_at) : "—"}
         </td>
       </tr>
-      {payload && (
+      {payload && isDeletedPatientMatch(payload) && (
+        <tr className="border-b border-[color:var(--color-brand-bg-mid)] last:border-0">
+          <td colSpan={5} className="px-3 pb-3">
+            <p className="text-sm font-semibold text-[color:var(--color-brand-navy)]">
+              Matches a deleted patient record
+            </p>
+            <EvidenceTable rows={payload.rows} />
+            <DeletedPatientMatchControls itemId={item.id} rowLabel={rowLabelFor(item)} />
+          </td>
+        </tr>
+      )}
+      {payload && !isDeletedPatientMatch(payload) && (
         <tr className="border-b border-[color:var(--color-brand-bg-mid)] last:border-0">
           <td colSpan={5} className="px-3 pb-3">
             <p className="text-sm font-semibold text-[color:var(--color-brand-navy)]">{payload.reason}</p>

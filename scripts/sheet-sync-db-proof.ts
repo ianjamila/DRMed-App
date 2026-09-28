@@ -1196,6 +1196,12 @@ async function main() {
         `concurrent dup (name+DOB): expected created=0 skipped_existing=1, got ${JSON.stringify(c1.rows[0].j.counts)}`,
       );
       assert(Object.keys(c1.rows[0].j.created).length === 0, `concurrent dup: expected no created id, got ${JSON.stringify(c1.rows[0].j.created)}`);
+      // review fix B: the skipped create_key comes back so the runner can
+      // stage that mirror row unresolved instead of throwing "no created id".
+      assert(
+        Array.isArray(c1.rows[0].j.skipped_create_keys) && c1.rows[0].j.skipped_create_keys.includes("dupe:1"),
+        `concurrent dup: expected skipped_create_keys to include "dupe:1", got ${JSON.stringify(c1.rows[0].j.skipped_create_keys)}`,
+      );
       await finish(r1.token);
       const patCount = await q<{ n: string }>(`select count(*)::text as n from public.patients where last_name = 'Concurrent'`);
       assert(patCount.rows[0].n === "1", `concurrent dup: expected exactly 1 patient named Concurrent, got ${patCount.rows[0].n}`);
@@ -1262,6 +1268,12 @@ async function main() {
         f.rows[0].j.counts.stale === 1 && (f.rows[0].j.counts.filled ?? 0) === 0,
         `stale fill: expected stale=1 filled=0, got ${JSON.stringify(f.rows[0].j.counts)}`,
       );
+      // review fix D: the rejected patient id comes back so the runner can
+      // null its association on the reporting mirror.
+      assert(
+        Array.isArray(f.rows[0].j.stale_patient_ids) && f.rows[0].j.stale_patient_ids.includes(spId),
+        `stale fill: expected stale_patient_ids to include the patient, got ${JSON.stringify(f.rows[0].j.stale_patient_ids)}`,
+      );
       await finish(r4.token);
       const untouched = await q<{ email: string | null }>(`select email from public.patients where id = $1`, [spId]);
       assert(untouched.rows[0].email === null, `stale fill: patient must be untouched, got email=${untouched.rows[0].email}`);
@@ -1278,6 +1290,27 @@ async function main() {
       const noLink = await q<{ n: string }>(`select count(*)::text as n from public.sheet_patient_links where link_key = 'stale:1'`);
       assert(noLink.rows[0].n === "0", `stale link: no link row should have been written, got ${noLink.rows[0].n}`);
 
+      // (d2) review fix D: facts carries the SAME stale-read guard as its
+      // sibling link/fill ops (the planner plans all three from one read) —
+      // a mismatched expected_row_version must skip it, no facts row written.
+      const r5b = await acquire("manual", false);
+      const facts1 = await apply(r5b.token, [
+        { op: "facts", patient_id: spId, registered_on: "2026-01-01", new_repeat: "new", source_ref: "stale-facts:1", expected_row_version: 0 },
+      ]);
+      assert(
+        facts1.rows[0].j.counts.stale === 1 && (facts1.rows[0].j.counts.facts ?? 0) === 0,
+        `stale facts: expected stale=1 facts=0, got ${JSON.stringify(facts1.rows[0].j.counts)}`,
+      );
+      assert(
+        Array.isArray(facts1.rows[0].j.stale_patient_ids) && facts1.rows[0].j.stale_patient_ids.includes(spId),
+        `stale facts: expected stale_patient_ids to include the patient, got ${JSON.stringify(facts1.rows[0].j.stale_patient_ids)}`,
+      );
+      await finish(r5b.token);
+      const noFacts1 = await q<{ n: string }>(
+        `select count(*)::text as n from public.patient_acquisition_facts where source_ref = 'stale-facts:1'`,
+      );
+      assert(noFacts1.rows[0].n === "0", `stale facts: no acquisition-facts row should have been written, got ${noFacts1.rows[0].n}`);
+
       // (e) positive control: the correct expected_row_version applies normally.
       const r6 = await acquire("manual", false);
       const f2 = await apply(r6.token, [
@@ -1285,6 +1318,15 @@ async function main() {
       ]);
       assert(f2.rows[0].j.counts.filled === 1, `matching row_version: expected filled=1, got ${JSON.stringify(f2.rows[0].j.counts)}`);
       await finish(r6.token);
+      // (e2) same positive control for facts, read fresh (the fill above
+      // just bumped row_version 1 -> 2 via the ownership trigger).
+      const rvAfterFill = await q<{ rv: string }>(`select row_version::text as rv from public.patients where id = $1`, [spId]);
+      const r6b = await acquire("manual", false);
+      const facts2 = await apply(r6b.token, [
+        { op: "facts", patient_id: spId, registered_on: "2026-01-01", new_repeat: "new", source_ref: "fresh-facts:1", expected_row_version: Number(rvAfterFill.rows[0].rv) },
+      ]);
+      assert(facts2.rows[0].j.counts.facts === 1, `matching row_version (facts): expected facts=1, got ${JSON.stringify(facts2.rows[0].j.counts)}`);
+      await finish(r6b.token);
 
       // (f) accented name: the dupe check folds common Latin-1 accents (Codex
       // review) so "José Peña" (typed with accents, e.g. by an admin) and
@@ -3147,7 +3189,7 @@ async function main() {
 
     // 36. 0167 (patient soft delete): a deleted patient is inactive everywhere
     // sheet sync touches patients ------------------------------------------
-    await check("0167: a soft-deleted patient is inactive — create/link/fill/resort/alias skip it, review resolve refuses it", async () => {
+    await check("0167: a soft-deleted patient is inactive — create/link/fill/facts/resort/alias skip it, review resolve refuses it", async () => {
       await setRole("service_role", null);
 
       // A genuinely soft-deleted patient, via 0167's own delete_patient() RPC
@@ -3169,8 +3211,14 @@ async function main() {
         "fixture: a deleted patient with a referral_source must still carry a referral_source_origin — the CHECK constraint pairing (and the invariant 0170's backfill maintains for every existing row, deleted or not) survives delete_patient",
       );
 
-      // create: the deleted patient must NOT count as "someone already holds
-      // this identity" — the same name+DOB creates a brand-new patient.
+      // create: owner decision 2026-09-25 (review fix E) — the sync must
+      // NEVER silently re-create someone staff deleted, reversing the
+      // original 0167 read of this check (a deleted record used to be exempt
+      // from the dupe test; now it counts as "someone already holds this
+      // identity" just like a live one). An AUTO create over the same
+      // name+DOB is skipped_existing, no new patient. An ADMIN create over
+      // the identical identity is the admin's own decision and is still
+      // never second-guessed.
       const lease1 = await acquire("manual", false);
       const createOps = [{
         op: "create", create_key: "deleted-dupe:1", method: "auto_exact",
@@ -3182,27 +3230,52 @@ async function main() {
         lease1.token, JSON.stringify(createOps),
       ]);
       assert(
-        c.rows[0].j.counts.created === 1 && (c.rows[0].j.counts.skipped_existing ?? 0) === 0,
-        `create over a deleted patient: expected created=1 skipped_existing=0, got ${JSON.stringify(c.rows[0].j.counts)}`,
+        c.rows[0].j.counts.created === 0 && c.rows[0].j.counts.skipped_existing === 1,
+        `auto create over a deleted patient: expected created=0 skipped_existing=1, got ${JSON.stringify(c.rows[0].j.counts)}`,
+      );
+      assert(
+        Array.isArray(c.rows[0].j.skipped_create_keys) && c.rows[0].j.skipped_create_keys.includes("deleted-dupe:1"),
+        `auto create over a deleted patient: expected skipped_create_keys to include "deleted-dupe:1", got ${JSON.stringify(c.rows[0].j.skipped_create_keys)}`,
+      );
+      const noNewPatient = await q<{ n: string }>(
+        `select count(*)::text as n from public.patients where first_name = 'Deleted' and last_name = 'ByAdmin' and deleted_at is null`,
+      );
+      assert(noNewPatient.rows[0].n === "0", "auto create over a deleted patient must not create a new patient row");
+
+      const adminCreateOps = [{
+        op: "create", create_key: "deleted-dupe:admin", method: "admin",
+        fields: { first_name: "Deleted", last_name: "ByAdmin", middle_name: null, birthdate: "1980-01-01" },
+        link_keys: ["deleted-dupe:admin"], admin_link_keys: ["deleted-dupe:admin"], legacy_intake: {},
+        facts: { registered_on: null, new_repeat: null, source_ref: "deleted-dupe:admin" },
+      }];
+      const ac = await q<{ j: Json }>(`select public.sheet_sync_apply_customer_ops($1::uuid, $2::jsonb) as j`, [
+        lease1.token, JSON.stringify(adminCreateOps),
+      ]);
+      assert(
+        ac.rows[0].j.counts.created === 1 && (ac.rows[0].j.counts.skipped_existing ?? 0) === 0,
+        `admin create over a deleted patient: expected created=1 skipped_existing=0 (an admin decision is never second-guessed), got ${JSON.stringify(ac.rows[0].j.counts)}`,
       );
 
-      // link / fill: targeting the deleted patient's id directly must never
+      // link / fill / facts: targeting the deleted patient's id directly must never
       // write to it — counted stale/skipped, never a raised error.
       const linkFillOps = [
         { op: "link", link_key: "deleted-link:1", patient_id: pid, method: "auto_exact" },
         { op: "fill", patient_id: pid, fields: { email: "should-not-write@example.test" } },
+        { op: "facts", patient_id: pid, registered_on: "2026-05-26", new_repeat: "new", source_ref: "deleted-facts:1" },
       ];
       const lf = await q<{ j: Json }>(`select public.sheet_sync_apply_customer_ops($1::uuid, $2::jsonb) as j`, [
         lease1.token, JSON.stringify(linkFillOps),
       ]);
       assert(
-        lf.rows[0].j.counts.stale === 1 && lf.rows[0].j.counts.skipped === 1,
-        `link/fill over a deleted patient: expected stale=1 skipped=1, got ${JSON.stringify(lf.rows[0].j.counts)}`,
+        lf.rows[0].j.counts.stale === 2 && lf.rows[0].j.counts.skipped === 1 && lf.rows[0].j.counts.facts === 0,
+        `link/fill/facts over a deleted patient: expected stale=2 skipped=1 facts=0, got ${JSON.stringify(lf.rows[0].j.counts)}`,
       );
       const linkRow = await q<{ n: string }>(`select count(*)::text as n from public.sheet_patient_links where link_key = 'deleted-link:1'`);
       assert(linkRow.rows[0].n === "0", "link over a deleted patient must write no link row");
       const stillNoEmail = await q<{ email: string | null }>(`select email from public.patients where id = $1`, [pid]);
       assert(stillNoEmail.rows[0].email === null, "fill over a deleted patient must not write");
+      const factsRow = await q<{ n: string }>(`select count(*)::text as n from public.patient_acquisition_facts where source_ref = 'deleted-facts:1'`);
+      assert(factsRow.rows[0].n === "0", "facts over a deleted patient must write no acquisition-facts row");
       await finish(lease1.token);
 
       // resort: excluded from the candidate list, and applying it is a no-op
@@ -3256,6 +3329,54 @@ async function main() {
       );
       await expectPgError("sheet_review_resolve link onto a deleted patient", "22023", () =>
         q(`select public.sheet_review_resolve($1::uuid, $2::uuid, 'link', $3::uuid)`, [item.rows[0].id, fx.adminId, pid]),
+      );
+    });
+
+    // 36b. review fix E: "Keep deleted" is allowed on a deleted-patient-match
+    // hold (hold_reason 'matches_deleted_patient') the same way "Keep undone"
+    // is allowed on an undo hold — every OTHER evidence-based hold reason
+    // still refuses Dismiss outright (22023).
+    await check("review fix E: Dismiss (Keep deleted) succeeds on a matches_deleted_patient hold; an ordinary evidence-based hold still refuses it", async () => {
+      await setRole("service_role", null);
+
+      await q(
+        `insert into public.sheet_patient_links (link_key, patient_id, decision, method, hold_reason)
+         values ('keep-deleted:1', null, 'review', 'auto_exact', 'matches_deleted_patient')`,
+      );
+      const item1 = await q<{ id: string }>(
+        `insert into public.sheet_sync_review_items (tab, item_key, kind, payload)
+         values ('customers', 'keep-deleted:1', 'possible_existing_patient', '{"link_keys":["keep-deleted:1"]}'::jsonb)
+         returning id`,
+      );
+      await q(`select public.sheet_review_resolve($1::uuid, $2::uuid, 'dismiss', null)`, [item1.rows[0].id, fx.adminId]);
+      const resolved1 = await q<{ status: string; keep_undone: boolean | null }>(
+        `select status, (resolution->>'keep_undone')::boolean as keep_undone from public.sheet_sync_review_items where id = $1`,
+        [item1.rows[0].id],
+      );
+      assert(
+        resolved1.rows[0].status === "dismissed" && resolved1.rows[0].keep_undone === true,
+        `Keep deleted: expected dismissed + keep_undone=true, got ${JSON.stringify(resolved1.rows[0])}`,
+      );
+      const heldRow1 = await q<{ decision: string; hold_reason: string | null }>(
+        `select decision, hold_reason from public.sheet_patient_links where link_key = 'keep-deleted:1'`,
+      );
+      assert(
+        heldRow1.rows[0].decision === "review" && heldRow1.rows[0].hold_reason === "matches_deleted_patient",
+        `Keep deleted: the hold itself must stay standing (never auto-created), got ${JSON.stringify(heldRow1.rows[0])}`,
+      );
+
+      // An ordinary evidence-based hold reason still refuses Dismiss.
+      await q(
+        `insert into public.sheet_patient_links (link_key, patient_id, decision, method, hold_reason)
+         values ('ordinary-hold:1', null, 'review', 'auto_exact', 'several patients share this full name')`,
+      );
+      const item2 = await q<{ id: string }>(
+        `insert into public.sheet_sync_review_items (tab, item_key, kind, payload)
+         values ('customers', 'ordinary-hold:1', 'ambiguous_patient', '{"link_keys":["ordinary-hold:1"]}'::jsonb)
+         returning id`,
+      );
+      await expectPgError("Dismiss on an ordinary evidence-based hold", "22023", () =>
+        q(`select public.sheet_review_resolve($1::uuid, $2::uuid, 'dismiss', null)`, [item2.rows[0].id, fx.adminId]),
       );
     });
 

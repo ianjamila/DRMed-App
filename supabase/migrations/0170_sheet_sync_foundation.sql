@@ -99,14 +99,20 @@ alter table public.patients
 -- already gave a real origin.
 alter table public.patients disable trigger trg_patients_updated_at;
 alter table public.patients disable trigger trg_patients_lifecycle_guard;
-update public.patients set referral_source_origin = 'staff'
- where referral_source is not null and referral_source_origin is null;
 -- 0158 (live 2026-09-24) lets /schedule and /register write the patient's own
 -- answer through resolve_patient_guarded, which only ever creates
 -- pre_registered rows. Those answers are patient-owned, not staff-owned.
+-- MUST run BEFORE the staff backfill below: both filter on
+-- referral_source_origin is null, and the staff update (unqualified on
+-- pre_registered/created_at) matches every non-null referral_source row —
+-- including these same ones. Running staff first leaves nothing null for
+-- this update to catch, so a website patient's own answer would be
+-- mislabelled 'staff' forever.
 update public.patients set referral_source_origin = 'patient'
  where pre_registered and referral_source is not null and referral_source_origin is null
    and created_at >= timestamptz '2026-09-24 00:00+08';
+update public.patients set referral_source_origin = 'staff'
+ where referral_source is not null and referral_source_origin is null;
 alter table public.patients enable trigger trg_patients_lifecycle_guard;
 -- Abort the deploy (never a user) if the guard did not actually come back on
 -- — the backfill above depends on it being disabled ONLY for its own
@@ -121,6 +127,21 @@ begin
   end if;
 end $$;
 alter table public.patients enable trigger trg_patients_updated_at;
+-- Assert the ordering above actually held: every post-0158 pre_registered
+-- row with an answer must have been claimed by the 'patient' update, not
+-- swept into 'staff' by running second.
+do $$
+begin
+  if exists (
+    select 1 from public.patients
+     where pre_registered and referral_source is not null
+       and created_at >= timestamptz '2026-09-24 00:00+08'
+       and referral_source_origin is distinct from 'patient'
+  ) then
+    raise exception '0170: a post-0158 patient-owned referral_source got backfilled as staff-owned (backfill ran out of order)'
+      using errcode = '22023';
+  end if;
+end $$;
 
 alter table public.patients
   add constraint patients_referral_source_origin_check
@@ -670,7 +691,15 @@ end $$;
 --            has none, its normalized phone) — front desk may have
 --            registered this exact person since the planner read patients.
 --            Exempt: an ADMIN create (this op's own method = 'admin') is
---            never second-guessed by this check.
+--            never second-guessed by this check. A matching DELETED patient
+--            (same rule, deleted_at is not null) ALSO skips the create —
+--            owner decision (2026-09-25, review fix E): the sync must never
+--            silently re-create someone staff deleted; the row is left for
+--            an admin (see customer-plan.ts's deleted-patient hold, which
+--            catches most of these before they ever reach this backstop).
+--            Every skipped create_key (live or deleted match) comes back in
+--            `skipped_create_keys` so the runner can mark that mirror row
+--            unresolved instead of throwing (review fix B).
 --   link   — auto link (method auto_exact / auto_loose only, else 22023),
 --            never over an admin row or a hold (skipped). Skipped (counted
 --            `stale`) when the op carries expected_row_version and the
@@ -678,12 +707,20 @@ end $$;
 --            the patient after the planner read it.
 --   fill   — fill-only-if-empty (+ the channel when unset or sheet-owned).
 --            Same `stale` skip as link, checked before the fill.
---   facts  — acquisition facts upsert.
+--   facts  — acquisition facts upsert. Same `stale` skip as link/fill
+--            (review fix D): the planner reads a patient once and plans its
+--            link/fill/facts ops from that one read, so a facts write must
+--            not go through for an identity the sibling link/fill ops just
+--            rejected as stale.
 --   hold   — persist a review: (link_key, no patient, 'review', reason),
 --            never over an admin row.
 -- create / link / hold stamp sheet_patient_links.run_id with this run. A
 -- stale or skipped-existing op is simply dropped: the next run re-plans it
--- from a fresh read.
+-- from a fresh read. Every patient id an op rejected as `stale` (link, fill,
+-- facts alike) comes back in `stale_patient_ids` so the runner can null that
+-- patient's association on any Customers mirror row before staging it
+-- (review fix D) — the reporting mirror must never publish an association
+-- the database just rejected.
 -- TODO(patient-lifecycle PR 3, off main): once that PR's writer contract
 -- lands, every patient-touching branch below should take
 -- pg_advisory_xact_lock_shared(hashtext('patient_lifecycle'),
@@ -708,6 +745,12 @@ declare
   v_rows int;
   v_created jsonb := '{}'::jsonb;
   v_link_ver bigint;
+  v_facts_ver bigint;
+  -- Review fixes B/D: create_keys skipped (live or deleted dupe) and patient
+  -- ids rejected as stale, deduped once at return time (array(select distinct
+  -- unnest(...))) rather than on every append.
+  v_skipped_keys text[] := '{}';
+  v_stale_pids uuid[] := '{}';
   v_op_phone_digits text;
   v_op_phone text;
   v_op_name_norm text;
@@ -765,6 +808,18 @@ begin
       -- must not turn it into a re-asked question every run — the saved
       -- 'create' link decision has no patient yet until this insert runs).
       --
+      -- Owner decision 2026-09-25 (review fix E): a DELETED patient (deleted_at
+      -- is not null) matching the same rule ALSO counts as "someone already
+      -- holds this identity" and skips the create — reversing the original
+      -- 0167 read of this comment (a deleted record used to be exempt, on the
+      -- theory that it "does not block the create"). The sync must never
+      -- silently re-create a person staff deleted; customer-plan.ts's own
+      -- deleted-patient hold catches this earlier, before an op is even
+      -- built, so this is only the backstop for whatever reaches here anyway
+      -- (an admin's earlier decision replayed, a race). Merged patients stay
+      -- exempt (merged_into_id is null below): a merge redirects to a
+      -- survivor the live index already resolves, it is not "gone".
+      --
       -- No standing function or index on `patients` for this (review
       -- decision: a permanent functional index on an every-write core table
       -- was too much blast radius for a narrow race). Instead, prefilter
@@ -772,13 +827,11 @@ begin
       -- on `birthdate` alone — a plain seq scan over merged_into_id is null
       -- rows, proven fast enough at 10k patients by the Timing check below)
       -- or phone_normalized (indexed: idx_patients_phone_normalized), plus
-      -- deleted_at is null and merged_into_id is null (0167's active-patient
-      -- rule: a deleted or merged record is not "someone else already holds
-      -- this identity" — it does not block the create), and only THEN
-      -- compare the normalized name inline against that small candidate set
-      -- — never scanning the whole table by name. The name-norm expression
-      -- below is byte-identical to names.ts's nameNormOf (see its own
-      -- comment).
+      -- merged_into_id is null (deleted_at is deliberately NOT filtered here
+      -- — see above), and only THEN compare the normalized name inline
+      -- against that small candidate set — never scanning the whole table by
+      -- name. The name-norm expression below is byte-identical to names.ts's
+      -- nameNormOf (see its own comment).
       v_dupe_id := null;
       if v_op->>'method' <> 'admin' then
         v_op_phone_digits := regexp_replace(coalesce(v_f->>'phone', ''), '[^0-9]', '', 'g');
@@ -789,7 +842,7 @@ begin
           trim(regexp_replace(regexp_replace(translate(lower(replace(coalesce(v_f->>'first_name', '') || ' ' || coalesce(v_f->>'middle_name', ''), '''', '')), v_accent_from, v_accent_to), '[^a-z0-9\s]', ' ', 'g'), '\s+', ' ', 'g'));
         if nullif(v_f->>'birthdate', '') is not null then
           select p.id into v_dupe_id from public.patients p
-           where p.deleted_at is null and p.merged_into_id is null
+           where p.merged_into_id is null
              and p.birthdate = (v_f->>'birthdate')::date
              and trim(regexp_replace(regexp_replace(translate(lower(replace(coalesce(p.last_name, ''), '''', '')), v_accent_from, v_accent_to), '[^a-z0-9\s]', ' ', 'g'), '\s+', ' ', 'g'))
                  || '|' ||
@@ -798,7 +851,7 @@ begin
            limit 1;
         elsif v_op_phone is not null then
           select p.id into v_dupe_id from public.patients p
-           where p.deleted_at is null and p.merged_into_id is null
+           where p.merged_into_id is null
              and p.phone_normalized = v_op_phone
              and trim(regexp_replace(regexp_replace(translate(lower(replace(coalesce(p.last_name, ''), '''', '')), v_accent_from, v_accent_to), '[^a-z0-9\s]', ' ', 'g'), '\s+', ' ', 'g'))
                  || '|' ||
@@ -809,6 +862,7 @@ begin
       end if;
       if v_dupe_id is not null then
         n_skipped_existing := n_skipped_existing + 1;
+        v_skipped_keys := v_skipped_keys || (v_op->>'create_key');
         continue;
       end if;
       v_src := (select rs.id from public.referral_sources rs where rs.id = nullif(v_f->>'referral_source', ''));
@@ -864,6 +918,7 @@ begin
       if not exists (select 1 from public.patients p where p.id = (v_op->>'patient_id')::uuid
                        and p.deleted_at is null and p.merged_into_id is null) then
         n_stale := n_stale + 1;
+        v_stale_pids := v_stale_pids || (v_op->>'patient_id')::uuid;
         continue;
       end if;
       -- Stale-read guard: the planner's candidate may have changed (or gone)
@@ -872,6 +927,7 @@ begin
         select p.row_version into v_link_ver from public.patients p where p.id = (v_op->>'patient_id')::uuid;
         if v_link_ver is distinct from (v_op->>'expected_row_version')::bigint then
           n_stale := n_stale + 1;
+          v_stale_pids := v_stale_pids || (v_op->>'patient_id')::uuid;
           continue;
         end if;
       end if;
@@ -912,6 +968,7 @@ begin
       -- planner read it (a conflicting DOB, say) — re-plan next run instead.
       if v_op ? 'expected_row_version' and v_old.row_version <> (v_op->>'expected_row_version')::bigint then
         n_stale := n_stale + 1;
+        v_stale_pids := v_stale_pids || v_old.id;
         continue;
       end if;
       v_src := case
@@ -965,6 +1022,25 @@ begin
       end if;
 
     elsif v_op->>'op' = 'facts' then
+      -- 0167 active-patient rule, same race as link above: the planner read
+      -- this patient before it could be deleted or merged, so a gone target
+      -- counts as `stale` and gets no facts row (the next run re-plans).
+      select p.row_version into v_facts_ver from public.patients p
+       where p.id = (v_op->>'patient_id')::uuid and p.deleted_at is null and p.merged_into_id is null;
+      if not found then
+        n_stale := n_stale + 1;
+        v_stale_pids := v_stale_pids || (v_op->>'patient_id')::uuid;
+        continue;
+      end if;
+      -- Stale-read guard (review fix D): the planner plans a patient's
+      -- link/fill/facts ops from ONE read, so a facts write must not go
+      -- through for an identity the sibling link/fill ops just rejected as
+      -- stale — same check, same bucket, as link/fill above.
+      if v_op ? 'expected_row_version' and v_facts_ver is distinct from (v_op->>'expected_row_version')::bigint then
+        n_stale := n_stale + 1;
+        v_stale_pids := v_stale_pids || (v_op->>'patient_id')::uuid;
+        continue;
+      end if;
       insert into public.patient_acquisition_facts (patient_id, registered_on, sheet_new_repeat, source_ref)
       values ((v_op->>'patient_id')::uuid, nullif(v_op->>'registered_on', '')::date,
               nullif(v_op->>'new_repeat', ''), v_op->>'source_ref')
@@ -978,7 +1054,10 @@ begin
     end if;
   end loop;
 
-  return jsonb_build_object('created', v_created, 'counts', jsonb_build_object(
+  return jsonb_build_object('created', v_created,
+    'skipped_create_keys', to_jsonb(v_skipped_keys),
+    'stale_patient_ids', to_jsonb(array(select distinct unnest(v_stale_pids))),
+    'counts', jsonb_build_object(
     'created', n_created, 'linked', n_linked, 'filled', n_filled, 'facts', n_facts,
     'held', n_held, 'skipped', n_skipped, 'stale', n_stale, 'skipped_existing', n_skipped_existing));
 end $$;
@@ -1062,8 +1141,12 @@ begin
        and not exists (select 1 from public.sheet_patient_links l
                         where l.decision = 'review'
                           and l.link_key in (select jsonb_array_elements_text(v_keys))
+                          -- Review fix E: "Keep deleted" on a deleted-patient-match hold
+                          -- behaves like "Keep undone" on an undo hold — the item stays
+                          -- dismissed rather than reopening every run.
                           and (not coalesce((i.resolution->>'keep_undone')::boolean, false)
-                               or l.hold_reason is distinct from 'undone by an admin'))
+                               or (l.hold_reason is distinct from 'undone by an admin'
+                                   and l.hold_reason is distinct from 'matches_deleted_patient')))
        and (not coalesce((i.resolution->>'keep_undone')::boolean, false)
             or i.resolution->'candidate_ids' = v_ids)
      order by i.resolved_at desc nulls last, i.id desc
@@ -1716,9 +1799,14 @@ begin
   end if;
   v_keys := case when jsonb_typeof(v_item.payload->'link_keys') = 'array' then v_item.payload->'link_keys' else '[]'::jsonb end;
   if p_action = 'dismiss' then
+    -- "Keep undone" (an undo hold) and "Keep deleted" (review fix E's
+    -- deleted-patient-match hold) are the only two holds Dismiss is allowed
+    -- to leave standing — every other evidence-based hold still needs a
+    -- link or a new patient.
     if exists (select 1 from public.sheet_patient_links l
                 where l.decision = 'review' and l.link_key in (select jsonb_array_elements_text(v_keys))
-                  and l.hold_reason is distinct from 'undone by an admin') then
+                  and l.hold_reason is distinct from 'undone by an admin'
+                  and l.hold_reason is distinct from 'matches_deleted_patient') then
       raise exception 'This row is held for a decision: link it to a patient or create a new one.' using errcode = '22023';
     end if;
     v_keep_undone := exists (select 1 from public.sheet_patient_links l

@@ -8,7 +8,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { fetchAllRows } from "../reports/paging";
 import type { Database, Json } from "../../types/database";
 import type {
-  CustomerOp, FactsRecord, LinkRecord, PatientRecord, PrevCustomerRow, ReviewItemInput, TabKey,
+  CustomerOp, DeletedPatientEvidence, FactsRecord, LinkRecord, PatientRecord, PrevCustomerRow, ReviewItemInput, TabKey,
 } from "./types";
 
 export class SyncBusyError extends Error { constructor() { super("Another sheet sync is running."); this.name = "SyncBusyError"; } }
@@ -75,7 +75,21 @@ export interface SheetSyncStore {
   loadFacts(): Promise<FactsRecord[]>;
   loadAliases(): Promise<Map<string, string>>;
   loadCustomerMirror(): Promise<PrevCustomerRow[]>;
-  applyCustomerOps(lease: string, ops: CustomerOp[]): Promise<{ created: Record<string, string>; counts: Record<string, number> }>;
+  /** 0167 soft-deleted patients' identity evidence (review fix E) — never a link/fill target. */
+  loadDeletedPatients(): Promise<DeletedPatientEvidence[]>;
+  /**
+   * `skippedCreateKeys` (review fix B): create_key of every create the SQL
+   * skipped as a duplicate (live or deleted, never an admin create) — no
+   * created id comes back for these, so the runner must not treat them as a
+   * failure. `stalePatientIds` (review fix D): patient ids a link/fill/facts
+   * op rejected because expected_row_version no longer matched, so the
+   * runner can null that association on the reporting mirror instead of
+   * publishing what the database just rejected.
+   */
+  applyCustomerOps(lease: string, ops: CustomerOp[]): Promise<{
+    created: Record<string, string>; counts: Record<string, number>;
+    skippedCreateKeys: string[]; stalePatientIds: string[];
+  }>;
   stage(lease: string, tab: TabKey, rows: Json[]): Promise<void>;
   commit(lease: string, tab: TabKey, expected: number): Promise<number>;
   upsertReview(lease: string, tab: TabKey, items: ReviewItemInput[], clearAbsent: boolean): Promise<Record<string, number>>;
@@ -198,7 +212,23 @@ export function createSupabaseStore(client: Client): SheetSyncStore {
     },
     loadCustomerMirror: () => all<PrevCustomerRow>((from, to) =>
       client.from("sheet_customer_rows").select("source_key, patient_id, phone_norm, dob, link_state").order("id").range(from, to) as never),
-    applyCustomerOps: (lease, ops) => rpc("sheet_sync_apply_customer_ops", { p_lease_token: lease, p_ops: ops }),
+    // Review fix E: same table, opposite filter from loadPatients above —
+    // deleted_at is not null. Also selects merged_into_id (unused by the
+    // matcher) so this chain reads as a "lifecycle" read like loadPatients,
+    // per query-surfaces.test.ts's per-file convention for this file.
+    loadDeletedPatients: () => all<DeletedPatientEvidence>((from, to) =>
+      client.from("patients").select("id, first_name, middle_name, last_name, birthdate, phone, deleted_at, merged_into_id")
+        .not("deleted_at", "is", null).order("id").range(from, to) as never),
+    async applyCustomerOps(lease, ops) {
+      const res = await rpc<{
+        created: Record<string, string>; counts: Record<string, number>;
+        skipped_create_keys?: string[]; stale_patient_ids?: string[];
+      }>("sheet_sync_apply_customer_ops", { p_lease_token: lease, p_ops: ops });
+      return {
+        created: res.created, counts: res.counts,
+        skippedCreateKeys: res.skipped_create_keys ?? [], stalePatientIds: res.stale_patient_ids ?? [],
+      };
+    },
     async stage(lease, tab, rows) { await rpc("sheet_mirror_stage", { p_lease_token: lease, p_tab: tab, p_rows: rows }); },
     commit: (lease, tab, expected) => rpc("sheet_mirror_commit", { p_lease_token: lease, p_tab: tab, p_expected: expected }),
     // Chunked (REVIEW_CHUNK items a call): one item costs a few indexed

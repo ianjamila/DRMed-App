@@ -215,6 +215,11 @@ export function isAutoResolution(resolution: Record<string, unknown> | null | un
  * One line for a resolved/dismissed item's resolution. `dismiss` with
  * `keep_undone: true` (0170 round 3+5) is the "Keep undone" outcome, not a
  * plain dismiss — the admin re-affirmed an undo hold rather than clearing it.
+ * `payload` (optional — only identity-kind items have one) distinguishes a
+ * deleted-patient-match "Keep deleted" (review fix E) from an ordinary "Keep
+ * undone": both set `keep_undone: true` on `resolution` (the SQL's flag is
+ * generic — "some hold existed at dismiss time" — not which kind), so only
+ * the item's own payload (`deleted_patient_id`) tells them apart.
  * `alias` names the channel it was mapped to when the id is one this page
  * knows (`isReferralSource`); an id added to the lookup without a matching
  * label here falls back to the bare action word rather than showing nothing.
@@ -222,11 +227,15 @@ export function isAutoResolution(resolution: Record<string, unknown> | null | un
  * `resolution.auto` text — that text is a fixed internal marker, not a
  * message meant for a screen.
  */
-export function resolutionSummary(resolution: Record<string, unknown> | null | undefined): string {
+export function resolutionSummary(
+  resolution: Record<string, unknown> | null | undefined,
+  payload?: Record<string, unknown> | null,
+): string {
   if (!resolution) return "—";
   if (isAutoResolution(resolution)) return "Cleared — no longer in the sheet";
   const action = typeof resolution.action === "string" ? resolution.action : undefined;
   if (action === "dismiss" && resolution.keep_undone === true) {
+    if (typeof payload?.deleted_patient_id === "string") return "Kept deleted";
     // Raised straight into this state by the sync after an undo (0170's
     // sheet_sync_upsert_review, auto_from_undo): the undo was the decision.
     return resolution.auto_from_undo === true ? "Kept undone (by the undo)" : "Kept undone";

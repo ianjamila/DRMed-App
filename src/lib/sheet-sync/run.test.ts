@@ -216,6 +216,77 @@ describe("runSheetSync — identity reload after customer ops (review fix #1)", 
   });
 });
 
+describe("runSheetSync — flags set from batch contents, not the response, survive a commit-then-throw (review fix C)", () => {
+  it("a create that committed server-side but whose response never arrived still triggers the patient-index reload", async () => {
+    // Simulates a network error AFTER the RPC committed: the base FakeStore's
+    // logic really runs (the patient is really created in the fixture's
+    // world), but the call itself then throws instead of returning — the
+    // exact case the old `Object.keys(created).length` condition missed,
+    // since `created` never gets populated when the response is lost.
+    class CommitThenLoseResponseStore extends FakeStore {
+      async applyCustomerOps(lease: string, ops: CustomerOp[]): ReturnType<FakeStore["applyCustomerOps"]> {
+        await super.applyCustomerOps(lease, ops);
+        throw new Error("simulated network error after commit");
+      }
+    }
+    const store = new CommitThenLoseResponseStore({});
+    const result = await run(store, {}, async () => tabs({
+      // nameRaw "Dela Cruz, Juan" loose-matches the ONE Customers row's
+      // created patient ("Dela Cruz, Juan Santos") — same technique as the
+      // review fix #1 tests above.
+      lab: [LAB_H0, LAB_H1, labRow(1)],
+    }));
+
+    expect(result.perTab.customers?.status).toBe("failed");
+    expect(result.perTab.customers?.error).toBe("simulated network error after commit");
+    // The reload the catch block ran (driven by `sentCreates`, set from the
+    // batch BEFORE the call) picked up the newly created patient — lab links
+    // to it instead of failing as identity-stale.
+    expect(result.perTab.lab?.status).toBe("succeeded");
+    expect(result.perTab.lab?.planned?.linked).toBe(1);
+    expect(store.stagedRows.lab).toHaveLength(1);
+    const stagedLab = store.stagedRows.lab[0] as Record<string, unknown>;
+    expect(stagedLab.patient_id).toMatch(/^new:/);
+  });
+});
+
+describe("runSheetSync — a skipped create (concurrent registration or deleted match) stages unresolved, not a failure (review fix B)", () => {
+  it("a create the SQL skips as a duplicate stages its mirror row unresolved (patient_id null, link_state unlinked) instead of throwing", async () => {
+    class ConcurrentRegistrationStore extends FakeStore {
+      async applyCustomerOps(lease: string, ops: CustomerOp[]) {
+        // Simulate front desk registering the EXACT same person (name + DOB)
+        // after the planner read patients but before this chunk applies:
+        // splice a matching live patient in now, so customer-world.ts's dupe
+        // check skips the create op (`skipped_existing`) instead of running it.
+        this.patients.push({
+          id: "concurrent-1", drm_id: "DRM-CONCURRENT", first_name: "Juan", middle_name: "Santos", last_name: "Dela Cruz",
+          birthdate: "1990-01-01", phone: null, phone_normalized: null, email: null, sex: null, address: null,
+          referred_by_doctor: null, preferred_release_medium: null, senior_pwd_id_kind: null, senior_pwd_id_number: null,
+          referral_source: null, referral_source_origin: null, merged_into_id: null,
+        });
+        return super.applyCustomerOps(lease, ops);
+      }
+    }
+    const store = new ConcurrentRegistrationStore({});
+    const result = await run(store); // default tabs(): one Customers row, "Dela Cruz, Juan Santos" DOB 1990-01-01
+
+    expect(result.perTab.customers?.status).toBe("succeeded");
+    expect(result.perTab.customers?.applied?.skipped_existing).toBe(1);
+    expect(result.perTab.customers?.applied?.created).toBe(0);
+    expect(store.stagedRows.customers).toHaveLength(1);
+    const staged = store.stagedRows.customers[0] as Record<string, unknown>;
+    expect(staged.patient_id).toBeNull();
+    expect(staged.link_state).toBe("unlinked");
+    expect(staged).not.toHaveProperty("pending_create_key");
+  });
+
+  // The negative case — a key that is NEITHER created nor reported skipped
+  // (the store response silently dropped it) — is already covered above by
+  // "a store response that drops a create op's id fails the customers tab
+  // loudly…" (review fix #3): that store never reports the key as skipped
+  // either, so the throw still fires exactly as before this fix.
+});
+
 describe("runSheetSync — identity reload after a PARTIAL customers ops failure (review fix #1b)", () => {
   // 499 distinct new-patient rows — customer-plan.ts always sorts every
   // `create` op before every `hold` op (two separate loops over `ops`,

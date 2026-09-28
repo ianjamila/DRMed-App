@@ -155,6 +155,22 @@ export interface LinkRecord {
   hold_reason?: string | null;
 }
 
+/**
+ * A deleted patient's identity evidence (review fix E) — 0167's soft-deleted
+ * patients, loaded SEPARATELY from `PatientRecord`/`loadPatients` and never
+ * used as a link/fill target. Only what the name+DOB/name+phone matchers
+ * need; store.ts's loader also selects deleted_at/merged_into_id (unused
+ * here) to satisfy query-surfaces.test.ts's lifecycle-read convention.
+ */
+export interface DeletedPatientEvidence {
+  id: string;
+  first_name: string | null;
+  middle_name: string | null;
+  last_name: string | null;
+  birthdate: string | null;
+  phone: string | null;
+}
+
 export interface FactsRecord {
   patient_id: string;
   registered_on: string | null;
@@ -195,7 +211,12 @@ export type CustomerOp =
    */
   | { op: "link"; link_key: string; patient_id: string; method: "auto_exact" | "auto_loose"; expected_row_version?: number }
   | { op: "fill"; patient_id: string; fields: FillFields; expected_row_version?: number }
-  | { op: "facts"; patient_id: string; registered_on: string | null; new_repeat: "new" | "repeat" | null; source_ref: string }
+  /**
+   * `expected_row_version` (review fix D): the SAME guard as link/fill —
+   * facts is planned from the same patient read as its sibling link/fill
+   * ops, so a stale identity must reject it too, not just them.
+   */
+  | { op: "facts"; patient_id: string; registered_on: string | null; new_repeat: "new" | "repeat" | null; source_ref: string; expected_row_version?: number }
   /** Persist a review: upsert (link_key, patient_id null, decision "review"), never over an admin row. */
   | { op: "hold"; link_key: string; reason: string };
 

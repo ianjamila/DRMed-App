@@ -31,11 +31,21 @@
  * independent of the order of the sheet rows.
  */
 import { isTokenMultisetSuperset, type PatientIndex } from "./patient-index";
-import { phone10 } from "./names";
+import { nameNormOf, phone10 } from "./names";
 import type {
-  CustomerMirrorRow, CustomerOp, CustomerPlan, CustomerRow, FactsRecord, FillFields, LinkRecord,
+  CustomerMirrorRow, CustomerOp, CustomerPlan, CustomerRow, DeletedPatientEvidence, FactsRecord, FillFields, LinkRecord,
   LinkState, PatientRecord, PrevCustomerRow, ReviewItemInput,
 } from "./types";
+
+/**
+ * The sentinel written to `sheet_patient_links.hold_reason` (and, once a run
+ * re-surfaces the hold, to `payload.held_because` — see `resolveHeld` below)
+ * for a deleted-patient-match hold (review fix E, owner decision 2026-09-25).
+ * A machine slug, not prose, because 0170's SQL matches it literally in two
+ * places (the dismiss guard and the "stays dismissed" re-open check) — same
+ * shape as the existing 'undone by an admin' sentinel.
+ */
+export const DELETED_PATIENT_HOLD_REASON = "matches_deleted_patient";
 
 interface Input {
   rows: readonly CustomerRow[];
@@ -43,6 +53,8 @@ interface Input {
   links: ReadonlyMap<string, LinkRecord>;
   facts: ReadonlyMap<string, FactsRecord>;
   prevRows: readonly PrevCustomerRow[];
+  /** 0167 soft-deleted patients' identity evidence (review fix E). Optional — defaults to none, so existing callers/tests are unaffected. */
+  deletedPatients?: readonly DeletedPatientEvidence[];
   importedAtIso?: string;       // legacy_intake.imported_at; runner passes the run start
 }
 
@@ -207,6 +219,32 @@ export function planCustomers(input: Input): CustomerPlan {
     g.rows.push(r);
   }
 
+  // Deleted-patient identity evidence (review fix E): same two matchers the
+  // create-op SQL backstop uses (name+DOB, or name+phone when no DOB) — no
+  // new fuzzy logic, just the existing simple rule applied to a second,
+  // smaller table. `dob` non-null keys the DOB map; phone10 keys the phone
+  // map. Collisions (two deleted patients sharing a key) keep the last one —
+  // this is a narrow backstop, not a precise match.
+  const deletedByNameDob = new Map<string, string>();
+  const deletedByNamePhone = new Map<string, string>();
+  for (const dp of input.deletedPatients ?? []) {
+    const nn = nameNormOf({ first: dp.first_name, middle: dp.middle_name, last: dp.last_name });
+    if (dp.birthdate) deletedByNameDob.set(`${nn}#${dp.birthdate}`, dp.id);
+    const ph = phone10(dp.phone);
+    if (ph) deletedByNamePhone.set(`${nn}|${ph}`, dp.id);
+  }
+  /** The deleted patient this group's identity matches, if any. */
+  function matchDeletedPatient(g: Group): string | null {
+    if (g.dob) return deletedByNameDob.get(`${g.nameNorm}#${g.dob}`) ?? null;
+    for (const r of g.rows) {
+      if (r.phone10) {
+        const hit = deletedByNamePhone.get(`${g.nameNorm}|${r.phone10}`);
+        if (hit) return hit;
+      }
+    }
+    return null;
+  }
+
   // Corroboration sources: rows linked last run that vanished from this snapshot.
   const currentKeys = new Set(input.rows.map((r) => r.sourceKey));
   const vanishedByPhone = new Map<string, string[]>();
@@ -266,6 +304,18 @@ export function planCustomers(input: Input): CustomerPlan {
     // A saved link whose patient is gone (deleted, or missing from this read):
     // creating would silently re-make someone staff already removed or linked.
     if (staleDecision) return review("ambiguous_patient", "the previously linked patient no longer exists");
+    // Review fix E: this row would otherwise become a create, but its
+    // identity matches a patient staff deleted — hold it for an admin
+    // instead of silently re-creating that person. candidates: [] (not the
+    // deleted id) — candidatePayload() looks candidates up in the LIVE
+    // index, which a deleted patient is never in; the id travels in `extra`
+    // instead, which the SQL create-recheck backstop is the last line of
+    // defense against as well.
+    const deletedMatch = matchDeletedPatient(g);
+    if (deletedMatch) {
+      return review("possible_existing_patient", DELETED_PATIENT_HOLD_REASON, [],
+        { held_because: DELETED_PATIENT_HOLD_REASON, deleted_patient_id: deletedMatch });
+    }
     return { kind: "create" };
   }
 

@@ -236,6 +236,12 @@ describe("resolutionSummary", () => {
       .toBe("Kept undone (by the undo)");
   });
 
+  it("a deleted-patient-match hold's Keep deleted reads Kept deleted, not Kept undone (review fix E)", () => {
+    expect(
+      resolutionSummary({ action: "dismiss", keep_undone: true }, { deleted_patient_id: "p1", reason: "matches_deleted_patient" }),
+    ).toBe("Kept deleted");
+  });
+
   it("a released item reads as handed back to the sync", () => {
     expect(resolutionSummary({ action: "released", undo_run_id: "u", release_run_id: "r" })).toBe("Released — the sync decides again");
   });

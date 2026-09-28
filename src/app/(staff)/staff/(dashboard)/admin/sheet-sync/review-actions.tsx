@@ -208,6 +208,79 @@ export function IdentityItemControls({
 }
 
 // ---------------------------------------------------------------------------
+// 1b. possible_existing_patient, deleted-patient-match variant (review fix E,
+//     owner decision 2026-09-25). No candidate list — the only "candidate" is
+//     the deleted patient itself, and admin Link onto a deleted patient is
+//     refused outright by sheet_review_resolve, so this offers only Create
+//     new (the existing create path — an admin create is allowed even over a
+//     deleted match) and Keep deleted (dismiss; the SQL now allows it for
+//     this hold reason, same as "Keep undone" for an undo hold — the hold
+//     stays so the row is never auto-created). Restoring the deleted patient
+//     (Admin Tools › Deleted Patients) lets an admin Link normally afterward.
+// ---------------------------------------------------------------------------
+
+export function DeletedPatientMatchControls({ itemId, rowLabel }: { itemId: string; rowLabel: string }) {
+  const router = useRouter();
+  const [pending, startTransition] = useTransition();
+  const [err, setErr] = useState<string | null>(null);
+
+  function resolve(action: "create" | "dismiss") {
+    setErr(null);
+    startTransition(async () => {
+      try {
+        const res = await resolveReviewItemAction({ itemId, action, patientId: null });
+        if (!res.ok) {
+          setErr(res.error);
+          return;
+        }
+        router.refresh();
+      } catch (e) {
+        console.error("sheet sync review resolve failed", e);
+        setErr("Could not reach the server. Check your connection and try again.");
+      }
+    });
+  }
+
+  return (
+    <div className="mt-3">
+      <div className="flex flex-wrap gap-2">
+        <button
+          type="button"
+          disabled={pending}
+          onClick={() => resolve("create")}
+          aria-label={`Create a new patient for ${rowLabel}`}
+          className={secondaryBtn}
+        >
+          {pending ? "Working…" : "Create a new patient"}
+        </button>
+        <button
+          type="button"
+          disabled={pending}
+          onClick={() => resolve("dismiss")}
+          aria-label={`Keep ${rowLabel} deleted`}
+          className={quietBtn}
+        >
+          {pending ? "Working…" : "Keep deleted"}
+        </button>
+        <Link
+          href="/staff/admin/deleted-patients"
+          target="_blank"
+          rel="noreferrer"
+          className={`${secondaryBtn} inline-flex items-center`}
+        >
+          Find the deleted record
+        </Link>
+      </div>
+      <p className="mt-2 text-xs text-[color:var(--color-brand-text-soft)]">
+        Restoring the deleted patient there lets you link this row to them normally on the next sync. The sync will
+        never re-create this person on its own.
+      </p>
+      <ErrorLine error={err} />
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // 2. unmapped_source
 // ---------------------------------------------------------------------------
 

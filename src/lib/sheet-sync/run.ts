@@ -103,9 +103,9 @@ export async function runSheetSync(opts: {
   let status: RunOutcome["status"];
 
   try {
-    const [raw, settings, lastGood, patients, linkRows, factRows, aliases, prevMirror] = await Promise.all([
+    const [raw, settings, lastGood, patients, linkRows, factRows, aliases, prevMirror, deletedPatients] = await Promise.all([
       opts.readSheet(), store.readSettings(), store.lastGoodRowsRead(), store.loadPatients(), store.loadLinks(),
-      store.loadFacts(), store.loadAliases(), store.loadCustomerMirror(),
+      store.loadFacts(), store.loadAliases(), store.loadCustomerMirror(), store.loadDeletedPatients(),
     ]);
     // The initial load (a full patients table, etc.) can itself take a while on
     // a large clinic — refresh the lease before spending more time planning.
@@ -137,7 +137,7 @@ export async function runSheetSync(opts: {
     try {
       const parsed = parseCustomersTab(raw.customers, { today, aliases });
       if (await snapshotOk("customers", parsed)) {
-        const plan = planCustomers({ rows: parsed.rows, index, links, facts, prevRows: prevMirror, importedAtIso: new Date(started).toISOString() });
+        const plan = planCustomers({ rows: parsed.rows, index, links, facts, prevRows: prevMirror, deletedPatients, importedAtIso: new Date(started).toISOString() });
         // Planning (identity resolution over every Customers row) can itself take
         // a while — refresh the lease again before writing anything.
         await store.heartbeat(lease);
@@ -146,8 +146,18 @@ export async function runSheetSync(opts: {
           planned: plan.counts, review: countKinds(review) };
         if (!opts.dryRun) {
           const created: Record<string, string> = {};
+          const skippedCreateKeys = new Set<string>();
+          const stalePatientIds = new Set<string>();
           const applied: Record<string, number> = {};
           let touchedLinks = false;
+          // Review fix C: any create op → a new `sentCreates` flag. Distinct
+          // from `Object.keys(created).length` (the old condition): that only
+          // knows what the RESPONSE said, so a chunk that committed the
+          // create server-side but whose response never reached us (a
+          // network error AFTER commit) would leave `created` empty and the
+          // patient index unrefreshed. Set from the BATCH CONTENTS, before
+          // the call, so a commit-then-throw still triggers the reload below.
+          let sentCreates = false;
           // Reload BEFORE staging/committing the mirror: a `hold` op stops a doubted
           // auto link from speaking for that name right away (customer-plan.ts's hold
           // ops; encounter-identity.ts treats decision "review" as a block), and a
@@ -156,24 +166,27 @@ export async function runSheetSync(opts: {
           // lab/consult resolving identity against the FRESH state, not the stale one.
           const reloadIdentity = async () => {
             if (touchedLinks) for (const l of await store.loadLinks()) links.set(l.link_key, l);
-            if (Object.keys(created).length) index = buildPatientIndex(await store.loadPatients());
+            if (sentCreates) index = buildPatientIndex(await store.loadPatients());
           };
           try {
             for (const batch of chunks<CustomerOp>(plan.ops, OPS_CHUNK)) {
+              if (batch.some((op) => op.op !== "fill" && op.op !== "facts")) touchedLinks = true;
+              if (batch.some((op) => op.op === "create")) sentCreates = true;
               const res = await store.applyCustomerOps(lease, batch);
               Object.assign(created, res.created);
+              for (const k of res.skippedCreateKeys) skippedCreateKeys.add(k);
+              for (const id of res.stalePatientIds) stalePatientIds.add(id);
               for (const [k, v] of Object.entries(res.counts)) applied[k] = (applied[k] ?? 0) + v;
-              if (batch.some((op) => op.op !== "fill" && op.op !== "facts")) touchedLinks = true;
             }
             await reloadIdentity();
           } catch (opsErr) {
             if (opsErr instanceof LeaseLostError) throw opsErr;
             // A prior chunk in this same loop may have already committed a
             // hold/create/link/fill before this one failed — reloadIdentity()
-            // no-ops unless touchedLinks/created say otherwise, so this is safe
-            // to call unconditionally. If the reload itself fails, lab/consult
-            // must not run against whatever links/index happened to be loaded
-            // before this run started.
+            // no-ops unless touchedLinks/sentCreates say otherwise, so this is
+            // safe to call unconditionally. If the reload itself fails,
+            // lab/consult must not run against whatever links/index happened
+            // to be loaded before this run started.
             try {
               await reloadIdentity();
             } catch (reloadErr) {
@@ -184,16 +197,33 @@ export async function runSheetSync(opts: {
           }
 
           // Every pending_create_key must come from a create op this run just
-          // applied. A missing id means the store's response silently dropped a
-          // key — writing patient_id: null would stage a mirror row pointing at
-          // nobody, so fail the tab loudly instead. The message carries a count
-          // only: a link key holds a patient's name and DOB.
+          // applied, or one it explicitly skipped as a duplicate (review fix
+          // B: `skippedCreateKeys` — a create the SQL skipped, live or
+          // deleted match, never returns an id; that mirror row stages
+          // unresolved instead of failing the whole tab). A key that is
+          // neither created nor skipped means the store's response silently
+          // dropped it — writing patient_id: null there would stage a mirror
+          // row pointing at nobody with no explanation, so fail the tab
+          // loudly instead. The message carries a count only: a link key
+          // holds a patient's name and DOB.
+          // Review fix D: a mirror row whose patient_id the ops loop rejected
+          // as `stale` (its facts/fill/link op lost the race to a change
+          // made after the planner read the patient) is ALSO unresolved —
+          // the reporting mirror must never publish an association the
+          // database just rejected.
           let missingIds = 0;
           const mirror = plan.mirror.map(({ pending_create_key, ...row }: CustomerMirrorRow) => {
-            if (!pending_create_key) return { ...row, patient_id: row.patient_id };
-            const patientId = created[pending_create_key];
-            if (!patientId) missingIds++;
-            return { ...row, patient_id: patientId ?? null };
+            if (pending_create_key) {
+              const patientId = created[pending_create_key];
+              if (patientId) return { ...row, patient_id: patientId };
+              if (skippedCreateKeys.has(pending_create_key)) return { ...row, patient_id: null, link_state: "unlinked" };
+              missingIds++;
+              return { ...row, patient_id: null };
+            }
+            if (row.patient_id && stalePatientIds.has(row.patient_id)) {
+              return { ...row, patient_id: null, link_state: "unlinked" };
+            }
+            return { ...row, patient_id: row.patient_id };
           });
           if (missingIds) {
             throw new Error(`sheet sync: no created patient id for ${missingIds} mirror row(s) — the store response is missing created ids`);

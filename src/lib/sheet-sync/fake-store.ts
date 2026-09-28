@@ -7,7 +7,7 @@
 import type { Json } from "../../types/database";
 import { applyOps } from "./__fixtures__/customer-world";
 import { LeaseLostError, SyncBusyError, type AcquireResult, type AuditRow, type ReleasePageResult, type RevertPageResult, type SheetSyncStore } from "./store";
-import type { CustomerOp, FactsRecord, LinkRecord, PatientRecord, PrevCustomerRow, ReviewItemInput, TabKey } from "./types";
+import type { CustomerOp, DeletedPatientEvidence, FactsRecord, LinkRecord, PatientRecord, PrevCustomerRow, ReviewItemInput, TabKey } from "./types";
 
 let runCounter = 0;
 
@@ -19,6 +19,8 @@ export interface FakeStoreOptions {
   patients?: PatientRecord[];
   links?: LinkRecord[];
   facts?: FactsRecord[];
+  /** review fix E: 0167 soft-deleted patients' identity evidence. */
+  deletedPatients?: DeletedPatientEvidence[];
   aliases?: Map<string, string>;
   mirror?: PrevCustomerRow[];
   lastGood?: Partial<Record<TabKey, number>>;
@@ -45,7 +47,11 @@ export class FakeStore implements SheetSyncStore {
   private busy: boolean;
   private leaseLostAfter: number | null;
   private fenceCount = 0;
-  private patients: PatientRecord[];
+  // protected (not private): a test subclass mutates `patients` directly
+  // to simulate a concurrent registration landing BETWEEN the planner's read
+  // and applyCustomerOps's apply (run.test.ts's review-fix-B coverage).
+  protected patients: PatientRecord[];
+  private deletedPatients: DeletedPatientEvidence[];
   private links: Map<string, LinkRecord>;
   private facts: Map<string, FactsRecord>;
   private aliases: Map<string, string>;
@@ -63,6 +69,7 @@ export class FakeStore implements SheetSyncStore {
     this.busy = opts.busy ?? false;
     this.leaseLostAfter = opts.leaseLostAfter ?? null;
     this.patients = opts.patients ?? [];
+    this.deletedPatients = opts.deletedPatients ?? [];
     this.links = new Map((opts.links ?? []).map((l) => [l.link_key, l]));
     this.facts = new Map((opts.facts ?? []).map((f) => [f.patient_id, f]));
     this.aliases = opts.aliases ?? new Map();
@@ -99,6 +106,7 @@ export class FakeStore implements SheetSyncStore {
   async lastGoodRowsRead() { return this.lastGood; }
   async isSuspectAccepted(tab: TabKey, rowsRead: number) { return this.acceptedSuspect.has(`${tab}:${rowsRead}`); }
   async loadPatients() { return this.patients; }
+  async loadDeletedPatients() { return this.deletedPatients; }
   async loadLinks() { return [...this.links.values()]; }
   async loadFacts() { return [...this.facts.values()]; }
   async loadAliases() { return new Map(this.aliases); }
@@ -108,33 +116,24 @@ export class FakeStore implements SheetSyncStore {
   async applyCustomerOps(_lease: string, ops: CustomerOp[]) {
     this.calls.push(["applyCustomerOps", ops.length]);
     this.fence();
-    // 0170's sheet_sync_apply_customer_ops returns SQL-named counts (created/
-    // linked/filled/facts/held/skipped) — mirror those exactly, not the op's
-    // own `op` field (create/link/fill/facts/hold), which callers must not rely on.
-    const created: Record<string, string> = {};
-    const counts: Record<string, number> = { created: 0, linked: 0, filled: 0, facts: 0, held: 0, skipped: 0 };
-    for (const op of ops) {
-      if (op.op === "create") { created[op.create_key] = `new:${op.create_key}`; counts.created++; }
-      else if (op.op === "link") {
-        const ex = this.links.get(op.link_key);
-        if (ex && (ex.method === "admin" || ex.decision === "review")) counts.skipped++; else counts.linked++;
-      } else if (op.op === "hold") {
-        const ex = this.links.get(op.link_key);
-        if (ex && ex.method === "admin") counts.skipped++; else counts.held++;
-      } else if (op.op === "fill") {
-        const p = this.patients.find((x) => x.id === op.patient_id);
-        if (!p || p.merged_into_id) counts.skipped++; else counts.filled++;
-      } else counts.facts++;
-    }
-    // Apply the ops to the underlying patients/links/facts the same way 0170's SQL
-    // does (reusing the fixture the customer-plan tests already trust), so a reload
-    // right after this call (loadPatients/loadLinks) sees the real post-op state —
-    // the point of the hold-reload fix in run.ts.
+    // Apply the ops to the underlying patients/links/facts the same way
+    // 0170's SQL does (customer-world.ts's applyOps — the same model
+    // customer-plan.test.ts trusts), so a reload right after this call
+    // (loadPatients/loadLinks) sees the real post-op state — the point of
+    // the hold-reload fix in run.ts — and so the returned created/counts/
+    // skippedCreateKeys/stalePatientIds genuinely reflect what happened,
+    // not a separate hand-rolled guess (a prior version of this method
+    // counted `created` for every create op regardless of whether it was
+    // actually skipped as a duplicate — review fix B's test coverage would
+    // have failed silently against that).
     const after = applyOps(ops, { patients: this.patients, links: this.links, facts: this.facts });
     this.patients = after.patients;
     this.links = after.links;
     this.facts = after.facts;
-    return { created, counts };
+    return {
+      created: after.created, counts: after.counts,
+      skippedCreateKeys: after.skippedCreateKeys, stalePatientIds: after.stalePatientIds,
+    };
   }
 
   async stage(_lease: string, tab: TabKey, rows: Json[]) {
