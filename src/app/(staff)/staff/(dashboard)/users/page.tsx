@@ -478,7 +478,7 @@ export default async function StaffUsersPage({ searchParams }: SearchProps) {
         </FilterRow>
       </div>
 
-      <ActiveRoleViewsPanel views={roleViews} now={now} />
+      <ActiveRoleViewsPanel views={roleViews} now={now} currentAdminId={session.user_id} />
 
       {/* Existing users */}
       <section>

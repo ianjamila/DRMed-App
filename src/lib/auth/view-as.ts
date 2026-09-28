@@ -112,3 +112,11 @@ export function viewAsStateKey(v: ActiveViewAs | null): string {
 export interface ViewAsActionState {
   error: string | null;
 }
+
+/** What `endViewAsForAction` (the "End now" button, spec addendum A3)
+ *  returns to `useActionState`. `notice` carries the "already ended" case
+ *  (ended: false) — not an error, just nothing left to do. */
+export interface EndViewAsActionState {
+  error: string | null;
+  notice: string | null;
+}

@@ -69,6 +69,49 @@ export async function exitViewAs(
   return transition(session, null, ctx, "Could not exit the role view.");
 }
 
+export type EndViewAsResult =
+  | { ok: true; ended: boolean }
+  | { ok: false; error: string };
+
+const NOT_UNSIMULATING_ADMIN =
+  "Only an admin who isn't viewing the app as another role can end someone's role view.";
+
+/** Admin B ends admin A's active View-as override (the "End now" button on
+ *  /staff/users — spec addendum A3). `session` must be a genuine, effective
+ *  admin (requireAdminStaff already ensures this — a simulating admin's
+ *  effective role is the simulated one, so they can't reach the page at
+ *  all), and `targetId` must be a real, non-empty id that isn't the caller's
+ *  own (an admin can't end their own view from here; the button is hidden
+ *  on their own line anyway). The SQL (0190 view_as_end_for) re-checks the
+ *  caller is a genuine, non-simulating admin under a row lock (P0076) —
+ *  this guard is belt-and-suspenders, not the source of truth. */
+export async function endViewAsFor(
+  session: StaffSession,
+  targetId: unknown,
+  ctx: ViewAsContext,
+): Promise<EndViewAsResult> {
+  if (session.role !== "admin") return { ok: false, error: NOT_ADMIN };
+  if (typeof targetId !== "string" || targetId.trim() === "") {
+    return { ok: false, error: "Could not end that role view." };
+  }
+  if (targetId === session.user_id) {
+    return { ok: false, error: "You can't end your own role view from here." };
+  }
+
+  const { data, error } = await createAdminClient().rpc("view_as_end_for", {
+    p_actor: session.user_id,
+    p_target: targetId,
+    ...requestArgs(ctx),
+  });
+  if (error) {
+    return {
+      ok: false,
+      error: error.code === "P0076" ? NOT_UNSIMULATING_ADMIN : "Could not end that role view.",
+    };
+  }
+  return { ok: true, ended: data === true };
+}
+
 /** Lazy `staff.view_as.ended` reason=expired (0187 view_as_expire). Best
  *  effort: the session is already correct without it (an expired override
  *  is inert), so a failure is reported, never thrown. */
