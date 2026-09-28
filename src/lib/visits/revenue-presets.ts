@@ -117,6 +117,67 @@ export interface RevenueTrendPoint {
   lab: number;
   consult: number;
   procedure: number;
+  /**
+   * The same dates one year earlier (`priorYearRange` — so the current,
+   * partial month is compared day-for-day, not against a whole month).
+   */
+  prior: { lab: number; consult: number; procedure: number };
+}
+
+export function trendTotal(p: { lab: number; consult: number; procedure: number }): number {
+  return p.lab + p.consult + p.procedure;
+}
+
+/** "↑ +12%" / "↓ −5%" direction for a trend month vs the same dates last year. */
+export function trendDirection(p: RevenueTrendPoint): {
+  dir: "up" | "down" | "flat" | "none";
+  change: string | null;
+} {
+  const change = yearOnYearChange(trendTotal(p), trendTotal(p.prior));
+  if (change === null) return { dir: "none", change: null };
+  if (change === "0%") return { dir: "flat", change };
+  return { dir: change.startsWith("+") ? "up" : "down", change };
+}
+
+/**
+ * The 12-month table as CSV rows (header first) for the bookkeeper. Plain
+ * numbers (no ₱, no thousands separators) so a spreadsheet reads them as
+ * numbers; month as YYYY-MM so it sorts.
+ */
+export function revenueTrendCsvRows(points: readonly RevenueTrendPoint[]): (string | number)[][] {
+  const money = (n: number) => Number(n.toFixed(2));
+  return [
+    [
+      "Month",
+      "Partial month",
+      "Lab Tests PHP",
+      "Doctor Consults PHP",
+      "Doctor Procedures PHP",
+      "Total PHP",
+      "Same dates last year: Lab Tests PHP",
+      "Same dates last year: Doctor Consults PHP",
+      "Same dates last year: Doctor Procedures PHP",
+      "Same dates last year: Total PHP",
+      "Change vs last year %",
+    ],
+    ...points.map((p) => [
+      p.key,
+      p.partial ? `to ${p.end}` : "",
+      money(p.lab),
+      money(p.consult),
+      money(p.procedure),
+      money(trendTotal(p)),
+      money(p.prior.lab),
+      money(p.prior.consult),
+      money(p.prior.procedure),
+      money(trendTotal(p.prior)),
+      // A number, not "+12%": a leading "+" is neutralised as a formula by the
+      // CSV writer, and a bare number is what a spreadsheet can chart.
+      trendTotal(p.prior) > 0
+        ? Math.round(((trendTotal(p) - trendTotal(p.prior)) / trendTotal(p.prior)) * 100)
+        : "",
+    ]),
+  ];
 }
 
 /**
