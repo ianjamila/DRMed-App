@@ -382,4 +382,115 @@ begin
 end
 $s2$;
 
+-- --- s3: guards on the direct-patient tables -----------------------------------
+do $s3$
+declare
+  k_admin constant uuid := 'a0000000-0000-4000-8000-000000000184';
+  a  uuid := pg_temp.mk_patient('S3A');
+  b  uuid := pg_temp.mk_patient('S3B');
+  d  uuid := pg_temp.mk_patient('S3D');
+  m  uuid := pg_temp.mk_patient('S3M');
+  vd uuid;
+  va uuid;
+  ap1 uuid; ap2 uuid; ap3 uuid; ap4 uuid; apw uuid;
+  att_d uuid;
+  x0 int;
+begin
+  -- Children created while the patients are active, then the patients go inactive.
+  vd := pg_temp.mk_visit(d);
+  va := pg_temp.mk_visit(a);
+  insert into public.appointments (patient_id, status, scheduled_at) values
+    (d, 'confirmed', now() + interval '1 day') returning id into ap1;
+  insert into public.appointments (patient_id, status, scheduled_at) values
+    (d, 'confirmed', now() + interval '1 day') returning id into ap2;
+  insert into public.appointments (patient_id, status, scheduled_at) values
+    (d, 'confirmed', now() + interval '2 days') returning id into ap3;
+  insert into public.appointments (patient_id, status, scheduled_at) values
+    (d, 'pending_callback', null) returning id into ap4;
+  insert into public.appointments (patient_id, walk_in_name, walk_in_phone, status, scheduled_at) values
+    (null, 'Walk In', '09170000000', 'confirmed', now() + interval '1 day') returning id into apw;
+  insert into public.appointment_attachments (booking_group_id, patient_id, storage_path, filename, mime_type, size_bytes)
+    values (gen_random_uuid(), d, 'lab-request-forms/s3.pdf', 's3.pdf', 'application/pdf', 10) returning id into att_d;
+  perform pg_temp.kill(d);
+  perform pg_temp.merge_into(m, a);
+
+  -- visits
+  perform pg_temp.expect('s3.1 CONTROL new visit on an active patient',
+    pg_temp.state_of(format($q$select pg_temp.mk_visit(%L)$q$, b)), 'ok');
+  perform pg_temp.expect('s3.2 FIRST visit on a deleted patient is refused',
+    pg_temp.state_of(format($q$select pg_temp.mk_visit(%L)$q$, d)), 'P0058');
+  perform pg_temp.expect('s3.3 visit on a merged patient is refused',
+    pg_temp.state_of(format($q$select pg_temp.mk_visit(%L)$q$, m)), 'P0058');
+  perform pg_temp.expect('s3.4 editing a deleted patient''s visit is refused',
+    pg_temp.state_of(format($q$update public.visits set notes = 'x' where id = %L$q$, vd)), 'P0058');
+  perform pg_temp.expect('s3.5 a no-op update is allowed',
+    pg_temp.state_of(format($q$update public.visits set notes = notes where id = %L$q$, vd)), 'ok');
+  perform pg_temp.expect('s3.6 soft-deleting a deleted patient''s visit is refused',
+    pg_temp.state_of(format($q$update public.visits set deleted_at = now(), deleted_by = %L, delete_reason = 'x' where id = %L$q$, k_admin, vd)), 'P0058');
+  x0 := pg_temp.held('ExclusiveLock');
+  perform pg_temp.expect('s3.7 CONTROL moving a visit between two active patients',
+    pg_temp.state_of(format($q$update public.visits set patient_id = %L where id = %L$q$, b, va)), 'ok');
+  perform pg_temp.expect('s3.8 …takes EXCLUSIVE on old and new',
+    (pg_temp.held('ExclusiveLock') - x0 >= 2)::text, 'true');
+  perform pg_temp.expect('s3.9 moving a visit onto a deleted patient is refused',
+    pg_temp.state_of(format($q$update public.visits set patient_id = %L where id = %L$q$, d, va)), 'P0058');
+  set local role service_role;
+  perform pg_temp.expect('s3.10 service_role gets no bypass',
+    pg_temp.state_of(format($q$select pg_temp.mk_visit(%L)$q$, d)), 'P0058');
+  reset role;
+
+  -- appointments
+  perform pg_temp.expect('s3.11 CONTROL booking an active patient',
+    pg_temp.state_of(format($q$insert into public.appointments (patient_id, status, scheduled_at) values (%L, 'confirmed', now() + interval '3 days')$q$, b)), 'ok');
+  perform pg_temp.expect('s3.12 booking a deleted patient is refused',
+    pg_temp.state_of(format($q$insert into public.appointments (patient_id, status, scheduled_at) values (%L, 'confirmed', now() + interval '3 days')$q$, d)), 'P0058');
+  perform pg_temp.expect('s3.13 CONTROL a walk-in is never guarded',
+    pg_temp.state_of($q$insert into public.appointments (walk_in_name, walk_in_phone, status, scheduled_at) values ('W', '09170000001', 'confirmed', now() + interval '3 days')$q$), 'ok');
+  -- (That cancel takes NO lock cannot be shown here — this transaction already
+  -- locked d while creating its fixtures; smoke:locks proves it doesn't wait.)
+  perform pg_temp.expect('s3.14 cancelling a deleted patient''s appointment is allowed',
+    pg_temp.state_of(format($q$update public.appointments set status = 'cancelled' where id = %L$q$, ap1)), 'ok');
+  perform pg_temp.expect('s3.16 marking no-show is allowed',
+    pg_temp.state_of(format($q$update public.appointments set status = 'no_show' where id = %L$q$, ap2)), 'ok');
+  perform pg_temp.expect('s3.17 marking arrived is refused',
+    pg_temp.state_of(format($q$update public.appointments set status = 'arrived' where id = %L$q$, ap3)), 'P0058');
+  perform pg_temp.expect('s3.18 cancel + another column is refused (exception is column-shaped)',
+    pg_temp.state_of(format($q$update public.appointments set status = 'cancelled', notes = 'x' where id = %L$q$, ap3)), 'P0058');
+  perform pg_temp.expect('s3.19 rescheduling is refused',
+    pg_temp.state_of(format($q$update public.appointments set scheduled_at = now() + interval '5 days' where id = %L$q$, ap3)), 'P0058');
+  perform pg_temp.expect('s3.20 attaching a walk-in to a deleted patient is refused',
+    pg_temp.state_of(format($q$update public.appointments set patient_id = %L, walk_in_name = null where id = %L$q$, d, apw)), 'P0058');
+  perform pg_temp.expect('s3.21 deleting a deleted patient''s appointment row is allowed',
+    pg_temp.state_of(format($q$delete from public.appointments where id = %L$q$, ap4)), 'ok');
+
+  -- patient_consents (0167's patients guard only covered DELETED; merged was open)
+  perform pg_temp.expect('s3.22 CONTROL consent event for an active patient',
+    pg_temp.state_of(format($q$insert into public.patient_consents (patient_id, event_type, reason, actor_kind, created_by) values (%L, 'withdrawn', 'smoke', 'staff', %L)$q$, b, k_admin)), 'ok');
+  perform pg_temp.expect('s3.23 consent event for a MERGED patient is refused',
+    pg_temp.state_of(format($q$insert into public.patient_consents (patient_id, event_type, reason, actor_kind, created_by) values (%L, 'withdrawn', 'smoke', 'staff', %L)$q$, m, k_admin)), 'P0058');
+
+  -- appointment_attachments (0167's delete-only guard folded in)
+  perform pg_temp.expect('s3.24 CONTROL upload row for an active patient',
+    pg_temp.state_of(format($q$insert into public.appointment_attachments (booking_group_id, patient_id, storage_path, filename, mime_type, size_bytes) values (gen_random_uuid(), %L, 'lab-request-forms/b.pdf', 'b.pdf', 'application/pdf', 10)$q$, b)), 'ok');
+  perform pg_temp.expect('s3.25 upload row for a deleted patient is refused',
+    pg_temp.state_of(format($q$insert into public.appointment_attachments (booking_group_id, patient_id, storage_path, filename, mime_type, size_bytes) values (gen_random_uuid(), %L, 'lab-request-forms/d.pdf', 'd.pdf', 'application/pdf', 10)$q$, d)), 'P0058');
+  perform pg_temp.expect('s3.26 removing a deleted patient''s upload is refused',
+    pg_temp.state_of(format($q$delete from public.appointment_attachments where id = %L$q$, att_d)), 'P0058');
+  perform pg_temp.expect('s3.27 0167''s delete-only guard is gone (folded in)',
+    (select count(*)::text from pg_trigger where tgname = 'trg_appointment_attachments_delete_guard'), '0');
+
+  -- The guard fires FIRST among BEFORE row triggers on every guarded table so far.
+  perform pg_temp.expect('s3.28 a_lifecycle_guard fires first',
+    (select string_agg(first_trigger, ',' order by rel) from (
+       select c.relname as rel,
+              (select t.tgname from pg_trigger t
+                where t.tgrelid = c.oid and not t.tgisinternal and (t.tgtype & 2) = 2 and (t.tgtype & 1) = 1
+                order by t.tgname collate "C" limit 1) as first_trigger
+         from pg_class c
+        where c.relnamespace = 'public'::regnamespace
+          and c.relname in ('visits', 'appointments', 'patient_consents', 'appointment_attachments')) s),
+    'a_lifecycle_guard,a_lifecycle_guard,a_lifecycle_guard,a_lifecycle_guard');
+end
+$s3$;
+
 rollback;

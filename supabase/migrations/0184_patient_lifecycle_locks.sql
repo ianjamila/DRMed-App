@@ -553,3 +553,226 @@ revoke all on function public.delete_patient(uuid, text, text, uuid, jsonb) from
 revoke all on function public.restore_patient(uuid, uuid, jsonb) from public, anon, authenticated;
 grant execute on function public.delete_patient(uuid, text, text, uuid, jsonb) to service_role;
 grant execute on function public.restore_patient(uuid, uuid, jsonb) to service_role;
+
+-- ---------------------------------------------------------------------------
+-- (3) The guard. DEFAULT REFUSE: on an inactive (deleted or merged) patient,
+-- every INSERT, UPDATE and DELETE on a patient-owned table raises P0058,
+-- except these, which are allowed whatever the patient's state and so take
+-- no lock at all (they add no work and move no money):
+--   appointments      UPDATE changing only status, to cancelled / no_show
+--                     (owner decision 2026-09-25); DELETE
+--   visit_pins        UPDATE changing only failed_attempts / locked_until /
+--                     last_used_at (portal sign-in bookkeeping); DELETE
+--                     (retention). A PIN REISSUE changes pin_hash: refused.
+--   critical_alerts   UPDATE changing only acknowledged_at / acknowledged_by
+--   doctor_pf_entries UPDATE changing only disbursement_id (paying a doctor
+--                     for work already done adds nothing to the patient)
+--   result_amendments UPDATE changing only the 0179 follow-up bookkeeping
+--                     (patient_contacted_at/_by, patient_notified_at,
+--                     patient_notified_channels, patient_notify_error) — the
+--                     notice sender checks the recipient itself
+--   results           INSERT (unlinked until result_test_requests — inert)
+-- A no-op UPDATE (nothing but updated_at changes) is always allowed: the
+-- recompute triggers rewrite identical values. There is NO trigger-depth
+-- exemption — a nested write (a batch reopen propagating batch_voided to an
+-- inactive patient's claim item) is refused like any other.
+--
+-- Everything else:
+--  1. results family only: take the result-MEMBERSHIP lock on every result
+--     the row depends on (old and new) — EXCLUSIVE for a result_test_requests
+--     write or a results DELETE (membership changes), SHARED otherwise. From
+--     here on no link to those results can be added or removed until commit,
+--     so the patients resolved in step 2 are the result's real patients.
+--  2. resolve the row's patients over EVERY patient-bearing reference (old
+--     and new), take the lifecycle lock — EXCLUSIVE on old+new when the write
+--     moves the row to a different patient set, SHARED otherwise — and assert
+--     all active.
+--  3. resolve again: if the set moved while we waited (a visit/test moved to
+--     another patient), raise P0072 (the caller retries in a fresh
+--     transaction; never "lock the new one too" — a newly found key may sort
+--     below one already held).
+--  4. result_test_requests INSERT/UPDATE: one patient per result — the new
+--     link's patient must be the patient of the result's other links
+--     (23514). Under the exclusive membership lock this cannot race.
+--     critical_alerts: withdrawn_by_amendment must be a correction of the
+--     alert's own result (23514).
+-- Before 1-4: the references other rows depend on indirectly are immutable
+-- (result_amendments.result_id/test_request_id; critical_alerts.result_id/
+-- test_request_id/patient_id — 23514), and 0179's ON DELETE SET NULL of
+-- critical_alerts.withdrawn_by_amendment is recognised (the vanished OLD
+-- reference is dropped; the alert's other references are still checked).
+--
+-- Installed as a_lifecycle_guard: same-timing triggers fire in name order and
+-- every other BEFORE trigger is tg_*/trg_*, so this lock is always taken
+-- before another trigger takes a row lock (0183's planned payments guard locks
+-- visits FOR UPDATE). SECURITY DEFINER (see (1)); EXECUTE revoked — firing
+-- needs none.
+-- ---------------------------------------------------------------------------
+create or replace function public.enforce_patient_activity()
+returns trigger
+language plpgsql
+security definer
+set search_path = pg_catalog, public, pg_temp
+as $$
+declare
+  v_o       jsonb := case when tg_op <> 'INSERT' then to_jsonb(old) end;
+  v_n       jsonb := case when tg_op <> 'DELETE' then to_jsonb(new) end;
+  v_changed text[];
+  v_old     uuid[] := '{}';
+  v_new     uuid[] := '{}';
+  v_set     uuid[];
+  v_again   uuid[];
+  v_owner   uuid[];
+begin
+  -- (a) Allowed whatever the patient's state; no lock.
+  if tg_op = 'DELETE' and tg_table_name in ('appointments', 'visit_pins') then
+    return old;
+  end if;
+  if tg_op = 'INSERT' and tg_table_name = 'results' then
+    return new;
+  end if;
+  if tg_op = 'UPDATE' then
+    select coalesce(array_agg(k order by k), '{}'::text[])
+      into v_changed
+      from jsonb_object_keys(v_n) k
+     where k <> 'updated_at'
+       and (v_n -> k) is distinct from (v_o -> k);
+    if cardinality(v_changed) = 0 then
+      return new;
+    end if;
+    if (tg_table_name = 'appointments'
+          and v_changed = array['status']
+          and v_n ->> 'status' in ('cancelled', 'no_show'))
+       or (tg_table_name = 'visit_pins'
+          and v_changed <@ array['failed_attempts', 'last_used_at', 'locked_until'])
+       or (tg_table_name = 'critical_alerts'
+          and v_changed <@ array['acknowledged_at', 'acknowledged_by'])
+       or (tg_table_name = 'doctor_pf_entries'
+          and v_changed = array['disbursement_id'])
+       or (tg_table_name = 'result_amendments'
+          and v_changed <@ array['patient_contacted_at', 'patient_contacted_by', 'patient_notified_at',
+                                 'patient_notified_channels', 'patient_notify_error']) then
+      return new;
+    end if;
+  end if;
+
+  -- (a2) Ownership references that other rows depend on INDIRECTLY are
+  -- immutable (Codex recheck P1): a withdrawn alert reaches a second result
+  -- through its amendment, so re-pointing an amendment at another result (or
+  -- an alert at another result/test/patient) would change what dependent
+  -- writers must lock without taking any lock they conflict with. Nothing in
+  -- the app or SQL rebinds these; a correction is a new row.
+  if tg_op = 'UPDATE' then
+    if tg_table_name = 'result_amendments' and v_changed && array['result_id', 'test_request_id'] then
+      raise exception 'a correction record stays on its result and test — record a new correction instead'
+        using errcode = '23514';
+    end if;
+    if tg_table_name = 'critical_alerts' and v_changed && array['result_id', 'test_request_id', 'patient_id'] then
+      raise exception 'a critical alert stays on its result, test and patient'
+        using errcode = '23514';
+    end if;
+  end if;
+
+  -- (a3) ON DELETE SET NULL on critical_alerts.withdrawn_by_amendment (0179):
+  -- deleting an amendment (directly, or cascading from its result or test)
+  -- UPDATEs the alert after the amendment row is gone. That OLD reference
+  -- can no longer be resolved; drop just that key so it does not fail closed
+  -- as "patient not found" — the alert's result, test and patient_id are
+  -- still locked and asserted below. Only this exact shape qualifies: the new
+  -- value is NULL and the referenced amendment no longer exists.
+  if tg_op = 'UPDATE' and tg_table_name = 'critical_alerts'
+     and v_o ->> 'withdrawn_by_amendment' is not null
+     and v_n ->> 'withdrawn_by_amendment' is null
+     and not exists (select 1 from public.result_amendments am
+                      where am.id = (v_o ->> 'withdrawn_by_amendment')::uuid) then
+    v_o := v_o - 'withdrawn_by_amendment';
+  end if;
+
+  -- (b) Results family: the membership lock FIRST (see header, step 1).
+  if tg_table_name in ('results', 'result_test_requests', 'result_values', 'result_amendments', 'critical_alerts') then
+    perform public.lifecycle_lock_results(
+      public.lifecycle_result_ids_of_row(tg_table_name, v_o) || public.lifecycle_result_ids_of_row(tg_table_name, v_n),
+      tg_table_name = 'result_test_requests' or (tg_table_name = 'results' and tg_op = 'DELETE'));
+  end if;
+
+  -- (c) Lock the owning patients, assert, re-resolve.
+  if v_o is not null then
+    v_old := public.lifecycle_patients_of_row(tg_table_name, v_o, tg_op = 'DELETE');
+  end if;
+  if v_n is not null then
+    v_new := public.lifecycle_patients_of_row(tg_table_name, v_n, false);
+  end if;
+  v_set := public.lifecycle_norm(v_old || v_new);
+
+  perform public.lifecycle_lock_and_assert(
+    v_set,
+    tg_op = 'UPDATE' and public.lifecycle_norm(v_old) is distinct from public.lifecycle_norm(v_new));
+
+  v_again := public.lifecycle_norm(
+       case when v_o is not null
+            then public.lifecycle_patients_of_row(tg_table_name, v_o, tg_op = 'DELETE')
+            else '{}'::uuid[] end
+    || case when v_n is not null
+            then public.lifecycle_patients_of_row(tg_table_name, v_n, false)
+            else '{}'::uuid[] end);
+  if v_again is distinct from v_set then
+    raise exception 'the patient on this record changed while it was being saved — try again'
+      using errcode = 'P0072';
+  end if;
+
+  -- (d) One patient per result (Codex plan review P1-1, "enforce ownership
+  -- consistency"): a link may only join a result whose OTHER links belong to
+  -- the same patient. Stable under the exclusive membership lock from (b).
+  if tg_table_name = 'result_test_requests' and tg_op <> 'DELETE' then
+    v_owner := public.lifecycle_norm(array_remove(
+                 public.lifecycle_patients_of_result((v_n ->> 'result_id')::uuid,
+                   case when tg_op = 'UPDATE' and (v_o ->> 'result_id') = (v_n ->> 'result_id')
+                        then (v_o ->> 'test_request_id')::uuid end)
+                 || public.lifecycle_patients_of_test_requests(array[(v_n ->> 'test_request_id')::uuid]),
+                 null));
+    if cardinality(v_owner) > 1 then
+      raise exception 'a result can only hold one patient''s tests — create a separate result for this test'
+        using errcode = '23514';
+    end if;
+  end if;
+  -- An alert can only be withdrawn by a correction of ITS OWN result (what
+  -- result_edit_commit does, 0179) — so the indirect path adds no result.
+  if tg_table_name = 'critical_alerts' and tg_op <> 'DELETE'
+     and v_n ->> 'withdrawn_by_amendment' is not null
+     and not exists (select 1 from public.result_amendments am
+                      where am.id = (v_n ->> 'withdrawn_by_amendment')::uuid
+                        and am.result_id = (v_n ->> 'result_id')::uuid) then
+    raise exception 'an alert can only be withdrawn by a correction of its own result'
+      using errcode = '23514';
+  end if;
+
+  return case when tg_op = 'DELETE' then old else new end;
+end;
+$$;
+
+revoke all on function public.enforce_patient_activity() from public, anon, authenticated, service_role;
+
+-- Tables whose rows name the patient directly.
+drop trigger if exists a_lifecycle_guard on public.visits;
+create trigger a_lifecycle_guard
+  before insert or update or delete on public.visits
+  for each row execute function public.enforce_patient_activity();
+
+drop trigger if exists a_lifecycle_guard on public.appointments;
+create trigger a_lifecycle_guard
+  before insert or update or delete on public.appointments
+  for each row execute function public.enforce_patient_activity();
+
+drop trigger if exists a_lifecycle_guard on public.patient_consents;
+create trigger a_lifecycle_guard
+  before insert or update or delete on public.patient_consents
+  for each row execute function public.enforce_patient_activity();
+
+-- 0167's delete-only attachment guard is folded in: the general guard covers
+-- INSERT/UPDATE/DELETE and takes the lock.
+drop trigger if exists trg_appointment_attachments_delete_guard on public.appointment_attachments;
+drop function if exists public.enforce_appointment_attachment_delete();
+drop trigger if exists a_lifecycle_guard on public.appointment_attachments;
+create trigger a_lifecycle_guard
+  before insert or update or delete on public.appointment_attachments
+  for each row execute function public.enforce_patient_activity();
