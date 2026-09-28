@@ -1,5 +1,6 @@
 "use server";
 
+import { z } from "zod";
 import { headers } from "next/headers";
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
@@ -9,6 +10,14 @@ import { requireActiveStaff } from "@/lib/auth/require-staff";
 import { requireAdminStaff } from "@/lib/auth/require-admin";
 import { assertVisitPatientActive } from "@/lib/patients/require-active";
 import { ipAndAgent } from "@/lib/server/action-helpers";
+import { loadOwnBatchRows } from "@/lib/audit/bulk-batch";
+import {
+  BULK_UNDO_VIA,
+  CHANGED_SINCE_REASON,
+  UNDO_ALREADY,
+  UNDO_EXPIRED,
+  type BulkUndoResult,
+} from "@/lib/ui/bulk-undo";
 import {
   QueueDeleteReasonSchema,
   WaiveBalanceSchema,
@@ -57,7 +66,7 @@ export type ReleaseResult =
 // undoReleaseSelectedAction — the older per-row/per-package actions keep the
 // plain ReleaseResult shape.
 export type BulkSelectionResult =
-  | { ok: true; count: number }
+  | { ok: true; count: number; batchId?: string }
   | { ok: false; error: string };
 
 const VALID_MEDIA: readonly ReleaseMedium[] = [
@@ -498,6 +507,13 @@ export async function releaseSelectedAction(
   }
   const scopedIds = scoped.map((r) => r.id);
 
+  // Undo (owner 2026-09-28): every audit row this call writes carries the
+  // SAME batch id, so a 10-minute Undo can read back exactly what this call
+  // released — see undoReleaseBatchAction / loadOwnBatchRows. Generated even
+  // when the release below only partially succeeds; it is only returned to
+  // the caller once at least one row actually released (below).
+  const batchId = crypto.randomUUID();
+
   const now = new Date().toISOString();
   const { data: released, error } = await supabase
     .from("test_requests")
@@ -533,6 +549,7 @@ export async function releaseSelectedAction(
         release_medium: releaseMedium,
         bulk: true,
         selection: true,
+        bulk_batch_id: batchId,
       },
       ip_address: ip,
       user_agent: ua,
@@ -545,6 +562,7 @@ export async function releaseSelectedAction(
         testRequestId: released[0].id,
         visitId,
         releaseMedium,
+        bulkBatchId: batchId,
       });
     } else {
       await notifyResultsReleasedBulk({
@@ -552,6 +570,7 @@ export async function releaseSelectedAction(
         testRequestIds: released.map((r) => r.id),
         testNames: released.map((r) => serviceName(r.services) ?? "Result"),
         releaseMedium,
+        bulkBatchId: batchId,
       });
     }
   } catch (err) {
@@ -563,7 +582,95 @@ export async function releaseSelectedAction(
   }
 
   revalidatePath(`/staff/visits/${visitId}`);
-  return { ok: true, count: released.length };
+  return { ok: true, count: released.length, batchId };
+}
+
+// Server-checked 10-minute Undo for releaseSelectedAction (owner 2026-09-28):
+// same window/same-staff/own-batch rules as every other bulk Undo
+// (loadOwnBatchRows), reusing undoReleasedRows — the exact core the
+// hand-picked undoReleaseSelectedAction runs — so the reason ("Undone within
+// 10 minutes of release", automatic, no prompt), the whole-report expansion
+// (0172) and the "patient already viewed" audit snapshot all behave
+// identically to a manual Unrelease. Its audit rows carry `via: BULK_UNDO_VIA`
+// plus `undo_of_batch`/`bulk_batch_id` (a NEW batch id, so this Undo is
+// itself undo-batch-traceable, though nothing currently re-undoes an Undo).
+// Note: if any of this batch's tests belong to a consolidated (chemistry)
+// report, undoReleasedRows' whole-report expansion can restore MORE ids than
+// this batch released — those extra ids come back in `restoredIds` too, per
+// the caller's `count > sent.length` handling elsewhere in this file.
+export async function undoReleaseBatchAction(
+  input: { batchId: string },
+): Promise<BulkUndoResult> {
+  const parsed = z.object({ batchId: z.string().uuid() }).safeParse(input);
+  if (!parsed.success) return { ok: false, error: UNDO_EXPIRED };
+
+  const session = await requireActiveStaff();
+
+  const loaded = await loadOwnBatchRows({
+    actorId: session.user_id,
+    batchId: parsed.data.batchId,
+    resourceType: "test_request",
+    nowMs: Date.now(),
+  });
+  if (!loaded.ok) return { ok: false, error: loaded.error };
+  if (loaded.alreadyUndone) return { ok: false, error: UNDO_ALREADY };
+
+  const releasedRows = loaded.rows.filter(
+    (r) => r.action === "test_request.released",
+  );
+  if (releasedRows.length === 0) return { ok: false, error: UNDO_EXPIRED };
+
+  const notRestored: Array<{ id: string; reason: string }> = [];
+  const candidateIds: string[] = [];
+  const seen = new Set<string>();
+  let visitId: string | null = null;
+  for (const row of releasedRows) {
+    const id = row.resource_id;
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    if (visitId === null) {
+      const vid = row.metadata?.visit_id;
+      if (typeof vid === "string") visitId = vid;
+    }
+    if (loaded.changedSince.has(id)) {
+      notRestored.push({ id, reason: CHANGED_SINCE_REASON });
+      continue;
+    }
+    candidateIds.push(id);
+  }
+  // releaseSelectedAction always stamps visit_id — a batch with none of its
+  // rows carrying it is not a batch this action wrote.
+  if (!visitId) return { ok: false, error: UNDO_EXPIRED };
+  if (candidateIds.length === 0) {
+    return notRestored.length > 0
+      ? { ok: true, restoredIds: [], notRestored }
+      : { ok: false, error: UNDO_EXPIRED };
+  }
+
+  const supabase = await createClient();
+  const undoBatchId = crypto.randomUUID();
+  const result = await undoReleasedRows(
+    supabase,
+    session,
+    visitId,
+    candidateIds,
+    "Undone within 10 minutes of release",
+    {
+      bulk: true,
+      via: BULK_UNDO_VIA,
+      undo_of_batch: parsed.data.batchId,
+      bulk_batch_id: undoBatchId,
+    },
+  );
+  revalidatePath(`/staff/visits/${visitId}`);
+  if (!result.ok) return { ok: false, error: result.error };
+
+  const restoredSet = new Set(result.undoneIds);
+  return {
+    ok: true,
+    restoredIds: result.undoneIds,
+    notRestored: notRestored.filter((n) => !restoredSet.has(n.id)),
+  };
 }
 
 // Undoes a hand-picked selection of released rows back to ready_for_release.
@@ -624,7 +731,7 @@ async function undoReleasedRows(
   visitId: string,
   testRequestIds: string[],
   trimmedReason: string,
-  auditExtra: Record<string, boolean>,
+  auditExtra: Record<string, string | boolean>,
 ): Promise<UndoRowsResult> {
   const visitDeleted = await refuseIfVisitDeleted(supabase, visitId);
   if (visitDeleted) return visitDeleted;

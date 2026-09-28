@@ -6,12 +6,27 @@ import { Panel } from "@/components/ui/panel";
 import { FixedBottomBar } from "@/components/staff/fixed-bottom-bar";
 import { isTextTarget, useBarFocus } from "@/components/staff/row-selection/bar-focus";
 import { ShortcutsHelp } from "@/components/staff/row-selection/shortcuts-help";
+import { BulkOutcomePanel } from "@/components/staff/row-selection/bulk-outcome";
+import { UNDO_ALREADY, UNDO_EXPIRED, UNDO_WINDOW_MS } from "@/lib/ui/bulk-undo";
 import {
   releaseSelectedAction,
+  undoReleaseBatchAction,
   undoReleaseSelectedAction,
   type ReleaseMedium,
 } from "./actions";
 import { useRowSelection } from "./selection-context";
+
+// Undo state for a "Release selected" batch — server-checked, 10-minute
+// window (owner 2026-09-28). Kept as local state, not tied to
+// `selectionEdits` (this page's SelectionProvider has none): it persists
+// until Dismiss or the operator runs a NEW release/unrelease action, even
+// though a successful release always clears the ids it acted on (which would
+// otherwise make `totalSelected === 0` unmount the whole bar, taking the
+// outcome with it — see the render branch below).
+interface ReleaseOutcome {
+  message: string;
+  undo: { batchId: string; doneAt: number } | null;
+}
 
 interface Props {
   visitId: string;
@@ -76,6 +91,11 @@ export function BulkActionBar({
   const [reasonError, setReasonError] = useState<string | null>(null);
   const [releasePending, startRelease] = useTransition();
   const [unreleasePending, startUnrelease] = useTransition();
+  // Separate from releasePending/unreleasePending so an Undo in flight isn't
+  // mistaken for (or blocked by) a fresh bulk action, and double-clicking
+  // ↶ Undo itself can't fire two undos.
+  const [undoPending, startUndo] = useTransition();
+  const [outcome, setOutcome] = useState<ReleaseOutcome | null>(null);
   const totalSelected = releaseCount + unreleaseCount;
   const barRef = useRef<HTMLDivElement>(null);
   const restoreFocus = useBarFocus(barRef, totalSelected > 0);
@@ -100,7 +120,15 @@ export function BulkActionBar({
     return () => window.removeEventListener("keydown", onKey);
   }, [totalSelected, clearAndReturn]);
 
-  if (totalSelected === 0) return null;
+  if (totalSelected === 0) {
+    return outcome ? (
+      <BulkOutcomePanel
+        message={outcome.message}
+        undo={undoProp(outcome.undo)}
+        onDismiss={() => setOutcome(null)}
+      />
+    ) : null;
+  }
 
   const blockedForConsent = gateRequired && !consentOnFile;
   const releaseDisabled =
@@ -138,6 +166,9 @@ export function BulkActionBar({
     // rows in the other bucket, or ticked while the action is in flight,
     // keep their checkmarks.
     const sentIds = releaseIds;
+    // A new deliberate bulk action replaces whatever outcome/Undo the last
+    // one left showing.
+    setOutcome(null);
     startRelease(async () => {
       const result = await releaseSelectedAction(visitId, sentIds, medium);
       if (!result.ok) {
@@ -150,6 +181,14 @@ export function BulkActionBar({
         );
       }
       clearIds(sentIds);
+      if (result.count > 0) {
+        setOutcome({
+          message: `Released ${result.count} test${result.count === 1 ? "" : "s"}. The patient was already notified that results are ready — tell them if needed.`,
+          undo: result.batchId
+            ? { batchId: result.batchId, doneAt: Date.now() }
+            : null,
+        });
+      }
     });
   }
 
@@ -160,6 +199,7 @@ export function BulkActionBar({
     }
     setReasonError(null);
     const sentIds = unreleaseIds;
+    setOutcome(null);
     startUnrelease(async () => {
       const result = await undoReleaseSelectedAction(
         visitId,
@@ -180,6 +220,36 @@ export function BulkActionBar({
     });
   }
 
+  // ↶ Undo for a "Release selected" batch (server-checked 10-minute window).
+  function runUndo(undo: { batchId: string; doneAt: number }) {
+    if (undoPending) return;
+    startUndo(async () => {
+      const result = await undoReleaseBatchAction({ batchId: undo.batchId });
+      if (!result.ok) {
+        const gone = result.error === UNDO_EXPIRED || result.error === UNDO_ALREADY;
+        setOutcome({ message: result.error, undo: gone ? null : undo });
+        return;
+      }
+      const restored = result.restoredIds.length;
+      let message =
+        restored > 0
+          ? `Undone — ${restored} test${restored === 1 ? " is" : "s are"} back to Ready for release. The patient was already notified that results are ready — tell them if needed.`
+          : "Nothing was undone.";
+      if (result.notRestored.length > 0) {
+        message += `\nNot undone (${result.notRestored.length}): ${result.notRestored
+          .map((n) => n.reason)
+          .join("; ")}`;
+      }
+      setOutcome({ message, undo: null });
+    });
+  }
+
+  function undoProp(undo: { batchId: string; doneAt: number } | null) {
+    return undo
+      ? { doneAt: undo.doneAt, windowMs: UNDO_WINDOW_MS, pending: undoPending, onUndo: () => runUndo(undo) }
+      : null;
+  }
+
   return (
     <FixedBottomBar>
       <Panel
@@ -190,6 +260,15 @@ export function BulkActionBar({
         aria-keyshortcuts="Alt+B"
         className="flex flex-wrap items-center gap-3 p-3 shadow-lg"
       >
+        {outcome ? (
+          <BulkOutcomePanel
+            inline
+            message={outcome.message}
+            undo={undoProp(outcome.undo)}
+            onDismiss={() => setOutcome(null)}
+          />
+        ) : null}
+
         <div
           aria-live="polite"
           className="text-xs text-[color:var(--color-brand-text-soft)]"
