@@ -73,12 +73,13 @@ default for a clinic.
 
 ### What we send
 
-Exactly two conversions, with these payloads and nothing else:
+Exactly three conversions, with these payloads and nothing else:
 
 | Conversion | Fired when | Parameters |
 |---|---|---|
 | `Booking submitted` | A public `/schedule` booking reaches the success screen | `send_to`, plus `transaction_id` |
 | `Messenger chat started` | A visitor taps any Messenger link or the floating button | `send_to` only |
+| `Website call tap` | A visitor taps any `tel:` link (every phone number on the marketing site renders through `TrackedTelLink`) | `send_to` only |
 
 Plus, per conversion, whatever gtag.js attaches itself: the page URL, IP
 address, user agent, and the `gclid` of the ad click that brought the visitor.

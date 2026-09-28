@@ -4,21 +4,32 @@ How to prove the tracking works, and that it stays inside the limits recorded in
 [ADR-0004](decisions/0004-google-ads-conversion-tracking.md).
 
 Part 1 is automated and already passing. Parts 2, 3 and 4 need the Google Ads
-UI, so they have to be run by an account admin — Part 2 once, to mint the two
+UI, so they have to be run by an account admin — Part 2 once, to mint the
 conversion labels the code expects; Part 3 after the first real traffic; and
 Part 4 to unlink two destinations that should never have been on this tag.
 
-**Status as of 2026-09-10.** Part 2 is **done** — both actions exist, both
-labels are live in production, and the stale codeless actions that would have
-double-counted are gone. Part 3's browser legs are **both done**: Messenger and
-booking have each fired end to end against the live account with their real
-labels. What remains of Part 3 is Google's side — the actions moving to
-*Recording conversions*, and one attributed click proving a `gclid` survives
-the journey. Part 4 is **closed without unlinking either
-destination** — one by the owner's choice, one because the control does not
-exist in this account's UI — which promotes the `ga-disable` flags from
-stopgap to permanent enforcement. Each part carries its own status box; read
+**Status as of 2026-09-10.** Part 2 is **done for `Booking submitted` and
+`Messenger chat started`** — both actions exist, both labels are live in
+production, and the stale codeless actions that would have double-counted are
+gone. Part 3's browser legs are **both done**: Messenger and booking have each
+fired end to end against the live account with their real labels. What remains
+of Part 3 is Google's side — the actions moving to *Recording conversions*,
+and one attributed click proving a `gclid` survives the journey. Part 4 is
+**closed without unlinking either destination** — one by the owner's choice,
+one because the control does not exist in this account's UI — which promotes
+the `ga-disable` flags from stopgap to permanent enforcement. Each part carries
+its own status box; read
 those before repeating any of it.
+
+**A third conversion, `Website call tap`, was added to the code on 2026-09-28**
+(every `tel:` link on the marketing site now fires it via `TrackedTelLink`) but
+its conversion action does **not exist yet** and
+`NEXT_PUBLIC_GOOGLE_ADS_CALL_TAP_LABEL` is unset everywhere — so it is
+completely inert until an admin repeats Part 2 for it below, sets the label in
+Vercel production, and **redeploys** (it is a `NEXT_PUBLIC_*` var, inlined at
+build time). Do this deliberately, not as a tidy-up: read *The navigation
+trap* below first, since the account already has an unrelated codeless
+`Clicks to call` action and it is easy to edit the wrong one.
 
 The failure mode to keep in mind throughout: **a blocked or misconfigured
 Google tag fails silently.** No user-visible error, no exception, no clue in
@@ -185,20 +196,22 @@ because a real `/schedule` submission needs a database behind it.
 
 ---
 
-## Part 2 — Create the two conversion actions (Google Ads UI, once)
+## Part 2 — Create the conversion actions (Google Ads UI, once each)
 
-> **DONE on 2026-09-10.** Both actions exist and both labels are live in the
-> production bundle. Kept below because the steps are the record of how the
-> account is configured, and because the UI defaults are wrong in six places
-> (see *What the wizard gets wrong*) — anyone creating a third conversion
-> action will hit every one of them.
+> **`Booking submitted` and `Messenger chat started` DONE on 2026-09-10.** Both
+> actions exist and both labels are live in the production bundle. Kept below
+> because the steps are the record of how the account is configured, and
+> because the UI defaults are wrong in six places (see *What the wizard gets
+> wrong*) — creating `Website call tap` (or any future conversion action) will
+> hit every one of them.
 >
 > | | id | category | count | window | label |
 > |---|---|---|---|---|---|
 > | `Booking submitted` | 7756723341 | `SUBMIT_LEAD_FORM` | Every | 30d | `tYRBCI3p2PIcEKqYlJ4D` |
 > | `Messenger chat started` | 7756758861 | `CONTACT` | One | 30d | `gUfcCM3-2vIcEKqYlJ4D` |
+> | `Website call tap` | — | `CONTACT` | One | 30d | **not created yet** |
 >
-> Both: primary, value "same value" ₱1, data-driven attribution, enhanced
+> All three: primary, value "same value" ₱1, data-driven attribution, enhanced
 > conversions off. The labels are not secrets — they ship in the client bundle
 > and are readable by anyone who opens DevTools on drmed.ph.
 
@@ -220,19 +233,21 @@ because a real `/schedule` submission needs a database behind it.
 > Part 1 browser checks against `https://drmed.ph` after the redeploy — if
 > `window.gtag` is still undefined with consent granted, the var did not take.
 
-The code ships both conversion **labels blank**, because a label only exists
+The code ships every conversion **label blank**, because a label only exists
 once its conversion action does. Until a label is filled in, that conversion is
 silently disabled — by design, so the tag can go live before the actions exist.
 
-For each of **Booking submitted** and **Messenger chat started**:
+For each of **Booking submitted**, **Messenger chat started**, and (still
+pending) **Website call tap**:
 
 1. Google Ads → **Goals → Conversions → New conversion action → Website**.
 2. Enter `drmed.ph`, then **Add a conversion action manually** (not a scan —
    these are event-based, not codeless).
-3. Category: **Submit lead form** for the booking, **Contact** for Messenger.
+3. Category: **Submit lead form** for the booking, **Contact** for Messenger
+   and for the call tap.
 4. Count: **Every** for the booking (two bookings from one person are two
-   bookings); **One** for Messenger (one chat is one lead, however many times
-   the button is tapped).
+   bookings); **One** for Messenger and for the call tap (one chat, or one
+   phone tap, is one lead, however many times it is repeated).
 5. Value: leave the default, or set a single default value. The site never
    sends a per-conversion value — ADR-0004 explains why.
 6. **Tag setup → Install the tag yourself.** The event snippet shows
@@ -242,6 +257,7 @@ For each of **Booking submitted** and **Messenger chat started**:
    - `NEXT_PUBLIC_GOOGLE_ADS_ID` = `AW-868551722` (if not already set)
    - `NEXT_PUBLIC_GOOGLE_ADS_BOOKING_LABEL`
    - `NEXT_PUBLIC_GOOGLE_ADS_MESSENGER_LABEL`
+   - `NEXT_PUBLIC_GOOGLE_ADS_CALL_TAP_LABEL`
 
    These are `NEXT_PUBLIC_*`, so they are inlined at build time — **redeploy
    after setting them**, or the site keeps the old (blank) values.
@@ -317,6 +333,10 @@ Account-default goals were reduced on 2026-09-10 to exactly:
 
 - **Submit lead form** (website) — `Booking submitted`
 - **Contact** (website) — `Messenger chat started`
+
+`Website call tap` is category **Contact** — the same goal `Messenger chat
+started` already uses — so once its action exists no further goal work is
+needed; it is counted automatically. Do not create a fourth goal for it.
 
 with Purchase, Page view, Add to cart, Begin checkout, Other, Download, Book
 appointment, Get directions and Engagement all switched off.

@@ -13,6 +13,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 const AW_ID = "AW-868551722";
 const BOOKING_LABEL = "abc123BookingLabel";
 const MESSENGER_LABEL = "xyz789MessengerLabel";
+const CALL_TAP_LABEL = "def456CallTapLabel";
 
 // Most cases below are about the gtag contract, so they run as a consenting
 // visitor. The consent gate itself is covered in its own block.
@@ -38,12 +39,18 @@ function withCookie(cookie: string | undefined) {
 
 // Fully configured unless a case deliberately blanks something out.
 async function loadModule(
-  env: { id?: string; booking?: string; messenger?: string } = {},
+  env: { id?: string; booking?: string; messenger?: string; callTap?: string } = {},
 ) {
-  const { id = AW_ID, booking = BOOKING_LABEL, messenger = MESSENGER_LABEL } = env;
+  const {
+    id = AW_ID,
+    booking = BOOKING_LABEL,
+    messenger = MESSENGER_LABEL,
+    callTap = CALL_TAP_LABEL,
+  } = env;
   vi.stubEnv("NEXT_PUBLIC_GOOGLE_ADS_ID", id);
   vi.stubEnv("NEXT_PUBLIC_GOOGLE_ADS_BOOKING_LABEL", booking);
   vi.stubEnv("NEXT_PUBLIC_GOOGLE_ADS_MESSENGER_LABEL", messenger);
+  vi.stubEnv("NEXT_PUBLIC_GOOGLE_ADS_CALL_TAP_LABEL", callTap);
   vi.resetModules();
   return import("./google-ads");
 }
@@ -96,6 +103,19 @@ describe("googleAdsConversion", () => {
 
     expect(gtag).toHaveBeenCalledWith("event", "conversion", {
       send_to: `${AW_ID}/${MESSENGER_LABEL}`,
+    });
+  });
+
+  it("routes the call-tap conversion to its own label", async () => {
+    const { googleAdsConversion } = await loadModule();
+    const gtag = vi.fn();
+    withWindow({ gtag });
+    withCookie(GRANTED);
+
+    googleAdsConversion("callTap");
+
+    expect(gtag).toHaveBeenCalledWith("event", "conversion", {
+      send_to: `${AW_ID}/${CALL_TAP_LABEL}`,
     });
   });
 
@@ -175,6 +195,17 @@ describe("googleAdsConversion configuration gate", () => {
     expect(gtag).toHaveBeenCalledWith("event", "conversion", {
       send_to: `${AW_ID}/${MESSENGER_LABEL}`,
     });
+  });
+
+  it("does not fire the call-tap conversion when its label is unset (label not minted yet)", async () => {
+    const { googleAdsConversion } = await loadModule({ callTap: "" });
+    const gtag = vi.fn();
+    withWindow({ gtag });
+    withCookie(GRANTED);
+
+    googleAdsConversion("callTap");
+
+    expect(gtag).not.toHaveBeenCalled();
   });
 });
 

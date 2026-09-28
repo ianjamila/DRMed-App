@@ -1,7 +1,7 @@
 import { Suspense } from "react";
 import { MapPin, Clock, Phone, Mail, Navigation, Car, HelpCircle, ExternalLink } from "lucide-react";
 import { PageHero } from "@/components/marketing/page-hero";
-import { SectionHeading, PillLink } from "@/components/marketing/ui";
+import { SectionHeading, PillLink, pillLinkClassName } from "@/components/marketing/ui";
 import { Reveal } from "@/components/marketing/motion";
 import { CONTACT, SOCIAL, AREAS_SERVED } from "@/lib/marketing/site";
 import { addressLines, hoursLabel, telHref, directionsHrefs, mapEmbedSrc } from "@/lib/marketing/nap";
@@ -15,6 +15,7 @@ import { getOnlineBookingStatus } from "@/lib/booking/online-booking";
 import { pageMetadata } from "@/lib/marketing/metadata";
 import type { FaqItem } from "@/lib/marketing/faq";
 import { TrackedTelLink } from "@/components/marketing/tracked-tel-link";
+import { TrackedMessengerLink } from "@/components/marketing/tracked-messenger-link";
 import { BookingCtaLabel } from "@/components/marketing/online-booking-context";
 
 export const metadata = pageMetadata({
@@ -163,9 +164,9 @@ export default async function ContactPage() {
                     <a href={SOCIAL.instagram} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-[7px] text-[color:var(--color-ink-mid)] hover:text-[color:var(--color-brand-navy)]" aria-label="DRMed on Instagram (opens in new tab)">
                       <ExternalLink className="h-4 w-4" aria-hidden="true" /> Instagram
                     </a>
-                    <a href={SOCIAL.messenger} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-[7px] text-[color:var(--color-ink-mid)] hover:text-[color:var(--color-brand-navy)]" aria-label="DRMed on Messenger (opens in new tab)">
+                    <TrackedMessengerLink href={SOCIAL.messenger} contentName="contact_page_connect" target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-[7px] text-[color:var(--color-ink-mid)] hover:text-[color:var(--color-brand-navy)]" aria-label="DRMed on Messenger (opens in new tab)">
                       <ExternalLink className="h-4 w-4" aria-hidden="true" /> Messenger
-                    </a>
+                    </TrackedMessengerLink>
                   </div>
                 </DetailRow>
               </div>
@@ -271,7 +272,13 @@ export default async function ContactPage() {
           </div>
           <div className="flex flex-wrap gap-3">
             <PillLink href="/schedule" variant="cyan" size="md"><BookingCtaLabel>Book a test or consultation</BookingCtaLabel></PillLink>
-            <PillLink href={telHref("mobile")} variant="lineOnDark" size="md">Call now</PillLink>
+            <TrackedTelLink
+              href={telHref("mobile")}
+              label="contact_page_cta"
+              className={pillLinkClassName({ variant: "lineOnDark" })}
+            >
+              Call now
+            </TrackedTelLink>
           </div>
         </div>
       </section>
