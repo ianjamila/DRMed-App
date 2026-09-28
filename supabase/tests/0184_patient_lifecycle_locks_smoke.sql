@@ -133,6 +133,22 @@ exception when others then
   return s;
 end $f$;
 
+-- Runs sql (expected to raise); returns the PG_EXCEPTION_CONTEXT call stack
+-- text, so a caller can tell WHICH function's raise actually fired — an RPC's
+-- own pre-lock (section 4) vs. the downstream a_lifecycle_guard trigger
+-- (section 3), which would raise the SAME P0058 if section 4's lock were
+-- removed entirely (0184 review M2: a behavioural assertion alone is vacuous
+-- here). Returns 'NO_EXCEPTION_RAISED' if the statement did not raise.
+create function pg_temp.context_of(sql text) returns text language plpgsql as $f$
+declare c text;
+begin
+  execute sql;
+  return 'NO_EXCEPTION_RAISED';
+exception when others then
+  get stacked diagnostics c = pg_exception_context;
+  return c;
+end $f$;
+
 -- Number of advisory locks this backend holds in a given mode.
 create function pg_temp.held(mode text) returns int language sql as $f$
   select count(*)::int from pg_locks
@@ -1106,6 +1122,16 @@ declare
   lp int; rp int; mp int;
   res jsonb;
   phys2 uuid; ta_fee uuid; td_fee uuid;
+  m uuid := pg_temp.mk_patient('S7M'); vm uuid; tm_fee uuid;  -- 0184 review M3
+  -- 0184 review I1: payments.corrects_payment_id must not freeze a moved
+  -- payment. The move target is `a`'s own visit `va` (already active,
+  -- already set up above) — no separate target patient needed.
+  pe uuid := pg_temp.mk_patient('S7E');
+  ve uuid; x_m uuid; y_m uuid; x_r uuid; y_r uuid; x_v uuid; y_v uuid; x_c uuid; y_c uuid;
+  ctx text;
+  -- 0184 review I2: (a2') only when the alert's patient could change.
+  t_i2 uuid; r_i2 uuid; prm_i2 uuid; al_null uuid;
+  t_i2b uuid; r_i2b uuid; al_ok uuid; other_pt uuid := pg_temp.mk_patient('S7OTHER');
 begin
   -- Text order: the lifecycle call comes before the first FOR UPDATE / slot
   -- lock. BOTH positions must be > 0: position() returns 0 for a missing call,
@@ -1160,13 +1186,27 @@ begin
   ta_fee := pg_temp.mk_line(va, 'requested', 500);
   td_fee := pg_temp.mk_line(vd, 'requested', 500);
   update public.test_requests set attending_physician_id = phys2, clinic_fee_php = 100 where id in (ta_fee, td_fee);
+  -- 0184 review M3: a MERGED patient's line, built the same way while m is
+  -- still active (same reason as td_fee above).
+  vm := pg_temp.mk_visit(m);
+  tm_fee := pg_temp.mk_line(vm, 'requested', 500);
+  update public.test_requests set attending_physician_id = phys2, clinic_fee_php = 100 where id = tm_fee;
 
   perform pg_temp.kill(d);
+  perform pg_temp.merge_into(m, a);
 
   perform pg_temp.expect('s7.3 result_save_draft on a deleted patient',
     pg_temp.state_of(format($q$select public.result_save_draft(%L, '[]'::jsonb)$q$, rd)), 'P0058');
   perform pg_temp.expect('s7.4 result_finalise_commit on a deleted patient',
     pg_temp.state_of(format($q$select public.result_finalise_commit(%L, %L, '[]'::jsonb, 'p.pdf', 1, now(), null, '[]'::jsonb)$q$, rd, k_med)), 'P0058');
+  -- 0184 review M2: s7.4's P0058 alone is vacuous — test_requests/results are
+  -- ALSO independently guarded (section 3), so it would pass identically even
+  -- with section 4's pre-lock deleted entirely. Assert the raise came from
+  -- the RPC's OWN pre-lock, not from enforce_patient_activity firing on some
+  -- downstream write the RPC never even reached.
+  ctx := pg_temp.context_of(format($q$select public.result_finalise_commit(%L, %L, '[]'::jsonb, 'p.pdf', 1, now(), null, '[]'::jsonb)$q$, rd, k_med));
+  perform pg_temp.expect('s7.4c …and it was result_finalise_commit''s OWN pre-lock, not the downstream guard',
+    (ctx not like '%enforce_patient_activity%')::text, 'true');
   perform pg_temp.expect('s7.5 result_edit_commit (new attempt) on a deleted patient',
     pg_temp.state_of(format($q$select public.result_edit_commit(%L, %L, 1, %L, 'a long enough reason', %L, 'n.pdf', 1, null, null, null)$q$, gen_random_uuid(), rd2, k_med, td2)), 'P0058');
   res := public.result_edit_commit(att, rd2, 0, k_med, 'smoke edit', td2, 'n.pdf', 1, null, null, null);
@@ -1174,13 +1214,23 @@ begin
     (res ->> 'replayed'), 'true');
   perform pg_temp.expect('s7.7 correct_payment on a deleted patient',
     pg_temp.state_of(format($q$select public.correct_payment(%L, 40, 'cash', null, null, 'smoke fix', %L)$q$, pd, k_admin)), 'P0058');
+  ctx := pg_temp.context_of(format($q$select public.correct_payment(%L, 40, 'cash', null, null, 'smoke fix', %L)$q$, pd, k_admin));
+  perform pg_temp.expect('s7.7c …and it was correct_payment''s OWN pre-lock, not the downstream guard',
+    (ctx not like '%enforce_patient_activity%')::text, 'true');
   perform pg_temp.expect('s7.8 correct_payment moving money ONTO a deleted patient''s visit',
     pg_temp.state_of(format($q$select public.correct_payment(%L, 10, 'cash', null, null, 'move', %L, %L)$q$,
       pg_temp.mk_pay(va, 10), k_admin, vd)), 'P0058');
+  ctx := pg_temp.context_of(format($q$select public.correct_payment(%L, 10, 'cash', null, null, 'move', %L, %L)$q$,
+      pg_temp.mk_pay(va, 10), k_admin, vd));
+  perform pg_temp.expect('s7.8c …and it was correct_payment''s OWN pre-lock, not the downstream guard',
+    (ctx not like '%enforce_patient_activity%')::text, 'true');
   perform pg_temp.expect('s7.9 correct_payment on a missing payment keeps its own message (P0054)',
     pg_temp.state_of(format($q$select public.correct_payment(%L, 1, 'cash', null, null, 'x', %L)$q$, gen_random_uuid(), k_admin)), 'P0054');
   perform pg_temp.expect('s7.10 appointments_insert_slot_guarded for a deleted patient',
     pg_temp.state_of(format($q$select public.appointments_insert_slot_guarded(jsonb_build_array(jsonb_build_object('patient_id', %L, 'status', 'confirmed', 'scheduled_at', (now() + interval '1 day')::text)))$q$, d)), 'P0058');
+  ctx := pg_temp.context_of(format($q$select public.appointments_insert_slot_guarded(jsonb_build_array(jsonb_build_object('patient_id', %L, 'status', 'confirmed', 'scheduled_at', (now() + interval '1 day')::text)))$q$, d));
+  perform pg_temp.expect('s7.10c …and it was appointments_insert_slot_guarded''s OWN pre-lock, not the downstream guard',
+    (ctx not like '%enforce_patient_activity%')::text, 'true');
   perform pg_temp.expect('s7.11 CONTROL walk-in through the same RPC',
     pg_temp.state_of($q$select public.appointments_insert_slot_guarded(jsonb_build_array(jsonb_build_object('walk_in_name', 'W', 'walk_in_phone', '09170000000', 'status', 'confirmed', 'scheduled_at', (now() + interval '1 day')::text)))$q$), 'ok');
   perform pg_temp.expect('s7.12 CONTROL active patient through the same RPC',
@@ -1192,6 +1242,8 @@ begin
   -- one.
   perform pg_temp.expect('s7.13 CONTROL both lines are eligible before the scrub',
     (select count(*)::text from public.test_requests where id in (ta_fee, td_fee) and clinic_fee_php > 0), '2');
+  perform pg_temp.expect('s7.13m CONTROL the MERGED patient''s line is also eligible before the scrub',
+    (select (clinic_fee_php > 0)::text from public.test_requests where id = tm_fee), 'true');
   perform pg_temp.expect('s7.14 the bulk scrub does not raise P0058 even though a deleted patient''s line qualifies',
     pg_temp.state_of($q$select public.recompute_clinic_fee_for_unreleased()$q$), 'ok');
   perform pg_temp.expect('s7.15 the ACTIVE patient''s line was scrubbed (clinic_fee_php -> 0)',
@@ -1200,6 +1252,94 @@ begin
     (select doctor_pf_php::text from public.test_requests where id = ta_fee), '500.00');
   perform pg_temp.expect('s7.16 the DELETED patient''s line was SKIPPED — clinic_fee_php unchanged, not scrubbed',
     (select clinic_fee_php::text from public.test_requests where id = td_fee), '100.00');
+  -- 0184 review M3: same skip for a MERGED patient's line (s7.13-16 above
+  -- only proved the deleted case).
+  perform pg_temp.expect('s7.16m the MERGED patient''s line was also SKIPPED — clinic_fee_php unchanged, not scrubbed',
+    (select clinic_fee_php::text from public.test_requests where id = tm_fee), '100.00');
+
+  -- ============================================================================
+  -- 0184 review I1: payments.corrects_payment_id must not freeze a moved
+  -- payment onto its (possibly later-deleted) source patient forever.
+  -- Flow: a payment recorded on the wrong patient (pe) is moved onto the
+  -- right one (a, via its visit va) via correct_payment; pe is then deleted
+  -- as a genuine duplicate (via the real delete_patient, blockers clear
+  -- because its only visit was soft-deleted first); every future edit/void
+  -- of the MOVED payment, on a — active throughout — must still work.
+  -- ============================================================================
+  ve := pg_temp.mk_visit(pe);
+  -- A visit with total_php = 0 is always 'paid' (recalc_visit_payment, 0111:
+  -- `v_total = 0 or v_paid >= v_total` is vacuously true) — give it a real
+  -- total so voiding every payment below actually reaches 'unpaid', or the
+  -- soft-delete two steps down would be refused (visit not unpaid), same
+  -- trap the reviewer's own repro sidesteps by setting total_php = 100.
+  update public.visits set total_php = 100 where id = ve;
+  x_m := pg_temp.mk_pay(ve, 10);
+  y_m := public.correct_payment(x_m, 10, 'cash', null, null, 'recorded on the wrong patient', k_admin, va);
+  x_r := pg_temp.mk_pay(ve, 10);
+  y_r := public.correct_payment(x_r, 10, 'cash', null, null, 'recorded on the wrong patient', k_admin, va);
+  x_v := pg_temp.mk_pay(ve, 10);
+  y_v := public.correct_payment(x_v, 10, 'cash', null, null, 'recorded on the wrong patient', k_admin, va);
+  x_c := pg_temp.mk_pay(ve, 10);
+  y_c := public.correct_payment(x_c, 10, 'cash', null, null, 'recorded on the wrong patient', k_admin, va);
+
+  -- ve (pe's only visit) is soft-deleted so patient_delete_blockers(pe) is
+  -- clear (an empty live visit, or one still carrying a live test, is itself
+  -- a blocker — 0167), then pe is deleted for real.
+  update public.visits set deleted_at = now(), deleted_by = k_admin, delete_reason = 'wrong patient' where id = ve;
+  perform pg_temp.expect('s7.17 patient_delete_blockers(pe) is clear once its only visit is soft-deleted',
+    (public.patient_delete_blockers(pe))::text, '[]');
+  perform pg_temp.expect('s7.18 pe is deletable via the REAL delete_patient (no blockers)',
+    pg_temp.state_of(format($q$select public.delete_patient(%L, 'duplicate', null, %L, null)$q$, pe, k_admin)), 'ok');
+
+  perform pg_temp.expect('s7.19 editing (method) the moved payment on ACTIVE pa succeeds even though pe is now deleted',
+    pg_temp.state_of(format($q$select public.correct_payment(%L, 10, 'gcash', null, null, 'method fix', %L)$q$, y_m, k_admin)), 'ok');
+  perform pg_temp.expect('s7.20 editing (reference only) the moved payment succeeds too',
+    pg_temp.state_of(format($q$select public.correct_payment(%L, 10, 'cash', 'REF-S7', null, 'ref fix', %L)$q$, y_r, k_admin)), 'ok');
+  perform pg_temp.expect('s7.21 voiding the moved payment directly succeeds',
+    pg_temp.state_of(format($q$update public.payments set voided_at = now(), voided_by = %L, void_reason = 'x' where id = %L$q$, k_admin, y_v)), 'ok');
+
+  perform pg_temp.expect('s7.22 corrects_payment_id is immutable (23514)',
+    pg_temp.state_of(format($q$update public.payments set corrects_payment_id = %L where id = %L$q$, x_m, y_c)), '23514');
+
+  perform pg_temp.expect('s7.23 inserting a NEW correction of a payment on a DELETED patient is refused (P0058, via corrects_payment_id, INSERT only)',
+    pg_temp.state_of(format($q$insert into public.payments (visit_id, amount_php, method, received_by, corrects_payment_id) values (%L, 5, 'cash', %L, %L)$q$, va, k_admin, x_m)), 'P0058');
+
+  -- ============================================================================
+  -- 0184 review I2: (a2') only fires when the alert's patient_id could
+  -- change — INSERT, or an UPDATE that actually touches patient_id. A legacy
+  -- alert whose stored patient_id is stale/NULL must not block an UNRELATED
+  -- write on it (result_edit_commit's withdrawal), on an otherwise ACTIVE
+  -- patient's result.
+  -- ============================================================================
+  t_i2 := pg_temp.mk_line(va, 'released', 100, null, false, 'c1000000-0000-4000-8000-000000000184');
+  insert into public.results (generation_kind, uploaded_by, storage_path, file_size_bytes, finalised_at)
+    values ('structured', k_med, 'x/y2.pdf', 10, now()) returning id into r_i2;
+  insert into public.result_test_requests (result_id, test_request_id) values (r_i2, t_i2);
+  select id into prm_i2 from public.result_template_params limit 1;
+  -- Simulate a legacy row predating this column being kept consistent:
+  -- session_replication_role = replica skips ALL triggers, including
+  -- a_lifecycle_guard, for this one INSERT only.
+  set local session_replication_role = replica;
+  insert into public.critical_alerts (result_id, test_request_id, parameter_id, direction, parameter_name, patient_id)
+    values (r_i2, t_i2, prm_i2, 'high', 'legacy', null) returning id into al_null;
+  set local session_replication_role = origin;
+
+  perform pg_temp.expect('s7.24 withdrawing a legacy NULL-patient alert on an ACTIVE patient succeeds',
+    pg_temp.state_of(format($q$select public.result_edit_commit(%L, %L, 0, %L, 'fix a typo', %L, 'n2.pdf', 1, null, null, '[]'::jsonb)$q$, gen_random_uuid(), r_i2, k_med, t_i2)), 'ok');
+  perform pg_temp.expect('s7.24b …and the legacy alert was actually withdrawn',
+    (select (withdrawn_at is not null)::text from public.critical_alerts where id = al_null), 'true');
+
+  -- CONTROL: when patient_id DOES change (a raw UPDATE, not through the
+  -- merge flow), a wrong value is still refused — the carve-out only skips
+  -- the check when the column is untouched, it does not remove it.
+  t_i2b := pg_temp.mk_line(va, 'released', 100, null, false, 'c1000000-0000-4000-8000-000000000184');
+  insert into public.results (generation_kind, uploaded_by, storage_path, file_size_bytes, finalised_at)
+    values ('structured', k_med, 'x/y3.pdf', 10, now()) returning id into r_i2b;
+  insert into public.result_test_requests (result_id, test_request_id) values (r_i2b, t_i2b);
+  insert into public.critical_alerts (result_id, test_request_id, parameter_id, direction, parameter_name, patient_id)
+    values (r_i2b, t_i2b, prm_i2, 'high', 'consistent', a) returning id into al_ok;
+  perform pg_temp.expect('s7.25 setting a consistent alert''s patient_id to a WRONG patient is still refused (23514)',
+    pg_temp.state_of(format($q$update public.critical_alerts set patient_id = %L where id = %L$q$, other_pt, al_ok)), '23514');
 end
 $s7$;
 

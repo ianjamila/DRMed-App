@@ -28,6 +28,20 @@
 -- race; the app retries once on 40P01 (LIFECYCLE_RETRYABLE_CODES, planned:
 -- src/lib/patients/lifecycle-retry.ts), the same as P0072/40001.
 --
+-- The SAME 40P01 class also reaches across PR 3a and today's still-unlocked
+-- app-side merge (0184 review M1): until PR 3b's merge RPC exists,
+-- mergePatientsAction (admin/patient-merge/actions.ts) row-locks a visit or
+-- alert first and only reaches the EXCLUSIVE patient lock afterwards, via
+-- a_lifecycle_guard firing on that same UPDATE — row lock, then advisory
+-- lock, the same order the guard itself is always in. A section (4) RPC
+-- running concurrently against one of the same rows takes the SHARED patient
+-- lock first, then its own `visits FOR UPDATE` (or equivalent) — advisory
+-- lock, then row lock, the opposite order. Two opposite-order lock
+-- acquisitions on the same two locks is exactly the deadlock shape, so
+-- Postgres picks a victim and aborts it with 40P01; the app's single retry
+-- (Task 17/24) is what makes the survivor's operation actually complete
+-- rather than surfacing the deadlock to the user.
+--
 -- (1) lifecycle_lock / lifecycle_lock_and_assert, the result-membership lock
 --     lifecycle_lock_results, and resolvers that follow EVERY patient-bearing reference
 -- (2) delete_patient / restore_patient re-created with FOR NO KEY UPDATE
@@ -729,7 +743,12 @@ begin
   -- through its amendment, so re-pointing an amendment at another result (or
   -- an alert at another result/test) would change what dependent writers
   -- must lock without taking any lock they conflict with. Nothing in the app
-  -- or SQL rebinds these; a correction is a new row.
+  -- or SQL rebinds these; a correction is a new row. Same reasoning for
+  -- payments.corrects_payment_id (0184 review I1): it names the ORIGINAL
+  -- payment a correction replaces, a historical fact fixed at INSERT time —
+  -- nothing in the app repoints it, and letting it move would let a plain
+  -- UPDATE change which patient the (a3b) INSERT-only follow below has to
+  -- answer for.
   --
   -- critical_alerts.patient_id is DELIBERATELY NOT in this immutable list
   -- (controller review after Tasks 5-6): the live merge flow
@@ -750,17 +769,27 @@ begin
       raise exception 'a critical alert stays on its result and test — record a new alert instead'
         using errcode = '23514';
     end if;
+    if tg_table_name = 'payments' and v_changed && array['corrects_payment_id'] then
+      raise exception 'a payment correction stays linked to the payment it corrects — record a new correction instead'
+        using errcode = '23514';
+    end if;
   end if;
 
   -- (a2') An alert's patient_id must always be the patient who currently
   -- owns its test (via the test's visit) — it follows its test, it does not
-  -- roam independently. Checked on INSERT and on every UPDATE (test_request_id
-  -- itself can never change per (a2) above, so in practice this only re-runs
-  -- when patient_id changes, but checking unconditionally is cheap and needs
-  -- no v_changed bookkeeping). This is a consistency check, not an
-  -- active-patient check — step (c) below still locks and asserts whichever
-  -- patient(s) this resolves to are active.
-  if tg_table_name = 'critical_alerts' and tg_op <> 'DELETE'
+  -- roam independently. Checked on INSERT (where it must already be right)
+  -- and on an UPDATE only when patient_id ITSELF is one of the changed
+  -- columns (0184 review I2): test_request_id can never change per (a2)
+  -- above, so this column is the only thing that could make the check start
+  -- failing, and checking it unconditionally on every UPDATE punished a
+  -- legacy row whose stored patient_id was already NULL/stale (from before
+  -- this column existed) by refusing every OTHER, unrelated field on it too —
+  -- including result_edit_commit's own withdrawal write, which never touches
+  -- patient_id. This is a consistency check, not an active-patient check —
+  -- step (c) below still locks and asserts whichever patient(s) this
+  -- resolves to are active.
+  if tg_table_name = 'critical_alerts'
+     and (tg_op = 'INSERT' or (tg_op = 'UPDATE' and v_changed && array['patient_id']))
      and (v_n ->> 'patient_id') is distinct from (
            select v.patient_id::text from public.test_requests tr
              join public.visits v on v.id = tr.visit_id
@@ -788,6 +817,25 @@ begin
      and not exists (select 1 from public.result_amendments am
                       where am.id = (v_o ->> 'withdrawn_by_amendment')::uuid) then
     v_o := v_o - 'withdrawn_by_amendment';
+  end if;
+
+  -- (a3b) payments.corrects_payment_id names the ORIGINAL payment a
+  -- correction replaces — followed only when a NEW correction is INSERTed,
+  -- so the guard can also require that source payment's patient active at
+  -- the moment the correction is recorded (0184 review I1). An UPDATE or
+  -- DELETE of the correction itself (editing its method/reference, voiding
+  -- it) must NOT keep resolving back through that frozen link forever: a
+  -- payment recorded on the wrong patient, corrected onto the right one, and
+  -- whose source patient is later legitimately deleted as a duplicate would
+  -- otherwise permanently P0058 every future edit or void of the correction
+  -- — on the correction's own, ACTIVE patient, with no way to recover except
+  -- restoring the unrelated deleted duplicate. (a2) above makes the column
+  -- immutable, so this can only ever differ by op, never by value: the
+  -- correction's target-visit patient is still resolved and checked either
+  -- way, via the row's own visit_id, unaffected by this strip.
+  if tg_table_name = 'payments' and tg_op <> 'INSERT' then
+    v_o := v_o - 'corrects_payment_id';
+    v_n := v_n - 'corrects_payment_id';
   end if;
 
   -- (b) Results family: the membership lock FIRST (see header, step 1).
@@ -1531,7 +1579,13 @@ begin
   end if;
 
   -- 0184: lifecycle locks — the payment's patient and, for a move, the target
-  -- visit's — before the payment row lock.
+  -- visit's — before the payment row lock. Review confirmation (I1): this
+  -- already covers BOTH sides of a correction the guard's (a3b) INSERT-time
+  -- corrects_payment_id follow would also resolve — "the source payment's
+  -- patient" is p_payment_id's OWN current visit's patient (the first term
+  -- above, read before any change), and "the target" is p_visit_id's patient
+  -- (the second term) — so the guard never has to lock a patient this
+  -- pre-lock did not already cover; no separate edit needed here.
   v_patients := public.lifecycle_norm(array_remove(
                   public.lifecycle_patients_of_payments(array[p_payment_id])
                   || case when p_visit_id is null then '{}'::uuid[]
