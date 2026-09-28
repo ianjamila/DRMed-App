@@ -4,6 +4,7 @@ import { createClient } from "@/lib/supabase/server";
 import { formatPhp } from "@/lib/marketing/format";
 import { PaymentForm } from "./payment-form";
 import { Panel } from "@/components/ui/panel";
+import { visitMoneySummary } from "@/lib/visits/statement";
 
 export const metadata = {
   title: "Record payment",
@@ -25,6 +26,7 @@ export default async function NewPaymentPage({ searchParams }: Props) {
     .select(
       `
         id, visit_number, total_php, paid_php, payment_status, hmo_provider_id,
+        legacy_import_run_id,
         patients!inner ( id, drm_id, first_name, last_name ),
         hmo_providers ( name )
       `,
@@ -51,6 +53,31 @@ export default async function NewPaymentPage({ searchParams }: Props) {
   const hmoProviderName = hmoProviderRow?.name ?? null;
 
   const balance = Math.max(0, Number(visit.total_php) - Number(visit.paid_php));
+
+  // 0183: a waived visit's money is fixed — no payment can be recorded on
+  // it (P0070). Refuse the whole form rather than rendering it disabled.
+  const money = visitMoneySummary(visit);
+  if (visit.payment_status === "waived") {
+    return (
+      <div className="mx-auto max-w-xl px-4 py-8 sm:px-6 lg:px-8">
+        <Link
+          href={`/staff/visits/${visit.id}`}
+          className="text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-cyan)] hover:underline"
+        >
+          ← Visit #{visit.visit_number}
+        </Link>
+        <h1 className="mt-3 font-heading text-3xl font-extrabold text-[color:var(--color-brand-navy)]">
+          Record payment
+        </h1>
+        <p className="mt-6 rounded-xl border border-amber-300 bg-amber-50 p-4 text-sm text-amber-900" data-testid="waived-notice">
+          {visit.legacy_import_run_id
+            ? `The balance on this visit was waived (imported history — nothing was posted to the books).`
+            : `The balance on this visit was waived — ${formatPhp(money.waived)} is recorded as a discount as its lines are released, and there is nothing to collect.`}{" "}
+          Payments on a waived visit are not accepted.
+        </p>
+      </div>
+    );
+  }
 
   return (
     <div className="mx-auto max-w-xl px-4 py-8 sm:px-6 lg:px-8">

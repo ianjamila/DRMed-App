@@ -99,6 +99,17 @@ export async function recordPaymentAction(
   const active = await assertVisitPatientActive(createAdminClient(), parsed.data.visit_id);
   if (!active.ok) return { ok: false, error: active.error };
 
+  // 0183: a waived visit's money is fixed (the DB refuses too — P0070).
+  const { data: v } = await createAdminClient()
+    .from("visits")
+    .select("payment_status")
+    .eq("id", parsed.data.visit_id)
+    .is("deleted_at", null)
+    .maybeSingle();
+  if (v?.payment_status === "waived") {
+    return { ok: false, error: "This visit's balance was waived, so no payment can be recorded on it." };
+  }
+
   const supabase = await createClient();
   const { data, error } = await supabase
     .from("payments")
@@ -170,7 +181,7 @@ async function redeemGiftCode(
       .maybeSingle(),
     admin
       .from("visits")
-      .select("id, total_php, paid_php, deleted_at")
+      .select("id, total_php, paid_php, deleted_at, payment_status")
       .eq("id", parsed.data.visit_id)
       .maybeSingle(),
   ]);
@@ -201,6 +212,10 @@ async function redeemGiftCode(
       ok: false,
       error: "This visit was deleted from the queue. Restore it before recording a payment.",
     };
+  }
+  // 0183: a waived visit's money is fixed (the DB refuses too — P0070).
+  if (visit.payment_status === "waived") {
+    return { ok: false, error: "This visit's balance was waived, so no payment can be recorded on it." };
   }
 
   const balance =
@@ -271,6 +286,9 @@ async function redeemGiftCode(
     const primaryError = updErr
       ? translatePgError(updErr)
       : "This code was just redeemed or cancelled by someone else. Refresh and try again.";
+    // 0183: waive_visit_balance refuses while a gift-code payment has no
+    // linked voucher (P0071), so this void can never be blocked by a waive
+    // that landed in between.
     const voidErr = await voidRedemptionPayment(admin, {
       paymentId: payment.id,
       userId,

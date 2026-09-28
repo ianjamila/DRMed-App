@@ -93,6 +93,12 @@ const SQL_LOOKUPS: Record<string, string> = {
     "Finds the live payment JE to reverse when a payment row is hard-deleted before being voided.",
   "function:bridge_test_request_released":
     "Idempotency: one live revenue JE per released line; a reversed one (after an undo) lets a re-release post again.",
+  "function:waiver_post_allocation":
+    "Idempotency: one live standalone waiver JE per allocation (0183).",
+  "function:waiver_unrecognise_line":
+    "Finds the live standalone waiver JE to reverse on undo-release / cancel; a reversed one must not be reversed twice (0183).",
+  "function:waive_visit_balance":
+    "Refuses to waive when a released live line has no live release JE (0183) — an existence lookup, not a total.",
   "function:bridge_test_request_cancelled":
     "Finds the live revenue JE to reverse on cancel.",
   "function:fn_undo_release_bridge":

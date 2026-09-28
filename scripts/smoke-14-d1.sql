@@ -56,6 +56,7 @@ begin
   -- Mark visit waived so the 12.2 payment-gating trigger lets us flip
   -- test_request.status to 'released' below. The smoke is about package
   -- triggers, not payment gating.
+  perform set_config('app.waive_visit', 'on', true);  -- 0183 guard: this fixture sets the status directly
   update public.visits set payment_status = 'waived' where id = v_visit_id;
 
   insert into public.services (id, code, name, description, price_php, kind,
