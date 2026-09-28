@@ -12,6 +12,7 @@ import {
   expiryRefreshDelay,
   formatRemainingMs,
   hasStaleViewAs,
+  remainingMsFrom,
   viewAsStateKey,
 } from "./view-as";
 
@@ -110,6 +111,13 @@ describe("hasStaleViewAs", () => {
     expect(hasStaleViewAs({ role: "admin", view_as_role: "reception", view_as_until: "2026-09-28T05:00:00.000Z" }, now)).toBe(false);
     expect(hasStaleViewAs({ role: "admin", view_as_role: null, view_as_until: null }, now)).toBe(false);
     expect(hasStaleViewAs({ role: "medtech", view_as_role: "reception", view_as_until: "2026-09-28T03:00:00.000Z" }, now)).toBe(false);
+  });
+});
+
+describe("remainingMsFrom", () => {
+  it("is the server clock's ms until an ISO expiry, not the device clock", () => {
+    expect(remainingMsFrom(FUTURE, NOW)).toBe(3 * 3_600_000 + 40 * 60_000);
+    expect(remainingMsFrom(PAST, NOW)).toBeLessThan(0);
   });
 });
 

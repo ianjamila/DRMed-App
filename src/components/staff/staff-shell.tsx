@@ -9,8 +9,9 @@ import { NotificationBell } from "./notification-bell";
 import { StaffMobileNavTrigger } from "./staff-mobile-nav-trigger";
 import { ROLE_LABEL } from "@/lib/staff/role-labels";
 import { ViewAsSelect } from "./view-as-select";
-import { RefreshOnFocus, ViewAsBanner } from "./view-as-banner";
-import { formatRemaining } from "@/lib/auth/view-as";
+import { ViewAsBanner, ViewAsShellSync } from "./view-as-banner";
+import { remainingMsFrom, viewAsStateKey } from "@/lib/auth/view-as";
+import { manilaTime } from "@/lib/dates/manila";
 
 interface Props {
   session: StaffSession;
@@ -53,6 +54,7 @@ export function StaffShell({ session, children, badges }: Props) {
           </p>
           {session.actual_role === "admin" && (
             <ViewAsSelect
+              key={viewAsStateKey(session.view_as)}
               current={session.view_as?.role ?? null}
               id="view-as-sidebar"
               className="mt-3"
@@ -76,10 +78,11 @@ export function StaffShell({ session, children, badges }: Props) {
           <ViewAsBanner
             role={session.view_as.role}
             until={session.view_as.until}
-            remainingLabel={formatRemaining(session.view_as.until)}
+            untilLabel={manilaTime(session.view_as.until)}
+            remainingMs={remainingMsFrom(session.view_as.until)}
           />
         ) : session.actual_role === "admin" ? (
-          <RefreshOnFocus />
+          <ViewAsShellSync />
         ) : null}
         {/* Mobile topbar — sidebar is hidden on small screens */}
         <header className="flex items-center justify-between gap-2 border-b border-[color:var(--color-brand-bg-mid)] bg-white px-4 py-3 md:hidden print:hidden">

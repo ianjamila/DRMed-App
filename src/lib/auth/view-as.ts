@@ -63,6 +63,14 @@ export function formatRemaining(untilIso: string, now: Date = new Date()): strin
   return formatRemainingMs(Date.parse(untilIso) - now.getTime());
 }
 
+/** Server-computed ms remaining until an ISO expiry. A default parameter
+ *  (rather than `Date.now()` inline in a render body) keeps a server
+ *  component's render pure for the react-hooks/purity rule — same pattern
+ *  as `hasRecentAudit` in `action-helpers.ts`. */
+export function remainingMsFrom(untilIso: string, now: Date = new Date()): number {
+  return Date.parse(untilIso) - now.getTime();
+}
+
 /** Delay before the banner asks the server whether the override has ended:
  *  the server-computed remaining time plus 1s, so the server's strict
  *  `until > now()` is already false. Never below 1s (no hot loop). */

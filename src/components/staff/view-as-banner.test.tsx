@@ -18,19 +18,32 @@ const { ViewAsSelect } = await import("./view-as-select");
 
 describe("ViewAsBanner", () => {
   const html = renderToStaticMarkup(
-    <ViewAsBanner role="reception" until="2026-09-25T08:00:00.000Z" remainingLabel="3h 40m" />,
+    <ViewAsBanner
+      role="reception"
+      until="2026-09-25T08:00:00.000Z"
+      untilLabel="4:00 PM"
+      remainingMs={3 * 3_600_000 + 40 * 60_000}
+    />,
   );
-  it("names the role, warns about saves, and shows the remaining time", () => {
-    expect(html).toContain("Viewing as Reception.");
+  it("names the role, the absolute end time and the time left, and warns about saves", () => {
+    expect(html).toContain("Viewing as Reception");
+    expect(html).toContain("until 4:00 PM");
+    expect(html).toContain("3h 40m left");
     expect(html).toContain("Anything you save is recorded under your name.");
-    expect(html).toContain("Ends in 3h 40m.");
   });
   it("is a status region hidden on print, with Exit and a role select", () => {
     expect(html).toContain('role="status"');
     expect(html).toContain("print:hidden");
     expect(html).toContain(">Exit<");
-    expect(html).toContain('name="return_to"');
     expect(html).toContain('name="role"');
+  });
+  it("renders the time left from the server's remainingMs, not the device clock", () => {
+    const skewed = vi.spyOn(Date, "now").mockReturnValue(Date.parse("2030-01-01T00:00:00Z"));
+    const h = renderToStaticMarkup(
+      <ViewAsBanner role="medtech" until="2026-09-25T08:00:00.000Z" untilLabel="4:00 PM" remainingMs={12 * 60_000} />,
+    );
+    expect(h).toContain("12m left");
+    skewed.mockRestore();
   });
 });
 

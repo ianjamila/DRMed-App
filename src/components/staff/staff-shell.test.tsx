@@ -18,8 +18,8 @@ vi.mock("@/components/ui/mobile-drawer", () => ({
 }));
 vi.mock("@/app/(staff)/staff/login/actions", () => ({ signOutStaff: "/noop-signout" }));
 vi.mock("@/app/(staff)/staff/(dashboard)/view-as/actions", () => ({
-  startViewAsAction: "/noop-start",
-  exitViewAsAction: "/noop-exit",
+  startViewAsAction: async () => ({ error: null }),
+  exitViewAsAction: async () => ({ error: null }),
 }));
 vi.mock("./notification-bell", () => ({ NotificationBell: () => null }));
 vi.mock("./staff-quote-shortcut", () => ({ StaffQuoteShortcut: () => null }));
@@ -61,8 +61,8 @@ describe("StaffShell view-as", () => {
         view_as: { role: "reception", until: new Date(Date.now() + 3_600_000).toISOString() },
       }),
     );
-    expect(html).toContain("Viewing as Reception.");
-    expect(html).toContain('action="/noop-exit"');
+    expect(html).toContain("Viewing as Reception");
+    expect(html).toContain(">Exit<");
     expect(html).toContain("Reception (viewing as) · Admin");
     // Admin-only sidebar item must be gone; a reception item must be present.
     expect(html).not.toContain('href="/staff/users"');
