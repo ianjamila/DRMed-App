@@ -214,6 +214,51 @@ export type Database = {
           },
         ]
       }
+      ad_spend_daily: {
+        Row: {
+          ad_key: string
+          campaign_key: string
+          campaign_label: string
+          clicks: number | null
+          id: number
+          impressions: number | null
+          platform: string
+          spend_date: string
+          spend_php: number
+          upload_id: string
+          uploaded_at: string
+          uploaded_by: string | null
+        }
+        Insert: {
+          ad_key: string
+          campaign_key: string
+          campaign_label: string
+          clicks?: number | null
+          id?: never
+          impressions?: number | null
+          platform: string
+          spend_date: string
+          spend_php: number
+          upload_id: string
+          uploaded_at?: string
+          uploaded_by?: string | null
+        }
+        Update: {
+          ad_key?: string
+          campaign_key?: string
+          campaign_label?: string
+          clicks?: number | null
+          id?: never
+          impressions?: number | null
+          platform?: string
+          spend_date?: string
+          spend_php?: number
+          upload_id?: string
+          uploaded_at?: string
+          uploaded_by?: string | null
+        }
+        Relationships: []
+      }
       appointment_attachments: {
         Row: {
           booking_group_id: string
@@ -261,6 +306,13 @@ export type Database = {
             columns: ["patient_id"]
             isOneToOne: false
             referencedRelation: "v_patients_directory"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "appointment_attachments_patient_id_fkey"
+            columns: ["patient_id"]
+            isOneToOne: false
+            referencedRelation: "v_patients_directory_admin"
             referencedColumns: ["id"]
           },
           {
@@ -340,6 +392,13 @@ export type Database = {
             columns: ["patient_id"]
             isOneToOne: false
             referencedRelation: "v_patients_directory"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "appointments_patient_id_fkey"
+            columns: ["patient_id"]
+            isOneToOne: false
+            referencedRelation: "v_patients_directory_admin"
             referencedColumns: ["id"]
           },
           {
@@ -432,6 +491,13 @@ export type Database = {
             columns: ["patient_id"]
             isOneToOne: false
             referencedRelation: "v_patients_directory"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "audit_log_patient_id_fkey"
+            columns: ["patient_id"]
+            isOneToOne: false
+            referencedRelation: "v_patients_directory_admin"
             referencedColumns: ["id"]
           },
           {
@@ -1315,6 +1381,13 @@ export type Database = {
             columns: ["patient_id"]
             isOneToOne: false
             referencedRelation: "v_patients_directory"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "critical_alerts_patient_id_fkey"
+            columns: ["patient_id"]
+            isOneToOne: false
+            referencedRelation: "v_patients_directory_admin"
             referencedColumns: ["id"]
           },
           {
@@ -3154,6 +3227,13 @@ export type Database = {
             foreignKeyName: "patient_acquisition_facts_patient_id_fkey"
             columns: ["patient_id"]
             isOneToOne: true
+            referencedRelation: "v_patients_directory_admin"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "patient_acquisition_facts_patient_id_fkey"
+            columns: ["patient_id"]
+            isOneToOne: true
             referencedRelation: "v_patients_without_consent"
             referencedColumns: ["id"]
           },
@@ -3249,6 +3329,13 @@ export type Database = {
             foreignKeyName: "patient_consents_patient_id_fkey"
             columns: ["patient_id"]
             isOneToOne: false
+            referencedRelation: "v_patients_directory_admin"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "patient_consents_patient_id_fkey"
+            columns: ["patient_id"]
+            isOneToOne: false
             referencedRelation: "v_patients_without_consent"
             referencedColumns: ["id"]
           },
@@ -3307,6 +3394,13 @@ export type Database = {
             foreignKeyName: "patient_merges_keep_id_fkey"
             columns: ["keep_id"]
             isOneToOne: false
+            referencedRelation: "v_patients_directory_admin"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "patient_merges_keep_id_fkey"
+            columns: ["keep_id"]
+            isOneToOne: false
             referencedRelation: "v_patients_without_consent"
             referencedColumns: ["id"]
           },
@@ -3322,6 +3416,13 @@ export type Database = {
             columns: ["source_id"]
             isOneToOne: false
             referencedRelation: "v_patients_directory"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "patient_merges_source_id_fkey"
+            columns: ["source_id"]
+            isOneToOne: false
+            referencedRelation: "v_patients_directory_admin"
             referencedColumns: ["id"]
           },
           {
@@ -3596,6 +3697,13 @@ export type Database = {
             columns: ["corrects_payment_id"]
             isOneToOne: false
             referencedRelation: "payments"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "payments_corrects_payment_id_fkey"
+            columns: ["corrects_payment_id"]
+            isOneToOne: false
+            referencedRelation: "v_historical_payments"
             referencedColumns: ["id"]
           },
           {
@@ -5495,6 +5603,13 @@ export type Database = {
             foreignKeyName: "sheet_customer_rows_patient_id_fkey"
             columns: ["patient_id"]
             isOneToOne: false
+            referencedRelation: "v_patients_directory_admin"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "sheet_customer_rows_patient_id_fkey"
+            columns: ["patient_id"]
+            isOneToOne: false
             referencedRelation: "v_patients_without_consent"
             referencedColumns: ["id"]
           },
@@ -5615,6 +5730,13 @@ export type Database = {
             foreignKeyName: "sheet_encounter_lines_patient_id_fkey"
             columns: ["patient_id"]
             isOneToOne: false
+            referencedRelation: "v_patients_directory_admin"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "sheet_encounter_lines_patient_id_fkey"
+            columns: ["patient_id"]
+            isOneToOne: false
             referencedRelation: "v_patients_without_consent"
             referencedColumns: ["id"]
           },
@@ -5703,6 +5825,13 @@ export type Database = {
             columns: ["patient_id"]
             isOneToOne: false
             referencedRelation: "v_patients_directory"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "sheet_patient_links_patient_id_fkey"
+            columns: ["patient_id"]
+            isOneToOne: false
+            referencedRelation: "v_patients_directory_admin"
             referencedColumns: ["id"]
           },
           {
@@ -6719,6 +6848,13 @@ export type Database = {
             foreignKeyName: "visits_patient_id_fkey"
             columns: ["patient_id"]
             isOneToOne: false
+            referencedRelation: "v_patients_directory_admin"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "visits_patient_id_fkey"
+            columns: ["patient_id"]
+            isOneToOne: false
             referencedRelation: "v_patients_without_consent"
             referencedColumns: ["id"]
           },
@@ -7134,6 +7270,62 @@ export type Database = {
       }
     }
     Functions: {
+      _patient_sources_encounters: {
+        Args: never
+        Returns: {
+          identity: string
+          loose_key: string
+          service_date: string
+          source: string
+          survivor_id: string
+        }[]
+      }
+      _patient_sources_identities: {
+        Args: never
+        Returns: {
+          basis: string
+          channel: string
+          confirmed: boolean
+          first_date: string
+          identity: string
+          is_returning: boolean
+          loose_key: string
+          survivor_id: string
+        }[]
+      }
+      _ps_assert_mirror_mode: { Args: never; Returns: undefined }
+      _ps_bucket: {
+        Args: { p_d: string; p_from: string; p_grain: string }
+        Returns: string
+      }
+      _ps_check_period: {
+        Args: { p_from: string; p_to: string }
+        Returns: undefined
+      }
+      _ps_doctor_norm: { Args: { p: string }; Returns: string }
+      _ps_loose_key: {
+        Args: { p_first: string; p_last: string }
+        Returns: string
+      }
+      _ps_name_norm: { Args: { p: string }; Returns: string }
+      _ps_revenue_lines: {
+        Args: { p_from: string; p_to: string }
+        Returns: {
+          identity: string
+          overlap: boolean
+          php: number
+          service_date: string
+          source: string
+          survivor_id: string
+        }[]
+      }
+      _ps_survivors: {
+        Args: never
+        Returns: {
+          patient_id: string
+          survivor_id: string
+        }[]
+      }
       _sheet_sync_fence: {
         Args: { p_lease_token: string; p_write?: boolean }
         Returns: string
@@ -7145,6 +7337,32 @@ export type Database = {
       _sheet_sync_record_changes: {
         Args: { p_new: Json; p_old: Json; p_run: string }
         Returns: number
+      }
+      ad_spend_coverage: {
+        Args: never
+        Returns: {
+          days: number
+          first_date: string
+          last_date: string
+          platform: string
+          total_php: number
+        }[]
+      }
+      ad_spend_daily_totals: {
+        Args: { p_from: string; p_to: string }
+        Returns: {
+          platform: string
+          spend_date: string
+          spend_php: number
+        }[]
+      }
+      ad_spend_delete: {
+        Args: { p_from: string; p_platform: string; p_to: string }
+        Returns: number
+      }
+      ad_spend_import: {
+        Args: { p_rows: Json; p_upload_id: string }
+        Returns: Json
       }
       admin_delete_result_template: {
         Args: { p_template_id: string }
@@ -7278,7 +7496,7 @@ export type Database = {
         Returns: undefined
       }
       eod_unclosed_days: {
-        Args: { p_from: string | null; p_shift_id: string; p_to: string | null }
+        Args: { p_from: string; p_shift_id: string; p_to: string }
         Returns: string[]
       }
       generate_drm_id: { Args: never; Returns: string }
@@ -7291,6 +7509,13 @@ export type Database = {
         Args: { p_year: number }
         Returns: number
       }
+      partner_labs: {
+        Args: never
+        Returns: {
+          id: string
+          name: string
+        }[]
+      }
       patient_delete_blockers: { Args: { p_patient_id: string }; Returns: Json }
       patient_kept_counts: {
         Args: { p_patient_ids: string[] }
@@ -7300,6 +7525,78 @@ export type Database = {
           patient_id: string
           payments: number
           visits: number
+        }[]
+      }
+      patient_sources_overlaps: {
+        Args: { p_from: string; p_to: string }
+        Returns: {
+          app_php: number
+          drm_id: string
+          patient_id: string
+          service_date: string
+          sheet_php: number
+        }[]
+      }
+      patient_sources_people: {
+        Args: {
+          p_channel: string
+          p_from: string
+          p_limit: number
+          p_mode: string
+          p_offset: number
+          p_to: string
+        }
+        Returns: {
+          display_name: string
+          drm_id: string
+          first_date: string
+          identity: string
+          identity_kind: string
+          patient_id: string
+          total_count: number
+        }[]
+      }
+      patient_sources_referrers: {
+        Args: { p_from: string; p_limit?: number; p_to: string }
+        Returns: {
+          doctor_label: string
+          new_confirmed: number
+          new_unconfirmed: number
+        }[]
+      }
+      patient_sources_revenue: {
+        Args: { p_from: string; p_to: string }
+        Returns: {
+          channel: string
+          confirmed_php: number
+          unconfirmed_php: number
+        }[]
+      }
+      patient_sources_series: {
+        Args: { p_from: string; p_grain: string; p_mode: string; p_to: string }
+        Returns: {
+          bucket_start: string
+          channel: string
+          confirmed: number
+          unconfirmed: number
+        }[]
+      }
+      patient_sources_summary: {
+        Args: { p_from: string; p_to: string }
+        Returns: {
+          last_run_status: string
+          last_synced_at: string
+          new_confirmed: number
+          new_unconfirmed: number
+          returning_first_recorded: number
+          served_confirmed: number
+          served_unconfirmed: number
+          sheet_last_dates: Json
+          sheet_rows_present: boolean
+          source_recorded: number
+          source_total: number
+          sync_paused: boolean
+          undated_registrations: number
         }[]
       }
       period_status_for: { Args: { p_date: string }; Returns: string }
@@ -7358,31 +7655,8 @@ export type Database = {
         Args: { p_service_kind: string }
         Returns: string
       }
-      partner_labs: {
-        Args: never
-        Returns: {
-          id: string
-          name: string
-        }[]
-      }
       restore_patient: {
         Args: { p_actor: string; p_context: Json; p_patient_id: string }
-        Returns: Json
-      }
-      result_edit_commit: {
-        Args: {
-          p_alerts: Json
-          p_anchor_test_request_id: string
-          p_attempt_id: string
-          p_editor: string
-          p_expected_amendment_count: number
-          p_new_file_size_bytes: number
-          p_new_image: Json
-          p_new_storage_path: string
-          p_reason: string
-          p_result_id: string
-          p_values: Json
-        }
         Returns: Json
       }
       result_amendment_remarks: {
@@ -7448,9 +7722,42 @@ export type Database = {
           visit_id: string
         }[]
       }
+      result_edit_commit: {
+        Args: {
+          p_alerts: Json
+          p_anchor_test_request_id: string
+          p_attempt_id: string
+          p_editor: string
+          p_expected_amendment_count: number
+          p_new_file_size_bytes: number
+          p_new_image: Json
+          p_new_storage_path: string
+          p_reason: string
+          p_result_id: string
+          p_values: Json
+        }
+        Returns: Json
+      }
+      result_finalise_commit: {
+        Args: {
+          p_alerts: Json
+          p_file_size_bytes: number
+          p_finalised_at: string
+          p_finaliser: string
+          p_new_image: Json
+          p_result_id: string
+          p_storage_path: string
+          p_values: Json
+        }
+        Returns: Json
+      }
       result_mark_copy_contacted: {
         Args: { p_amendment_id: string }
         Returns: string
+      }
+      result_note_patient_download: {
+        Args: { p_served: Json }
+        Returns: number
       }
       result_outdated_copies: {
         Args: { p_include_followed_up?: boolean }
@@ -7489,23 +7796,6 @@ export type Database = {
           patient_id: string
           result_id: string
         }[]
-      }
-      result_finalise_commit: {
-        Args: {
-          p_alerts: Json
-          p_file_size_bytes: number
-          p_finalised_at: string
-          p_finaliser: string
-          p_new_image: Json
-          p_result_id: string
-          p_storage_path: string
-          p_values: Json
-        }
-        Returns: Json
-      }
-      result_note_patient_download: {
-        Args: { p_served: Json }
-        Returns: number
       }
       result_save_draft: {
         Args: { p_result_id: string; p_values: Json }
@@ -7644,7 +7934,12 @@ export type Database = {
       }
       staff_role: { Args: never; Returns: string }
       view_as_end_for: {
-        Args: { p_actor: string; p_ip?: unknown; p_target: string; p_ua?: string }
+        Args: {
+          p_actor: string
+          p_ip?: unknown
+          p_target: string
+          p_ua?: string
+        }
         Returns: boolean
       }
       view_as_expire: {
@@ -7652,7 +7947,12 @@ export type Database = {
         Returns: boolean
       }
       view_as_transition: {
-        Args: { p_actor: string; p_ip?: unknown; p_role?: string; p_ua?: string }
+        Args: {
+          p_actor: string
+          p_ip?: unknown
+          p_role?: string
+          p_ua?: string
+        }
         Returns: Json
       }
       visits_classification_summary: {

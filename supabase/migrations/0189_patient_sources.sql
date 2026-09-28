@@ -685,3 +685,248 @@ begin
   offset greatest(0, coalesce(p_offset, 0));
 end;
 $$;
+
+-- (14) Ad spend per AD per day (spec §2.1). Writes only through the RPCs below.
+create table if not exists public.ad_spend_daily (
+  id             bigint generated always as identity primary key,
+  spend_date     date not null,
+  platform       text not null check (platform in ('meta', 'google')),
+  campaign_key   text not null check (char_length(campaign_key) between 1 and 300),
+  ad_key         text not null check (char_length(ad_key) between 1 and 300),
+  campaign_label text not null check (char_length(campaign_label) <= 300),
+  spend_php      numeric(12,2) not null check (spend_php >= 0),
+  impressions    int check (impressions is null or impressions >= 0),
+  clicks         int check (clicks is null or clicks >= 0),
+  uploaded_by    uuid references auth.users(id),
+  uploaded_at    timestamptz not null default now(),
+  upload_id      uuid not null,
+  constraint ad_spend_daily_key unique (spend_date, platform, campaign_key, ad_key)
+);
+create index if not exists ad_spend_daily_date on public.ad_spend_daily (spend_date, platform);
+
+alter table public.ad_spend_daily enable row level security;
+-- Literal revokes (not format() in a do block): seed-grant-parity.test.ts
+-- regex-scans for them.
+revoke all on public.ad_spend_daily from anon;
+revoke all on public.ad_spend_daily from authenticated;
+grant select on public.ad_spend_daily to authenticated;
+drop policy if exists "ad_spend_daily: admin read" on public.ad_spend_daily;
+create policy "ad_spend_daily: admin read" on public.ad_spend_daily
+  for select to authenticated using ((select public.has_role(array['admin'])));
+
+-- (15) Import: all-or-nothing upsert; duplicate keys inside one call are summed
+-- (the parser already sums them — this keeps ON CONFLICT from touching a row twice).
+create or replace function public.ad_spend_import(p_upload_id uuid, p_rows jsonb)
+returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_inserted int := 0;
+  v_replaced int := 0;
+  v_days int := 0;
+  v_n int;
+begin
+  if not public.has_role(array['admin']) then
+    raise exception 'Only admins can save ad spend' using errcode = '42501';
+  end if;
+  if p_upload_id is null or p_rows is null or jsonb_typeof(p_rows) <> 'array' then
+    raise exception 'Ad spend import needs an upload id and a list of rows' using errcode = '22023';
+  end if;
+  v_n := jsonb_array_length(p_rows);
+  if v_n = 0 or v_n > 20000 then
+    raise exception 'Ad spend import takes 1 to 20,000 rows, got %', v_n using errcode = '22023';
+  end if;
+
+  with src as (
+    select r.spend_date, r.platform, r.campaign_key, r.ad_key,
+           max(r.campaign_label) as campaign_label,
+           sum(r.spend_php) as spend_php,
+           sum(r.impressions)::int as impressions,
+           sum(r.clicks)::int as clicks
+    from jsonb_to_recordset(p_rows) as r(
+      spend_date date, platform text, campaign_key text, ad_key text,
+      campaign_label text, spend_php numeric, impressions int, clicks int)
+    group by r.spend_date, r.platform, r.campaign_key, r.ad_key
+  ),
+  up as (
+    insert into public.ad_spend_daily as a
+      (spend_date, platform, campaign_key, ad_key, campaign_label, spend_php,
+       impressions, clicks, uploaded_by, uploaded_at, upload_id)
+    select s.spend_date, s.platform, s.campaign_key, s.ad_key, s.campaign_label, s.spend_php,
+           s.impressions, s.clicks, auth.uid(), now(), p_upload_id
+    from src s
+    on conflict (spend_date, platform, campaign_key, ad_key) do update
+      set campaign_label = excluded.campaign_label,
+          spend_php      = excluded.spend_php,
+          impressions    = excluded.impressions,
+          clicks         = excluded.clicks,
+          uploaded_by    = excluded.uploaded_by,
+          uploaded_at    = excluded.uploaded_at,
+          upload_id      = excluded.upload_id
+    returning (xmax = 0) as inserted, a.spend_date
+  )
+  select count(*) filter (where u.inserted), count(*) filter (where not u.inserted), count(distinct u.spend_date)
+    into v_inserted, v_replaced, v_days
+  from up u;
+
+  insert into public.audit_log (actor_id, actor_type, action, resource_type, resource_id, metadata)
+  values (auth.uid(), 'staff', 'ad_spend.imported', 'ad_spend_upload', p_upload_id,
+          jsonb_build_object('inserted', v_inserted, 'replaced', v_replaced, 'days', v_days));
+
+  return jsonb_build_object('inserted', v_inserted, 'replaced', v_replaced, 'days', v_days);
+end;
+$$;
+
+-- (16) Correction: remove saved spend for one platform over a date range.
+create or replace function public.ad_spend_delete(p_platform text, p_from date, p_to date)
+returns int
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_deleted int;
+begin
+  if not public.has_role(array['admin']) then
+    raise exception 'Only admins can remove ad spend' using errcode = '42501';
+  end if;
+  if p_platform is null or p_platform not in ('meta', 'google') then
+    raise exception 'Unknown ad platform %', coalesce(p_platform, '(none)') using errcode = '22023';
+  end if;
+  if p_from is null or p_to is null or p_from > p_to then
+    raise exception 'Pick a start date on or before the end date' using errcode = '22023';
+  end if;
+
+  delete from public.ad_spend_daily a
+  where a.platform = p_platform and a.spend_date between p_from and p_to;
+  get diagnostics v_deleted = row_count;
+
+  insert into public.audit_log (actor_id, actor_type, action, resource_type, resource_id, metadata)
+  values (auth.uid(), 'staff', 'ad_spend.deleted', 'ad_spend', null,
+          jsonb_build_object('platform', p_platform, 'from', p_from, 'to', p_to, 'rows', v_deleted));
+
+  return v_deleted;
+end;
+$$;
+
+-- (17) Reads for the page (P10).
+create or replace function public.ad_spend_daily_totals(p_from date, p_to date)
+returns table (spend_date date, platform text, spend_php numeric)
+language plpgsql
+stable
+security definer
+set search_path = ''
+as $$
+#variable_conflict use_column
+begin
+  if not public.has_role(array['admin']) then
+    raise exception 'Only admins can see ad spend' using errcode = '42501';
+  end if;
+  perform public._ps_check_period(p_from, p_to);
+  return query
+  select a.spend_date, a.platform, sum(a.spend_php)::numeric(14,2)
+  from public.ad_spend_daily a
+  where a.spend_date between p_from and p_to
+  group by a.spend_date, a.platform
+  order by a.spend_date, a.platform;
+end;
+$$;
+
+create or replace function public.ad_spend_coverage()
+returns table (platform text, first_date date, last_date date, days int, total_php numeric)
+language plpgsql
+stable
+security definer
+set search_path = ''
+as $$
+#variable_conflict use_column
+begin
+  if not public.has_role(array['admin']) then
+    raise exception 'Only admins can see ad spend' using errcode = '42501';
+  end if;
+  return query
+  select a.platform, min(a.spend_date), max(a.spend_date),
+         count(distinct a.spend_date)::int, sum(a.spend_php)::numeric(14,2)
+  from public.ad_spend_daily a
+  group by a.platform
+  order by a.platform;
+end;
+$$;
+
+-- (18) Function ACLs. Helpers: callable only by their owner (the definer
+-- functions above run as the owner). Report + ad-spend functions: authenticated
+-- (each checks has_role(array['admin']) itself; has_role follows View-as, 0182).
+revoke all on function public._ps_name_norm(text) from public, anon, authenticated, service_role;
+revoke all on function public._ps_loose_key(text, text) from public, anon, authenticated, service_role;
+revoke all on function public._ps_doctor_norm(text) from public, anon, authenticated, service_role;
+revoke all on function public._ps_survivors() from public, anon, authenticated, service_role;
+revoke all on function public._ps_assert_mirror_mode() from public, anon, authenticated, service_role;
+revoke all on function public._ps_check_period(date, date) from public, anon, authenticated, service_role;
+revoke all on function public._ps_bucket(date, text, date) from public, anon, authenticated, service_role;
+revoke all on function public._patient_sources_encounters() from public, anon, authenticated, service_role;
+revoke all on function public._patient_sources_identities() from public, anon, authenticated, service_role;
+revoke all on function public._ps_revenue_lines(date, date) from public, anon, authenticated, service_role;
+
+revoke all on function public.patient_sources_summary(date, date) from public, anon;
+revoke all on function public.patient_sources_series(date, date, text, text) from public, anon;
+revoke all on function public.patient_sources_revenue(date, date) from public, anon;
+revoke all on function public.patient_sources_overlaps(date, date) from public, anon;
+revoke all on function public.patient_sources_referrers(date, date, int) from public, anon;
+revoke all on function public.patient_sources_people(date, date, text, text, int, int) from public, anon;
+revoke all on function public.ad_spend_import(uuid, jsonb) from public, anon;
+revoke all on function public.ad_spend_delete(text, date, date) from public, anon;
+revoke all on function public.ad_spend_daily_totals(date, date) from public, anon;
+revoke all on function public.ad_spend_coverage() from public, anon;
+grant execute on function public.patient_sources_summary(date, date) to authenticated;
+grant execute on function public.patient_sources_series(date, date, text, text) to authenticated;
+grant execute on function public.patient_sources_revenue(date, date) to authenticated;
+grant execute on function public.patient_sources_overlaps(date, date) to authenticated;
+grant execute on function public.patient_sources_referrers(date, date, int) to authenticated;
+grant execute on function public.patient_sources_people(date, date, text, text, int, int) to authenticated;
+grant execute on function public.ad_spend_import(uuid, jsonb) to authenticated;
+grant execute on function public.ad_spend_delete(text, date, date) to authenticated;
+grant execute on function public.ad_spend_daily_totals(date, date) to authenticated;
+grant execute on function public.ad_spend_coverage() to authenticated;
+
+-- (19) Post-conditions: abort the deploy if an ACL is not what this file says.
+do $$
+declare
+  f text;
+begin
+  foreach f in array array[
+    'public.patient_sources_summary(date,date)',
+    'public.patient_sources_series(date,date,text,text)',
+    'public.patient_sources_revenue(date,date)',
+    'public.patient_sources_overlaps(date,date)',
+    'public.patient_sources_referrers(date,date,integer)',
+    'public.patient_sources_people(date,date,text,text,integer,integer)',
+    'public.ad_spend_import(uuid,jsonb)',
+    'public.ad_spend_delete(text,date,date)',
+    'public.ad_spend_daily_totals(date,date)',
+    'public.ad_spend_coverage()'
+  ] loop
+    if has_function_privilege('anon', f, 'execute') then
+      raise exception '0189: % is executable by anon', f;
+    end if;
+    if not has_function_privilege('authenticated', f, 'execute') then
+      raise exception '0189: % is not executable by authenticated', f;
+    end if;
+  end loop;
+  foreach f in array array[
+    'public._ps_name_norm(text)', 'public._ps_loose_key(text,text)', 'public._ps_doctor_norm(text)',
+    'public._ps_survivors()', 'public._ps_assert_mirror_mode()', 'public._ps_check_period(date,date)',
+    'public._ps_bucket(date,text,date)', 'public._patient_sources_encounters()',
+    'public._patient_sources_identities()', 'public._ps_revenue_lines(date,date)'
+  ] loop
+    if has_function_privilege('anon', f, 'execute') or has_function_privilege('authenticated', f, 'execute') then
+      raise exception '0189: helper % is executable by a JWT role', f;
+    end if;
+  end loop;
+  if has_table_privilege('anon', 'public.ad_spend_daily', 'select')
+     or has_table_privilege('authenticated', 'public.ad_spend_daily', 'insert') then
+    raise exception '0189: ad_spend_daily grants are wider than admin read';
+  end if;
+end;
+$$;
