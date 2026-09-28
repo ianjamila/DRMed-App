@@ -25,5 +25,6 @@ export function activeRoleViews(rows: Row[], now: Date = new Date()): ActiveRole
     const v = activeViewAs(r, now);
     if (v) out.push({ id: r.id, full_name: r.full_name, role: v.role, until: v.until });
   }
-  return out.sort((a, b) => Date.parse(a.until) - Date.parse(b.until));
+  // Soonest ending first; id breaks ties so the order is total (repo rule).
+  return out.sort((a, b) => Date.parse(a.until) - Date.parse(b.until) || a.id.localeCompare(b.id));
 }
