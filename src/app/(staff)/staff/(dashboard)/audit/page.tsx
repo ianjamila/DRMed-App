@@ -207,7 +207,16 @@ export default async function AuditLogPage({ searchParams }: Props) {
       {/* A browser submits only the fields the form carries, so without these
           hidden inputs pressing Filter would silently reset the sort and the
           page size the reader had chosen. */}
-      <form className="mb-2 grid gap-2 text-sm sm:grid-cols-2 lg:grid-cols-5">
+      {/* Keyed by the applied filters: every field is uncontrolled (defaultValue),
+          and Next keeps this page mounted across search-param changes, so
+          without a new key "Clear" would leave the old values (e.g. a
+          Viewing-as role) selected and the next Filter would re-apply them. */}
+      <form
+        key={[params.action, params.drm, params.actor, viewingAs, params.since, params.until]
+          .map((v) => v ?? "")
+          .join("|")}
+        className="mb-2 grid gap-2 text-sm sm:grid-cols-2 lg:grid-cols-5"
+      >
         {isDefaultSort ? null : (
           <>
             <input type="hidden" name="sort" value={sort.key} />
