@@ -908,6 +908,29 @@ begin
   end if;
   raise notice 'PASS H3';
 
+  -- ---- H4: numeric division rounds before floor() could run ----------------
+  -- ₱1,500,000.02 + ₱750,000.00 + ₱750,000.01 with ₱0.02 paid: the first
+  -- quotient is 150000000.9999999967 centavos, which numeric `/` rounds up to
+  -- 150000001 at 16 significant digits; div() truncates exactly, so the
+  -- remainder pass hands the two spare centavos to lines 1 and 2, not line 1
+  -- twice. Exact per-line shares are asserted (a sum check would miss it).
+  insert into public.visits (patient_id, total_php, paid_php, payment_status)
+  values (k_patient, 3000000.03, 0, 'unpaid') returning id into v_visit;
+  insert into public.test_requests (id, visit_id, service_id, status, requested_by, base_price_php, final_price_php)
+  values ('00000000-0000-4000-8000-0000000000a1', v_visit, k_lab_svc, 'in_progress', k_admin, 1500000.02, 1500000.02),
+         ('00000000-0000-4000-8000-0000000000a2', v_visit, k_lab_svc, 'in_progress', k_admin, 750000.00, 750000.00),
+         ('00000000-0000-4000-8000-0000000000a3', v_visit, k_lab_svc, 'in_progress', k_admin, 750000.01, 750000.01);
+  insert into public.payments (visit_id, amount_php, method, received_by)
+  values (v_visit, 0.02, 'cash', k_admin);
+  perform public.waive_visit_balance(v_visit, k_admin, 'H4 smoke: rounding boundary');
+  if (select amount_php from public.visit_waiver_allocations where test_request_id = '00000000-0000-4000-8000-0000000000a1') <> 1500000.01
+     or (select amount_php from public.visit_waiver_allocations where test_request_id = '00000000-0000-4000-8000-0000000000a2') <> 750000.00
+     or (select amount_php from public.visit_waiver_allocations where test_request_id = '00000000-0000-4000-8000-0000000000a3') <> 750000.00 then
+    raise exception 'H4 FAIL: shares are % (want 1500000.01 / 750000.00 / 750000.00)',
+      (select string_agg(amount_php::text, ' / ' order by test_request_id) from public.visit_waiver_allocations where visit_id = v_visit);
+  end if;
+  raise notice 'PASS H4';
+
   raise notice 'PASS H';
 end
 $H$;

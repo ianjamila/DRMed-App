@@ -544,8 +544,11 @@ begin
     create temp table tmp_waiver_alloc on commit drop as
       select tr.id as test_request_id,
              -- numeric intermediates: centavos × centavos overflows bigint past
-             -- ₱9.2M × ₱9.2M, well inside numeric(10,2)'s range.
-             floor((v_rem_c::numeric * round(tr.final_price_php * 100)) / v_sum_c)::bigint as share_c,
+             -- ₱9.2M × ₱9.2M, well inside numeric(10,2)'s range. div(), not
+             -- floor(a / b): numeric division rounds to 16 significant digits
+             -- BEFORE a floor could run, so a quotient like 150000000.9999999967
+             -- would round up and hand a centavo out twice; div() truncates exactly.
+             div(v_rem_c::numeric * round(tr.final_price_php * 100), v_sum_c)::bigint        as share_c,
              mod(v_rem_c::numeric * round(tr.final_price_php * 100), v_sum_c)::bigint        as frac,
              case when s.kind in ('doctor_consultation', 'doctor_procedure') then '4920' else '4910' end as acct,
              tr.status

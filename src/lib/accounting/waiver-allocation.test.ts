@@ -53,6 +53,14 @@ describe("allocateWaiver (mirror of waive_visit_balance's split, 0183)", () => {
     expect(out.every((o) => o.amountPhp <= 40_000_000)).toBe(true);
     expect(out.map((o) => o.amountPhp)).toEqual([34_285_714.29, 25_714_285.71]);
   });
+  it("truncates the quotient exactly (the SQL uses div(); numeric `/` would round 150000000.9999999967 up)", () => {
+    // ₱1,500,000.02 + ₱750,000.00 + ₱750,000.01, ₱0.02 paid → remainder ₱3,000,000.01.
+    expect(
+      allocateWaiver(3_000_000.01, [line("a", 1_500_000.02), line("b", 750_000.0), line("c", 750_000.01)]).map(
+        (o) => o.amountPhp,
+      ),
+    ).toEqual([1_500_000.01, 750_000.0, 750_000.0]);
+  });
   it("preview refuses a visit total out of step with its lines in EITHER direction (0183 [CR-6])", () => {
     // total 1,000, one ₱900 line, ₱200 paid → remainder 800 fits under the
     // lines, so allocateWaiver alone would happily split it; the RPC refuses.
