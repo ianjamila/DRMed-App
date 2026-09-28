@@ -4,6 +4,8 @@
 // notice fails. Reads only whether settings are present; never returns a value.
 // No "server-only": it is pure over the env it is given (the default is
 // process.env, which only has these keys on the server anyway).
+// Never import it into a client component: there process.env holds only
+// NEXT_PUBLIC_* values, so every channel would wrongly read as not set up.
 
 export type ChannelStatus =
   | { ready: true }

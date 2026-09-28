@@ -28,7 +28,6 @@ export async function sendEmail(input: SendEmailInput): Promise<SendResult> {
   const from = process.env.RESEND_FROM_EMAIL!;
   const replyTo = process.env.RESEND_REPLY_TO_EMAIL;
 
-
   try {
     const res = await fetch("https://api.resend.com/emails", {
       method: "POST",
