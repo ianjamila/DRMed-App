@@ -75,6 +75,7 @@ export const DASHBOARD_CARDS: readonly CardDef[] = [
   { id: "admin.result_followups",  label: "Result follow-ups",   roles: ["admin"], group: "attention" },
 
   // ---- Admin: Money -------------------------------------------------------
+  { id: "admin.revenue_by_class",     label: "Revenue by classification", roles: ["admin"], group: "money", sensitive: true },
   { id: "admin.net_income_books_mtd", label: "Net Income (Books)", roles: ["admin"], group: "money", sensitive: true },
   // Retain the saved ID for the operational figure, now shown before expenses.
   { id: "admin.net_income_mtd",        label: "Gross Profit (Ops)",  roles: ["admin"], group: "money", sensitive: true },

@@ -3,7 +3,18 @@ import { quickLinksFor } from "@/components/staff/staff-nav-config";
 import type { StaffSession } from "@/lib/auth/require-staff";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { DOCTOR_KINDS_PG_LIST } from "@/lib/visits/classification";
+import {
+  DOCTOR_KINDS_PG_LIST,
+  summariseClasses,
+  summaryTotals,
+} from "@/lib/visits/classification";
+import {
+  buildRevenuePresets,
+  DEFAULT_REVENUE_PRESET,
+  type RevenuePresetKey,
+} from "@/lib/visits/revenue-presets";
+import { RevenueByClass } from "@/components/staff/revenue-by-class";
+import { priorYearRange } from "@/lib/reports/period-presets";
 import { LAB_QUEUE_GATE_VISITS_OR } from "@/lib/visits/lab-gate";
 import { PAYABLE_BILL_STATUSES } from "@/lib/accounting/payable-bills";
 import { todayManilaISODate } from "@/lib/dates/manila";
@@ -716,10 +727,77 @@ async function loadAdminStats(show: (id: string) => boolean) {
   };
 }
 
-export async function AdminDashboard({ session }: { session: StaffSession }) {
+/**
+ * The "Revenue by classification" dropdown — the same RPC and component as
+ * Visit Records, over one of the quick date ranges. Loaded beside
+ * loadAdminStats rather than inside it: it depends on the URL, the rest of
+ * the dashboard does not.
+ */
+async function loadRevenueByClass(presetKey: RevenuePresetKey) {
+  const presets = buildRevenuePresets(todayManilaISODate());
+  const preset = presets.find((p) => p.key === presetKey) ?? presets[0];
+  const supabase = await createClient();
+  const prior = preset.start && preset.end ? priorYearRange(preset.start, preset.end) : null;
+  const [{ data, error }, priorRes] = await Promise.all([
+    supabase.rpc("visits_classification_summary", {
+      p_start: preset.start || undefined,
+      p_end: preset.end || undefined,
+      p_deleted: "active",
+    }),
+    prior
+      ? supabase.rpc("visits_classification_summary", {
+          p_start: prior.start,
+          p_end: prior.end,
+          p_deleted: "active",
+        })
+      : Promise.resolve({ data: null, error: null }),
+  ]);
+  if (error) await reportError({ scope: "admin-dashboard.revenue_by_class", error });
+  if (priorRes.error) {
+    await reportError({ scope: "admin-dashboard.revenue_by_class_prior", error: priorRes.error });
+  }
+  const rows = summariseClasses(data);
+  const priorRows = prior && !priorRes.error ? summariseClasses(priorRes.data) : null;
+  return {
+    presets,
+    preset,
+    rows,
+    totals: summaryTotals(rows),
+    error: Boolean(error),
+    prior: priorRows ? { rows: priorRows, totals: summaryTotals(priorRows) } : null,
+    pnlHref:
+      preset.start && preset.end
+        ? `/staff/admin/operations/expenses?from=${preset.start}&to=${preset.end}`
+        : null,
+  };
+}
+
+/** A Visit Records link over the preset's range, with its dropdown open. */
+function visitsHref(range: { start: string; end: string }, kind?: string): string {
+  const qs = new URLSearchParams();
+  if (kind) qs.set("kind", kind);
+  if (range.start) qs.set("start", range.start);
+  if (range.end) qs.set("end", range.end);
+  qs.set("rev", "1");
+  return `/staff/visits?${qs}`;
+}
+
+export async function AdminDashboard({
+  session,
+  revenuePreset,
+}: {
+  session: StaffSession;
+  /** null = the default range, dropdown collapsed. */
+  revenuePreset: RevenuePresetKey | null;
+}) {
   const hidden = await loadHiddenCardIds("admin");
   const show = (id: string) => !hidden.has(id);
-  const stats = await loadAdminStats(show);
+  const [stats, revenue] = await Promise.all([
+    loadAdminStats(show),
+    show("admin.revenue_by_class")
+      ? loadRevenueByClass(revenuePreset ?? DEFAULT_REVENUE_PRESET)
+      : null,
+  ]);
 
   const auditItems: ActivityItem[] = stats.recentAudit.map((a) => ({
     primary: a.action,
@@ -752,6 +830,7 @@ export async function AdminDashboard({ session }: { session: StaffSession }) {
     show("admin.new_messages");
 
   const showMoney =
+    show("admin.revenue_by_class") ||
     show("admin.net_income_mtd") ||
     show("admin.net_income_books_mtd") ||
     show("admin.past_due_periods") ||
@@ -1000,6 +1079,24 @@ export async function AdminDashboard({ session }: { session: StaffSession }) {
               />
             )}
           </div>
+          {revenue && (
+            <div className="mt-4">
+              <RevenueByClass
+                rows={revenue.rows}
+                totals={revenue.totals}
+                rangeLabel={revenue.preset.label}
+                open={revenuePreset !== null}
+                error={revenue.error}
+                presets={revenue.presets}
+                activePreset={revenue.preset.key}
+                presetHref={(p) => `/staff?revenue=${p.key}`}
+                cardHref={(c) => visitsHref(revenue.preset, c)}
+                visitsHref={visitsHref(revenue.preset)}
+                prior={revenue.prior}
+                pnlHref={revenue.pnlHref}
+              />
+            </div>
+          )}
         </SectionHeading>
       )}
 

@@ -155,27 +155,27 @@ describe("Lab & Imaging order (owner request 2026-09-24)", () => {
 });
 
 describe("Front Desk is ordered by the daily flow", () => {
-  it("lists Patients, Reception Queue, then the former Billing items, with no subgroups", () => {
+  it("lists Patients, Visit Records, Reception Queue, then the money items, with no subgroups", () => {
     const front = section(visibleNavFor("reception"), "Front Desk");
     expect(front?.items?.map((i) => i.href)).toEqual([
       "/staff/patients",
-      "/staff/visits/queue",
       "/staff/visits",
+      "/staff/visits/queue",
       "/staff/payments/cash-drawer",
       "/staff/result-follow-ups",
     ]);
     expect(front?.subgroups).toBeUndefined();
   });
 
-  it("splits the daily-flow items from the money items with one divider, above Visit Records", () => {
+  it("splits the daily-flow items from the money items with one divider, above Cash Drawer", () => {
     const front = section(STAFF_NAV, "Front Desk");
-    expect(front?.items?.filter((i) => i.dividerBefore).map((i) => i.href)).toEqual(["/staff/visits"]);
+    expect(front?.items?.filter((i) => i.dividerBefore).map((i) => i.href)).toEqual(["/staff/payments/cash-drawer"]);
   });
 
   it("pins every divider in the sidebar, and none sits on a list's first item", () => {
     const flagged = allItems(STAFF_NAV).filter((i) => i.dividerBefore).map((i) => i.href);
     expect(flagged).toEqual([
-      "/staff/visits",
+      "/staff/payments/cash-drawer",
       "/staff/admin/payroll/employees",
       "/staff/admin/payroll/holidays",
       "/staff/admin/operations",
@@ -357,8 +357,8 @@ describe("visible hrefs per role", () => {
       "/staff/messages",
       "/staff/quote",
       "/staff/patients",
-      "/staff/visits/queue",
       "/staff/visits",
+      "/staff/visits/queue",
       "/staff/payments/cash-drawer",
       "/staff/result-follow-ups",
       // Lab & Imaging › Queue, which for reception is only "Released today"
@@ -706,10 +706,10 @@ describe("derived dashboard shortcuts preserve the visible set", () => {
   it("preserves reception groups, labels and order, including parked/action links", () => {
     expect(quickLinkGroupsFor("reception", "reception").map((g) => [g.label, g.items.map((i) => i.label)])).toEqual([
       ["Messages & Bookings", ["Appointments", "Website Messages", "Quick Quote"]],
-      ["Front Desk", ["Patients", "New Patient", "Reception Queue", "Visit Records", "Cash Drawer", "Petty Cash", "Sell Gift Code"]],
+      ["Front Desk", ["Patients", "New Patient", "Visit Records", "Reception Queue", "Cash Drawer", "Petty Cash", "Sell Gift Code"]],
     ]);
     expect(quickLinksFor("reception", "reception").map((i) => i.href)).toEqual([
-      "/staff/appointments", "/staff/messages", "/staff/quote", "/staff/patients", "/staff/patients/new", "/staff/visits/queue", "/staff/visits", "/staff/payments/cash-drawer", "/staff/payments/petty-cash", "/staff/gift-codes/sell",
+      "/staff/appointments", "/staff/messages", "/staff/quote", "/staff/patients", "/staff/patients/new", "/staff/visits", "/staff/visits/queue", "/staff/payments/cash-drawer", "/staff/payments/petty-cash", "/staff/gift-codes/sell",
     ]);
   });
   it("preserves all ten admin shortcuts", () => {
