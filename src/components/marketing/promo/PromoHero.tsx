@@ -1,8 +1,9 @@
 import type { ReactNode } from "react";
 import { ArrowRight, MessageCircle } from "lucide-react";
-import { SectionHeading, PillLink } from "@/components/marketing/ui";
+import { SectionHeading, PillLink, pillLinkClassName } from "@/components/marketing/ui";
 import { SOCIAL } from "@/lib/marketing/site";
 import { BookingCtaLabel } from "@/components/marketing/online-booking-context";
+import { TrackedMessengerLink } from "@/components/marketing/tracked-messenger-link";
 
 interface PromoCta {
   label: string;
@@ -58,15 +59,16 @@ export function PromoHero({
               {link.label}
             </PillLink>
           ))}
-          <PillLink
+          <TrackedMessengerLink
             href={SOCIAL.messenger}
-            variant="line"
+            contentName={`promo_hero_${primary.label}`}
             target="_blank"
             rel="noopener noreferrer"
+            className={pillLinkClassName({ variant: "line" })}
           >
             <MessageCircle className="h-4 w-4" aria-hidden="true" />
             {messengerLabel}
-          </PillLink>
+          </TrackedMessengerLink>
         </div>
       </div>
     </section>
