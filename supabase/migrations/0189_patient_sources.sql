@@ -754,6 +754,28 @@ begin
     raise exception 'Ad spend import takes 1 to 20,000 rows, got %', v_n using errcode = '22023';
   end if;
 
+  -- Replace-per-campaign-day (fix, Codex #1): an upload REPLACES everything
+  -- already saved for each (spend_date, platform, campaign_key) it touches —
+  -- not just the exact (…, ad_key) rows it repeats. Otherwise uploading the
+  -- same spend once as a campaign total, once per ad name and once per ad ID
+  -- keeps all three under different ad_keys (the unique key includes ad_key)
+  -- and multiplies the counted spend. Two separate statements (not one WITH
+  -- with two data-modifying CTEs on the same table, whose relative order is
+  -- unspecified) so the delete is guaranteed visible to the insert that
+  -- follows it, within the same transaction.
+  delete from public.ad_spend_daily a
+  where exists (
+    select 1
+    from (
+      select distinct r.spend_date, r.platform, r.campaign_key
+      from jsonb_to_recordset(p_rows) as r(
+        spend_date date, platform text, campaign_key text, ad_key text,
+        campaign_label text, spend_php numeric, impressions int, clicks int)
+    ) g
+    where g.spend_date = a.spend_date and g.platform = a.platform and g.campaign_key = a.campaign_key
+  );
+  get diagnostics v_replaced = row_count;
+
   with src as (
     select r.spend_date, r.platform, r.campaign_key, r.ad_key,
            max(r.campaign_label) as campaign_label,
@@ -764,27 +786,19 @@ begin
       spend_date date, platform text, campaign_key text, ad_key text,
       campaign_label text, spend_php numeric, impressions int, clicks int)
     group by r.spend_date, r.platform, r.campaign_key, r.ad_key
-  ),
-  up as (
-    insert into public.ad_spend_daily as a
-      (spend_date, platform, campaign_key, ad_key, campaign_label, spend_php,
-       impressions, clicks, uploaded_by, uploaded_at, upload_id)
-    select s.spend_date, s.platform, s.campaign_key, s.ad_key, s.campaign_label, s.spend_php,
-           s.impressions, s.clicks, auth.uid(), now(), p_upload_id
-    from src s
-    on conflict (spend_date, platform, campaign_key, ad_key) do update
-      set campaign_label = excluded.campaign_label,
-          spend_php      = excluded.spend_php,
-          impressions    = excluded.impressions,
-          clicks         = excluded.clicks,
-          uploaded_by    = excluded.uploaded_by,
-          uploaded_at    = excluded.uploaded_at,
-          upload_id      = excluded.upload_id
-    returning (xmax = 0) as inserted, a.spend_date
   )
-  select count(*) filter (where u.inserted), count(*) filter (where not u.inserted), count(distinct u.spend_date)
-    into v_inserted, v_replaced, v_days
-  from up u;
+  insert into public.ad_spend_daily as a
+    (spend_date, platform, campaign_key, ad_key, campaign_label, spend_php,
+     impressions, clicks, uploaded_by, uploaded_at, upload_id)
+  select s.spend_date, s.platform, s.campaign_key, s.ad_key, s.campaign_label, s.spend_php,
+         s.impressions, s.clicks, auth.uid(), now(), p_upload_id
+  from src s;
+  get diagnostics v_inserted = row_count;
+
+  select count(distinct r.spend_date) into v_days
+  from jsonb_to_recordset(p_rows) as r(
+    spend_date date, platform text, campaign_key text, ad_key text,
+    campaign_label text, spend_php numeric, impressions int, clicks int);
 
   insert into public.audit_log (actor_id, actor_type, action, resource_type, resource_id, metadata)
   values (auth.uid(), 'staff', 'ad_spend.imported', 'ad_spend_upload', p_upload_id,

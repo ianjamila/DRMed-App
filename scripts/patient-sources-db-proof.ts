@@ -74,6 +74,21 @@
 //      the UTC day instead of the Manila day).
 //        then (p.created_at at time zone 'Asia/Manila')::date end as app_on
 //        -> then p.created_at::date end as app_on
+//   H. ad_spend_import (Codex #1, DB half, 2026-09-28 fix): drop the
+//      delete-before-insert step and restore the original single `with src
+//      as (...), up as (insert ... on conflict (spend_date, platform,
+//      campaign_key, ad_key) do update ... returning (xmax = 0) as inserted)
+//      select count(*) filter (...) into v_inserted, v_replaced, ... from up`
+//      shape (no DELETE statement, no distinct-groups CTE). Expect: FAIL Ad
+//      spend import/replace/zero/delete — confirmed 2026-09-28 (reverted this
+//      function to the old body via psql, reran the proof, restored the
+//      fixed migration file, reran again):
+//        FAIL Ad spend import/replace/zero/delete — cx per-ad upload:
+//        expected replaced 1 (the old campaign-total row), got
+//        {"days":1,"inserted":2,"replaced":0}
+//      (the old ad_key "(campaign)"=100 row is never removed, so cxTotal()
+//      would go on to read 200, then 300 after the per-ad-ID upload, had the
+//      check not already failed on the replaced count first).
 //
 //   for each letter: edit $MIG, then
 //     $PSQL $DB -v ON_ERROR_STOP=1 -f $MIG
@@ -1054,8 +1069,10 @@ async function main() {
       await setRole("postgres", null);
       await setRole("authenticated", { sub: fx.adminId, role: "authenticated" });
 
+      // -- Intra-upload dedup: duplicate (date,platform,campaign,ad) rows in
+      // ONE upload are summed before saving. --
       const uploadId1 = (await q<{ id: string }>(`select gen_random_uuid() as id`)).rows[0].id;
-      const r1 = await expectOk("first import", () =>
+      const r1 = await expectOk("first import (dup-sum)", () =>
         q<{ ad_spend_import: Json }>(`select public.ad_spend_import($1::uuid, $2::jsonb) as ad_spend_import`, [
           uploadId1,
           JSON.stringify([
@@ -1066,37 +1083,97 @@ async function main() {
         ]));
       const j1 = r1.rows[0].ad_spend_import;
       assert(j1.inserted === 2 && j1.replaced === 0 && j1.days === 1, `first import: expected {inserted:2,replaced:0,days:1}, got ${JSON.stringify(j1)}`);
+      const a1v1 = await q<{ php: string }>(`select spend_php::text as php from public.ad_spend_daily where campaign_key='c1' and ad_key='a1'`);
+      assert(Number(a1v1.rows[0].php) === 150, `a1 after dup-sum: expected 150, got ${a1v1.rows[0].php}`);
 
-      let a1 = await q<{ php: string }>(`select spend_php::text as php from public.ad_spend_daily where campaign_key='c1' and ad_key='a1'`);
-      assert(Number(a1.rows[0].php) === 150, `a1 after dup-sum: expected 150, got ${a1.rows[0].php}`);
-
-      const uploadId2 = (await q<{ id: string }>(`select gen_random_uuid() as id`)).rows[0].id;
-      const r2 = await expectOk("second import (a2 only)", () =>
-        q<{ ad_spend_import: Json }>(`select public.ad_spend_import($1::uuid, $2::jsonb) as ad_spend_import`, [
-          uploadId2,
-          JSON.stringify([{ spend_date: "2026-06-01", platform: "meta", campaign_key: "c1", ad_key: "a2", campaign_label: "C1", spend_php: 20 }]),
+      // -- B (Codex #1, DB half): a campaign uploaded first as a total, then
+      // broken into per-ad rows, then re-keyed by ad ID, must always save the
+      // SAME total for (day, campaign) — an upload REPLACES everything saved
+      // for each (spend_date, platform, campaign_key) it contains, so a stale
+      // ad_key from an earlier, differently-shaped upload never survives
+      // alongside the new one and gets counted twice. A sibling campaign on
+      // the same day must be untouched by any of this. --
+      const cxTotal = async () => {
+        const r = await q<{ php: string | null }>(
+          `select sum(spend_php)::text as php from public.ad_spend_daily where campaign_key='cx' and spend_date='2026-06-05'`);
+        return Number(r.rows[0].php ?? 0);
+      };
+      const cxRowCount = async () => {
+        const r = await q<{ n: string }>(
+          `select count(*)::text as n from public.ad_spend_daily where campaign_key='cx' and spend_date='2026-06-05'`);
+        return Number(r.rows[0].n);
+      };
+      const uploadCy = (await q<{ id: string }>(`select gen_random_uuid() as id`)).rows[0].id;
+      await expectOk("sibling campaign cy seed", () =>
+        q(`select public.ad_spend_import($1::uuid, $2::jsonb)`, [
+          uploadCy,
+          JSON.stringify([{ spend_date: "2026-06-05", platform: "meta", campaign_key: "cy", ad_key: "(campaign)", campaign_label: "CY", spend_php: 77 }]),
         ]));
-      const j2 = r2.rows[0].ad_spend_import;
-      assert(j2.inserted === 0 && j2.replaced === 1, `second import: expected {inserted:0,replaced:1,...}, got ${JSON.stringify(j2)}`);
-      a1 = await q<{ php: string }>(`select spend_php::text as php from public.ad_spend_daily where campaign_key='c1' and ad_key='a1'`);
-      assert(Number(a1.rows[0].php) === 150, `a1 must be untouched by a partial upload, got ${a1.rows[0].php}`);
 
-      const uploadId3 = (await q<{ id: string }>(`select gen_random_uuid() as id`)).rows[0].id;
-      const r3 = await expectOk("zero correction", () =>
+      const uploadA = (await q<{ id: string }>(`select gen_random_uuid() as id`)).rows[0].id;
+      const rA = await expectOk("cx campaign-total upload", () =>
         q<{ ad_spend_import: Json }>(`select public.ad_spend_import($1::uuid, $2::jsonb) as ad_spend_import`, [
-          uploadId3,
-          JSON.stringify([{ spend_date: "2026-06-01", platform: "meta", campaign_key: "c1", ad_key: "a1", campaign_label: "C1", spend_php: 0, impressions: 0, clicks: 0 }]),
+          uploadA,
+          JSON.stringify([{ spend_date: "2026-06-05", platform: "meta", campaign_key: "cx", ad_key: "(campaign)", campaign_label: "CX", spend_php: 100 }]),
         ]));
-      const j3 = r3.rows[0].ad_spend_import;
-      assert(j3.inserted === 0 && j3.replaced === 1, `zero correction: expected {inserted:0,replaced:1,...}, got ${JSON.stringify(j3)}`);
-      a1 = await q<{ php: string }>(`select spend_php::text as php from public.ad_spend_daily where campaign_key='c1' and ad_key='a1'`);
-      assert(Number(a1.rows[0].php) === 0, `a1 after zero correction: expected 0, got ${a1.rows[0].php}`);
+      assert(rA.rows[0].ad_spend_import.replaced === 0, `cx first upload: expected replaced 0, got ${JSON.stringify(rA.rows[0].ad_spend_import)}`);
+      assert((await cxTotal()) === 100, `cx after campaign-total upload: expected total 100, got ${await cxTotal()}`);
+      assert((await cxRowCount()) === 1, `cx after campaign-total upload: expected 1 row, got ${await cxRowCount()}`);
 
+      const uploadB = (await q<{ id: string }>(`select gen_random_uuid() as id`)).rows[0].id;
+      const rB = await expectOk("cx per-ad-name upload", () =>
+        q<{ ad_spend_import: Json }>(`select public.ad_spend_import($1::uuid, $2::jsonb) as ad_spend_import`, [
+          uploadB,
+          JSON.stringify([
+            { spend_date: "2026-06-05", platform: "meta", campaign_key: "cx", ad_key: "video a", campaign_label: "CX", spend_php: 60 },
+            { spend_date: "2026-06-05", platform: "meta", campaign_key: "cx", ad_key: "video b", campaign_label: "CX", spend_php: 40 },
+          ]),
+        ]));
+      assert(rB.rows[0].ad_spend_import.replaced === 1, `cx per-ad upload: expected replaced 1 (the old campaign-total row), got ${JSON.stringify(rB.rows[0].ad_spend_import)}`);
+      assert((await cxTotal()) === 100, `cx after per-ad upload: expected total STILL 100, not 200 — got ${await cxTotal()}`);
+      assert((await cxRowCount()) === 2, `cx after per-ad upload: expected 2 rows, got ${await cxRowCount()}`);
+
+      const uploadC = (await q<{ id: string }>(`select gen_random_uuid() as id`)).rows[0].id;
+      const rC = await expectOk("cx per-ad-ID upload", () =>
+        q<{ ad_spend_import: Json }>(`select public.ad_spend_import($1::uuid, $2::jsonb) as ad_spend_import`, [
+          uploadC,
+          JSON.stringify([
+            { spend_date: "2026-06-05", platform: "meta", campaign_key: "cx", ad_key: "id:1", campaign_label: "CX", spend_php: 60 },
+            { spend_date: "2026-06-05", platform: "meta", campaign_key: "cx", ad_key: "id:2", campaign_label: "CX", spend_php: 40 },
+          ]),
+        ]));
+      assert(rC.rows[0].ad_spend_import.replaced === 2, `cx per-ad-ID upload: expected replaced 2 (both prior per-ad rows), got ${JSON.stringify(rC.rows[0].ad_spend_import)}`);
+      assert((await cxTotal()) === 100, `cx after per-ad-ID upload: expected total STILL 100, not 200/300 — got ${await cxTotal()}`);
+      assert((await cxRowCount()) === 2, `cx after per-ad-ID upload: expected 2 rows, got ${await cxRowCount()}`);
+
+      const cyAfter = await q<{ php: string }>(`select spend_php::text as php from public.ad_spend_daily where campaign_key='cy' and spend_date='2026-06-05'`);
+      assert(Number(cyAfter.rows[0].php) === 77, `sibling campaign cy: expected untouched at 77, got ${cyAfter.rows[0].php}`);
+
+      // -- Explicit zero is kept as a real value, not treated as missing
+      // (P14); a same-key re-upload replaces the one prior row. --
+      const uploadD = (await q<{ id: string }>(`select gen_random_uuid() as id`)).rows[0].id;
+      const rD = await expectOk("c2/a1 first upload", () =>
+        q<{ ad_spend_import: Json }>(`select public.ad_spend_import($1::uuid, $2::jsonb) as ad_spend_import`, [
+          uploadD,
+          JSON.stringify([{ spend_date: "2026-06-01", platform: "meta", campaign_key: "c2", ad_key: "a1", campaign_label: "C2", spend_php: 5 }]),
+        ]));
+      assert(rD.rows[0].ad_spend_import.replaced === 0, `c2/a1 first upload: expected replaced 0, got ${JSON.stringify(rD.rows[0].ad_spend_import)}`);
+      const uploadE = (await q<{ id: string }>(`select gen_random_uuid() as id`)).rows[0].id;
+      const rE = await expectOk("zero correction", () =>
+        q<{ ad_spend_import: Json }>(`select public.ad_spend_import($1::uuid, $2::jsonb) as ad_spend_import`, [
+          uploadE,
+          JSON.stringify([{ spend_date: "2026-06-01", platform: "meta", campaign_key: "c2", ad_key: "a1", campaign_label: "C2", spend_php: 0, impressions: 0, clicks: 0 }]),
+        ]));
+      assert(rE.rows[0].ad_spend_import.replaced === 1, `zero correction: expected replaced 1 (the prior c2/a1 row), got ${JSON.stringify(rE.rows[0].ad_spend_import)}`);
+      const c2a1 = await q<{ php: string }>(`select spend_php::text as php from public.ad_spend_daily where campaign_key='c2' and ad_key='a1'`);
+      assert(Number(c2a1.rows[0].php) === 0, `c2/a1 after zero correction: expected 0, got ${c2a1.rows[0].php}`);
+
+      // -- All-or-nothing: a bad row anywhere in the batch changes nothing. --
       const beforeCount = await q<{ n: string }>(`select count(*)::text as n from public.ad_spend_daily`);
-      const uploadId4 = (await q<{ id: string }>(`select gen_random_uuid() as id`)).rows[0].id;
+      const uploadF = (await q<{ id: string }>(`select gen_random_uuid() as id`)).rows[0].id;
       await expectPgError("negative spend all-or-nothing", "23514", () =>
         q(`select public.ad_spend_import($1::uuid, $2::jsonb)`, [
-          uploadId4,
+          uploadF,
           JSON.stringify([
             { spend_date: "2026-06-02", platform: "meta", campaign_key: "c9", ad_key: "a9", campaign_label: "C9", spend_php: 5 },
             { spend_date: "2026-06-02", platform: "meta", campaign_key: "c9", ad_key: "a10", campaign_label: "C9", spend_php: -1 },
@@ -1113,7 +1190,7 @@ async function main() {
 
       const delN = await expectOk("ad_spend_delete", () =>
         q<{ ad_spend_delete: number }>(`select public.ad_spend_delete('meta','2026-06-01','2026-06-01') as ad_spend_delete`));
-      assert(delN.rows[0].ad_spend_delete === 2, `expected ad_spend_delete to remove 2 rows (a1,a2), got ${delN.rows[0].ad_spend_delete}`);
+      assert(delN.rows[0].ad_spend_delete === 3, `expected ad_spend_delete to remove 3 rows (c1/a1, c1/a2, c2/a1 — all on 2026-06-01), got ${delN.rows[0].ad_spend_delete}`);
       const delAudit = await q<{ n: string }>(`select count(*)::text as n from public.audit_log where action = 'ad_spend.deleted'`);
       assert(Number(delAudit.rows[0].n) >= 1, "expected an ad_spend.deleted audit row");
 
@@ -1162,6 +1239,35 @@ async function main() {
       const idTwo = await identityRow("name:zzproofk|two");
       assert(idTwo?.first_date === "2026-06-09", `(iii) expected first_date 2026-06-09 (min across the two rows), got ${idTwo?.first_date}`);
       assert(idTwo?.channel === "not_recorded", `(iii) expected channel not_recorded for a 2-row key, got ${idTwo?.channel}`);
+    }));
+
+    // 24. P5: old visitor with a registration date counts on that date -------
+    // Pins the plan's precedence (Codex review uncertainty): the `confirmed`
+    // CTE's CASE checks `r.reg_on is not null` (-> 'registration') BEFORE it
+    // checks `old_visitors` (-> 'before_window'). So a confirmed patient whose
+    // only live visit predates the 2023-12-01 window, but who ALSO has a
+    // (later) registration date, is basis 'registration' and counts as New on
+    // that date — it does NOT fall into 'before_window' just because its only
+    // visit is old. This is what the plan's precedence already implements;
+    // the owner has been asked to confirm this is the intended behaviour
+    // (P5's "counted nowhere" language was written for an old visitor with NO
+    // registration date at all — see check 9's control).
+    await check("P5: old visitor with a registration date counts on that date — owner to confirm", () => scoped(async () => {
+      await setRole("postgres", null);
+      const before = await summary();
+
+      const xId = await patient("Zzproofp5", "OldVisitReg");
+      await visit(xId, "2022-01-15"); // before 2023-12-01: not an "encounter" on its own
+      await facts(xId, "2026-06-15", "new");
+
+      const idX = await identityRow(`patient:${xId}`);
+      assert(idX?.basis === "registration", `expected basis 'registration' (not 'before_window'), got ${JSON.stringify(idX)}`);
+      assert(idX?.first_date === "2026-06-15", `expected first_date 2026-06-15 (the registration date), got ${idX?.first_date}`);
+
+      const after = await summary();
+      const d = delta(before, after);
+      assert(d.new_confirmed === 1, `expected new_confirmed delta 1 (counted New on 2026-06-15), got ${d.new_confirmed}`);
+      assert(d.undated_registrations === 0, `expected undated_registrations delta 0 (it is dated, not undated), got ${d.undated_registrations}`);
     }));
   } finally {
     // Never persisted. This proof never writes anything real.
