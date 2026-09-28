@@ -7,6 +7,13 @@ import { decideAppointmentTiming, type BookingConflict, type ServiceRow } from "
 import { labRequestStatus, type IntakePreference } from "@/lib/appointments/lab-request";
 import type { AppointmentSource } from "@/lib/appointments/source";
 import type { Attribution } from "@/lib/analytics/attribution";
+import { insertWithPatientRecovery } from "@/lib/appointments/patient-recovery";
+
+// Translate an insertWithPatientRecovery error (code may be null, unlike the
+// raw PostgrestError translatePgError expects) into a UI-facing message.
+function translateInsertError(e: { code?: string | null; message: string }): string {
+  return translatePgError({ code: e.code ?? undefined, message: e.message });
+}
 
 // Server-side orchestration. Receives the admin client as a param (no service-
 // role import here), so it must only be called from server actions / route handlers.
@@ -151,40 +158,53 @@ export async function createAppointmentGroup(
   const status = timing.pendingCallback ? "pending_callback" : "confirmed";
   const physicianId = input.branch === "doctor_appointment" ? input.physicianId : null;
   const homeServiceRequested = input.branch === "home_service";
-  const rows = services.map((s) => ({
-    patient_id: patient.patientId,
-    service_id: s.id,
-    physician_id: physicianId,
-    scheduled_at: timing.scheduledAtIso,
-    notes: input.notes,
-    status,
-    booking_group_id: bookingGroupId,
-    home_service_requested: homeServiceRequested,
-    walk_in_name: patient.walkInName ?? null,
-    walk_in_phone: patient.walkInPhone ?? null,
-    created_by: input.createdBy,
-    source: input.source,
-    attribution: input.attribution,
-  }));
+  const buildRows = (pt: PatientResolution) =>
+    services.map((s) => ({
+      patient_id: pt.patientId,
+      service_id: s.id,
+      physician_id: physicianId,
+      scheduled_at: timing.scheduledAtIso,
+      notes: input.notes,
+      status,
+      booking_group_id: bookingGroupId,
+      home_service_requested: homeServiceRequested,
+      walk_in_name: pt.walkInName ?? null,
+      walk_in_phone: pt.walkInPhone ?? null,
+      created_by: input.createdBy,
+      source: input.source,
+      attribution: input.attribution,
+    }));
   // The pre-insert conflict SELECT above is fast-path UX; the RPC's advisory
   // lock + re-check is the authoritative last line against a slot race. A
   // P0040 at insert is a hard error in BOTH modes (the row was not inserted),
   // unlike pre-insert conflicts which staff may override. An explicit staff
   // override ("Book anyway", audited) skips the occupancy re-check — the
   // guard exists to stop races, not deliberate staff double-booking.
-  const { data: created, error } = await admin.rpc("appointments_insert_slot_guarded", {
-    p_rows: rows,
-    p_physician_id: physicianId ?? undefined,
-    p_scheduled_at: timing.scheduledAtIso ?? undefined,
-    p_allow_concurrent: allowConcurrent || (input.mode === "relaxed" && input.override),
+  // 0184: appointments_insert_slot_guarded now takes the patient's lifecycle
+  // lock first and raises P0058 if it is deleted/merged mid-flight;
+  // insertWithPatientRecovery re-resolves once for a typed-in patient
+  // ("reused"/"created") and retries, and never silently swaps a patient
+  // chosen by id ("existing"/"walk_in").
+  const inserted = await insertWithPatientRecovery({
+    patient,
+    insert: (pt) =>
+      admin.rpc("appointments_insert_slot_guarded", {
+        p_rows: buildRows(pt),
+        p_physician_id: physicianId ?? undefined,
+        p_scheduled_at: timing.scheduledAtIso ?? undefined,
+        p_allow_concurrent: allowConcurrent || (input.mode === "relaxed" && input.override),
+      }),
+    resolveAgain: input.resolvePatient,
   });
-  if (error) {
-    if (error.code === "P0040") {
-      return { ok: false, error: "That slot was just taken. Please pick another time." };
-    }
-    return { ok: false, error: translatePgError(error) };
+  if (!inserted.ok) {
+    const e = inserted.error;
+    if (typeof e === "string") return { ok: false, error: e };
+    if (e.code === "P0040") return { ok: false, error: "That slot was just taken. Please pick another time." };
+    return { ok: false, error: translateInsertError(e) };
   }
-  if (!created || created.length !== rows.length) {
+  const created = inserted.data;
+  const finalPatient = inserted.patient;
+  if (!created || created.length !== services.length) {
     return { ok: false, error: "Could not save the appointment." };
   }
 
@@ -195,7 +215,7 @@ export async function createAppointmentGroup(
     scheduledAtIso: timing.scheduledAtIso,
     pendingCallback: timing.pendingCallback,
     conflicts: timing.conflicts,
-    patient,
+    patient: finalPatient,
     services,
   };
 }
@@ -235,32 +255,39 @@ export async function createLabRequestOnlyBooking(
 
   const bookingGroupId = randomUUID();
   const { status, pendingCallback } = labRequestStatus(input.intakePreference);
+  const buildRow = (pt: PatientResolution) => ({
+    patient_id: pt.patientId,
+    service_id: null,
+    physician_id: null,
+    scheduled_at: null,
+    notes: input.notes,
+    status,
+    booking_group_id: bookingGroupId,
+    home_service_requested: input.branch === "home_service",
+    walk_in_name: pt.walkInName ?? null,
+    walk_in_phone: pt.walkInPhone ?? null,
+    created_by: input.createdBy,
+    source: input.source,
+    attribution: input.attribution,
+  });
 
   // No physician/slot → the RPC skips the slot guard and is a plain insert,
   // but keeps one code path (and the dropped-INSERT-policy posture) for all
-  // appointment writes.
-  const { data: created, error } = await admin.rpc("appointments_insert_slot_guarded", {
-    p_rows: [
-      {
-        patient_id: patient.patientId,
-        service_id: null,
-        physician_id: null,
-        scheduled_at: null,
-        notes: input.notes,
-        status,
-        booking_group_id: bookingGroupId,
-        home_service_requested: input.branch === "home_service",
-        walk_in_name: patient.walkInName ?? null,
-        walk_in_phone: patient.walkInPhone ?? null,
-        created_by: input.createdBy,
-        source: input.source,
-        attribution: input.attribution,
-      },
-    ],
+  // appointment writes. 0184: still takes the patient's lifecycle lock first
+  // and can raise P0058 mid-flight — same recovery as createAppointmentGroup.
+  const inserted = await insertWithPatientRecovery({
+    patient,
+    insert: (pt) => admin.rpc("appointments_insert_slot_guarded", { p_rows: [buildRow(pt)] }),
+    resolveAgain: input.resolvePatient,
   });
-
-  if (error || !created || created.length !== 1) {
-    return { ok: false, error: error ? translatePgError(error) : "Could not save the request." };
+  if (!inserted.ok) {
+    const e = inserted.error;
+    if (typeof e === "string") return { ok: false, error: e };
+    return { ok: false, error: translateInsertError(e) };
+  }
+  const created = inserted.data;
+  if (!created || created.length !== 1) {
+    return { ok: false, error: "Could not save the request." };
   }
 
   return {
@@ -268,6 +295,6 @@ export async function createLabRequestOnlyBooking(
     bookingGroupId,
     appointmentIds: created,
     pendingCallback,
-    patient,
+    patient: inserted.patient,
   };
 }
