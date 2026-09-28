@@ -57,7 +57,7 @@ describe("Patient Sources has one definition and one caller", () => {
       .filter((f) => !(f in CALLERS) && !f.endsWith(".test.ts"))
       .filter((f) => {
         const src = scanText(f, readFileSync(join(ROOT, f), "utf8"));
-        return RPCS.some((r) => src.includes(`"${r}"`) || src.includes(`'${r}'`));
+        return RPCS.some((r) => [`"${r}"`, `'${r}'`, "`" + r + "`"].some((q) => src.includes(q)));
       });
     expect(offenders).toEqual([]);
   });
