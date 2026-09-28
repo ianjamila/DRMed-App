@@ -111,7 +111,24 @@ export interface RevenueTrendPoint {
   label: string;
   year: number;
   partial: boolean;
+  /** The month's window — what a click on its bar opens in Visit Records. */
+  start: string;
+  end: string;
   lab: number;
   consult: number;
   procedure: number;
+}
+
+/**
+ * Visit Records over one trend month, with its revenue dropdown open. `view`
+ * (active / deleted / all) is carried so the list matches what the bar counted.
+ */
+export function trendMonthHref(
+  point: Pick<RevenueTrendPoint, "start" | "end">,
+  view: string = "active",
+): string {
+  const qs = new URLSearchParams({ start: point.start, end: point.end });
+  if (view !== "active") qs.set("view", view);
+  qs.set("rev", "1");
+  return `/staff/visits?${qs}`;
 }

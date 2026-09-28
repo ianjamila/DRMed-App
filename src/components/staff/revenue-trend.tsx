@@ -1,8 +1,10 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { VISIT_CLASS_LABEL, VISIT_CLASSES, type VisitClass } from "@/lib/visits/classification";
-import type { RevenueTrendPoint } from "@/lib/visits/revenue-presets";
+import { trendMonthHref, type RevenueTrendPoint } from "@/lib/visits/revenue-presets";
 
 // Validated with the dataviz palette checker (adjacent stack pairs pass CVD and
 // the normal-vision floor on white). The consult violet is under 3:1 against
@@ -64,12 +66,14 @@ export function RevenueTrend({ view = "active" }: { view?: string }) {
 
   useEffect(() => {
     const el = wrapRef.current;
-    const details = el?.closest("details");
-    if (!el || !details) return;
+    if (!el) return;
+    // Inside the dropdown: wait until it is opened. Standalone (Monthly
+    // Trends): load straight away.
+    const details = el.closest("details");
     let started = false;
     let cancelled = false;
     const load = () => {
-      if (started || !details.open) return;
+      if (started || (details && !details.open)) return;
       started = true;
       setState({ kind: "loading" });
       fetch(`/api/admin/revenue-trend?view=${encodeURIComponent(view)}`, {
@@ -86,10 +90,10 @@ export function RevenueTrend({ view = "active" }: { view?: string }) {
         });
     };
     load();
-    details.addEventListener("toggle", load);
+    details?.addEventListener("toggle", load);
     return () => {
       cancelled = true;
-      details.removeEventListener("toggle", load);
+      details?.removeEventListener("toggle", load);
     };
   }, [view]);
 
@@ -130,7 +134,13 @@ export function RevenueTrend({ view = "active" }: { view?: string }) {
           Loading the last 12 months…
         </p>
       ) : (
-        <TrendChart points={state.points} width={width} active={active} setActive={setActive} />
+        <TrendChart
+          points={state.points}
+          width={width}
+          active={active}
+          setActive={setActive}
+          view={view}
+        />
       )}
     </div>
   );
@@ -141,12 +151,15 @@ function TrendChart({
   width,
   active,
   setActive,
+  view,
 }: {
   points: RevenueTrendPoint[];
   width: number;
   active: number | null;
   setActive: (i: number | null) => void;
+  view: string;
 }) {
+  const router = useRouter();
   const max = Math.max(0, ...points.map(total));
   const w = Math.max(width - 2, 240);
   const slot = w / points.length;
@@ -216,11 +229,17 @@ function TrendChart({
                   height={HEIGHT}
                   fill="transparent"
                   tabIndex={0}
-                  aria-label={`${monthName(p)}: ${PHP.format(total(p))} total`}
+                  role="link"
+                  aria-label={`${monthName(p)}: ${PHP.format(total(p))} total. Open these visits in Visit Records.`}
                   onMouseEnter={() => setActive(i)}
                   onFocus={() => setActive(i)}
                   onBlur={() => setActive(null)}
-                  className="cursor-default outline-none focus-visible:stroke-[color:var(--color-brand-cyan)]"
+                  // Click (or Enter) opens that month in Visit Records.
+                  onClick={() => router.push(trendMonthHref(p, view))}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") router.push(trendMonthHref(p, view));
+                  }}
+                  className="cursor-pointer outline-none focus-visible:stroke-[color:var(--color-brand-cyan)]"
                 />
               </g>
             );
@@ -253,6 +272,9 @@ function TrendChart({
               <span>Total</span>
               <span className="font-mono">{PHP.format(total(activePoint))}</span>
             </p>
+            <p className="mt-1 text-[10px] text-[color:var(--color-brand-text-soft)]">
+              Click to open these visits
+            </p>
           </div>
         ) : null}
       </div>
@@ -275,7 +297,14 @@ function TrendChart({
             <tbody className="font-mono">
               {points.map((p) => (
                 <tr key={p.key} className="border-t border-[color:var(--color-brand-bg-mid)]">
-                  <td className="py-1 pr-3 font-sans">{monthName(p)}</td>
+                  <td className="py-1 pr-3 font-sans">
+                    <Link
+                      href={trendMonthHref(p, view)}
+                      className="text-[color:var(--color-brand-cyan)] hover:underline"
+                    >
+                      {monthName(p)}
+                    </Link>
+                  </td>
                   {VISIT_CLASSES.map((c) => (
                     <td key={c} className="py-1 pr-3 text-right">
                       {PHP.format(p[c])}

@@ -4,6 +4,7 @@ import {
   isRevenuePresetKey,
   matchRevenuePreset,
   REVENUE_PRESET_KEYS,
+  trendMonthHref,
   trendMonths,
   yearOnYearChange,
 } from "./revenue-presets";
@@ -87,5 +88,19 @@ describe("trendMonths", () => {
       ["2027-01-01", "2027-01-01"],
     ]);
     expect(trendMonths("2028-03-05", 2)[0]).toMatchObject({ start: "2028-02-01", end: "2028-02-29" });
+  });
+});
+
+describe("trendMonthHref", () => {
+  it("opens Visit Records over the month with the dropdown open", () => {
+    expect(trendMonthHref({ start: "2026-08-01", end: "2026-08-31" })).toBe(
+      "/staff/visits?start=2026-08-01&end=2026-08-31&rev=1",
+    );
+  });
+
+  it("carries a non-default view so the list matches the bar", () => {
+    expect(trendMonthHref({ start: "2026-09-01", end: "2026-09-28" }, "deleted")).toBe(
+      "/staff/visits?start=2026-09-01&end=2026-09-28&view=deleted&rev=1",
+    );
   });
 });
