@@ -183,6 +183,18 @@ declare
   pq uuid[];
   s0 int;
   x0 int;
+  v_raised boolean := false;
+  -- Review fix #1 (per-path union assertions): a 4th distinct active patient
+  -- so critical_alerts' four paths (result/test/patient_id/amendment) each
+  -- contribute a DIFFERENT patient — removing any one must shrink the set.
+  n   uuid := pg_temp.mk_patient('S1N');
+  vn  uuid;
+  trn uuid;
+  rn  uuid;
+  amn uuid;
+  amx uuid;   -- cross-patient amendment: result on p, test on q
+  alx uuid;   -- cross-patient allocation: item on p, payment on q
+  pqk uuid[]; -- {p,q,k,n} sorted
 begin
   v  := pg_temp.mk_visit(p, true);
   tr := pg_temp.mk_line(v, 'in_progress', 1000);
@@ -208,7 +220,14 @@ begin
   -- f0 (and k below) own no rows, so no guard has locked them earlier in this
   -- transaction (once Tasks 4-7 install the guards, p already is).
   perform public.lifecycle_lock_and_assert(array[f0, f0], false);
-  perform pg_temp.expect('s1.3 shared lock taken once per distinct patient',
+  -- NOT proof of our own dedup/sort: Postgres itself collapses a repeated
+  -- acquisition of the SAME advisory lock key into one pg_locks row, so this
+  -- would read '1' even if lifecycle_lock's dedup loop were removed and it
+  -- called pg_advisory_xact_lock_shared twice for f0. What this DOES prove:
+  -- a duplicate-patient array is accepted without error and without double
+  -- counting. Sort order and real dedup under contention are proven by
+  -- scripts/smoke-lifecycle-locks.ts's two-connection races (review fix #2).
+  perform pg_temp.expect('s1.3 a duplicate-patient array locks without error, one held ShareLock (not proof of dedup — see the race script)',
     (pg_temp.held('ShareLock') - s0)::text, '1');
   x0 := pg_temp.held('ExclusiveLock');
   perform public.lifecycle_lock_and_assert(array[k], true);
@@ -235,8 +254,13 @@ begin
   begin
     perform public.lifecycle_lock_and_assert(array[d], false);
   exception when sqlstate 'P0058' then
+    v_raised := true;
     perform pg_temp.expect('s1.13 message names the DRM-ID', (sqlerrm like '%DRM-LKS1D%')::text, 'true');
   end;
+  -- The above block silently "passes" (no OK, no FAILED) if P0058 is never
+  -- raised at all — expect() only runs INSIDE the handler. Assert separately
+  -- that the exception actually fired (review fix #7).
+  perform pg_temp.expect('s1.13b the P0058 exception was actually raised', v_raised::text, 'true');
 
   -- Resolvers.
   perform pg_temp.expect('s1.14 visit → patient',
@@ -326,7 +350,11 @@ begin
   s0 := pg_temp.held_results('ShareLock');
   r2 := gen_random_uuid();
   perform public.lifecycle_lock_results(array[r2, r2, null], false);
-  perform pg_temp.expect('s1.37 shared membership lock, once per distinct result, NULLs ignored',
+  -- Same caveat as s1.3 (review fix #2): a repeated/NULL-padded array locking
+  -- to exactly one held ShareLock does not by itself prove OUR loop dedups
+  -- or sorts — Postgres collapses the repeat regardless. What this DOES
+  -- prove: a duplicate + NULL result-id array is accepted without error.
+  perform pg_temp.expect('s1.37 a duplicate+NULL result-id array locks without error, one held ShareLock (not proof of dedup — see the race script)',
     (pg_temp.held_results('ShareLock') - s0)::text, '1');
   x0 := pg_temp.held_results('ExclusiveLock');
   perform public.lifecycle_lock_results(array[gen_random_uuid()], true);
@@ -349,10 +377,65 @@ begin
               'public.lifecycle_patients_of_payments(uuid[])',
               'public.lifecycle_patients_of_amendments(uuid[])',
               'public.lifecycle_patients_of_allocations(uuid[])',
-              'public.lifecycle_via(text,text)',
+              'public.lifecycle_via(text,text,boolean)',
               'public.lifecycle_result_ids_of_row(text,jsonb)',
               'public.lifecycle_patients_of_row(text,jsonb,boolean)']) f),
     'false');
+
+  -- Review fix #1: per-path UNION assertions. s1.23/s1.30 as originally
+  -- written used same-patient references on every path of a multi-reference
+  -- branch, so dropping any ONE of them left the (already-satisfied) expected
+  -- set unchanged — the mutation passed silently. Below, EVERY path of each
+  -- multi-reference branch names a DIFFERENT patient, so dropping any one
+  -- path shrinks the set and the assertion catches it.
+  vn  := pg_temp.mk_visit(n, true);
+  trn := pg_temp.mk_line(vn, 'in_progress', 10);
+  insert into public.results (generation_kind, uploaded_by) values ('structured', 'a2000000-0000-4000-8000-000000000184')
+    returning id into rn;
+  insert into public.result_test_requests (result_id, test_request_id) values (rn, trn);
+  insert into public.result_amendments (result_id, test_request_id, prior_storage_path, prior_uploaded_by,
+                                        prior_uploaded_at, reason, amended_by, amendment_seq)
+    values (rn, trn, 'x', 'a2000000-0000-4000-8000-000000000184', now(), 'smoke', 'a2000000-0000-4000-8000-000000000184', 1)
+    returning id into amn;
+  pqk := (select array_agg(x order by x) from unnest(array[p, q, k, n]) x);
+  perform pg_temp.expect('s1.40 critical_alerts: result / test / patient_id / withdrawn_by_amendment each contribute a DISTINCT patient (p,q,k,n) — dropping any one path shrinks the set',
+    public.lifecycle_norm(public.lifecycle_patients_of_row('critical_alerts',
+      jsonb_build_object('result_id', r, 'test_request_id', hq, 'patient_id', k, 'withdrawn_by_amendment', amn), false))::text,
+    pqk::text);
+
+  perform pg_temp.expect('s1.41 row resolver: hmo_payment_allocations item ∪ payment, cross-patient (item→p, payment→q)',
+    public.lifecycle_norm(public.lifecycle_patients_of_row('hmo_payment_allocations',
+      jsonb_build_object('item_id', it, 'payment_id', payq), false))::text, pq::text);
+
+  insert into public.result_amendments (result_id, test_request_id, prior_storage_path, prior_uploaded_by,
+                                        prior_uploaded_at, reason, amended_by, amendment_seq)
+    values (r, hq, 'x', 'a2000000-0000-4000-8000-000000000184', now(), 'smoke', 'a2000000-0000-4000-8000-000000000184', 1)
+    returning id into amx;
+  perform pg_temp.expect('s1.42 lifecycle_patients_of_amendments: result ∪ test, cross-patient (result→p, test→q) — the function itself, not just the row-resolver wrapper',
+    public.lifecycle_norm(public.lifecycle_patients_of_amendments(array[amx]))::text, pq::text);
+
+  insert into public.hmo_payment_allocations (payment_id, item_id, amount_php) values (payq, it, 10)
+    returning id into alx;
+  perform pg_temp.expect('s1.43 lifecycle_patients_of_allocations: item ∪ payment, cross-patient (item→p, payment→q) — the function itself',
+    public.lifecycle_norm(public.lifecycle_patients_of_allocations(array[alx]))::text, pq::text);
+
+  -- Review fix #1: branches with no assertion at all (result_values,
+  -- hmo_claim_resolutions, visit_pins non-delete, patient_consents).
+  perform pg_temp.expect('s1.44 row resolver: result_values',
+    public.lifecycle_patients_of_row('result_values', jsonb_build_object('result_id', r), false)::text, array[p]::text);
+  perform pg_temp.expect('s1.45 row resolver: hmo_claim_resolutions',
+    public.lifecycle_patients_of_row('hmo_claim_resolutions', jsonb_build_object('item_id', it), false)::text, array[p]::text);
+  perform pg_temp.expect('s1.46 row resolver: visit_pins, insert-shaped (not for-delete)',
+    public.lifecycle_patients_of_row('visit_pins', jsonb_build_object('visit_id', v), false)::text, array[p]::text);
+  perform pg_temp.expect('s1.47 row resolver: patient_consents CONTROL',
+    public.lifecycle_patients_of_row('patient_consents', jsonb_build_object('patient_id', p), false)::text, array[p]::text);
+  perform pg_temp.expect('s1.48 row resolver: patient_consents NULL patient_id fails closed (NOT NULL column, malformed row)',
+    (array_position(public.lifecycle_patients_of_row('patient_consents', jsonb_build_object('patient_id', null), false), null) is not null)::text, 'true');
+
+  -- Review fix #4: lifecycle_via has no ELSE — an unrecognised kind must fail
+  -- closed (P0058), never silently return NULL and drop the path.
+  perform pg_temp.expect('s1.49 lifecycle_via: an unrecognised kind fails closed',
+    pg_temp.state_of($q$select public.lifecycle_via('bogus_kind', gen_random_uuid()::text)$q$), 'P0058');
 end
 $s1$;
 
@@ -389,6 +472,7 @@ declare
   a  uuid := pg_temp.mk_patient('S3A');
   b  uuid := pg_temp.mk_patient('S3B');
   d  uuid := pg_temp.mk_patient('S3D');
+  d2 uuid := pg_temp.mk_patient('S3D2');  -- killed with NO prior visit (review fix #8)
   m  uuid := pg_temp.mk_patient('S3M');
   vd uuid;
   va uuid;
@@ -412,13 +496,46 @@ begin
   insert into public.appointment_attachments (booking_group_id, patient_id, storage_path, filename, mime_type, size_bytes)
     values (gen_random_uuid(), d, 'lab-request-forms/s3.pdf', 's3.pdf', 'application/pdf', 10) returning id into att_d;
   perform pg_temp.kill(d);
+  perform pg_temp.kill(d2);
   perform pg_temp.merge_into(m, a);
 
   -- visits
   perform pg_temp.expect('s3.1 CONTROL new visit on an active patient',
     pg_temp.state_of(format($q$select pg_temp.mk_visit(%L)$q$, b)), 'ok');
-  perform pg_temp.expect('s3.2 FIRST visit on a deleted patient is refused',
-    pg_temp.state_of(format($q$select pg_temp.mk_visit(%L)$q$, d)), 'P0058');
+  -- Review fix #8: the original s3.2 used patient `d`, who already had visit
+  -- `vd` created above. Inserting a SECOND visit under `d` fires 0167's
+  -- maintain_repeat_patient_flag (AFTER INSERT on visits: v_count > 1 →
+  -- UPDATE patients SET is_repeat_patient), and THAT UPDATE is what 0167's
+  -- own trg_patients_lifecycle_guard refuses on a deleted patient —
+  -- a_lifecycle_guard's BEFORE INSERT check never even runs first because
+  -- the whole statement aborts either way, so s3.2 "passed" for the wrong
+  -- reason. d2 has NO prior visit: v_count = 1 after the insert, the
+  -- repeat-flag UPDATE never fires, so only a_lifecycle_guard can refuse it.
+  perform pg_temp.expect('s3.2 a patient''s FIRST-EVER visit is refused when deleted (no prior visit — only a_lifecycle_guard can be blocking it)',
+    pg_temp.state_of(format($q$select pg_temp.mk_visit(%L)$q$, d2)), 'P0058');
+  -- Differential proof: disable a_lifecycle_guard inside a sub-transaction
+  -- that ALWAYS rolls back (the sentinel-errcode raise below undoes both the
+  -- ALTER TABLE and the INSERT — the trigger is never left disabled) and
+  -- confirm the identical insert now succeeds, which can only be true if
+  -- a_lifecycle_guard was the sole blocker above.
+  declare
+    v_disabled_insert_ok boolean := false;
+  begin
+    begin
+      alter table public.visits disable trigger a_lifecycle_guard;
+      perform pg_temp.mk_visit(d2);
+      v_disabled_insert_ok := true;
+      raise exception using errcode = 'XXTMP';
+    exception when others then
+      if sqlstate is distinct from 'XXTMP' then
+        v_disabled_insert_ok := false;
+      end if;
+    end;
+    perform pg_temp.expect('s3.2b with a_lifecycle_guard disabled (rolled back after — never left disabled), the SAME first visit succeeds',
+      v_disabled_insert_ok::text, 'true');
+  end;
+  perform pg_temp.expect('s3.2c a_lifecycle_guard is enabled again afterward and refuses the same insert',
+    pg_temp.state_of(format($q$select pg_temp.mk_visit(%L)$q$, d2)), 'P0058');
   perform pg_temp.expect('s3.3 visit on a merged patient is refused',
     pg_temp.state_of(format($q$select pg_temp.mk_visit(%L)$q$, m)), 'P0058');
   perform pg_temp.expect('s3.4 editing a deleted patient''s visit is refused',
@@ -490,6 +607,35 @@ begin
         where c.relnamespace = 'public'::regnamespace
           and c.relname in ('visits', 'appointments', 'patient_consents', 'appointment_attachments')) s),
     'a_lifecycle_guard,a_lifecycle_guard,a_lifecycle_guard,a_lifecycle_guard');
+
+  -- Review fix #3 (controller decision): a HARD delete of a patient row is
+  -- legitimate (sheet-sync undo hard-deletes patients it created; smoke
+  -- fixtures do the same) and cascades into two guarded tables — consents
+  -- (ON DELETE CASCADE, seen as a DELETE) and attachments (ON DELETE SET
+  -- NULL, seen as an UPDATE). The vanished OLD.patient_id must be DROPPED,
+  -- not fail closed, on both.
+  declare
+    hv     uuid := pg_temp.mk_patient('S3HV');
+    hv_att uuid;
+  begin
+    insert into public.patient_consents (patient_id, event_type, reason, actor_kind, created_by)
+      values (hv, 'withdrawn', 'smoke', 'staff', k_admin);
+    insert into public.appointment_attachments (booking_group_id, patient_id, storage_path, filename, mime_type, size_bytes)
+      values (gen_random_uuid(), hv, 'lab-request-forms/hv.pdf', 'hv.pdf', 'application/pdf', 10) returning id into hv_att;
+    perform pg_temp.expect('s3.29 hard-deleting a patient succeeds: the cascade into consents (DELETE) and attachments (UPDATE...SET NULL) is not refused',
+      pg_temp.state_of(format($q$delete from public.patients where id = %L$q$, hv)), 'ok');
+    perform pg_temp.expect('s3.30 …the consent row is gone (ON DELETE CASCADE ran)',
+      (select count(*)::text from public.patient_consents where patient_id = hv), '0');
+    perform pg_temp.expect('s3.31 …the attachment''s patient_id is now NULL (ON DELETE SET NULL ran)',
+      (select (patient_id is null)::text from public.appointment_attachments where id = hv_att), 'true');
+  end;
+
+  -- Negative control: a patient that is only SOFT-deleted still exists as a
+  -- row, so the vanished-patient carve-out must NOT swallow the ordinary
+  -- guard — an UPDATE (not delete) of `d`'s existing attachment is still
+  -- refused exactly as before.
+  perform pg_temp.expect('s3.32 NEGATIVE CONTROL: updating (not deleting) a SOFT-deleted patient''s upload is still refused',
+    pg_temp.state_of(format($q$update public.appointment_attachments set filename = 'renamed.pdf' where id = %L$q$, att_d)), 'P0058');
 end
 $s3$;
 

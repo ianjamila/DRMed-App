@@ -41,6 +41,12 @@
 -- RLS-hidden parent can never look like "no patient". EXECUTE is revoked from
 -- every runtime role; guard triggers and the RPCs below call these as their
 -- owner. VOLATILE: every statement after a lock wait takes a fresh snapshot.
+-- This relies on READ COMMITTED (Postgres's default, and what every pooled
+-- Supabase connection runs at): each statement in the function then sees a
+-- fresh snapshot taken right after the lock wait. Under REPEATABLE READ the
+-- re-read below would still see the transaction's ORIGINAL snapshot from
+-- before the wait, defeating the whole point of re-reading after the lock —
+-- nothing in the app opens a transaction at that isolation level.
 -- ---------------------------------------------------------------------------
 create or replace function public.lifecycle_norm(p_ids uuid[])
 returns uuid[]
@@ -220,8 +226,28 @@ as $$
 $$;
 
 -- One reference → its patients. A NULL/empty reference names nobody ('{}');
--- a reference to a row that does not exist yields a NULL element (fail closed).
-create or replace function public.lifecycle_via(p_kind text, p_id text)
+-- a reference to a row that does not exist yields a NULL element (fail
+-- closed) — EXCEPT 'result': an unlinked or missing result has no rows in
+-- result_test_requests either way, so it always yields '{}' (see
+-- lifecycle_patients_of_result), never a NULL element. An unrecognised
+-- p_kind fails closed too (P0058), never silently drops the path.
+--
+-- p_for_delete (default false) governs ONLY the 'patient' kind: a patient id
+-- that no longer resolves to a patients row is DROPPED (a NULL element,
+-- stripped by lifecycle_patients_of_row's p_for_delete cleanup) instead of
+-- failing closed, the same treatment a vanished visit/test/result parent
+-- already gets. It can only happen on the OLD side of a DELETE or an UPDATE:
+-- the patient row was hard-deleted earlier in THIS transaction (sheet-sync
+-- undo hard-deletes patients it created; smoke fixtures do the same), which
+-- cascades into patient_consents (ON DELETE CASCADE, a DELETE this function
+-- sees) and appointment_attachments (ON DELETE SET NULL, an UPDATE this
+-- function also sees on the OLD side). NEW-row / INSERT references are
+-- unchanged — a bogus new patient id still fails via the FK, not here.
+-- Signature grew a third parameter (review fix #3/#4): drop the old 2-arg
+-- overload so a re-run of this migration does not leave it stranded
+-- alongside the new one (create or replace cannot rename a signature).
+drop function if exists public.lifecycle_via(text, text);
+create or replace function public.lifecycle_via(p_kind text, p_id text, p_for_delete boolean default false)
 returns uuid[]
 language plpgsql
 volatile
@@ -232,8 +258,17 @@ begin
   if nullif(p_id, '') is null then
     return '{}'::uuid[];
   end if;
+  if p_kind not in ('patient', 'visit', 'test_request', 'payment', 'result',
+                     'amendment', 'hmo_item', 'allocation') then
+    raise exception 'lifecycle_via: unknown reference kind %', p_kind using errcode = 'P0058';
+  end if;
+  if p_kind = 'patient' then
+    if p_for_delete then
+      return coalesce((select array[p.id] from public.patients p where p.id = p_id::uuid), array[null]::uuid[]);
+    end if;
+    return array[p_id::uuid];   -- a missing patient fails in lifecycle_lock_and_assert
+  end if;
   return case p_kind
-    when 'patient'      then array[p_id::uuid]   -- a missing patient fails in lifecycle_lock_and_assert
     when 'visit'        then public.lifecycle_patients_of_visits(array[p_id::uuid])
     when 'test_request' then public.lifecycle_patients_of_test_requests(array[p_id::uuid])
     when 'payment'      then public.lifecycle_patients_of_payments(array[p_id::uuid])
@@ -327,8 +362,11 @@ $$;
 -- The patients a row (as jsonb) belongs to: the UNION over EVERY
 -- patient-bearing reference the row carries (Facts table; Codex plan review
 -- P1-1), so references that disagree are all locked and asserted, never just
--- the one path someone thought of. For a DELETE a vanished parent is dropped:
--- it can only be a cascade from the parent's own (guarded) delete. A new
+-- the one path someone thought of. For a DELETE — and, since the review fix
+-- below, the OLD row of an UPDATE too — a vanished parent is dropped: it can
+-- only be a cascade from the parent's own (guarded) delete, or (for a
+-- 'patient' reference specifically) a hard delete of the patient row itself
+-- earlier in this same transaction (see lifecycle_via's p_for_delete). A new
 -- patient-bearing column on any of these tables must be added here AND to
 -- the Facts table; s14.5 fails on an FK the resolver does not know.
 create or replace function public.lifecycle_patients_of_row(p_table text, p_row jsonb, p_for_delete boolean)
@@ -342,12 +380,12 @@ declare
   v uuid[];
 begin
   v := case p_table
-    when 'visits'                  then public.lifecycle_via('patient', p_row ->> 'patient_id')
+    when 'visits'                  then public.lifecycle_via('patient', p_row ->> 'patient_id', p_for_delete)
                                         || case when p_row ->> 'patient_id' is null then array[null::uuid] else '{}'::uuid[] end
-    when 'patient_consents'        then public.lifecycle_via('patient', p_row ->> 'patient_id')
+    when 'patient_consents'        then public.lifecycle_via('patient', p_row ->> 'patient_id', p_for_delete)
                                         || case when p_row ->> 'patient_id' is null then array[null::uuid] else '{}'::uuid[] end
-    when 'appointments'            then public.lifecycle_via('patient', p_row ->> 'patient_id')
-    when 'appointment_attachments' then public.lifecycle_via('patient', p_row ->> 'patient_id')
+    when 'appointments'            then public.lifecycle_via('patient', p_row ->> 'patient_id', p_for_delete)
+    when 'appointment_attachments' then public.lifecycle_via('patient', p_row ->> 'patient_id', p_for_delete)
     when 'test_requests'           then public.lifecycle_via('visit', p_row ->> 'visit_id')
                                         || public.lifecycle_via('test_request', p_row ->> 'parent_id')
     when 'payments'                then public.lifecycle_via('visit', p_row ->> 'visit_id')
@@ -361,7 +399,7 @@ begin
                                         || public.lifecycle_via('test_request', p_row ->> 'test_request_id')
     when 'critical_alerts'         then public.lifecycle_via('result', p_row ->> 'result_id')
                                         || public.lifecycle_via('test_request', p_row ->> 'test_request_id')
-                                        || public.lifecycle_via('patient', p_row ->> 'patient_id')
+                                        || public.lifecycle_via('patient', p_row ->> 'patient_id', p_for_delete)
                                         || public.lifecycle_via('amendment', p_row ->> 'withdrawn_by_amendment')
     when 'hmo_claim_items'         then public.lifecycle_via('test_request', p_row ->> 'test_request_id')
     when 'hmo_payment_allocations' then public.lifecycle_via('hmo_item', p_row ->> 'item_id')
@@ -391,7 +429,7 @@ revoke all on function public.lifecycle_patients_of_hmo_items(uuid[]) from publi
 revoke all on function public.lifecycle_patients_of_payments(uuid[]) from public, anon, authenticated, service_role;
 revoke all on function public.lifecycle_patients_of_amendments(uuid[]) from public, anon, authenticated, service_role;
 revoke all on function public.lifecycle_patients_of_allocations(uuid[]) from public, anon, authenticated, service_role;
-revoke all on function public.lifecycle_via(text, text) from public, anon, authenticated, service_role;
+revoke all on function public.lifecycle_via(text, text, boolean) from public, anon, authenticated, service_role;
 revoke all on function public.lifecycle_result_ids_of_row(text, jsonb) from public, anon, authenticated, service_role;
 revoke all on function public.lifecycle_patients_of_row(text, jsonb, boolean) from public, anon, authenticated, service_role;
 
@@ -602,6 +640,17 @@ grant execute on function public.restore_patient(uuid, uuid, jsonb) to service_r
 -- critical_alerts.withdrawn_by_amendment is recognised (the vanished OLD
 -- reference is dropped; the alert's other references are still checked).
 --
+-- The OLD row is ALWAYS resolved with p_for_delete = true (not only on
+-- DELETE, review fix #3): a hard delete of a patient row earlier in this
+-- same transaction — sheet-sync undo, smoke fixtures — cascades into
+-- patient_consents (ON DELETE CASCADE, seen here as a DELETE) and
+-- appointment_attachments (ON DELETE SET NULL, seen here as an UPDATE whose
+-- OLD.patient_id no longer resolves). Both must drop the vanished patient
+-- reference rather than fail closed, same as a vanished visit/test/result
+-- parent already does. A patient still merely SOFT-deleted continues to
+-- refuse (its row still exists, so lifecycle_lock_and_assert still finds
+-- deleted_at set) — only a row that has genuinely vanished is dropped.
+--
 -- Installed as a_lifecycle_guard: same-timing triggers fire in name order and
 -- every other BEFORE trigger is tg_*/trg_*, so this lock is always taken
 -- before another trigger takes a row lock (0183's planned payments guard locks
@@ -695,9 +744,12 @@ begin
       tg_table_name = 'result_test_requests' or (tg_table_name = 'results' and tg_op = 'DELETE'));
   end if;
 
-  -- (c) Lock the owning patients, assert, re-resolve.
+  -- (c) Lock the owning patients, assert, re-resolve. The OLD row always
+  -- passes p_for_delete = true (review fix #3, header note above) — not just
+  -- on DELETE — so a patient reference that vanished via a hard delete
+  -- earlier in this transaction is dropped on the OLD side of an UPDATE too.
   if v_o is not null then
-    v_old := public.lifecycle_patients_of_row(tg_table_name, v_o, tg_op = 'DELETE');
+    v_old := public.lifecycle_patients_of_row(tg_table_name, v_o, true);
   end if;
   if v_n is not null then
     v_new := public.lifecycle_patients_of_row(tg_table_name, v_n, false);
@@ -710,7 +762,7 @@ begin
 
   v_again := public.lifecycle_norm(
        case when v_o is not null
-            then public.lifecycle_patients_of_row(tg_table_name, v_o, tg_op = 'DELETE')
+            then public.lifecycle_patients_of_row(tg_table_name, v_o, true)
             else '{}'::uuid[] end
     || case when v_n is not null
             then public.lifecycle_patients_of_row(tg_table_name, v_n, false)
