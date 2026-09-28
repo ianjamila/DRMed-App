@@ -129,6 +129,9 @@ begin
   end if;
 
   select view_as_role, view_as_until into v_text, v_text2 from public.staff_profiles where id = k_admin;
+  if not found then
+    raise exception 'T2: staff_profiles row missing for admin %', k_admin;
+  end if;
   if v_text is not null or v_text2 is not null then
     raise exception 'T2: admin row should be clear after exit (role=% until=%)', v_text, v_text2;
   end if;
@@ -136,7 +139,7 @@ begin
   select bool_and((metadata ->> 'until') is not null) into v_bool
     from public.audit_log
    where actor_id = k_admin and action = 'staff.view_as.started';
-  if not v_bool then
+  if v_bool is not true then
     raise exception 'T2: a started row is missing metadata.until';
   end if;
   raise notice 'T2 ok: start -> switch -> exit writes exactly 4 rows in order, columns clear';
@@ -185,7 +188,10 @@ begin
     from public.audit_log
    where actor_id = k_admin and action = 'staff.view_as.ended'
    order by id desc limit 1;
-  if not v_bool then
+  if not found then
+    raise exception 'T4: no staff.view_as.ended row found for admin %', k_admin;
+  end if;
+  if v_bool is not true then
     raise exception 'T4: the expired ended row is missing expired_at';
   end if;
   raise notice 'T4 ok: starting over an expired row closes it as expired first';
@@ -198,7 +204,7 @@ begin
 
   select public.view_as_expire(k_admin) into v_bool;
   select public.view_as_expire(k_admin) into v_bool2;
-  if not v_bool or v_bool2 then
+  if v_bool is not true or v_bool2 is not false then
     raise exception 'T5: expected true then false, got % then %', v_bool, v_bool2;
   end if;
   select count(*) into v_n from pg_temp.va_rows(k_admin);
@@ -206,6 +212,9 @@ begin
     raise exception 'T5: expected exactly one ended row (%)', v_n;
   end if;
   select view_as_role, view_as_until into v_text, v_text2 from public.staff_profiles where id = k_admin;
+  if not found then
+    raise exception 'T5: staff_profiles row missing for admin %', k_admin;
+  end if;
   if v_text is not null or v_text2 is not null then
     raise exception 'T5: admin row should be clear after lazy expiry (role=% until=%)', v_text, v_text2;
   end if;
@@ -214,10 +223,13 @@ begin
      set view_as_role = 'reception', view_as_until = now() + interval '1 hour'
    where id = k_admin;
   select public.view_as_expire(k_admin) into v_bool;
-  if v_bool then
+  if v_bool is not false then
     raise exception 'T5: view_as_expire must not touch an ACTIVE override';
   end if;
   select view_as_role, view_as_until into v_text, v_text2 from public.staff_profiles where id = k_admin;
+  if not found then
+    raise exception 'T5: staff_profiles row missing for admin %', k_admin;
+  end if;
   if v_text is distinct from 'reception' or v_text2 is null then
     raise exception 'T5: ACTIVE override columns changed (role=% until=%)', v_text, v_text2;
   end if;
@@ -246,7 +258,7 @@ begin
   insert into public.audit_log (actor_id, actor_type, action, metadata)
   values (k_admin, 'staff', 'smoke.187.a', '{"k": 1}'::jsonb)
   returning metadata into v_meta;
-  if v_meta ->> 'acting_as' <> 'reception' or v_meta ->> 'k' <> '1' then
+  if (v_meta ->> 'acting_as') is distinct from 'reception' or (v_meta ->> 'k') is distinct from '1' then
     raise exception 'T7a: expected acting_as=reception and k=1, got %', v_meta;
   end if;
 
@@ -304,7 +316,10 @@ begin
     from public.audit_log
    where actor_id = k_admin and action = 'smoke.187.definer'
    order by id desc limit 1;
-  if v_meta ->> 'acting_as' <> 'reception' then
+  if not found then
+    raise exception 'T8: no audit_log row found for the definer insert';
+  end if;
+  if (v_meta ->> 'acting_as') is distinct from 'reception' then
     raise exception 'T8: stamp missing from an insert done via a SQL-side definer function (%)', v_meta;
   end if;
   raise notice 'T8 ok: the stamp fires regardless of which caller performs the insert';
@@ -322,7 +337,7 @@ begin
   insert into public.audit_log (actor_id, actor_type, action, metadata)
   values (k_admin, 'staff', 'smoke.187.restored', null)
   returning metadata into v_meta;
-  if v_meta ->> 'acting_as' <> 'reception' then
+  if (v_meta ->> 'acting_as') is distinct from 'reception' then
     raise exception 'T9: stamp did not resume after re-enabling the trigger (%)', v_meta;
   end if;
   raise notice 'T9 ok (control): disabling the trigger removes the stamp; re-enabling restores it';
