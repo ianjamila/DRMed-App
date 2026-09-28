@@ -21,6 +21,8 @@ type DashboardData = {
     outstanding_php: number;
   }>;
   wt_accumulated_this_month_php: number;
+  /** Voided rows the Vendor Bills / Bill Payments lists hide by default. */
+  voided: { bills: number; payments: number };
 };
 
 type ActionResult<T> = { ok: true; data: T } | { ok: false; error: string };
@@ -173,6 +175,18 @@ export async function getAPDashboardAction(): Promise<ActionResult<DashboardData
     0
   );
 
+  // -------------------------------------------------------------------------
+  // Query 5 — voided counts, so the overview can say what the lists hide
+  // -------------------------------------------------------------------------
+  // Head-only counts: no rows cross the wire, and no 1000-row cap applies.
+  const [voidedBills, voidedPayments] = await Promise.all([
+    admin.from("bills").select("id", { count: "exact", head: true }).eq("status", "voided"),
+    admin
+      .from("bill_payments")
+      .select("id", { count: "exact", head: true })
+      .not("voided_at", "is", null),
+  ]);
+
   return {
     ok: true,
     data: {
@@ -182,6 +196,7 @@ export async function getAPDashboardAction(): Promise<ActionResult<DashboardData
       upcoming_recurring: upcomingMapped,
       top_vendors_by_outstanding: topVendors,
       wt_accumulated_this_month_php: wtTotal,
+      voided: { bills: voidedBills.count ?? 0, payments: voidedPayments.count ?? 0 },
     },
   };
 }

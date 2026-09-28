@@ -22,6 +22,9 @@ import { CircleAlert } from "lucide-react";
 import { StatusBadge } from "@/lib/ui/status-badge";
 import { billPaymentMethodLabel } from "@/lib/accounting/ap-labels";
 import { manilaDate } from "@/lib/dates/manila";
+import { AP_INDEX_MAX_ROWS } from "@/lib/ui/table-params";
+import { SHOW_VOIDED_PARAM, splitVoided } from "@/lib/accounting/ap-voided-filter";
+import { HiddenVoidedEmptyState, ShowVoidedToggle } from "../../_components/show-voided-toggle";
 
 const PHP = new Intl.NumberFormat("en-PH", { style: "currency", currency: "PHP" });
 
@@ -71,13 +74,19 @@ type PaymentRow = {
   voided_at: string | null;
 };
 
-type Props = { vendor: VendorRow; bills: BillRow[]; payments: PaymentRow[] };
+type Props = {
+  vendor: VendorRow;
+  bills: BillRow[];
+  payments: PaymentRow[];
+  /** `?voided=1` — voided bills and payments are hidden otherwise, as on the AP lists. */
+  showVoided: boolean;
+};
 
 // ---------------------------------------------------------------------------
 // Main component
 // ---------------------------------------------------------------------------
 
-export function VendorDetailClient({ vendor, bills, payments }: Props) {
+export function VendorDetailClient({ vendor, bills, payments, showVoided }: Props) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
@@ -87,6 +96,16 @@ export function VendorDetailClient({ vendor, bills, payments }: Props) {
   const outstanding = activeBills.reduce((s, b) => s + Number(b.outstanding_amount ?? 0), 0);
   const activePayments = payments.filter((p) => !p.voided_at);
   const totalPaid = activePayments.reduce((s, p) => s + Number(p.amount_php ?? 0), 0);
+
+  // One switch for both tables — the KPI cards above already leave voided
+  // rows out, so the tables now match them by default.
+  const billsView = splitVoided(bills, (b) => b.status === "voided", showVoided);
+  const paymentsView = splitVoided(payments, (p) => p.voided_at !== null, showVoided);
+  const voidedCount =
+    bills.length - activeBills.length + (payments.length - activePayments.length);
+  const basePath = `/staff/admin/accounting/ap/vendors/${vendor.id}`;
+  const toggleVoidedHref = showVoided ? basePath : `${basePath}?${SHOW_VOIDED_PARAM}=1`;
+  const showVoidedHref = `${basePath}?${SHOW_VOIDED_PARAM}=1`;
 
   const toggleActive = () => {
     setError(null);
@@ -210,6 +229,10 @@ export function VendorDetailClient({ vendor, bills, payments }: Props) {
       {/* ------------------------------------------------------------------ */}
       {/* Bills table                                                         */}
       {/* ------------------------------------------------------------------ */}
+      <div className="mb-2 flex justify-end">
+        <ShowVoidedToggle checked={showVoided} voidedCount={voidedCount} toggleHref={toggleVoidedHref} />
+      </div>
+
       <section className="mb-8">
         <h2 className="mb-3 font-heading text-lg font-bold text-[color:var(--color-brand-navy)]">
           Bills
@@ -218,6 +241,13 @@ export function VendorDetailClient({ vendor, bills, payments }: Props) {
           <p className="rounded-md border border-dashed border-gray-300 bg-gray-50 p-6 text-center text-sm text-[color:var(--color-brand-text-soft)]">
             No bills on record for this vendor.
           </p>
+        ) : billsView.visible.length === 0 ? (
+          <HiddenVoidedEmptyState
+            noun="bill"
+            hiddenVoided={billsView.hiddenVoided}
+            showHref={showVoidedHref}
+            lead="No active bills for this vendor."
+          />
         ) : (
           <div className="overflow-x-auto rounded-md border border-gray-200">
             <table className="w-full min-w-[640px] text-sm">
@@ -232,7 +262,7 @@ export function VendorDetailClient({ vendor, bills, payments }: Props) {
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100">
-                {bills.map((b) => (
+                {billsView.visible.map((b) => (
                   <tr key={b.id} className={b.status === "voided" ? "opacity-50" : ""}>
                     <td className="px-3 py-2">
                       <Link
@@ -259,6 +289,17 @@ export function VendorDetailClient({ vendor, bills, payments }: Props) {
             </table>
           </div>
         )}
+        {billsView.visible.length > 0 && billsView.hiddenVoided > 0 && (
+          <p className="mt-2 text-xs text-[color:var(--color-brand-text-soft)]">
+            {billsView.hiddenVoided} voided bill{billsView.hiddenVoided !== 1 ? "s" : ""} hidden.
+          </p>
+        )}
+        {bills.length >= AP_INDEX_MAX_ROWS && (
+          <p className="mt-2 rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+            Showing the latest {AP_INDEX_MAX_ROWS.toLocaleString("en-PH")} bills for this vendor — the
+            totals above cover only those.
+          </p>
+        )}
       </section>
 
       {/* ------------------------------------------------------------------ */}
@@ -272,6 +313,13 @@ export function VendorDetailClient({ vendor, bills, payments }: Props) {
           <p className="rounded-md border border-dashed border-gray-300 bg-gray-50 p-6 text-center text-sm text-[color:var(--color-brand-text-soft)]">
             No payments on record for this vendor.
           </p>
+        ) : paymentsView.visible.length === 0 ? (
+          <HiddenVoidedEmptyState
+            noun="payment"
+            hiddenVoided={paymentsView.hiddenVoided}
+            showHref={showVoidedHref}
+            lead="No active payments for this vendor."
+          />
         ) : (
           <div className="overflow-x-auto rounded-md border border-gray-200">
             <table className="w-full min-w-[640px] text-sm">
@@ -286,7 +334,7 @@ export function VendorDetailClient({ vendor, bills, payments }: Props) {
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100">
-                {payments.map((p) => (
+                {paymentsView.visible.map((p) => (
                   <tr key={p.id} className={p.voided_at ? "opacity-50" : ""}>
                     <td className="px-3 py-2">
                       <Link
@@ -318,6 +366,17 @@ export function VendorDetailClient({ vendor, bills, payments }: Props) {
               </tbody>
             </table>
           </div>
+        )}
+        {paymentsView.visible.length > 0 && paymentsView.hiddenVoided > 0 && (
+          <p className="mt-2 text-xs text-[color:var(--color-brand-text-soft)]">
+            {paymentsView.hiddenVoided} voided payment{paymentsView.hiddenVoided !== 1 ? "s" : ""} hidden.
+          </p>
+        )}
+        {payments.length >= AP_INDEX_MAX_ROWS && (
+          <p className="mt-2 rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+            Showing the latest {AP_INDEX_MAX_ROWS.toLocaleString("en-PH")} payments for this vendor — the
+            totals above cover only those.
+          </p>
         )}
       </section>
     </div>
