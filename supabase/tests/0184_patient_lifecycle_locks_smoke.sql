@@ -1824,4 +1824,60 @@ begin
 end
 $s12$;
 
+-- --- s13: portal identity + skip summary ----------------------------------------------------
+do $s13$
+declare
+  k_admin constant uuid := 'a0000000-0000-4000-8000-000000000184';
+  k_rec   constant uuid := 'a1000000-0000-4000-8000-000000000184';
+  p uuid := pg_temp.mk_patient('S13A');
+  d uuid := pg_temp.mk_patient('S13D');
+  n int;
+begin
+  perform pg_temp.kill(d);
+  perform set_config('request.jwt.claims', '', true);
+  perform set_config('app.current_patient_id', p::text, true);
+  perform pg_temp.expect('s13.1 the legacy GUC alone no longer identifies a patient',
+    coalesce(public.current_patient_id()::text, 'null'), 'null');
+  perform set_config('app.current_patient_id', '', true);
+  perform set_config('request.jwt.claims', json_build_object('role', 'anon', 'patient_id', p)::text, true);
+  perform pg_temp.expect('s13.2 the JWT claim identifies an active patient', public.current_patient_id()::text, p::text);
+  perform set_config('request.jwt.claims', json_build_object('role', 'anon', 'patient_id', d)::text, true);
+  perform pg_temp.expect('s13.3 …but not a deleted one', coalesce(public.current_patient_id()::text, 'null'), 'null');
+  perform set_config('request.jwt.claims', '', true);
+  perform pg_temp.expect('s13.4 set_patient_context is gone',
+    coalesce(to_regprocedure('public.set_patient_context(uuid)')::text, 'gone'), 'gone');
+  perform pg_temp.expect('s13.5 current_patient_id still callable by every policy role',
+    (has_function_privilege('anon', 'public.current_patient_id()', 'execute')
+     and has_function_privilege('authenticated', 'public.current_patient_id()', 'execute')
+     and has_function_privilege('service_role', 'public.current_patient_id()', 'execute'))::text, 'true');
+
+  -- Skip summary.
+  insert into public.audit_log (actor_type, action, metadata, created_at) values
+    ('system', 'notification.skipped_inactive_patient', '{"sender":"lk-smoke-released","reason":"deleted"}', now() - interval '1 day'),
+    ('system', 'notification.skipped_inactive_patient', '{"sender":"lk-smoke-released","reason":"deleted"}', now() - interval '2 days'),
+    ('system', 'notification.skipped_inactive_patient', '{"sender":"lk-smoke-register","reason":"merged"}', now() - interval '20 days'),
+    ('system', 'notification.skipped_inactive_patient', '{"sender":"lk-smoke-register","reason":"merged"}', now() - interval '40 days');
+  perform pg_temp.expect('s13.6 summary over 7 and 30 days',
+    (select string_agg(sender || '/' || reason || '=' || skipped_7d || '/' || skipped_30d, ',' order by sender collate "C")
+       from public.notification_skip_summary() where sender like 'lk-smoke-%'),
+    'lk-smoke-register/merged=0/1,lk-smoke-released/deleted=2/2');
+
+  set local role authenticated;
+  perform set_config('request.jwt.claims', json_build_object('role', 'authenticated', 'sub', k_rec)::text, true);
+  perform set_config('request.jwt.claim.sub', k_rec::text, true);
+  n := (select count(*) from public.notification_skip_summary() where sender like 'lk-smoke-%');
+  perform pg_temp.expect('s13.7 a non-admin sees no rows (audit_log RLS; invoker)', n::text, '0');
+  perform set_config('request.jwt.claims', json_build_object('role', 'authenticated', 'sub', k_admin)::text, true);
+  perform set_config('request.jwt.claim.sub', k_admin::text, true);
+  n := (select count(*) from public.notification_skip_summary() where sender like 'lk-smoke-%');
+  perform pg_temp.expect('s13.8 an admin sees them', n::text, '2');
+  reset role;
+  perform set_config('request.jwt.claims', '', true);
+  perform set_config('request.jwt.claim.sub', '', true);
+  perform pg_temp.expect('s13.9 EXECUTE: authenticated yes, anon no',
+    (has_function_privilege('authenticated', 'public.notification_skip_summary()', 'execute')
+     and not has_function_privilege('anon', 'public.notification_skip_summary()', 'execute'))::text, 'true');
+end
+$s13$;
+
 rollback;

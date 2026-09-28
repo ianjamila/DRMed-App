@@ -2704,3 +2704,57 @@ $$;
 
 revoke all on function public.reschedule_closure_appointments(date, uuid, boolean, jsonb) from public, anon, authenticated;
 grant execute on function public.reschedule_closure_appointments(date, uuid, boolean, jsonb) to service_role;
+
+-- ---------------------------------------------------------------------------
+-- (10a) current_patient_id() — the JWT claim only. The app.current_patient_id
+-- GUC fallback (0001/0114) was the set_patient_context bridge: nothing calls
+-- it, and any transaction that could set a GUC could have claimed to be any
+-- patient. 0167's active filter, SECURITY DEFINER and grants are kept.
+-- ---------------------------------------------------------------------------
+create or replace function public.current_patient_id()
+returns uuid
+language sql
+stable
+security definer
+set search_path = pg_catalog, public, pg_temp
+as $$
+  select p.id
+    from public.patients p
+   where p.id = nullif(nullif(current_setting('request.jwt.claims', true), '')::jsonb ->> 'patient_id', '')::uuid
+     and p.deleted_at is null
+     and p.merged_into_id is null;
+$$;
+
+revoke all on function public.current_patient_id() from public;
+grant execute on function public.current_patient_id() to anon, authenticated, service_role;
+
+drop function if exists public.set_patient_context(uuid);
+
+-- ---------------------------------------------------------------------------
+-- (10b) notification_skip_summary — Cron Health's "Patient messages not
+-- sent": recorded notification.skipped_inactive_patient rows by sender and
+-- reason, last 7 and 30 days. SECURITY INVOKER: audit_log's RLS (admin-only
+-- SELECT) decides who sees anything. These are RECORDED skips — an outage
+-- can fail both the recipient lookup and its audit insert (lookup_failed is
+-- also reported to Sentry by the app).
+-- ---------------------------------------------------------------------------
+create or replace function public.notification_skip_summary()
+returns table (sender text, reason text, skipped_7d bigint, skipped_30d bigint)
+language sql
+stable
+security invoker
+set search_path = pg_catalog, public, pg_temp
+as $$
+  select coalesce(a.metadata ->> 'sender', 'unknown') as sender,
+         coalesce(a.metadata ->> 'reason', 'unknown') as reason,
+         count(*) filter (where a.created_at >= now() - interval '7 days')  as skipped_7d,
+         count(*)                                                          as skipped_30d
+    from public.audit_log a
+   where a.action = 'notification.skipped_inactive_patient'
+     and a.created_at >= now() - interval '30 days'
+   group by 1, 2
+   order by 1, 2;
+$$;
+
+revoke all on function public.notification_skip_summary() from public, anon;
+grant execute on function public.notification_skip_summary() to authenticated, service_role;

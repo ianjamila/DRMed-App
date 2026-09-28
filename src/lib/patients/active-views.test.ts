@@ -70,5 +70,18 @@ describe("SQL directory surfaces apply the active-patient rule", () => {
     expect(body).toMatch(/security\s+definer/i);
     expect(body).toMatch(/deleted_at\s+is\s+null/i);
     expect(body).toMatch(/merged_into_id\s+is\s+null/i);
+    // 0184: the JWT claim is the only identity source; the legacy GUC bridge is gone.
+    expect(body).not.toMatch(/app\.current_patient_id/);
+  });
+
+  it("set_patient_context was dropped (0184) and nothing re-creates it", () => {
+    const creates = files.filter((f) =>
+      /create\s+(or\s+replace\s+)?function\s+public\.set_patient_context/i.test(
+        readFileSync(join(MIGRATIONS_DIR, f), "utf8"),
+      ),
+    );
+    expect(creates.every((f) => f < "0184")).toBe(true);
+    const drop = readFileSync(join(MIGRATIONS_DIR, "0184_patient_lifecycle_locks.sql"), "utf8");
+    expect(drop).toMatch(/drop\s+function\s+if\s+exists\s+public\.set_patient_context\(uuid\)/i);
   });
 });
