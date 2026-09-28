@@ -3113,6 +3113,52 @@ export type Database = {
           },
         ]
       }
+      patient_acquisition_facts: {
+        Row: {
+          patient_id: string
+          registered_on: string | null
+          sheet_new_repeat: string | null
+          source_ref: string | null
+          updated_at: string
+        }
+        Insert: {
+          patient_id: string
+          registered_on?: string | null
+          sheet_new_repeat?: string | null
+          source_ref?: string | null
+          updated_at?: string
+        }
+        Update: {
+          patient_id?: string
+          registered_on?: string | null
+          sheet_new_repeat?: string | null
+          source_ref?: string | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "patient_acquisition_facts_patient_id_fkey"
+            columns: ["patient_id"]
+            isOneToOne: true
+            referencedRelation: "patients"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "patient_acquisition_facts_patient_id_fkey"
+            columns: ["patient_id"]
+            isOneToOne: true
+            referencedRelation: "v_patients_directory"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "patient_acquisition_facts_patient_id_fkey"
+            columns: ["patient_id"]
+            isOneToOne: true
+            referencedRelation: "v_patients_without_consent"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       patient_consents: {
         Row: {
           accepted_statement: string | null
@@ -3319,7 +3365,9 @@ export type Database = {
           pre_registered: boolean
           preferred_release_medium: string | null
           referral_source: string | null
+          referral_source_origin: string | null
           referred_by_doctor: string | null
+          row_version: number
           senior_pwd_id_kind: string | null
           senior_pwd_id_number: string | null
           sex: string | null
@@ -3356,7 +3404,9 @@ export type Database = {
           pre_registered?: boolean
           preferred_release_medium?: string | null
           referral_source?: string | null
+          referral_source_origin?: string | null
           referred_by_doctor?: string | null
+          row_version?: number
           senior_pwd_id_kind?: string | null
           senior_pwd_id_number?: string | null
           sex?: string | null
@@ -3393,7 +3443,9 @@ export type Database = {
           pre_registered?: boolean
           preferred_release_medium?: string | null
           referral_source?: string | null
+          referral_source_origin?: string | null
           referred_by_doctor?: string | null
+          row_version?: number
           senior_pwd_id_kind?: string | null
           senior_pwd_id_number?: string | null
           sex?: string | null
@@ -4587,8 +4639,51 @@ export type Database = {
           },
         ]
       }
+      referral_source_aliases: {
+        Row: {
+          created_at: string
+          created_by: string | null
+          raw_normalized: string
+          referral_source_id: string
+          replaced: Json | null
+          run_id: string | null
+        }
+        Insert: {
+          created_at?: string
+          created_by?: string | null
+          raw_normalized: string
+          referral_source_id: string
+          replaced?: Json | null
+          run_id?: string | null
+        }
+        Update: {
+          created_at?: string
+          created_by?: string | null
+          raw_normalized?: string
+          referral_source_id?: string
+          replaced?: Json | null
+          run_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "referral_source_aliases_referral_source_id_fkey"
+            columns: ["referral_source_id"]
+            isOneToOne: false
+            referencedRelation: "referral_sources"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "referral_source_aliases_run_id_fkey"
+            columns: ["run_id"]
+            isOneToOne: false
+            referencedRelation: "sheet_sync_runs"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       referral_sources: {
         Row: {
+          channel_group: string
           created_at: string
           id: string
           is_active: boolean
@@ -4596,6 +4691,7 @@ export type Database = {
           sort_order: number
         }
         Insert: {
+          channel_group?: string
           created_at?: string
           id: string
           is_active?: boolean
@@ -4603,6 +4699,7 @@ export type Database = {
           sort_order?: number
         }
         Update: {
+          channel_group?: string
           created_at?: string
           id?: string
           is_active?: boolean
@@ -5308,6 +5405,546 @@ export type Database = {
             referencedColumns: ["code"]
           },
         ]
+      }
+      sheet_customer_rows: {
+        Row: {
+          dob: string | null
+          dup_count: number
+          full_name_raw: string
+          id: number
+          link_key: string
+          link_state: string
+          loose_key: string
+          name_norm: string
+          new_repeat: string | null
+          patient_id: string | null
+          phone_norm: string | null
+          referral_source_id: string | null
+          referred_by_raw: string | null
+          registered_on: string | null
+          release_medium_raw: string | null
+          row_hash: string
+          run_id: string
+          sheet_row: number
+          source_key: string
+          source_norm: string
+          source_raw: string
+        }
+        Insert: {
+          dob?: string | null
+          dup_count?: number
+          full_name_raw: string
+          id?: never
+          link_key: string
+          link_state: string
+          loose_key: string
+          name_norm: string
+          new_repeat?: string | null
+          patient_id?: string | null
+          phone_norm?: string | null
+          referral_source_id?: string | null
+          referred_by_raw?: string | null
+          registered_on?: string | null
+          release_medium_raw?: string | null
+          row_hash: string
+          run_id: string
+          sheet_row: number
+          source_key: string
+          source_norm?: string
+          source_raw?: string
+        }
+        Update: {
+          dob?: string | null
+          dup_count?: number
+          full_name_raw?: string
+          id?: never
+          link_key?: string
+          link_state?: string
+          loose_key?: string
+          name_norm?: string
+          new_repeat?: string | null
+          patient_id?: string | null
+          phone_norm?: string | null
+          referral_source_id?: string | null
+          referred_by_raw?: string | null
+          registered_on?: string | null
+          release_medium_raw?: string | null
+          row_hash?: string
+          run_id?: string
+          sheet_row?: number
+          source_key?: string
+          source_norm?: string
+          source_raw?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "sheet_customer_rows_patient_id_fkey"
+            columns: ["patient_id"]
+            isOneToOne: false
+            referencedRelation: "patients"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "sheet_customer_rows_patient_id_fkey"
+            columns: ["patient_id"]
+            isOneToOne: false
+            referencedRelation: "v_patients_directory"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "sheet_customer_rows_patient_id_fkey"
+            columns: ["patient_id"]
+            isOneToOne: false
+            referencedRelation: "v_patients_without_consent"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "sheet_customer_rows_referral_source_id_fkey"
+            columns: ["referral_source_id"]
+            isOneToOne: false
+            referencedRelation: "referral_sources"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "sheet_customer_rows_run_id_fkey"
+            columns: ["run_id"]
+            isOneToOne: false
+            referencedRelation: "sheet_sync_runs"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      sheet_encounter_lines: {
+        Row: {
+          base_php: number | null
+          clinic_fee_php: number | null
+          control_no: string | null
+          doctor_raw: string | null
+          final_php: number | null
+          hmo_raw: string | null
+          id: number
+          identity_key: string
+          loose_key: string
+          name_norm: string
+          name_raw: string
+          patient_id: string | null
+          payment_detail_raw: string | null
+          payment_method_raw: string | null
+          raw: Json
+          release_medium_raw: string | null
+          released_on: string | null
+          revenue_php: number | null
+          row_hash: string
+          run_id: string
+          service_date: string
+          service_raw: string | null
+          sheet_row: number
+          tab: string
+          test_no: string | null
+        }
+        Insert: {
+          base_php?: number | null
+          clinic_fee_php?: number | null
+          control_no?: string | null
+          doctor_raw?: string | null
+          final_php?: number | null
+          hmo_raw?: string | null
+          id?: never
+          identity_key: string
+          loose_key: string
+          name_norm: string
+          name_raw: string
+          patient_id?: string | null
+          payment_detail_raw?: string | null
+          payment_method_raw?: string | null
+          raw: Json
+          release_medium_raw?: string | null
+          released_on?: string | null
+          revenue_php?: number | null
+          row_hash: string
+          run_id: string
+          service_date: string
+          service_raw?: string | null
+          sheet_row: number
+          tab: string
+          test_no?: string | null
+        }
+        Update: {
+          base_php?: number | null
+          clinic_fee_php?: number | null
+          control_no?: string | null
+          doctor_raw?: string | null
+          final_php?: number | null
+          hmo_raw?: string | null
+          id?: never
+          identity_key?: string
+          loose_key?: string
+          name_norm?: string
+          name_raw?: string
+          patient_id?: string | null
+          payment_detail_raw?: string | null
+          payment_method_raw?: string | null
+          raw?: Json
+          release_medium_raw?: string | null
+          released_on?: string | null
+          revenue_php?: number | null
+          row_hash?: string
+          run_id?: string
+          service_date?: string
+          service_raw?: string | null
+          sheet_row?: number
+          tab?: string
+          test_no?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "sheet_encounter_lines_patient_id_fkey"
+            columns: ["patient_id"]
+            isOneToOne: false
+            referencedRelation: "patients"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "sheet_encounter_lines_patient_id_fkey"
+            columns: ["patient_id"]
+            isOneToOne: false
+            referencedRelation: "v_patients_directory"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "sheet_encounter_lines_patient_id_fkey"
+            columns: ["patient_id"]
+            isOneToOne: false
+            referencedRelation: "v_patients_without_consent"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "sheet_encounter_lines_run_id_fkey"
+            columns: ["run_id"]
+            isOneToOne: false
+            referencedRelation: "sheet_sync_runs"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      sheet_mirror_staging: {
+        Row: {
+          row: Json
+          run_id: string
+          seq: number
+          staged_at: string
+          tab: string
+        }
+        Insert: {
+          row: Json
+          run_id: string
+          seq?: never
+          staged_at?: string
+          tab: string
+        }
+        Update: {
+          row?: Json
+          run_id?: string
+          seq?: never
+          staged_at?: string
+          tab?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "sheet_mirror_staging_run_id_fkey"
+            columns: ["run_id"]
+            isOneToOne: false
+            referencedRelation: "sheet_sync_runs"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      sheet_patient_links: {
+        Row: {
+          decided_at: string
+          decided_by: string | null
+          decision: string
+          hold_reason: string | null
+          link_key: string
+          method: string
+          patient_id: string | null
+          run_id: string | null
+        }
+        Insert: {
+          decided_at?: string
+          decided_by?: string | null
+          decision?: string
+          hold_reason?: string | null
+          link_key: string
+          method: string
+          patient_id?: string | null
+          run_id?: string | null
+        }
+        Update: {
+          decided_at?: string
+          decided_by?: string | null
+          decision?: string
+          hold_reason?: string | null
+          link_key?: string
+          method?: string
+          patient_id?: string | null
+          run_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "sheet_patient_links_patient_id_fkey"
+            columns: ["patient_id"]
+            isOneToOne: false
+            referencedRelation: "patients"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "sheet_patient_links_patient_id_fkey"
+            columns: ["patient_id"]
+            isOneToOne: false
+            referencedRelation: "v_patients_directory"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "sheet_patient_links_patient_id_fkey"
+            columns: ["patient_id"]
+            isOneToOne: false
+            referencedRelation: "v_patients_without_consent"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "sheet_patient_links_run_id_fkey"
+            columns: ["run_id"]
+            isOneToOne: false
+            referencedRelation: "sheet_sync_runs"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      sheet_sync_changes: {
+        Row: {
+          change_kind: string
+          changed_at: string
+          column_name: string | null
+          id: number
+          new_value: string | null
+          old_value: string | null
+          patient_id: string
+          reverted_at: string | null
+          row_version_after: number
+          run_id: string
+          undo_outcome: string | null
+          undo_run_id: string | null
+        }
+        Insert: {
+          change_kind: string
+          changed_at?: string
+          column_name?: string | null
+          id?: never
+          new_value?: string | null
+          old_value?: string | null
+          patient_id: string
+          reverted_at?: string | null
+          row_version_after: number
+          run_id: string
+          undo_outcome?: string | null
+          undo_run_id?: string | null
+        }
+        Update: {
+          change_kind?: string
+          changed_at?: string
+          column_name?: string | null
+          id?: never
+          new_value?: string | null
+          old_value?: string | null
+          patient_id?: string
+          reverted_at?: string | null
+          row_version_after?: number
+          run_id?: string
+          undo_outcome?: string | null
+          undo_run_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "sheet_sync_changes_run_id_fkey"
+            columns: ["run_id"]
+            isOneToOne: false
+            referencedRelation: "sheet_sync_runs"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "sheet_sync_changes_undo_run_id_fkey"
+            columns: ["undo_run_id"]
+            isOneToOne: false
+            referencedRelation: "sheet_sync_runs"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      sheet_sync_review_items: {
+        Row: {
+          first_seen_at: string
+          id: string
+          item_key: string
+          kind: string
+          last_seen_at: string
+          payload: Json
+          resolution: Json | null
+          resolved_at: string | null
+          resolved_by: string | null
+          run_id: string | null
+          status: string
+          tab: string
+        }
+        Insert: {
+          first_seen_at?: string
+          id?: string
+          item_key: string
+          kind: string
+          last_seen_at?: string
+          payload?: Json
+          resolution?: Json | null
+          resolved_at?: string | null
+          resolved_by?: string | null
+          run_id?: string | null
+          status?: string
+          tab: string
+        }
+        Update: {
+          first_seen_at?: string
+          id?: string
+          item_key?: string
+          kind?: string
+          last_seen_at?: string
+          payload?: Json
+          resolution?: Json | null
+          resolved_at?: string | null
+          resolved_by?: string | null
+          run_id?: string | null
+          status?: string
+          tab?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "sheet_sync_review_items_run_id_fkey"
+            columns: ["run_id"]
+            isOneToOne: false
+            referencedRelation: "sheet_sync_runs"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      sheet_sync_runs: {
+        Row: {
+          actor_id: string | null
+          dry_run: boolean
+          ended_at: string | null
+          error: string | null
+          heartbeat_at: string | null
+          id: string
+          lease_token: string | null
+          legacy_import_run_id: string | null
+          per_tab: Json
+          released_by_run_id: string | null
+          reverted_by_run_id: string | null
+          started_at: string
+          status: string
+          summary: Json
+          trigger: string
+        }
+        Insert: {
+          actor_id?: string | null
+          dry_run?: boolean
+          ended_at?: string | null
+          error?: string | null
+          heartbeat_at?: string | null
+          id?: string
+          lease_token?: string | null
+          legacy_import_run_id?: string | null
+          per_tab?: Json
+          released_by_run_id?: string | null
+          reverted_by_run_id?: string | null
+          started_at?: string
+          status: string
+          summary?: Json
+          trigger: string
+        }
+        Update: {
+          actor_id?: string | null
+          dry_run?: boolean
+          ended_at?: string | null
+          error?: string | null
+          heartbeat_at?: string | null
+          id?: string
+          lease_token?: string | null
+          legacy_import_run_id?: string | null
+          per_tab?: Json
+          released_by_run_id?: string | null
+          reverted_by_run_id?: string | null
+          started_at?: string
+          status?: string
+          summary?: Json
+          trigger?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "sheet_sync_runs_legacy_import_run_id_fkey"
+            columns: ["legacy_import_run_id"]
+            isOneToOne: false
+            referencedRelation: "legacy_import_runs"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "sheet_sync_runs_released_by_run_id_fkey"
+            columns: ["released_by_run_id"]
+            isOneToOne: false
+            referencedRelation: "sheet_sync_runs"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "sheet_sync_runs_reverted_by_run_id_fkey"
+            columns: ["reverted_by_run_id"]
+            isOneToOne: false
+            referencedRelation: "sheet_sync_runs"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      sheet_sync_settings: {
+        Row: {
+          converted_at: string | null
+          final_synced_at: string | null
+          id: boolean
+          mirror_window_start: string
+          pause_reason: string | null
+          paused: boolean
+          paused_at: string | null
+          paused_by: string | null
+          updated_at: string
+        }
+        Insert: {
+          converted_at?: string | null
+          final_synced_at?: string | null
+          id?: boolean
+          mirror_window_start?: string
+          pause_reason?: string | null
+          paused?: boolean
+          paused_at?: string | null
+          paused_by?: string | null
+          updated_at?: string
+        }
+        Update: {
+          converted_at?: string | null
+          final_synced_at?: string | null
+          id?: boolean
+          mirror_window_start?: string
+          pause_reason?: string | null
+          paused?: boolean
+          paused_at?: string | null
+          paused_by?: string | null
+          updated_at?: string
+        }
+        Relationships: []
       }
       specialty_codes: {
         Row: {
@@ -6497,6 +7134,18 @@ export type Database = {
       }
     }
     Functions: {
+      _sheet_sync_fence: {
+        Args: { p_lease_token: string; p_write?: boolean }
+        Returns: string
+      }
+      _sheet_sync_lease_live: {
+        Args: { p_heartbeat: string }
+        Returns: boolean
+      }
+      _sheet_sync_record_changes: {
+        Args: { p_new: Json; p_old: Json; p_run: string }
+        Returns: number
+      }
       admin_delete_result_template: {
         Args: { p_template_id: string }
         Returns: undefined
@@ -6888,6 +7537,94 @@ export type Database = {
       set_patient_context: {
         Args: { p_patient_id: string }
         Returns: undefined
+      }
+      sheet_alias_apply: {
+        Args: {
+          p_actor: string
+          p_item_id?: string
+          p_lease_token: string
+          p_raw_normalized: string
+          p_source_id: string
+        }
+        Returns: number
+      }
+      sheet_mirror_commit: {
+        Args: { p_expected: number; p_lease_token: string; p_tab: string }
+        Returns: number
+      }
+      sheet_mirror_stage: {
+        Args: { p_lease_token: string; p_rows: Json; p_tab: string }
+        Returns: number
+      }
+      sheet_resort_apply: {
+        Args: {
+          p_expected_old: string
+          p_lease_token: string
+          p_new: string
+          p_patient_ids: string[]
+        }
+        Returns: number
+      }
+      sheet_resort_candidates: {
+        Args: never
+        Returns: {
+          answer: string
+          id: string
+          referral_source: string
+          referral_source_origin: string
+        }[]
+      }
+      sheet_review_resolve: {
+        Args: {
+          p_action: string
+          p_actor: string
+          p_item_id: string
+          p_patient_id: string
+        }
+        Returns: undefined
+      }
+      sheet_sync_acquire: {
+        Args: { p_actor: string; p_dry_run: boolean; p_trigger: string }
+        Returns: Json
+      }
+      sheet_sync_apply_customer_ops: {
+        Args: { p_lease_token: string; p_ops: Json }
+        Returns: Json
+      }
+      sheet_sync_clear_absent_review: {
+        Args: { p_lease_token: string; p_present: Json; p_tab: string }
+        Returns: number
+      }
+      sheet_sync_finish: {
+        Args: {
+          p_error: string
+          p_lease_token: string
+          p_per_tab: Json
+          p_status: string
+          p_summary: Json
+        }
+        Returns: undefined
+      }
+      sheet_sync_heartbeat: {
+        Args: { p_lease_token: string }
+        Returns: undefined
+      }
+      sheet_sync_release_undo: {
+        Args: { p_lease_token: string; p_limit?: number; p_undo_run: string }
+        Returns: Json
+      }
+      sheet_sync_revert_run: {
+        Args: { p_lease_token: string; p_limit?: number; p_target_run: string }
+        Returns: Json
+      }
+      sheet_sync_upsert_review: {
+        Args: {
+          p_clear_absent: boolean
+          p_items: Json
+          p_lease_token: string
+          p_tab: string
+        }
+        Returns: Json
       }
       show_limit: { Args: never; Returns: number }
       show_trgm: { Args: { "": string }; Returns: string[] }

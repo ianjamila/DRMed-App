@@ -27,16 +27,20 @@ jobs:
           # be in the past for future readers. A new cron added later gets its
           # own active_from one day after its first expected run.
           sql=$(cat <<'SQL'
-          WITH watched(route, actions, max_age, active_from) AS (
+          WITH watched(route, actions, max_age, active_from, require_trigger) AS (
             VALUES
-              ('sync-accounting', ARRAY['accounting.sync.completed', 'accounting.sync.empty', 'accounting.sync.skipped'], interval '30 hours', date '2026-09-15'),
-              ('appointment-reminders', ARRAY['appointment.reminders.completed'], interval '30 hours', date '2026-09-18'),
-              ('data-retention', ARRAY['data_retention.sweep'], interval '30 hours', date '2026-09-15'),
-              ('recurring-bills', ARRAY['recurring_bills.completed'], interval '30 hours', date '2026-09-18'),
-              ('template-health', ARRAY['result_template.health_alert'], interval '30 hours', date '2026-09-15'),
-              ('template-health?mode=weekly', ARRAY['result_template.health_summary'], interval '8 days', date '2026-09-22'),
-              ('dedup-digest', ARRAY['system.dedup_digest.completed'], interval '8 days', date '2026-09-22'),
-              ('stale-bookings', ARRAY['system.stale_bookings.completed'], interval '30 hours', date '2026-09-27')
+              ('sync-accounting', ARRAY['accounting.sync.completed', 'accounting.sync.empty', 'accounting.sync.skipped'], interval '30 hours', date '2026-09-15', NULL::text),
+              ('appointment-reminders', ARRAY['appointment.reminders.completed'], interval '30 hours', date '2026-09-18', NULL::text),
+              ('data-retention', ARRAY['data_retention.sweep'], interval '30 hours', date '2026-09-15', NULL::text),
+              ('recurring-bills', ARRAY['recurring_bills.completed'], interval '30 hours', date '2026-09-18', NULL::text),
+              ('template-health', ARRAY['result_template.health_alert'], interval '30 hours', date '2026-09-15', NULL::text),
+              ('template-health?mode=weekly', ARRAY['result_template.health_summary'], interval '8 days', date '2026-09-22', NULL::text),
+              ('dedup-digest', ARRAY['system.dedup_digest.completed'], interval '8 days', date '2026-09-22', NULL::text),
+              -- sheet-sync's "Sync now" / CLI runs also audit actor_type
+              -- 'system' (run.ts) — require_trigger keeps a manual/CLI run
+              -- from masking a stopped Vercel cron here too.
+              ('sheet-sync', ARRAY['sheet_sync.completed', 'sheet_sync.skipped'], interval '30 hours', date '2026-09-29', 'cron'),
+              ('stale-bookings', ARRAY['system.stale_bookings.completed'], interval '30 hours', date '2026-09-27', NULL::text)
           ), heartbeats AS (
             SELECT w.route, w.max_age, w.active_from, latest.created_at AS last_seen,
                    now() - latest.created_at AS age
@@ -47,6 +51,7 @@ jobs:
               WHERE a.action = ANY(w.actions)
                 -- Manual accounting syncs must not mask a stopped cron.
                 AND a.actor_type = 'system'
+                AND (w.require_trigger IS NULL OR a.metadata->>'trigger' = w.require_trigger)
               ORDER BY a.created_at DESC
               LIMIT 1
             ) latest ON true

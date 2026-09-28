@@ -27,6 +27,7 @@ The three "chrome" systems every staff page hangs off of: the **sidebar nav conf
 | Card component | `…/(dashboard)/_dashboards/_components/stat-card.tsx` (`StatCard`) |
 | Brand theme tokens | `src/app/globals.css` (`--color-brand-*`) |
 | Cron Health (admin-only, Operations nav subgroup) | `src/app/(staff)/staff/(dashboard)/admin/operations/cron-health/page.tsx` — beside the `(daily-monitoring)` route group, so no tab bar; canonical legs (with the plain `label` + `description` the page shows) + status rule in `src/lib/ops/cron-heartbeats.ts`, drift guards in `cron-heartbeats.test.ts` |
+| Sheet Sync (admin-only, Admin Tools nav item, last after Patient Merge) | `src/app/(staff)/staff/(dashboard)/admin/sheet-sync/page.tsx` — 4 in-page views (`?view=overview\|review\|resort\|history`) via `sectionTabClass`/`sectionTabsNavClass` (a param-driven bar, not `<SectionTabs/>`); nav entry + description in `staff-nav-config.ts` |
 
 Roles everywhere: `reception`, `medtech`, `xray_technician`, `pathologist`, `admin`.
 
@@ -141,6 +142,23 @@ these, it does not grow its own pager.
   browser and whose checkbox selection a URL navigation would discard. Reach
   for it only when moving page state into the URL would cost a refetch or lose
   state; everything else uses the link version and its zero hydration.
+
+### Multi-select on a list — use the shared kit
+
+`src/components/staff/row-selection/` is the ONE row-selection kit: `SelectionProvider`
+(client; wraps the server-rendered tables; `resetKey` = a joined string of every list
+param, because search-param navigation does not remount client state), `RowSelectCheckbox`
+(`rowKey`/`kinds`/`weight`/`label`; prunes itself on unmount or kind change),
+`SelectAllCheckbox` (header, indeterminate), `BulkBar` (sticky bottom, count, Clear,
+Escape). Caps live in `src/lib/ui/bulk-selection.ts` (100 rows / 500 records, pure,
+tested). A page adds a leading checkbox column, builds a serialisable `…ByKey` map for its
+bar, and writes ONE bar component with page-specific buttons. Server actions take the
+grouped ids, enforce their own cap and status/ownership predicates, audit one row per
+record from the rows the write RETURNED, and return `changedIds` so the bar can report
+partial results. Live example: `appointments/appointments-bulk-bar.tsx` +
+`src/lib/appointments/bulk-eligibility.ts`. The visit page's Tests section predates the
+kit and keeps its own copy (`visits/[id]/selection-context.tsx`); the HMO-claims pages are
+client-state tables. Spec: `docs/superpowers/specs/2026-09-25-bulk-row-selection-design.md`.
 
 ## 4a · The three page-shape standards (agreed 2026-09-11)
 

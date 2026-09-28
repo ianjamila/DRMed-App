@@ -126,6 +126,38 @@ revoke all on public.staff_alert_recipients from anon;
 revoke all on public.staff_alert_recipients from authenticated;
 grant select, insert, update, delete on public.staff_alert_recipients to authenticated;
 
+-- 0170: Sheet Sync tables are admin-read (RLS) and never reachable by anon;
+-- writes only through service-role RPCs. Staging is service-role only.
+revoke all on public.sheet_sync_settings from anon;
+revoke all on public.sheet_sync_settings from authenticated;
+grant select on public.sheet_sync_settings to authenticated;
+revoke all on public.sheet_sync_runs from anon;
+revoke all on public.sheet_sync_runs from authenticated;
+grant select on public.sheet_sync_runs to authenticated;
+revoke all on public.sheet_sync_review_items from anon;
+revoke all on public.sheet_sync_review_items from authenticated;
+grant select on public.sheet_sync_review_items to authenticated;
+revoke all on public.sheet_sync_changes from anon;
+revoke all on public.sheet_sync_changes from authenticated;
+grant select on public.sheet_sync_changes to authenticated;
+revoke all on public.sheet_patient_links from anon;
+revoke all on public.sheet_patient_links from authenticated;
+grant select on public.sheet_patient_links to authenticated;
+revoke all on public.patient_acquisition_facts from anon;
+revoke all on public.patient_acquisition_facts from authenticated;
+grant select on public.patient_acquisition_facts to authenticated;
+revoke all on public.referral_source_aliases from anon;
+revoke all on public.referral_source_aliases from authenticated;
+grant select on public.referral_source_aliases to authenticated;
+revoke all on public.sheet_customer_rows from anon;
+revoke all on public.sheet_customer_rows from authenticated;
+grant select on public.sheet_customer_rows to authenticated;
+revoke all on public.sheet_encounter_lines from anon;
+revoke all on public.sheet_encounter_lines from authenticated;
+grant select on public.sheet_encounter_lines to authenticated;
+revoke all on public.sheet_mirror_staging from anon;
+revoke all on public.sheet_mirror_staging from authenticated;
+
 -- 0167: patient views (the directory view's mirror already exists from 0171 —
 -- do not duplicate it). The dedup view is service_role-only; the admin
 -- inclusive view is authenticated-only (its WHERE limits it to admins).

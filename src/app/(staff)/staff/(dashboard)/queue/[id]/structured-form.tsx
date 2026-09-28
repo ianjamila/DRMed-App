@@ -54,6 +54,10 @@ interface Props {
   // computed server-side (fetchCopyStates + shouldOfferNotify); the Server
   // Action re-checks before it ever sends.
   notifyOffer?: NotifyOffer;
+  // 'amend' mode: called on a successful save instead of showing the
+  // message here — AmendResultForm keys this form by version, so it remounts
+  // once the save's revalidation lands and would lose it.
+  onAmended?: (result: Extract<StructuredResult, { ok: true }>) => void;
 }
 
 // Local form state per parameter.
@@ -231,6 +235,10 @@ export function StructuredResultForm(props: Props) {
           props.testRequestId,
           fd,
         );
+        if (result.ok && props.onAmended) {
+          props.onAmended(result);
+          return;
+        }
         setFeedback(result);
         if (result.ok) router.refresh();
         return;
