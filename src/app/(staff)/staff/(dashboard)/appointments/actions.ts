@@ -28,6 +28,15 @@ import {
   type BulkBookingIds,
 } from "@/lib/appointments/stale";
 import { todayManilaISODate } from "@/lib/dates/manila";
+import { loadOwnBatchRows } from "@/lib/audit/bulk-batch";
+import {
+  BULK_UNDO_VIA,
+  UNDO_ALREADY,
+  UNDO_EXPIRED,
+  bucketAppointmentUndo,
+  planAppointmentUndo,
+  type BulkUndoResult,
+} from "@/lib/ui/bulk-undo";
 
 type Transition =
   | "arrived"
@@ -891,4 +900,125 @@ export async function undoLikelyNoShowsAction(bookings: BulkBookingIds): Promise
   await auditBulk(session, moved, groups, "appointment.confirmed", "bulk_likely_no_show_undo", batchId);
   revalidatePath("/staff/appointments");
   return { ok: true, data: { marked: groups, heldBack: heldBack.length } };
+}
+
+// Undo for the appointments bulk bar (owner 2026-09-28): puts every booking
+// the caller's bulk action moved back to the status it had before — read
+// from that action's own audit rows (bulk_batch_id + previous_status), for 10
+// minutes, and only where the booking is still in the status the action left
+// it (the write's predicate). Moving a booking back into active work
+// (arrived / confirmed / pending callback) needs every linked patient active,
+// like ↶ Revert; those bookings are held back and named, the rest proceed.
+export async function undoBulkAppointmentsAction(input: unknown): Promise<BulkUndoResult> {
+  const session = await requireActiveStaff();
+  if (session.role !== "reception" && session.role !== "admin") {
+    return { ok: false, error: "Reception or admin only." };
+  }
+  const parsed = z.object({ batchId: z.string().uuid() }).safeParse(input);
+  if (!parsed.success) return { ok: false, error: UNDO_EXPIRED };
+
+  const loaded = await loadOwnBatchRows({
+    actorId: session.user_id,
+    batchId: parsed.data.batchId,
+    resourceType: "appointment",
+    nowMs: Date.now(),
+  });
+  if (!loaded.ok) return { ok: false, error: loaded.error };
+  if (loaded.alreadyUndone) return { ok: false, error: UNDO_ALREADY };
+  const entries = planAppointmentUndo(loaded.rows);
+  if (entries.length === 0) return { ok: false, error: UNDO_EXPIRED };
+
+  const notRestored: Array<{ id: string; reason: string }> = [];
+  const admin = createAdminClient();
+  const needsActive = entries.filter((e) => e.restoreTo !== "no_show" && e.restoreTo !== "cancelled");
+  let heldIds = new Set<string>();
+  if (needsActive.length > 0) {
+    const ids = [...new Set(needsActive.flatMap((e) => e.groupIds))];
+    const patientOf = new Map<string, string | null>();
+    for (const part of chunk(ids, BULK_ID_CHUNK)) {
+      const { data, error } = await admin.from("appointments").select("id, patient_id").in("id", part);
+      if (error) return { ok: false, error: "Could not check the patient records — try again." };
+      for (const row of data ?? []) patientOf.set(row.id, row.patient_id);
+    }
+    const patientIds = [...new Set([...patientOf.values()].filter((p): p is string => p !== null))];
+    const activeIds = new Set<string>();
+    for (const part of chunk(patientIds, BULK_ID_CHUNK)) {
+      const { data, error } = await activePatients(admin.from("patients").select("id")).in("id", part);
+      if (error) return { ok: false, error: "Could not check the patient records — try again." };
+      for (const row of data ?? []) activeIds.add(row.id);
+    }
+    const bookings = [...new Map(needsActive.map((e) => [e.groupIds.join(","), e.groupIds])).values()];
+    const { heldBack } = splitBookingsByActivePatient(bookings, patientOf, activeIds);
+    heldIds = new Set(heldBack.flat());
+  }
+  for (const e of entries) {
+    if (heldIds.has(e.id)) notRestored.push({ id: e.id, reason: "patient record deleted or merged" });
+  }
+  const toWrite = entries.filter((e) => !heldIds.has(e.id));
+  const activeCheckIds = toWrite
+    .filter((e) => e.restoreTo !== "no_show" && e.restoreTo !== "cancelled")
+    .map((e) => e.id);
+  if (activeCheckIds.length > 0) {
+    const active = await assertAppointmentsPatientsActive(admin, activeCheckIds);
+    if (!active.ok) return { ok: false, error: active.error };
+  }
+
+  const supabase = await createClient();
+  const undoBatchId = crypto.randomUUID();
+  const moved: Array<{ id: string; patient_id: string | null; current: string; restoreTo: string }> = [];
+  let failed = false;
+  for (const bucket of bucketAppointmentUndo(toWrite)) {
+    for (const part of chunk(bucket.ids, BULK_ID_CHUNK)) {
+      const { data, error } = await supabase
+        .from("appointments")
+        .update({ status: bucket.restoreTo })
+        .in("id", part)
+        .eq("status", bucket.current)
+        .select("id, patient_id");
+      if (error) {
+        failed = true;
+        continue;
+      }
+      for (const row of data ?? []) moved.push({ ...row, current: bucket.current, restoreTo: bucket.restoreTo });
+    }
+  }
+  const movedIds = new Set(moved.map((m) => m.id));
+  for (const e of toWrite) {
+    if (!movedIds.has(e.id)) notRestored.push({ id: e.id, reason: "changed again since — refresh to see its status" });
+  }
+
+  if (moved.length > 0) {
+    const h = await headers();
+    const ip = h.get("x-forwarded-for")?.split(",")[0]?.trim() ?? null;
+    const ua = h.get("user-agent");
+    const groupOf = new Map(entries.map((e) => [e.id, e.groupIds]));
+    await Promise.all(
+      moved.map((row) =>
+        audit({
+          actor_id: session.user_id,
+          actor_type: "staff",
+          patient_id: row.patient_id,
+          action: `appointment.${row.restoreTo}`,
+          resource_type: "appointment",
+          resource_id: row.id,
+          metadata: {
+            actor_role: session.role,
+            group_appointment_ids: groupOf.get(row.id) ?? [row.id],
+            previous_status: row.current,
+            via: BULK_UNDO_VIA,
+            undo_of_batch: parsed.data.batchId,
+            bulk_batch_id: undoBatchId,
+            bulk_batch_size: moved.length,
+          },
+          ip_address: ip,
+          user_agent: ua,
+        }),
+      ),
+    );
+    revalidatePath("/staff/appointments");
+  }
+  if (failed && moved.length === 0) {
+    return { ok: false, error: "Could not undo — refresh the page and check the bookings." };
+  }
+  return { ok: true, restoredIds: [...movedIds], notRestored };
 }
