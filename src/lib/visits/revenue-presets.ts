@@ -5,6 +5,7 @@
  * (see M2 in period-presets.ts) and is unit-testable away from the JSX.
  */
 import { buildPeriodPresets } from "@/lib/reports/period-presets";
+import { firstOfMonthISO, isoDateParts, lastOfMonthISO } from "@/lib/dates/manila";
 
 export const REVENUE_PRESET_KEYS = [
   "this-month",
@@ -64,4 +65,53 @@ export function yearOnYearChange(current: number, prior: number): string | null 
   const pct = Math.round(((current - prior) / prior) * 100);
   if (pct === 0) return "0%";
   return pct > 0 ? `+${pct}%` : `−${Math.abs(pct)}%`;
+}
+
+export interface TrendMonth {
+  /** YYYY-MM */
+  key: string;
+  /** Short month name, e.g. "Sep". */
+  label: string;
+  year: number;
+  start: string;
+  /** Last day of the month — or today, for the current (partial) month. */
+  end: string;
+  partial: boolean;
+}
+
+const MONTH_SHORT = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+/**
+ * The trailing `count` calendar months ending with the current one, oldest
+ * first — the windows behind the dropdown's 12-month trend. Integer calendar
+ * arithmetic only (no `Date`), so the 1st of a month is not the month before.
+ */
+export function trendMonths(todayISO: string, count = 12): TrendMonth[] {
+  const { year, month } = isoDateParts(todayISO);
+  const out: TrendMonth[] = [];
+  for (let back = count - 1; back >= 0; back--) {
+    const start = firstOfMonthISO(year, month - back);
+    const { year: y, month: m } = isoDateParts(start);
+    const partial = back === 0;
+    out.push({
+      key: start.slice(0, 7),
+      label: MONTH_SHORT[m - 1],
+      year: y,
+      start,
+      end: partial ? todayISO : lastOfMonthISO(y, m),
+      partial,
+    });
+  }
+  return out;
+}
+
+/** One month of the trend, as /api/admin/revenue-trend returns it. */
+export interface RevenueTrendPoint {
+  key: string;
+  label: string;
+  year: number;
+  partial: boolean;
+  lab: number;
+  consult: number;
+  procedure: number;
 }

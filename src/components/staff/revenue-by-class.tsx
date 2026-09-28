@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { ROUTE_NAME } from "@/lib/staff/route-names";
+import { RevenueTrend } from "@/components/staff/revenue-trend";
 import {
   VISIT_CLASS_LABEL,
   type ClassSummaryRow,
@@ -89,6 +90,7 @@ export function RevenueByClass({
   visitsHref,
   prior,
   pnlHref,
+  trendView = "active",
 }: {
   rows: ClassSummaryRow[];
   totals: { lines: number; revenuePhp: number };
@@ -109,6 +111,8 @@ export function RevenueByClass({
   prior?: PriorYearRevenue | null;
   /** Expenses & P&L (where Gross Profit lives) over the same dates. */
   pnlHref?: string | null;
+  /** Visit view (active / deleted / all) the 12-month trend counts. */
+  trendView?: string;
 }) {
   const priorByClass = new Map(prior?.rows.map((r) => [r.class, r.revenuePhp]));
   return (
@@ -217,6 +221,7 @@ export function RevenueByClass({
             })}
           </div>
         )}
+        <RevenueTrend view={trendView} />
         <p className="mt-3 text-xs text-[color:var(--color-brand-text-soft)]">
           Counts billed lines only — items inside a package are covered by the
           package price. A visit with both lab and doctor work is counted under
