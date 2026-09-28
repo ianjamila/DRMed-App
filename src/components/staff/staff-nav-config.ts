@@ -601,6 +601,12 @@ export const STAFF_NAV: StaffNavSection[] = [
             roles: ["admin"],
           },
           {
+            href: "/staff/admin/sheet-sync",
+            label: ROUTE_NAME["/staff/admin/sheet-sync"],
+            description: "Keep patients and patient-source numbers current from the reception Google Sheet.",
+            roles: ["admin"],
+          },
+          {
             href: "/staff/admin/deleted-patients",
             label: ROUTE_NAME["/staff/admin/deleted-patients"],
             description:

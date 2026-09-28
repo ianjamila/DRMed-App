@@ -6,21 +6,23 @@ const workflow = readFileSync(".github/workflows/cron-watchdog.yml", "utf8");
 
 // Intentionally strict: an SQL shape change must update this parser, not skip rows.
 function parseWatched(source: string) {
-  const values = source.match(/WITH watched\(route, actions, max_age, active_from\) AS \(\s*VALUES([\s\S]*?)\), heartbeats AS/);
+  const values = source.match(/WITH watched\(route, actions, max_age, active_from, require_trigger\) AS \(\s*VALUES([\s\S]*?)\), heartbeats AS/);
   if (!values) throw new Error("Cannot find watched VALUES table");
-  const rowPattern = /\('([^']+)',\s*ARRAY\[([^\]]+)\],\s*interval '(\d+) (hours|days)',\s*date '(\d{4}-\d{2}-\d{2})'\)/g;
+  const rowPattern = /\('([^']+)',\s*ARRAY\[([^\]]+)\],\s*interval '(\d+) (hours|days)',\s*date '(\d{4}-\d{2}-\d{2})',\s*(NULL::text|'[^']+')\)/g;
   const rows = [...values[1].matchAll(rowPattern)];
   if (rows.length !== CRON_HEARTBEATS.length) {
     throw new Error(`Parsed ${rows.length} watched rows; expected ${CRON_HEARTBEATS.length}`);
   }
-  if (values[1].replace(rowPattern, "").replace(/[\s,]/g, "")) {
+  const withoutRows = values[1].replace(rowPattern, "");
+  if (withoutRows.replace(/--[^\n]*/g, "").replace(/[\s,]/g, "")) {
     throw new Error("Unparsed SQL remains in watched VALUES");
   }
-  return rows.map(([, route, actions, amount, unit, activeFrom]) => ({
+  return rows.map(([, route, actions, amount, unit, activeFrom, requireTrigger]) => ({
     route,
     actions: [...actions.matchAll(/'([^']+)'/g)].map((m) => m[1]).sort(),
     maxAge: Number(amount) * (unit === "days" ? 24 : 1) * 60 * 60 * 1000,
     activeFrom,
+    requireTrigger: requireTrigger === "NULL::text" ? null : requireTrigger.slice(1, -1),
   }));
 }
 
@@ -44,7 +46,13 @@ describe("cron drift guards", () => {
     expect(rows.sort(byRoute)).toEqual(CRON_HEARTBEATS.map((c) => ({
       route: c.path.replace("/api/cron/", ""),
       actions: [...c.actions].sort(), maxAge: c.maxAge, activeFrom: c.activeFrom,
+      requireTrigger: "requireTrigger" in c ? c.requireTrigger : null,
     })).sort(byRoute));
+  });
+
+  it("only sheet-sync requires a trigger — a manual/CLI 'system' run must not count as its cron heartbeat", () => {
+    expect(CRON_HEARTBEATS.filter((c) => "requireTrigger" in c).map((c) => c.key)).toEqual(["sheet-sync"]);
+    expect(workflow).toContain("AND (w.require_trigger IS NULL OR a.metadata->>'trigger' = w.require_trigger)");
   });
 
   it("fails loudly for absent, empty, or partially parsed VALUES", () => {

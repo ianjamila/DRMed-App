@@ -22,11 +22,15 @@ export default async function CronHealthPage() {
   const supabase = await createClient();
   const rows = await Promise.all(CRON_HEARTBEATS.map(async (cron) => {
     // One latest row per leg, not a capped shared audit scan that can hide a quiet leg.
-    const { data, error } = await supabase
+    let query = supabase
       .from("audit_log")
       .select("created_at")
       .eq("actor_type", "system")
-      .in("action", [...cron.actions])
+      .in("action", [...cron.actions]);
+    // sheet-sync's "Sync now" / CLI runs also audit actor_type 'system' (run.ts)
+    // — requireTrigger keeps a manual/CLI run from masking a stopped cron here too.
+    if ("requireTrigger" in cron) query = query.eq("metadata->>trigger", cron.requireTrigger);
+    const { data, error } = await query
       .order("created_at", { ascending: false })
       .order("id", { ascending: true })
       .limit(1)

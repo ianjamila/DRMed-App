@@ -769,6 +769,33 @@ describe("Cron Health navigation", () => {
   });
 });
 
+describe("Sheet Sync is admin-only", () => {
+  const href = "/staff/admin/sheet-sync";
+
+  it("sits in Admin Tools right after Merge Duplicate Patients", () => {
+    const item = itemByHref(href);
+    expect(item.label).toBe("Sheet Sync");
+    expect(item.roles).toEqual(["admin"]);
+  });
+
+  it.each(ALL_ROLES.filter((r) => r !== "admin"))(
+    "%s does not see Sheet Sync",
+    (role) => {
+      expect(allHrefs(visibleNavFor(role))).not.toContain(href);
+    },
+  );
+
+  it("admin sees Sheet Sync", () => {
+    expect(allHrefs(visibleNavFor("admin"))).toContain(href);
+  });
+
+  it("lights exactly this item, whichever ?view= the page is on", () => {
+    // usePathname() never carries the query string, so every ?view= of this
+    // one-page admin tool resolves to the same pathname and the same item.
+    expect(activeHrefs(href)).toEqual([href]);
+  });
+});
+
 describe("Quick Quote access has one source of truth", () => {
   it("the sidebar item uses QUICK_QUOTE_ROLES", () => {
     expect(itemByHref("/staff/quote").roles).toBe(QUICK_QUOTE_ROLES);
