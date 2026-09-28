@@ -25,7 +25,10 @@ export const DASHBOARD_CARDS: readonly CardDef[] = [
   { id: "reception.visits_today",      label: "Visits today",      roles: ["reception"], group: "snapshot" },
   { id: "reception.unpaid_balance",    label: "Unpaid balance",    roles: ["reception"], group: "snapshot", sensitive: true },
   { id: "reception.pending_release",   label: "Pending release",   roles: ["reception"], group: "snapshot" },
-  { id: "reception.walk_ins_waiting",  label: "Walk-ins waiting",  roles: ["reception"], group: "snapshot" },
+  // Id kept from when the card was called "Walk-ins waiting"; renaming the id
+  // would drop saved preferences.
+  { id: "reception.walk_ins_waiting",  label: "Arrivals awaiting registration", roles: ["reception"], group: "snapshot" },
+  { id: "reception.likely_no_shows",   label: "Likely no-shows",   roles: ["reception"], group: "snapshot" },
   { id: "reception.new_messages",      label: "Website messages",  roles: ["reception"], group: "snapshot" },
   // Off by default since partner revision 8 sent "Sell gift code" to the
   // admin-only Hidden Tabs section: counter sales are rare enough that a

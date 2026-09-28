@@ -39,7 +39,8 @@ jobs:
               -- sheet-sync's "Sync now" / CLI runs also audit actor_type
               -- 'system' (run.ts) — require_trigger keeps a manual/CLI run
               -- from masking a stopped Vercel cron here too.
-              ('sheet-sync', ARRAY['sheet_sync.completed', 'sheet_sync.skipped'], interval '30 hours', date '2026-09-27', 'cron')
+              ('sheet-sync', ARRAY['sheet_sync.completed', 'sheet_sync.skipped'], interval '30 hours', date '2026-09-29', 'cron'),
+              ('stale-bookings', ARRAY['system.stale_bookings.completed'], interval '30 hours', date '2026-09-27', NULL::text)
           ), heartbeats AS (
             SELECT w.route, w.max_age, w.active_from, latest.created_at AS last_seen,
                    now() - latest.created_at AS age

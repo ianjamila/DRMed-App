@@ -82,13 +82,23 @@ export const CRON_HEARTBEATS = [
     schedule: "0 16 * * *",
     actions: ["sheet_sync.completed", "sheet_sync.skipped"],
     maxAge: 30 * 60 * 60 * 1000,
-    activeFrom: "2026-09-27",
+    activeFrom: "2026-09-29",
     // sheet-sync is the only watched task a person (or the CLI) can also
     // trigger: "Sync now" on the admin page and `npm run sheet:sync` both
     // audit actor_type 'system' too (run.ts), so actor_type alone would let a
     // manual/CLI run mask a stopped Vercel cron. Every audited action here
     // carries `trigger` in its metadata (run.ts's audit() call) — require it.
     requireTrigger: "cron",
+  },
+  {
+    key: "stale-bookings",
+    label: "Bookings not acted on (daily)",
+    description: "Emails reception a morning list of bookings with no set time that nobody has acted on for 3 days or more.",
+    path: "/api/cron/stale-bookings",
+    schedule: "30 0 * * *",
+    actions: ["system.stale_bookings.completed"],
+    maxAge: 30 * 60 * 60 * 1000,
+    activeFrom: "2026-09-27",
   },
 ] as const;
 

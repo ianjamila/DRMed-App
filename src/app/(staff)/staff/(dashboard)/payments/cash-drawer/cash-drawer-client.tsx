@@ -6,6 +6,7 @@ import Link from "next/link";
 import { recordCashAdjustmentAction, voidCashAdjustmentAction }
   from "./actions";
 import { PaymentsTabs } from "../_components/payments-tabs";
+import { UnclosedDaysNotice } from "@/components/staff/unclosed-days-notice";
 import { PageHeader } from "@/components/staff/page-header";
 import { ROUTE_NAME, SECTION_NAME } from "@/lib/staff/route-names";
 import { friendlyManilaDate, manilaTime } from "@/lib/dates/manila";
@@ -43,6 +44,7 @@ export function CashDrawerClient(props: {
   routing: (CashRule & { kind: string })[];
   staff: Staff[];
   partnerLabs: PartnerLab[];
+  unclosedDays: string[];
 }) {
   const router = useRouter();
   const [pending, start] = useTransition();
@@ -116,6 +118,12 @@ export function CashDrawerClient(props: {
             </div>
           </div>
         }
+      />
+
+      <UnclosedDaysNotice
+        days={props.unclosedDays}
+        shiftId={props.currentShiftId}
+        className="mb-4"
       />
 
       <section className="rounded-lg border bg-white p-4 shadow-sm">

@@ -7,6 +7,10 @@ import { StaffQuoteShortcut } from "./staff-quote-shortcut";
 import { canUseQuickQuote } from "@/lib/staff/quote-access";
 import { NotificationBell } from "./notification-bell";
 import { StaffMobileNavTrigger } from "./staff-mobile-nav-trigger";
+import { ROLE_LABEL } from "@/lib/staff/role-labels";
+import { ViewAsSelect } from "./view-as-select";
+import { RefreshOnFocus, ViewAsBanner } from "./view-as-banner";
+import { formatRemaining } from "@/lib/auth/view-as";
 
 interface Props {
   session: StaffSession;
@@ -14,14 +18,6 @@ interface Props {
   // Sidebar nav count badges keyed by item href (see StaffNav/StaffMobileNavTrigger).
   badges?: Record<string, number>;
 }
-
-const ROLE_LABEL: Record<StaffSession["role"], string> = {
-  reception: "Reception",
-  medtech: "Medical Tech",
-  xray_technician: "X-ray Technician",
-  pathologist: "Pathologist",
-  admin: "Admin",
-};
 
 export function StaffShell({ session, children, badges }: Props) {
   return (
@@ -50,8 +46,18 @@ export function StaffShell({ session, children, badges }: Props) {
             {session.full_name}
           </p>
           <p className="text-xs text-[color:var(--color-brand-text-soft)]">
-            {ROLE_LABEL[session.role]} · {session.email}
+            {session.view_as
+              ? `${ROLE_LABEL[session.role]} (viewing as) · ${ROLE_LABEL[session.actual_role]}`
+              : ROLE_LABEL[session.role]}{" "}
+            · {session.email}
           </p>
+          {session.actual_role === "admin" && (
+            <ViewAsSelect
+              current={session.view_as?.role ?? null}
+              id="view-as-sidebar"
+              className="mt-3"
+            />
+          )}
           <form action={signOutStaff} className="mt-3">
             <Button
               type="submit"
@@ -66,11 +72,22 @@ export function StaffShell({ session, children, badges }: Props) {
 
       {/* Main */}
       <div className="flex min-w-0 flex-1 flex-col">
+        {session.view_as ? (
+          <ViewAsBanner
+            role={session.view_as.role}
+            until={session.view_as.until}
+            remainingLabel={formatRemaining(session.view_as.until)}
+          />
+        ) : session.actual_role === "admin" ? (
+          <RefreshOnFocus />
+        ) : null}
         {/* Mobile topbar — sidebar is hidden on small screens */}
         <header className="flex items-center justify-between gap-2 border-b border-[color:var(--color-brand-bg-mid)] bg-white px-4 py-3 md:hidden print:hidden">
           <div className="flex items-center gap-2">
             <StaffMobileNavTrigger
               role={session.role}
+              actualRole={session.actual_role}
+              viewAs={session.view_as}
               email={session.email}
               fullName={session.full_name}
               badges={badges}
