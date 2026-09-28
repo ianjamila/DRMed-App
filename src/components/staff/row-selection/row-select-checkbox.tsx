@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo } from "react";
+import { requestBarFocus } from "./bar-focus";
 import { useRowSelection } from "./selection-context";
 
 interface Props {
@@ -39,6 +40,11 @@ export function RowSelectCheckbox({ rowKey, kinds, weight = 1, label }: Props) {
         checked={checked}
         disabled={blocked}
         onChange={() => toggle(entry)}
+        onKeyDown={(e) => {
+          if (e.key !== "Enter") return;
+          e.preventDefault();
+          requestBarFocus();
+        }}
         aria-label={`Select ${label}`}
         title={blocked ? `You can select up to ${limits.rows} rows at a time` : undefined}
         className="h-4 w-4 accent-[color:var(--color-brand-cyan)] disabled:opacity-40"

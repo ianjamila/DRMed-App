@@ -1,9 +1,10 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useRef, useState, useTransition } from "react";
 import { Button } from "@/components/ui/button";
 import { Panel } from "@/components/ui/panel";
 import { FixedBottomBar } from "@/components/staff/fixed-bottom-bar";
+import { useBarFocus } from "@/components/staff/row-selection/bar-focus";
 import {
   releaseSelectedAction,
   undoReleaseSelectedAction,
@@ -74,8 +75,10 @@ export function BulkActionBar({
   const [reasonError, setReasonError] = useState<string | null>(null);
   const [releasePending, startRelease] = useTransition();
   const [unreleasePending, startUnrelease] = useTransition();
-
   const totalSelected = releaseCount + unreleaseCount;
+  const barRef = useRef<HTMLDivElement>(null);
+  const restoreFocus = useBarFocus(barRef, totalSelected > 0);
+
   if (totalSelected === 0) return null;
 
   const blockedForConsent = gateRequired && !consentOnFile;
@@ -159,8 +162,11 @@ export function BulkActionBar({
   return (
     <FixedBottomBar>
       <Panel
+        ref={barRef}
+        tabIndex={-1}
         role="region"
         aria-label="Bulk actions"
+        aria-keyshortcuts="Alt+B"
         className="flex flex-wrap items-center gap-3 p-3 shadow-lg"
       >
         <div
@@ -173,11 +179,13 @@ export function BulkActionBar({
           selected
           {releaseCount > 0 ? ` · ${releaseCount} ready` : ""}
           {unreleaseCount > 0 ? ` · ${unreleaseCount} released` : ""}
+          <span className="hidden text-[color:var(--color-brand-text-soft)] sm:inline"> · Alt+B</span>
         </div>
 
         <button
           type="button"
           onClick={() => {
+            restoreFocus();
             clear();
             setReason("");
             setReasonError(null);
