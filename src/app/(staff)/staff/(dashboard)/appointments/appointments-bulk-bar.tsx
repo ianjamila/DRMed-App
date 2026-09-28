@@ -1,14 +1,15 @@
 "use client";
 
-import { useTransition } from "react";
+import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { BulkBar } from "@/components/staff/row-selection/bulk-bar";
+import { BulkOutcomePanel } from "@/components/staff/row-selection/bulk-outcome";
 import { useRowSelection } from "@/components/staff/row-selection/selection-context";
 import {
   BULK_TARGET,
   bulkActionPlan,
-  outcomeMessage,
+  bulkAppointmentsMessage,
   summariseOutcome,
   type BulkAction,
   type GroupInfo,
@@ -33,7 +34,7 @@ const BUTTONS: Array<{
   { action: "arrive", label: "Mark arrived", verb: "Marked", pastTense: "arrived", variant: "success", confirm: null },
   { action: "confirm", label: "Confirm", verb: "Confirmed", pastTense: "", variant: "brand", confirm: null },
   {
-    action: "noShow", label: "No-show", verb: "Marked", pastTense: "no-show", variant: "outline",
+    action: "noShow", label: "No-show", verb: "Marked", pastTense: "as no-show", variant: "outline",
     confirm: (n) => `Mark ${n} booking${n === 1 ? "" : "s"} as no-show?`,
   },
   {
@@ -51,9 +52,14 @@ const BUTTONS: Array<{
 ];
 
 export function AppointmentsBulkBar({ groupsByKey, isAdmin }: Props) {
-  const { state, clearKeys } = useRowSelection();
+  const { state, clearKeys, count } = useRowSelection();
   const router = useRouter();
   const [pending, start] = useTransition();
+  // The last action's outcome, naming every booking not changed or skipped.
+  // It outlives the selection it reports on (which is cleared on success), so
+  // it is kept here and shown in place of the bar until dismissed or a new
+  // selection starts.
+  const [outcome, setOutcome] = useState<string | null>(null);
 
   const selected = [...state.keys()]
     .map((key) => ({ key, info: groupsByKey[key] }))
@@ -61,6 +67,8 @@ export function AppointmentsBulkBar({ groupsByKey, isAdmin }: Props) {
     .map((g) => ({ key: g.key, status: g.info.status, patientActive: g.info.patientActive }));
   const plan = bulkActionPlan(selected, isAdmin);
   const inactiveCount = selected.filter((g) => !g.patientActive).length;
+  // A new selection replaces the last outcome; it never comes back later.
+  if (count > 0 && outcome !== null) setOutcome(null);
 
   function run(button: (typeof BUTTONS)[number]) {
     const keys = plan[button.action].keys;
@@ -83,12 +91,17 @@ export function AppointmentsBulkBar({ groupsByKey, isAdmin }: Props) {
         return;
       }
       const outcome = summariseOutcome(keys, groupsByKey, result.changedIds);
-      const message = outcomeMessage(button.verb, button.pastTense, outcome);
-      if (message) alert(message);
-      // Pruning wins (spec §4): clear everything sent; the alert is the record.
-      clearKeys(keys);
+      const notSent = plan[button.action].skippedInactiveKeys;
+      setOutcome(bulkAppointmentsMessage(button, outcome, groupsByKey, notSent));
+      // Pruning wins (spec §4): clear everything sent — and the inactive ones the
+      // button left out, which the message now names — the panel is the record.
+      clearKeys([...keys, ...notSent]);
       router.refresh();
     });
+  }
+
+  if (count === 0) {
+    return outcome ? <BulkOutcomePanel message={outcome} onDismiss={() => setOutcome(null)} /> : null;
   }
 
   return (

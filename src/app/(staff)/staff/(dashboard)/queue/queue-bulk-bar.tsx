@@ -3,9 +3,8 @@
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
-import { Panel } from "@/components/ui/panel";
-import { FixedBottomBar } from "@/components/staff/fixed-bottom-bar";
 import { BulkBar } from "@/components/staff/row-selection/bulk-bar";
+import { BulkOutcomePanel } from "@/components/staff/row-selection/bulk-outcome";
 import { useRowSelection } from "@/components/staff/row-selection/selection-context";
 import { deleteTestRequestsManyAction } from "@/lib/actions/visits/queue-deletion";
 import {
@@ -131,22 +130,7 @@ export function QueueBulkBar({ rowsByKey, hasPanels }: Props) {
 
   if (count === 0) {
     if (!outcome) return null;
-    return (
-      <FixedBottomBar>
-        <Panel role="status" className="flex items-start gap-3 p-3 text-xs shadow-lg">
-          <p className="max-h-48 flex-1 overflow-y-auto whitespace-pre-line text-[color:var(--color-brand-text-mid)]">
-            {outcome}
-          </p>
-          <button
-            type="button"
-            onClick={() => setOutcome(null)}
-            className="min-h-[44px] rounded-md border border-[color:var(--color-brand-bg-mid)] bg-white px-3 font-semibold"
-          >
-            Dismiss
-          </button>
-        </Panel>
-      </FixedBottomBar>
-    );
+    return <BulkOutcomePanel message={outcome} onDismiss={() => setOutcome(null)} />;
   }
 
   return (

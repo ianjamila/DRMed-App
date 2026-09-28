@@ -3,6 +3,8 @@
 // ALLOWED_FROM and the active-patient guard themselves; this only decides
 // what to send and how to word the outcome.
 
+import { formatBulkOutcome } from "@/lib/ui/bulk-outcome";
+
 export type BulkAction = "arrive" | "noShow" | "cancel" | "confirm" | "revert" | "delete";
 
 /** Mirrors ALLOWED_FROM in appointments/actions.ts (keyed by button, not target). */
@@ -39,6 +41,7 @@ export interface BulkGroup {
 export interface BulkPlanEntry {
   keys: string[];
   skippedInactive: number;
+  skippedInactiveKeys: string[];
 }
 
 export function bulkActionPlan(
@@ -47,7 +50,7 @@ export function bulkActionPlan(
 ): Record<BulkAction, BulkPlanEntry> {
   const plan = {} as Record<BulkAction, BulkPlanEntry>;
   for (const action of Object.keys(BULK_ELIGIBLE_FROM) as BulkAction[]) {
-    const entry: BulkPlanEntry = { keys: [], skippedInactive: 0 };
+    const entry: BulkPlanEntry = { keys: [], skippedInactive: 0, skippedInactiveKeys: [] };
     if (action === "delete" && !isAdmin) {
       plan[action] = entry;
       continue;
@@ -57,6 +60,7 @@ export function bulkActionPlan(
       if (!from.includes(group.status)) continue;
       if (NEEDS_ACTIVE_PATIENT.has(action) && !group.patientActive) {
         entry.skippedInactive += 1;
+        entry.skippedInactiveKeys.push(group.key);
         continue;
       }
       entry.keys.push(group.key);
@@ -70,6 +74,8 @@ export interface GroupInfo {
   ids: string[];
   status: string;
   patientActive: boolean;
+  /** How the outcome message names the booking. */
+  label: string;
 }
 
 export interface Outcome {
@@ -78,10 +84,14 @@ export interface Outcome {
   unchanged: string[];
 }
 
-/** Maps the ids a write returned back to the bookings that were sent. */
+/**
+ * Maps the ids a write returned back to the bookings that were sent. Only
+ * reads `ids`, so it takes any lookup that has that much (deliberately
+ * narrower than `GroupInfo` — callers can pass a fixture without `label`).
+ */
 export function summariseOutcome(
   sentKeys: readonly string[],
-  groupsByKey: Record<string, GroupInfo>,
+  groupsByKey: Record<string, Pick<GroupInfo, "ids">>,
   changedIds: readonly string[],
 ): Outcome {
   const changedSet = new Set(changedIds);
@@ -133,19 +143,28 @@ export function conflictingGroupKeys(
   return conflicting;
 }
 
-/** null when every booking changed; otherwise the alert text. */
-export function outcomeMessage(verb: string, pastTense: string, outcome: Outcome): string | null {
-  const total = outcome.changed.length + outcome.partly.length + outcome.unchanged.length;
-  if (outcome.partly.length === 0 && outcome.unchanged.length === 0) return null;
-  const firstSentence = pastTense
-    ? `${verb} ${outcome.changed.length} of ${total} bookings ${pastTense}.`
-    : `${verb} ${outcome.changed.length} of ${total} bookings.`;
-  const parts = [firstSentence];
-  if (outcome.partly.length > 0) {
-    parts.push(
-      `${outcome.partly.length} partly changed — open ${outcome.partly.length === 1 ? "it" : "them"} to check.`,
-    );
-  }
-  if (outcome.unchanged.length > 0) parts.push(`${outcome.unchanged.length} had already changed.`);
-  return parts.join(" ");
+const PARTLY = "partly changed — open it to check";
+const ALREADY = "had already changed — refresh to see its status";
+const INACTIVE = "patient record deleted or merged";
+
+/** Always a message (the outcome panel is also where Undo lives). */
+export function bulkAppointmentsMessage(
+  button: { verb: string; pastTense: string },
+  outcome: Outcome,
+  groupsByKey: Readonly<Record<string, GroupInfo>>,
+  notSentKeys: readonly string[],
+): string {
+  const label = (key: string) => groupsByKey[key]?.label ?? "A booking";
+  return formatBulkOutcome({
+    verb: button.verb,
+    tail: button.pastTense || undefined,
+    noun: { one: "booking", many: "bookings" },
+    sent: outcome.changed.length + outcome.partly.length + outcome.unchanged.length,
+    changed: outcome.changed.length,
+    notChanged: [
+      ...outcome.partly.map((key) => ({ label: label(key), reason: PARTLY })),
+      ...outcome.unchanged.map((key) => ({ label: label(key), reason: ALREADY })),
+    ],
+    notSent: notSentKeys.map((key) => ({ label: label(key), reason: INACTIVE })),
+  });
 }

@@ -3,6 +3,8 @@
 // shows afterwards. Lives in src/lib because "use server" modules may only
 // export async functions and both sides need these.
 
+import { formatBulkOutcome } from "@/lib/ui/bulk-outcome";
+
 export const QUEUE_KIND = {
   claim: "claimable",
   unclaim: "unclaimable",
@@ -42,10 +44,6 @@ export interface QueueRowInfo {
   assignedTo: string | null;
 }
 
-function tests(n: number): string {
-  return `test${n === 1 ? "" : "s"}`;
-}
-
 /**
  * "Claimed 3 of 5 tests." plus one line per skipped row, naming it and why.
  * Every skipped row is named (at most 100, the action cap): the bar clears
@@ -58,16 +56,14 @@ export function bulkQueueMessage(
   result: { changedIds: readonly string[]; skipped: readonly SkippedRow[] },
   rowsByKey: Readonly<Record<string, QueueRowInfo>>,
 ): string {
-  const changed = result.changedIds.length;
-  const head =
-    changed === 0
-      ? `Nothing ${verb.toLowerCase()}.`
-      : changed === sentCount
-        ? `${verb} ${changed} ${tests(changed)}.`
-        : `${verb} ${changed} of ${sentCount} ${tests(sentCount)}.`;
-  if (result.skipped.length === 0) return head;
-  const lines = result.skipped.map(
-    (s) => `• ${rowsByKey[s.id]?.label ?? "A test"}: ${s.reason}`,
-  );
-  return [head, `Not changed (${result.skipped.length}):`, ...lines].join("\n");
+  return formatBulkOutcome({
+    verb,
+    noun: { one: "test", many: "tests" },
+    sent: sentCount,
+    changed: result.changedIds.length,
+    notChanged: result.skipped.map((s) => ({
+      label: rowsByKey[s.id]?.label ?? "A test",
+      reason: s.reason,
+    })),
+  });
 }

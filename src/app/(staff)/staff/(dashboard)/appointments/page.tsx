@@ -256,6 +256,7 @@ function groupInfoMap(
       ids: g.rows.map((row) => row.id),
       status: g.lead.status,
       patientActive: groupPatientActive(g.lead),
+      label: selectionLabel(g),
     };
   }
   return out;
