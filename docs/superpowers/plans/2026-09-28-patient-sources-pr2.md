@@ -92,9 +92,11 @@
 
 # Phase A — database
 
-### Task 1: Local stack on the safe Postgres image
+### Task 1: Current main, and the local stack on the safe Postgres image
 
 **Files:** `supabase/.temp/postgres-version` (gitignored)
+
+- [ ] **Step 0: Merge main.** `git fetch origin && git merge --no-edit origin/main` (main gained #245 — lab-queue bulk actions, guide v2.37, no migration — after this plan was written). Resolve conflicts keeping both sides; `npm test` must stay green before any new code.
 
 - [ ] **Step 1: Pin the image.** `.106`/`.111` segfault on any EXECUTE-denied call, and the proof makes many (memory `supabase-postgres-denied-function-segfault`).
 
@@ -3522,12 +3524,12 @@ describe("Patient Sources has one definition and one caller", () => {
   - The New visit section: the optional "How did you hear about us?" select appears only when the patient has no source.
   - Admin dashboard section: the "New patients today" card.
   - Glossary: add "Confirmed / unconfirmed (Patient Sources)" and "Returning, first time in our records"; update the "Referral source" entry's cross-reference to Patient Sources.
-  - Bump the TOC tag (line ≈ 250) and footer (≈ 1330) to **v2.37**, the merge date, "at migration 0189" (keep the existing out-of-order list).
-- [ ] **CLAUDE.md:** guide version line → v2.37; migration ledger: add 0189 (`patient_sources`) in the same style once applied (Task 21 fills the date); "Where things live" row: `Patient Sources (Marketing): SQL counting in 0189 (admin-gated report functions over an identity core); the one RPC caller src/lib/marketing/patient-sources.server.ts; pure helpers patient-sources.ts, period.ts, ad-spend-import.ts; pages marketing/patients(/people); CSVs /api/admin/reports/patient-sources*.csv`.
+  - Bump the TOC tag (line ≈ 250) and footer (≈ 1330) to the **next version after main's** (main was at v2.37 after #245 on 2026-09-28, so v2.38 unless main moved again), the merge date, "at migration 0189" (keep the existing out-of-order list).
+- [ ] **CLAUDE.md:** guide version line → the same version as the guide; migration ledger: add 0189 (`patient_sources`) in the same style once applied (Task 21 fills the date); "Where things live" row: `Patient Sources (Marketing): SQL counting in 0189 (admin-gated report functions over an identity core); the one RPC caller src/lib/marketing/patient-sources.server.ts; pure helpers patient-sources.ts, period.ts, ad-spend-import.ts; pages marketing/patients(/people); CSVs /api/admin/reports/patient-sources*.csv`.
 - [ ] **drmed-staff-ui skill:** `grep -n "period-chips\|Booking Sources\|marketing" .claude/skills/drmed-staff-ui/SKILL.md` — point any `period-chips` citation at `marketing/_components/period-controls.tsx`; add the Patient Sources tab and the `admin.new_patients_today` card.
 - [ ] **drmed-migrations skill:** add a 0189 line (additive; report functions `security definer` + `has_role(array['admin'])` gate + `#variable_conflict use_column`; helpers revoked from every role; `ad_spend_daily` writes only via RPC).
 - [ ] **Spec:** append "§8 Planning refinements (2026-09-28)" with P1–P17, one line each.
-- [ ] Commit — `git commit -am "docs(patient-sources): user guide v2.37, CLAUDE.md, skills, spec refinements"`
+- [ ] Commit — `git commit -am "docs(patient-sources): user guide, CLAUDE.md, skills, spec refinements"`
 
 ### Task 19: End-to-end verification on the local stack
 
