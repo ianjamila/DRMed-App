@@ -375,7 +375,9 @@ export default async function ConsolidatedQueuePage({
         </p>
       ) : loadState === "ready" ? (
         <ReportEditForm
-          key={`${editing.resultId}:${res.amendment_count}`}
+          // By report only: ReportEditForm keys its own fields by version
+          // and must itself survive the save's revalidation (X2).
+          key={editing.resultId}
           resultId={editing.resultId}
           expectedAmendmentCount={res.amendment_count}
           params={params}
