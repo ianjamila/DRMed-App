@@ -73,7 +73,7 @@ export async function claimTestAction(
     .select("id, visit_id")
     .maybeSingle();
 
-  if (error) return { ok: false, error: error.message };
+  if (error) return { ok: false, error: translatePgError(error) };
   if (!data) {
     return {
       ok: false,

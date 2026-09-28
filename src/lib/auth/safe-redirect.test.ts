@@ -52,4 +52,30 @@ describe("safeRedirectPath", () => {
   it.each([null, undefined, ""])("falls back for %s", (value) => {
     expect(safeRedirectPath(value)).toBe("/staff");
   });
+
+  // Percent-encoded ".." segments pass the raw-string ".." check above
+  // (the literal two dots never appear), but a browser (and `new URL`)
+  // decodes and resolves them before navigating — so "/staff/%2e%2e/patients"
+  // lands outside the staff area even though it started inside it.
+  it.each([
+    "/staff/%2e%2e/patients",
+    "/staff/%2E%2e/x",
+    "/staff/.%2e/x",
+    "/staff/%2e./x",
+    "/staff/foo/%2e%2e/%2e%2e/bar",
+  ])("rejects an encoded traversal segment: %s", (value) => {
+    expect(safeRedirectPath(value)).toBe("/staff");
+  });
+
+  it("keeps an ordinary path with an encoded query value", () => {
+    expect(safeRedirectPath("/staff/patients?q=a%2Fb")).toBe(
+      "/staff/patients?q=a%2Fb",
+    );
+  });
+
+  it("keeps an ordinary path with a fragment", () => {
+    expect(safeRedirectPath("/staff/visits/123#top")).toBe(
+      "/staff/visits/123#top",
+    );
+  });
 });

@@ -7643,6 +7643,18 @@ export type Database = {
         Returns: boolean
       }
       staff_role: { Args: never; Returns: string }
+      view_as_end_for: {
+        Args: { p_actor: string; p_ip?: unknown; p_target: string; p_ua?: string }
+        Returns: boolean
+      }
+      view_as_expire: {
+        Args: { p_actor: string; p_ip?: unknown; p_ua?: string }
+        Returns: boolean
+      }
+      view_as_transition: {
+        Args: { p_actor: string; p_ip?: unknown; p_role?: string; p_ua?: string }
+        Returns: Json
+      }
       visits_classification_summary: {
         Args: { p_deleted?: string; p_end?: string; p_start?: string }
         Returns: {

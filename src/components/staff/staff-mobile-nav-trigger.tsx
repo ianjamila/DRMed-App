@@ -243,14 +243,23 @@ export function StaffMobileNavTrigger({
   fullName,
   badges,
 }: Props) {
+  // Plain open/closed state. `staff-shell.tsx` keys this whole component on
+  // `viewAsStateKey(session.view_as)`, so ANY View-as state change (start,
+  // switch, exit) remounts it fresh with `open` back at its initial `false` —
+  // no effect needed, and no risk of the drawer reopening itself the way a
+  // state keyed only by role/until once did (Codex P3: exiting View-as could
+  // reopen the drawer, because "none" before opening and "none" after exiting
+  // were the same key). A FAILED switch leaves the session's `view_as`
+  // unchanged, so the key doesn't change, the parent doesn't remount, and the
+  // drawer stays open with the picker's error still visible.
   const [open, setOpen] = useState(false);
-  const pathname = usePathname();
   const close = () => setOpen(false);
+  const pathname = usePathname();
 
-  // Drawer closes via the per-link onClick={close} below; relying on those
-  // avoids a setState-in-effect on pathname (lint flags it, and it's
-  // redundant since every navigable surface in the drawer already calls
-  // close()).
+  // Drawer also closes via the per-link onClick={close} below (ordinary
+  // navigation); relying on those avoids a setState-in-effect on pathname
+  // (lint flags it, and it's redundant since every navigable surface in the
+  // drawer already calls close()).
 
   const sections = visibleNavFor(role);
 
@@ -323,7 +332,14 @@ export function StaffMobileNavTrigger({
             · {email}
           </p>
           {actualRole === "admin" && (
-            <ViewAsSelect current={viewAs?.role ?? null} id="view-as-drawer" className="mt-3" />
+            // No key here: staff-shell.tsx keys the whole trigger on the
+            // View-as state, so a state change already remounts this picker
+            // fresh — a second key on the same signal would be redundant.
+            <ViewAsSelect
+              current={viewAs?.role ?? null}
+              id="view-as-drawer"
+              className="mt-3"
+            />
           )}
           <form action={signOutStaff} className="mt-3">
             <Button type="submit" variant="outline" className="w-full text-xs">

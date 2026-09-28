@@ -18,6 +18,9 @@ import {
 import { SortableTh, PlainTh } from "@/components/staff/sortable-th";
 import { ListPagination, PAGE_SIZES } from "@/components/staff/list-pagination";
 import { AUDIT_PRESETS } from "@/lib/audit/presets";
+import { VIEW_AS_ROLES } from "@/lib/auth/view-as";
+import { ROLE_LABEL } from "@/lib/staff/role-labels";
+import { parseViewingAsFilter, viewingAsLabel } from "@/lib/audit/viewing-as-filter";
 
 export const metadata = {
   title: "Audit Log",
@@ -35,6 +38,7 @@ interface Props {
     action?: string;
     actor?: string;
     drm?: string;
+    viewing_as?: string;
     since?: string;
     until?: string;
     sort?: string;
@@ -74,6 +78,7 @@ export default async function AuditLogPage({ searchParams }: Props) {
   const size = parsePageSize(params.size, DEFAULT_SIZE);
   const page = parsePage(params.page);
   const [offset, rangeTo] = rangeFor(page, size);
+  const viewingAs = parseViewingAsFilter(params.viewing_as);
 
   // Resolve a DRM-ID to its patient_id once, then filter audit rows by
   // that patient_id. We use the admin client because the staff_profiles
@@ -121,6 +126,11 @@ export default async function AuditLogPage({ searchParams }: Props) {
   if (params.actor) {
     query = query.eq("actor_type", params.actor);
   }
+  if (viewingAs === "any") {
+    query = query.not("metadata->>acting_as", "is", null);
+  } else if (viewingAs) {
+    query = query.eq("metadata->>acting_as", viewingAs);
+  }
   if (patientFilter) {
     query = query.eq("patient_id", patientFilter.id);
   }
@@ -151,6 +161,10 @@ export default async function AuditLogPage({ searchParams }: Props) {
     action: params.action ?? null,
     actor: params.actor ?? null,
     drm: params.drm ?? null,
+    // Carry the PARSED value, not the raw param — an unrecognised
+    // `viewing_as` already resolves to "no filter" above, so re-carrying the
+    // junk forward would leave the URL claiming a filter that isn't applied.
+    viewing_as: viewingAs,
     since: params.since ?? null,
     until: params.until ?? null,
     sort: isDefaultSort ? null : sort.key,
@@ -175,7 +189,7 @@ export default async function AuditLogPage({ searchParams }: Props) {
   );
 
   const hasAnyFilter = Boolean(
-    params.action || params.actor || params.drm || params.since || params.until,
+    params.action || params.actor || params.drm || viewingAs || params.since || params.until,
   );
 
   return (
@@ -193,7 +207,16 @@ export default async function AuditLogPage({ searchParams }: Props) {
       {/* A browser submits only the fields the form carries, so without these
           hidden inputs pressing Filter would silently reset the sort and the
           page size the reader had chosen. */}
-      <form className="mb-2 grid gap-2 text-sm sm:grid-cols-2 lg:grid-cols-5">
+      {/* Keyed by the applied filters: every field is uncontrolled (defaultValue),
+          and Next keeps this page mounted across search-param changes, so
+          without a new key "Clear" would leave the old values (e.g. a
+          Viewing-as role) selected and the next Filter would re-apply them. */}
+      <form
+        key={[params.action, params.drm, params.actor, viewingAs, params.since, params.until]
+          .map((v) => v ?? "")
+          .join("|")}
+        className="mb-2 grid gap-2 text-sm sm:grid-cols-2 lg:grid-cols-5"
+      >
         {isDefaultSort ? null : (
           <>
             <input type="hidden" name="sort" value={sort.key} />
@@ -228,6 +251,20 @@ export default async function AuditLogPage({ searchParams }: Props) {
           <option value="system">System</option>
           <option value="anonymous">Anonymous</option>
         </select>
+        <select
+          name="viewing_as"
+          defaultValue={viewingAs ?? ""}
+          aria-label="Viewing as"
+          className="rounded-md border border-[color:var(--color-brand-bg-mid)] bg-white px-3 py-2 focus:border-[color:var(--color-brand-cyan)] focus:outline-none"
+        >
+          <option value="">All rows</option>
+          <option value="any">Any role view</option>
+          {VIEW_AS_ROLES.map((role) => (
+            <option key={role} value={role}>
+              {ROLE_LABEL[role]}
+            </option>
+          ))}
+        </select>
         <div className="grid grid-cols-2 gap-2 lg:col-span-1">
           <input
             type="date"
@@ -260,6 +297,7 @@ export default async function AuditLogPage({ searchParams }: Props) {
                 action: null,
                 actor: null,
                 drm: null,
+                viewing_as: null,
                 since: null,
                 until: null,
                 page: null,
@@ -319,6 +357,7 @@ export default async function AuditLogPage({ searchParams }: Props) {
               {th("action", "Action")}
               {th("actor_type", "Actor")}
               {th("resource_type", "Resource")}
+              <PlainTh label="Viewing as" />
               <PlainTh label="IP" />
               <PlainTh label="Metadata" />
             </tr>
@@ -327,7 +366,7 @@ export default async function AuditLogPage({ searchParams }: Props) {
             {(rows ?? []).length === 0 ? (
               <tr>
                 <td
-                  colSpan={6}
+                  colSpan={7}
                   className="px-4 py-8 text-center text-sm text-[color:var(--color-brand-text-soft)]"
                 >
                   No matching audit entries.
@@ -351,6 +390,13 @@ export default async function AuditLogPage({ searchParams }: Props) {
                   </td>
                   <td className="px-4 py-3 font-mono text-xs text-[color:var(--color-brand-text-mid)]">
                     {r.resource_type ? `${r.resource_type}:${(r.resource_id ?? "").slice(0, 8)}` : "—"}
+                  </td>
+                  <td className="px-4 py-3 text-xs text-[color:var(--color-brand-text-mid)]">
+                    {viewingAsLabel(
+                      r.metadata && typeof r.metadata === "object" && !Array.isArray(r.metadata)
+                        ? (r.metadata as Record<string, unknown>).acting_as
+                        : undefined,
+                    )}
                   </td>
                   <td className="px-4 py-3 font-mono text-xs text-[color:var(--color-brand-text-soft)]">
                     {(r.ip_address as unknown as string) ?? "—"}

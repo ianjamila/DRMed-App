@@ -1,8 +1,9 @@
 import { ArrowRight, MessageCircle } from "lucide-react";
-import { PillLink } from "@/components/marketing/ui";
+import { PillLink, pillLinkClassName } from "@/components/marketing/ui";
 import { Reveal } from "@/components/marketing/motion";
 import { SOCIAL } from "@/lib/marketing/site";
 import { BookingCtaLabel } from "@/components/marketing/online-booking-context";
+import { TrackedMessengerLink } from "@/components/marketing/tracked-messenger-link";
 
 /**
  * Closing CTA band for campaign landing pages — navy field with a booking pill
@@ -32,15 +33,16 @@ export function PromoClosingCta({
               <BookingCtaLabel>{primaryLabel}</BookingCtaLabel>
               <ArrowRight className="h-4 w-4" aria-hidden="true" />
             </PillLink>
-            <PillLink
+            <TrackedMessengerLink
               href={SOCIAL.messenger}
-              variant="lineOnDark"
+              contentName={`promo_closing_cta_${primaryLabel}`}
               target="_blank"
               rel="noopener noreferrer"
+              className={pillLinkClassName({ variant: "lineOnDark" })}
             >
               <MessageCircle className="h-4 w-4" aria-hidden="true" />
               Message Us on Messenger
-            </PillLink>
+            </TrackedMessengerLink>
           </div>
         </Reveal>
       </div>

@@ -22,6 +22,24 @@ const variants: Record<Variant, string> = {
     "border border-white/35 bg-transparent text-white hover:border-white hover:bg-white hover:text-[color:var(--color-brand-navy)]",
 };
 
+// The exact class string a PillLink renders, exposed so a non-Link element
+// that must look like a pill CTA (e.g. TrackedMessengerLink/TrackedTelLink,
+// which render a plain <a> so they can attach a tracking onClick) can match
+// it byte-for-byte instead of re-deriving these tokens.
+export function pillLinkClassName({
+  variant = "cyan",
+  size = "md",
+  className,
+}: {
+  variant?: Variant;
+  size?: Size;
+  className?: string;
+} = {}) {
+  return [base, sizes[size], variants[variant], className ?? ""]
+    .filter(Boolean)
+    .join(" ");
+}
+
 /**
  * Pill-shaped CTA link — the marketing button. Variants encode the AA-safe
  * color pairings (see comments). Use `line`/`lineOnDark` for secondary actions.
@@ -43,9 +61,7 @@ export function PillLink({
   return (
     <Link
       href={href}
-      className={[base, sizes[size], variants[variant], className ?? ""]
-        .filter(Boolean)
-        .join(" ")}
+      className={pillLinkClassName({ variant, size, className })}
       {...rest}
     >
       {children}
