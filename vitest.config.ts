@@ -8,7 +8,10 @@ import { fileURLToPath } from "node:url";
 // `.test.tsx` is included for the handful of *client* components worth
 // asserting markup on (e.g. the staff sidebar's collapsed-by-default
 // sections). Those render through `react-dom/server`'s
-// renderToStaticMarkup — still no DOM, still no RSC.
+// renderToStaticMarkup — still no DOM, still no RSC. A test that needs to
+// click through an interactive client component opts into a DOM for that one
+// file with a `// @vitest-environment jsdom` first line and drives it with
+// @testing-library/react + user-event; everything else stays on node.
 export default defineConfig({
   resolve: {
     alias: {

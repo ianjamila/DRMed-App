@@ -1,4 +1,5 @@
 import "server-only";
+import { smsStatus } from "./channel-status";
 
 interface SendSmsInput {
   to: string;
@@ -16,28 +17,13 @@ export type SmsResult =
 // Semaphore expects that, not E.164.
 export async function sendSms(input: SendSmsInput): Promise<SmsResult> {
   // M6: real keys in .env.local + `npm run dev` must never message real
-  // patients. Sends require production, or an explicit local opt-in.
-  const live =
-    process.env.VERCEL_ENV === "production" ||
-    process.env.NOTIFICATIONS_LIVE === "true";
-  if (!live) {
-    return {
-      ok: false,
-      kind: "skipped",
-      reason: "NOTIFICATIONS_LIVE not enabled in this environment",
-    };
-  }
+  // patients. Sends require production, or an explicit local opt-in — the
+  // shared check in channel-status.ts, which the Email Alerts page also shows.
+  const status = smsStatus();
+  if (!status.ready) return { ok: false, kind: "skipped", reason: status.reason };
 
-  const apiKey = process.env.SEMAPHORE_API_KEY;
-  const sender = process.env.SEMAPHORE_SENDER_NAME;
-
-  if (!apiKey || apiKey.includes("your_semaphore") || !sender) {
-    return {
-      ok: false,
-      kind: "skipped",
-      reason: "SEMAPHORE_API_KEY / SEMAPHORE_SENDER_NAME not configured",
-    };
-  }
+  const apiKey = process.env.SEMAPHORE_API_KEY!;
+  const sender = process.env.SEMAPHORE_SENDER_NAME!;
 
   const normalized = normalizePhPhone(input.to);
   if (!normalized) {

@@ -6,6 +6,8 @@ import { revalidatePath } from "next/cache";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { audit } from "@/lib/audit/log";
 import { requireAdminStaff } from "@/lib/auth/require-admin";
+import { endViewAsFor } from "@/lib/auth/view-as-switch";
+import type { EndViewAsActionState } from "@/lib/auth/view-as";
 import {
   AdminResetPasswordSchema,
   StaffCreateSchema,
@@ -480,4 +482,34 @@ export async function restoreStaffUserAction(
 
   revalidatePath("/staff/users");
   return { ok: true, redirect_to: `/staff/users/${staffUserId}/edit` };
+}
+
+// "End now" on the Active role views panel (spec addendum A3): an admin ends
+// ANOTHER admin's active View-as override. requireAdminStaff() alone is the
+// gate here — an admin who is themselves mid-simulation has an EFFECTIVE
+// role that isn't admin, so they can't even load /staff/users, and the "End
+// now" button is hidden on the caller's own line regardless (see
+// active-role-views-panel.tsx). No redirect: the panel lives above the
+// existing-users table on the same page, and revalidatePath refreshes both
+// in place.
+export async function endViewAsForAction(
+  _prev: EndViewAsActionState,
+  formData: FormData,
+): Promise<EndViewAsActionState> {
+  const session = await requireAdminStaff();
+  const { ip, ua } = await ipAndAgent();
+  const result = await endViewAsFor(session, formData.get("target_id"), { ip, ua });
+  if (!result.ok) {
+    await reportError({
+      scope: "view-as.end-for",
+      error: new Error(result.error),
+      metadata: { userId: session.user_id, targetId: formData.get("target_id") },
+    });
+    return { error: result.error, notice: null };
+  }
+  if (!result.ended) {
+    return { error: null, notice: "That role view had already ended." };
+  }
+  revalidatePath("/staff/users");
+  return { error: null, notice: null };
 }

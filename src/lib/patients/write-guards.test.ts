@@ -101,6 +101,10 @@ const EXEMPT: Record<string, string> = {
     "A deleted/merged patient has no open lines to claim; claiming does not bill or release.",
   [`src/app/(staff)/staff/(dashboard)/queue/actions.ts:performUnclaim`]:
     "Handing a claim back reduces work, same reasoning as claimTestAction; shared by unclaimTestAction/unclaimOwnTestAction/unclaimFromQueueAction.",
+  [`src/app/(staff)/staff/(dashboard)/queue/actions.ts:claimTestsAction`]:
+    "Bulk form of claimTestAction — claiming does not bill or release, and a deleted/merged patient has no open lines to claim.",
+  [`src/app/(staff)/staff/(dashboard)/queue/actions.ts:unclaimTestsAction`]:
+    "Bulk form of the queue list's Unclaim — handing a claim back reduces work, same reasoning as performUnclaim.",
   [`src/app/(staff)/staff/(dashboard)/queue/actions.ts:reassignTestAction`]:
     "Reassigning an already-claimed line does not put new work or money on the record.",
   [`src/app/(staff)/staff/(dashboard)/queue/consolidated/[visitId]/[groupId]/actions.ts:claimConsolidated`]:
@@ -127,8 +131,8 @@ const EXEMPT: Record<string, string> = {
     "Task 15 undo-merge — the paired lifecycle RPC-equivalent caller to mergePatientsAction above.",
   [`src/lib/actions/visits/queue-deletion.ts:deleteVisitAction`]:
     "Deletes stay unguarded by design (Task 23) — they remove work, never put it back.",
-  [`src/lib/actions/visits/queue-deletion.ts:deleteTestRequestsAction`]:
-    "Deletes stay unguarded by design (Task 23) — they remove work, never put it back.",
+  [`src/lib/actions/visits/queue-deletion.ts:deleteTestRequestsForVisit`]:
+    "Deletes stay unguarded by design (Task 23) — they remove work, never put it back. Shared core of deleteTestRequestsAction and deleteTestRequestsManyAction.",
   [`src/app/(staff)/staff/(dashboard)/appointments/actions.ts:attachPatientToAppointmentAction`]:
     "The patient is resolved via an activePatients(...)-filtered read or resolvePatient (active-only, Task 9) earlier in this same function, before the attach write.",
   [`src/app/(staff)/staff/(dashboard)/appointments/actions.ts:deleteGroups`]:

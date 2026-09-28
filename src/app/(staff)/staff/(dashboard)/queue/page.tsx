@@ -61,6 +61,12 @@ import {
   type PdfState,
 } from "@/lib/results/pdf-availability";
 import { canViewResultPdf } from "@/lib/visits/line-visibility";
+import { SelectionProvider } from "@/components/staff/row-selection/selection-context";
+import { RowSelectCheckbox } from "@/components/staff/row-selection/row-select-checkbox";
+import { SelectAllCheckbox } from "@/components/staff/row-selection/select-all-checkbox";
+import type { SelectionEntry } from "@/lib/ui/bulk-selection";
+import { queueRowKinds, type QueueRowInfo } from "@/lib/queue/bulk-queue";
+import { QueueBulkBar } from "./queue-bulk-bar";
 
 const LAB_QUEUE_SUBSCRIPTIONS = [
   { table: "test_requests", event: "INSERT" },
@@ -597,6 +603,51 @@ export default async function QueuePage({ searchParams }: SearchProps) {
     card.claimedBy !== null &&
     (session.role === "admin" || card.claimedBy === user?.id);
 
+  // Bulk selection (spec §6). Reception never gets checkboxes (it only sees
+  // Released today), and Released today is a record, not a worklist. A row's
+  // kinds come from the SAME predicates that render its buttons below, so
+  // the bar never offers what the row itself wouldn't. Chemistry panel cards
+  // get no checkbox: paging happens before the fold, so a visible card can
+  // hold part of a panel.
+  const selectable = !receptionView && !releasedTab;
+  const singleKinds = (card: QueueCardSingle) =>
+    queueRowKinds({
+      claimable: card.status === "requested" && canClaimSection(session.role, card.section),
+      unclaimable: canUnclaim(card),
+      deletable: card.canDelete,
+    });
+  const selectionEntries: SelectionEntry[] = [];
+  const rowsByKey: Record<string, QueueRowInfo> = {};
+  if (selectable) {
+    for (const card of matched) {
+      if (card.kind !== "single") continue;
+      const kinds = singleKinds(card);
+      if (kinds.length === 0) continue;
+      selectionEntries.push({ rowKey: card.testRequestId, kinds, weight: 1 });
+      rowsByKey[card.testRequestId] = {
+        visitId: card.visitId,
+        label: `${card.label} — ${card.patientName}`,
+        assignedTo: card.claimedBy,
+      };
+    }
+  }
+  const hasPanels = matched.some((card) => card.kind === "grouped");
+  // Any change to what the list shows or its order drops the selection —
+  // SelectionProvider resets itself on this string WITHOUT remounting the
+  // table (never put a React key on the provider).
+  const selectionResetKey = [
+    filter,
+    mineOnly ? "1" : "",
+    start,
+    end,
+    q,
+    visit,
+    sort.key,
+    sort.dir,
+    String(page),
+    String(size),
+  ].join("|");
+
   // `q` is applied after the fetch, so it can only narrow the page in hand —
   // everything else is a real DB filter and counts against the whole table.
   const hasServerFilters = hasDateRange || Boolean(visit);
@@ -891,10 +942,19 @@ export default async function QueuePage({ searchParams }: SearchProps) {
         </p>
       ) : null}
 
+      <SelectionProvider resetKey={selectionResetKey}>
       <Panel className="overflow-x-auto">
         <table className="w-full text-sm">
           <thead className="bg-[color:var(--color-brand-bg)] text-left text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
             <tr>
+              {selectable ? (
+                <th className="w-12 px-2 py-3">
+                  <SelectAllCheckbox
+                    entries={selectionEntries}
+                    label="Select all tests on this page"
+                  />
+                </th>
+              ) : null}
               {/* "Released today" is about when work LEFT the bench, and the
                   tab has always ordered by `released_at` — but the column was
                   labelled "Requested" and printed the request time, so the
@@ -916,7 +976,7 @@ export default async function QueuePage({ searchParams }: SearchProps) {
             {matched.length === 0 ? (
               <tr>
                 <td
-                  colSpan={receptionView ? 6 : 7}
+                  colSpan={(receptionView ? 6 : 7) + (selectable ? 1 : 0)}
                   className="px-4 py-8 text-center text-sm text-[color:var(--color-brand-text-soft)]"
                 >
                   {hasFilters
@@ -931,11 +991,23 @@ export default async function QueuePage({ searchParams }: SearchProps) {
             ) : (
               matched.map((card) => {
                 if (card.kind === "single") {
+                  const kinds = selectable ? singleKinds(card) : [];
                   return (
                     <tr
                       key={card.testRequestId}
                       className="hover:bg-[color:var(--color-brand-bg)]"
                     >
+                      {selectable ? (
+                        <td className="px-2 py-3 align-middle">
+                          {kinds.length > 0 ? (
+                            <RowSelectCheckbox
+                              rowKey={card.testRequestId}
+                              kinds={kinds}
+                              label={`${card.label}, ${card.patientName}`}
+                            />
+                          ) : null}
+                        </td>
+                      ) : null}
                       <td className="px-4 py-3 text-[color:var(--color-brand-text-mid)]">
                         {manilaDateTime(releasedTab ? card.releasedAt : card.requestedAt)}
                       </td>
@@ -1046,6 +1118,7 @@ export default async function QueuePage({ searchParams }: SearchProps) {
                     key={card.cardKey}
                     className="hover:bg-[color:var(--color-brand-bg)]"
                   >
+                    {selectable ? <td className="px-2 py-3" aria-hidden /> : null}
                     <td className="px-4 py-3 text-[color:var(--color-brand-text-mid)]">
                       {manilaDateTime(releasedTab ? card.releasedAt : card.requestedAt)}
                     </td>
@@ -1145,6 +1218,8 @@ export default async function QueuePage({ searchParams }: SearchProps) {
           </tbody>
         </table>
       </Panel>
+        {selectable ? <QueueBulkBar rowsByKey={rowsByKey} hasPanels={hasPanels} /> : null}
+      </SelectionProvider>
 
       {/* The pager counts TESTS, which is what `.range()` slices; a
           consolidated chemistry card folds several of them into one row. */}

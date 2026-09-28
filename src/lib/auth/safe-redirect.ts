@@ -36,5 +36,25 @@ export function safeRedirectPath(next: string | null | undefined): string {
   // CR/LF/NUL and friends can split a header or truncate a URL. DEL too.
   if (hasControlCharacter(next)) return DEFAULT_PATH;
 
+  // The checks above only look at the RAW string, so a percent-encoded ".."
+  // segment (any case, and mixed with a literal dot — "%2e.", ".%2e") sails
+  // through: the literal two dots never appear. A browser decodes and
+  // resolves the path before navigating, so "/staff/%2e%2e/patients" lands
+  // on "/patients" — same origin, never off-site, but outside the staff area
+  // this function promises. Resolve against a fixed dummy origin (WHATWG URL
+  // parsing does the percent-decoding and dot-segment collapsing for us) and
+  // require the result to still be same-origin and inside /staff.
+  const DUMMY_ORIGIN = "https://x.invalid";
+  let resolved: URL;
+  try {
+    resolved = new URL(next, DUMMY_ORIGIN);
+  } catch {
+    return DEFAULT_PATH;
+  }
+  if (resolved.origin !== DUMMY_ORIGIN) return DEFAULT_PATH;
+  if (resolved.pathname !== "/staff" && !resolved.pathname.startsWith("/staff/")) {
+    return DEFAULT_PATH;
+  }
+
   return next;
 }
