@@ -61,11 +61,11 @@ export function parsePanelRowKey(key: string): { visitId: string; groupId: strin
 }
 
 /**
- * One result for a bulk Claim that went to two actions: single tests
- * (claimTestsAction) and chemistry panels (claimPanelsAction). A refusal of
- * the whole single-test call is returned as-is — the caller never sends the
- * panels then. A refusal of the whole panel call lands every panel in
- * `skipped`, because the single tests before it WERE claimed.
+ * One result for a bulk action that ran the single tests and the chemistry
+ * panels separately (queue/panel-actions.ts). A refusal of the whole
+ * single-test call is returned as-is — the caller never runs the panels then.
+ * A refusal of a whole panel call lands every key in `panelKeys` in
+ * `skipped`, because the single tests before it DID change.
  */
 export function combineClaimResults(
   single: BulkQueueResult | null,

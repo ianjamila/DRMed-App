@@ -20,6 +20,7 @@ import {
 } from "@/lib/queue/claim-eligibility";
 import { ipAndAgent } from "@/lib/server/action-helpers";
 import type { BulkQueueResult, SkippedRow } from "@/lib/queue/bulk-queue";
+import { unclaimPanelMembers } from "@/lib/actions/queue/panel-writes";
 
 export type ClaimResult = { ok: true } | { ok: false; error: string };
 
@@ -150,6 +151,33 @@ async function performUnclaim(
   const refusal = ownerId === null ? UNCLAIM_REFUSAL_ANY : UNCLAIM_REFUSAL_OWN;
   if (before.some((r) => !evaluateUnclaim(r, ownerId).ok)) {
     return { ok: false, error: refusal };
+  }
+
+  // A consolidated panel is handed back in ONE statement (0191,
+  // unclaim_panel_members): every member under the one holder the pre-read
+  // saw, or nothing — a member that changes in between raises P0077 instead
+  // of leaving the report half returned.
+  if (testRequestIds.length > 1) {
+    const holders = new Set(before.map((r) => r.assigned_to));
+    const holder = holders.size === 1 ? [...holders][0] : null;
+    if (!holder) {
+      return {
+        ok: false,
+        error: "The tests in this report are held by different people — refresh the queue.",
+      };
+    }
+    const visitOf = new Map(before.map((r) => [r.id, r.visits.id]));
+    const result = await unclaimPanelMembers(session, supabase, {
+      testRequestIds,
+      holder,
+      visitIdOf: (id) => visitOf.get(id) ?? null,
+      reason: reason?.trim() || null,
+      selfService: ownerId !== null,
+    });
+    if (!result.ok) return result;
+    revalidatePath("/staff/queue");
+    for (const id of testRequestIds) revalidatePath(`/staff/queue/${id}`);
+    return { ok: true };
   }
 
   // Only an in-flight claim with no uploaded result can be unclaimed. A

@@ -250,6 +250,11 @@ export function translatePgError(err: PgError): string {
     // mid-simulation.
     case "P0076":
       return "Only an admin who isn't viewing the app as another role can end someone's role view.";
+    // 0191 claim_panel_members: the panel was not claimed at all (all or nothing).
+    case "P0077":
+      return err.message
+        ? err.message
+        : "Some tests in this report were already claimed or changed status.";
     default:
       return err.message ?? "Database error. Please try again.";
   }

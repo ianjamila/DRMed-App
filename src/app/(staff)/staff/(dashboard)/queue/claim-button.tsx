@@ -4,7 +4,7 @@ import { useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { claimTestAction } from "./actions";
-import { claimPanelAction } from "./consolidated/[visitId]/[groupId]/actions";
+import { claimPanelAction } from "./panel-actions";
 
 // One test, or a whole consolidated chemistry panel — the panel is named by
 // (visit, report group) and its members are resolved on the server, because
