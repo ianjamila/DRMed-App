@@ -14,12 +14,47 @@ import { shouldOfferNotify } from "@/lib/results/copy-followups";
 import { fetchCopyStateAdmin } from "@/lib/results/copy-followups.server";
 import { allLinksReleased, fetchLinkedTestRequestStatusesStrict } from "@/lib/results/release-eligibility";
 
-export type NotifyOutcome = "sent" | "sent_unrecorded" | "failed" | "already" | "inactive" | "not_released";
+export type NotifyOutcome =
+  | "sent"
+  | "sent_unrecorded"
+  | "failed"
+  | "not_set_up"
+  | "already"
+  | "inactive"
+  | "not_released";
 
 /** Every outcome an edit form's "let the patient know" checkbox can settle
  * on, including the two that are decided before notifyResultCorrected is
  * even called. */
 export type CorrectedNotifyOutcome = NotifyOutcome | "not_offered" | "check_failed";
+
+// The two skip reasons this file produces for a missing contact. Every other
+// "skipped" comes from the provider itself (sendSms / sendEmail): its keys are
+// not configured, or NOTIFICATIONS_LIVE is off.
+const NO_PHONE = "patient has no phone on file";
+const NO_EMAIL = "patient has no email on file";
+
+type ChannelResult = { ok: true } | { ok: false; kind: "skipped"; reason: string } | { ok: false; kind: "error"; error: string };
+
+/**
+ * Why a send reached nobody, for result_amendments.patient_notify_error.
+ * "no contact on file" only when the patient genuinely has neither a phone
+ * nor an email; when every channel was skipped and at least one only because
+ * notices aren't set up here, say so (notSetUp) rather than blame the
+ * patient's record.
+ */
+export function describeSendFailure(sms: ChannelResult, email: ChannelResult): { error: string; notSetUp: boolean } {
+  const failed = [sms, email].filter((r): r is Exclude<ChannelResult, { ok: true }> => !r.ok);
+  const reasons = failed.map((r) => (r.kind === "skipped" ? r.reason : r.error));
+  const allSkipped = failed.every((r) => r.kind === "skipped");
+  if (allSkipped && reasons.every((r) => r === NO_PHONE || r === NO_EMAIL)) {
+    return { error: "no contact on file", notSetUp: false };
+  }
+  if (allSkipped) {
+    return { error: `notices not set up: ${reasons.join("; ")}`, notSetUp: true };
+  }
+  return { error: reasons.join("; "), notSetUp: false };
+}
 
 interface Args {
   /**
@@ -135,6 +170,7 @@ export async function notifyResultCorrected({
 
   let channels: string[] = [];
   let error: string | null = null;
+  let notSetUp = false;
   let smsMeta: unknown = null;
   let emailMeta: unknown = null;
 
@@ -157,14 +193,14 @@ export async function notifyResultCorrected({
         : Promise.resolve({
             ok: false as const,
             kind: "skipped" as const,
-            reason: "patient has no phone on file",
+            reason: NO_PHONE,
           }),
       patient?.email
         ? sendEmail({ to: patient.email, subject: msg.emailSubject, text: msg.sms, html: msg.emailHtml })
         : Promise.resolve({
             ok: false as const,
             kind: "skipped" as const,
-            reason: "patient has no email on file",
+            reason: NO_EMAIL,
           }),
     ]);
 
@@ -197,15 +233,7 @@ export async function notifyResultCorrected({
     if (smsResult.ok) channels.push("sms");
     if (emailResult.ok) channels.push("email");
     if (channels.length === 0) {
-      error =
-        !smsResult.ok && smsResult.kind === "skipped" && !emailResult.ok && emailResult.kind === "skipped"
-          ? "no contact on file"
-          : [
-              !smsResult.ok ? (smsResult.kind === "skipped" ? smsResult.reason : smsResult.error) : null,
-              !emailResult.ok ? (emailResult.kind === "skipped" ? emailResult.reason : emailResult.error) : null,
-            ]
-              .filter(Boolean)
-              .join("; ");
+      ({ error, notSetUp } = describeSendFailure(smsResult, emailResult));
     }
   } catch (e) {
     await reportError({
@@ -266,7 +294,7 @@ export async function notifyResultCorrected({
     });
   }
 
-  if (channels.length === 0) return "failed";
+  if (channels.length === 0) return notSetUp ? "not_set_up" : "failed";
   return recorded ? "sent" : "sent_unrecorded";
 }
 

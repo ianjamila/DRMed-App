@@ -549,7 +549,7 @@ const LIFECYCLES: Record<string, LifecycleSurface> = {
   },
   "app/(staff)/staff/(dashboard)/payments/new/actions.ts": {
     lifecycle: "live",
-    why: "Records a payment. P0045 blocks the insert at the database, but only as a raw Postgres error — the filter is what produces a sentence the operator can act on.",
+    why: "Records a payment. P0045 blocks the insert at the database, but only as a raw Postgres error — the filter is what produces a sentence the operator can act on. Also reads a visit's payment_status by id to refuse a payment on a waived visit (0183) — a deleted visit is refused by P0045 either way.",
   },
   "app/(staff)/staff/(dashboard)/payments/new/page.tsx": {
     lifecycle: "live",
