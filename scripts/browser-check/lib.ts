@@ -6,7 +6,7 @@
  * `npm run seed:test && npm run seed:hmo && npm run seed:bulk-fixtures`.
  */
 import "../lib/load-env";
-import { chromium, type Browser, type Page } from "playwright-core";
+import { chromium, type Browser, type BrowserContext, type Page } from "playwright-core";
 import { Client } from "pg";
 import { refuseNonLocal, requireLocalOrExplicitProd } from "../lib/env-guard";
 
@@ -64,12 +64,56 @@ export async function signIn(
     await d.accept();
   });
   await page.goto(`${APP_BASE}/staff/login`);
-  await page.fill('input[name="email"]', email);
-  await page.fill('input[name="password"]', password);
-  await Promise.all([
-    page.waitForURL((u) => !u.pathname.includes("/login"), { timeout: 30_000 }),
-    page.click('button[type="submit"]'),
-  ]);
+  // Local GoTrue's default sign-in rate limit is per-IP, and this script
+  // signs the same two accounts in repeatedly (once per run, times however
+  // many runs happen back to back) — a transient 429 shows up as the form
+  // re-rendering on /login rather than redirecting. Retry with backoff
+  // instead of failing the whole checklist over it.
+  const MAX_ATTEMPTS = 4;
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    await page.fill('input[name="email"]', email);
+    await page.fill('input[name="password"]', password);
+    await page.click('button[type="submit"]');
+    try {
+      await page.waitForURL((u) => !u.pathname.includes("/login"), { timeout: 8_000 });
+      return page;
+    } catch {
+      if (attempt === MAX_ATTEMPTS) {
+        throw new Error(
+          `signIn(${email}) did not leave /login after ${MAX_ATTEMPTS} attempts — likely local GoTrue rate limiting from repeated runs; wait a few minutes and retry`,
+        );
+      }
+      await sleep(attempt * 5_000);
+      await page.goto(`${APP_BASE}/staff/login`);
+    }
+  }
+  throw new Error("unreachable");
+}
+
+export type StorageState = Awaited<ReturnType<BrowserContext["storageState"]>>;
+
+/**
+ * A second page for an ALREADY-signed-in account, via its saved
+ * storageState (cookies) — no fresh GoTrue sign-in. Local GoTrue's default
+ * sign-in rate limit (`sign_in_sign_ups`, 30 per 5 minutes per IP,
+ * supabase/config.toml) is easy to trip when a check needs a second
+ * viewport (390px) or a second tab for the SAME account: this is how R2
+ * gets its own context without spending another login attempt. Each
+ * account signs in via `signIn()` exactly ONCE per run; every other page
+ * for it comes from here.
+ */
+export async function newPageFromState(
+  browser: Browser,
+  storageState: StorageState,
+  viewport = { width: 1280, height: 800 },
+): Promise<Page & { dialogs: string[] }> {
+  const ctx = await browser.newContext({ viewport, storageState });
+  const page = (await ctx.newPage()) as Page & { dialogs: string[] };
+  page.dialogs = [];
+  page.on("dialog", async (d) => {
+    page.dialogs.push(d.message());
+    await d.accept();
+  });
   return page;
 }
 
@@ -109,4 +153,25 @@ export async function setInactiveRole(
 
 export async function sleep(ms: number): Promise<void> {
   await new Promise((r) => setTimeout(r, ms));
+}
+
+/**
+ * Polls a locator's count instead of reading it once right after a fixed
+ * sleep — the outcome panel (with its ↶ Undo button) appears after a
+ * client-side `router.refresh()`, whose timing isn't guaranteed by any
+ * single sleep, especially when the shared local stack is under load from
+ * another session. Returns the count once it's non-zero, or 0 if it never is.
+ */
+export async function waitForCount(
+  locator: { count: () => Promise<number> },
+  timeoutMs = 6_000,
+  intervalMs = 200,
+): Promise<number> {
+  const start = Date.now();
+  let n = await locator.count();
+  while (n === 0 && Date.now() - start < timeoutMs) {
+    await sleep(intervalMs);
+    n = await locator.count();
+  }
+  return n;
 }
