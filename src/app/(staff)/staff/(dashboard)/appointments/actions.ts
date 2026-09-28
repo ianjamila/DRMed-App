@@ -51,7 +51,7 @@ const ALLOWED_FROM: Record<Transition, string[]> = {
 };
 
 export type ApptResult =
-  | { ok: true; changedIds: string[] }
+  | { ok: true; changedIds: string[]; batchId?: string }
   | { ok: false; error: string };
 
 // One booking as the operator saw it: its appointment ids and the status on
@@ -122,6 +122,7 @@ async function transitionGroups(
   batch: ReadonlyArray<BatchEntry>,
   to: Transition,
   extraMetadata?: Record<string, unknown>,
+  batchId?: string,
 ): Promise<ApptResult> {
   const session = await requireActiveStaff();
   if (session.role !== "reception" && session.role !== "admin") {
@@ -177,6 +178,16 @@ async function transitionGroups(
   // deciding whether to report an error — with a multi-status bulk, write A
   // can commit while write B errors, and A's rows must not go unaudited or
   // leave the page stale just because B failed.
+  // The status each id carried into this call — the "current" side of an
+  // Undo plan — from the operator-supplied `from` buckets. The legacy
+  // `from: null` bucket (single-row callers) records none: those callers
+  // include a deliberate revert, so there is no one "prior" status to name.
+  const fromOf = new Map<string, string>();
+  for (const [from, groupIds] of idsByFrom) {
+    if (from === null) continue;
+    for (const id of groupIds) fromOf.set(id, from);
+  }
+
   if (data.length > 0) {
     const h = await headers();
     const ip = h.get("x-forwarded-for")?.split(",")[0]?.trim() ?? null;
@@ -198,6 +209,8 @@ async function transitionGroups(
             actor_role: session.role,
             group_appointment_ids: siblings.get(row.id) ?? [row.id],
             bulk_batch_size: ids.length,
+            ...(fromOf.has(row.id) ? { previous_status: fromOf.get(row.id) } : {}),
+            ...(batchId ? { bulk_batch_id: batchId } : {}),
             ...extraMetadata,
           },
           ip_address: ip,
@@ -227,10 +240,10 @@ async function transitionGroups(
     // through its normal ok outcome — still refresh so the list catches up.
     if (idsByFrom.has(null)) return { ok: false, error: notInState };
     revalidatePath("/staff/appointments");
-    return { ok: true, changedIds: [] };
+    return { ok: true, changedIds: [], ...(batchId ? { batchId } : {}) };
   }
 
-  return { ok: true, changedIds: data.map((row) => row.id) };
+  return { ok: true, changedIds: data.map((row) => row.id), ...(batchId ? { batchId } : {}) };
 }
 
 // Single-booking wrapper — every existing caller (the row buttons,
@@ -281,7 +294,8 @@ export async function bulkTransitionAction(batch: unknown, to: unknown): Promise
   if (!parsedBatch.success || !parsedTo.success) {
     return { ok: false, error: "Could not read the selection — refresh and try again." };
   }
-  return transitionGroups(parsedBatch.data, parsedTo.data);
+  const batchId = crypto.randomUUID();
+  return transitionGroups(parsedBatch.data, parsedTo.data, undefined, batchId);
 }
 
 // Completes the appointment(s) a visit was started from. Called from
@@ -577,7 +591,7 @@ export async function attachPatientToAppointmentAction(
   return { ok: true, changedIds: updatedIds };
 }
 
-async function deleteGroups(batch: ReadonlyArray<BatchEntry>): Promise<ApptResult> {
+async function deleteGroups(batch: ReadonlyArray<BatchEntry>, batchId?: string): Promise<ApptResult> {
   const session = await requireActiveStaff();
   if (session.role !== "admin") {
     return { ok: false, error: "Admin only." };
@@ -632,6 +646,7 @@ async function deleteGroups(batch: ReadonlyArray<BatchEntry>): Promise<ApptResul
             scheduled_at: row.scheduled_at,
             group_appointment_ids: siblings.get(row.id) ?? [row.id],
             bulk_batch_size: ids.length,
+            ...(batchId ? { bulk_batch_id: batchId } : {}),
           },
           ip_address: ip,
           user_agent: ua,
@@ -660,10 +675,10 @@ async function deleteGroups(batch: ReadonlyArray<BatchEntry>): Promise<ApptResul
     // through its normal ok outcome — still refresh so the list catches up.
     if (idsByFrom.has(null)) return { ok: false, error: "No matching appointments." };
     revalidatePath("/staff/appointments");
-    return { ok: true, changedIds: [] };
+    return { ok: true, changedIds: [], ...(batchId ? { batchId } : {}) };
   }
 
-  return { ok: true, changedIds: deleted.map((row) => row.id) };
+  return { ok: true, changedIds: deleted.map((row) => row.id), ...(batchId ? { batchId } : {}) };
 }
 
 // Single booking, any status — today's row-button behaviour (now audited from
@@ -685,7 +700,8 @@ export async function bulkDeleteAction(batch: unknown): Promise<ApptResult> {
   if (parsed.data.some((entry) => !BULK_DELETABLE_STATUSES.includes(entry.from))) {
     return { ok: false, error: "Completed bookings cannot be deleted from here." };
   }
-  return deleteGroups(parsed.data);
+  const batchId = crypto.randomUUID();
+  return deleteGroups(parsed.data, batchId);
 }
 
 // ---------------------------------------------------------------------------
@@ -731,6 +747,7 @@ async function auditBulk(
   groups: string[][],
   action: string,
   via: string,
+  batchId?: string,
 ) {
   const h = await headers();
   const ip = h.get("x-forwarded-for")?.split(",")[0]?.trim() ?? null;
@@ -752,6 +769,7 @@ async function auditBulk(
           via,
           stale_after_days: STALE_UNTIMED_AFTER_DAYS,
           bulk_booking_count: groups.length,
+          ...(batchId ? { bulk_batch_id: batchId } : {}),
         },
         ip_address: ip,
         user_agent: ua,
@@ -769,6 +787,7 @@ export async function markLikelyNoShowsAction(bookings: BulkBookingIds): Promise
   if (!parsed.success) return { ok: false, error: "Nothing to mark — refresh the page and try again." };
 
   const cutoffIso = staleCutoffIso(todayManilaISODate());
+  const batchId = crypto.randomUUID();
   const supabase = await createClient();
   const moved: { id: string; patient_id: string | null }[] = [];
   for (const ids of chunk(parsed.data.flat(), BULK_ID_CHUNK)) {
@@ -785,7 +804,7 @@ export async function markLikelyNoShowsAction(bookings: BulkBookingIds): Promise
       // reception see what happened rather than hiding a partial run.
       if (moved.length > 0) {
         const groups = regroup(parsed.data, new Set(moved.map((r) => r.id)));
-        await auditBulk(session, moved, groups, "appointment.no_show", "bulk_likely_no_show");
+        await auditBulk(session, moved, groups, "appointment.no_show", "bulk_likely_no_show", batchId);
         revalidatePath("/staff/appointments");
       }
       return { ok: false, error: "Could not mark all of them — refresh the page to see which are left." };
@@ -797,7 +816,7 @@ export async function markLikelyNoShowsAction(bookings: BulkBookingIds): Promise
     return { ok: false, error: "None of those bookings can be marked any more — refresh the page." };
   }
   const groups = regroup(parsed.data, new Set(moved.map((r) => r.id)));
-  await auditBulk(session, moved, groups, "appointment.no_show", "bulk_likely_no_show");
+  await auditBulk(session, moved, groups, "appointment.no_show", "bulk_likely_no_show", batchId);
   revalidatePath("/staff/appointments");
   return { ok: true, data: { marked: groups } };
 }
@@ -842,6 +861,7 @@ export async function undoLikelyNoShowsAction(bookings: BulkBookingIds): Promise
   const active = await assertAppointmentsPatientsActive(admin, restorableIds);
   if (!active.ok) return { ok: false, error: active.error };
 
+  const batchId = crypto.randomUUID();
   const supabase = await createClient();
   const moved: { id: string; patient_id: string | null }[] = [];
   for (const ids of chunk(restorableIds, BULK_ID_CHUNK)) {
@@ -854,7 +874,7 @@ export async function undoLikelyNoShowsAction(bookings: BulkBookingIds): Promise
     if (error) {
       if (moved.length > 0) {
         const groups = regroup(restorable, new Set(moved.map((r) => r.id)));
-        await auditBulk(session, moved, groups, "appointment.confirmed", "bulk_likely_no_show_undo");
+        await auditBulk(session, moved, groups, "appointment.confirmed", "bulk_likely_no_show_undo", batchId);
         revalidatePath("/staff/appointments");
       }
       return { ok: false, error: "Could not undo all of them — refresh the page to see which are back." };
@@ -868,7 +888,7 @@ export async function undoLikelyNoShowsAction(bookings: BulkBookingIds): Promise
       : { ok: false, error: "Nothing left to undo." };
   }
   const groups = regroup(restorable, new Set(moved.map((r) => r.id)));
-  await auditBulk(session, moved, groups, "appointment.confirmed", "bulk_likely_no_show_undo");
+  await auditBulk(session, moved, groups, "appointment.confirmed", "bulk_likely_no_show_undo", batchId);
   revalidatePath("/staff/appointments");
   return { ok: true, data: { marked: groups, heldBack: heldBack.length } };
 }

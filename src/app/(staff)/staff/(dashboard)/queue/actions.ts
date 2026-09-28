@@ -283,6 +283,7 @@ export async function claimTestsAction(input: unknown): Promise<BulkQueueResult>
   }
   const parsed = BulkClaimSchema.safeParse(input);
   if (!parsed.success) return { ok: false, error: BULK_INPUT_ERROR };
+  const batchId = crypto.randomUUID();
   const ids = Array.from(new Set(parsed.data.testIds));
   const panelsByKey = new Map<string, PanelRef>();
   for (const p of parsed.data.panels) {
@@ -452,7 +453,7 @@ export async function claimTestsAction(input: unknown): Promise<BulkQueueResult>
       action: "test_request.claimed",
       resource_type: "test_request",
       resource_id: row.id,
-      metadata: { visit_id: row.visit_id, bulk_batch_size: ids.length },
+      metadata: { visit_id: row.visit_id, bulk_batch_size: ids.length, bulk_batch_id: batchId },
       ip_address: ip,
       user_agent: ua,
     });
@@ -465,7 +466,12 @@ export async function claimTestsAction(input: unknown): Promise<BulkQueueResult>
         action: "test_request.claimed",
         resource_type: "test_request",
         resource_id: row.id,
-        metadata: { visit_id: row.visit_id, bulk_batch_size: totalRecords, panel_key: panel.key },
+        metadata: {
+          visit_id: row.visit_id,
+          bulk_batch_size: totalRecords,
+          panel_key: panel.key,
+          bulk_batch_id: batchId,
+        },
         ip_address: ip,
         user_agent: ua,
       });
@@ -484,6 +490,7 @@ export async function claimTestsAction(input: unknown): Promise<BulkQueueResult>
     ok: true,
     changedIds: [...changed.map((r) => r.id), ...changedPanels.map((p) => p.key)],
     skipped,
+    batchId,
   };
 }
 
@@ -513,6 +520,7 @@ export async function unclaimTestsAction(input: unknown): Promise<BulkQueueResul
   }
   const parsed = BulkUnclaimSchema.safeParse(input);
   if (!parsed.success) return { ok: false, error: BULK_INPUT_ERROR };
+  const batchId = crypto.randomUUID();
   // First occurrence of an id wins.
   const seenHolder = new Map<string, string>();
   for (const item of parsed.data.items) {
@@ -708,6 +716,7 @@ export async function unclaimTestsAction(input: unknown): Promise<BulkQueueResul
         reason,
         self_service: ownerId !== null,
         bulk_batch_size: ids.length,
+        bulk_batch_id: batchId,
       },
       ip_address: ip,
       user_agent: ua,
@@ -729,6 +738,7 @@ export async function unclaimTestsAction(input: unknown): Promise<BulkQueueResul
           self_service: ownerId !== null,
           bulk_batch_size: totalRecords,
           panel_key: panel.key,
+          bulk_batch_id: batchId,
         },
         ip_address: ip,
         user_agent: ua,
@@ -748,6 +758,7 @@ export async function unclaimTestsAction(input: unknown): Promise<BulkQueueResul
     ok: true,
     changedIds: [...changed.map((r) => r.id), ...changedPanels.map((p) => p.key)],
     skipped,
+    batchId,
   };
 }
 

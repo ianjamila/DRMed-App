@@ -348,6 +348,7 @@ export async function deleteTestRequestsManyAction(input: unknown): Promise<Bulk
   }
   const parsed = parseReason(shape.data.reason);
   if (!parsed.ok) return { ok: false, error: parsed.error };
+  const batchId = crypto.randomUUID();
   const ids = Array.from(new Set(shape.data.testRequestIds));
   const panelsByKey = new Map<string, PanelRef>();
   for (const p of shape.data.panels) {
@@ -422,6 +423,7 @@ export async function deleteTestRequestsManyAction(input: unknown): Promise<Bulk
   for (const [visitId, groupIds] of byVisit) {
     const outcome = await deleteTestRequestsForVisit(session, visitId, groupIds, parsed.reason, {
       size: totalRecords,
+      batchId,
       panelKeyOf,
     });
     if (!outcome.ok) {
@@ -454,7 +456,7 @@ export async function deleteTestRequestsManyAction(input: unknown): Promise<Bulk
       }
     }
   }
-  return { ok: true, changedIds, skipped };
+  return { ok: true, changedIds, skipped, batchId };
 }
 
 export async function restoreTestRequestsAction(
