@@ -22,6 +22,8 @@ import { SortableTh, PlainTh } from "@/components/staff/sortable-th";
 import { ListPagination, PAGE_SIZES } from "@/components/staff/list-pagination";
 import { AP_INDEX_MAX_ROWS } from "@/lib/ui/table-params";
 import { manilaDate } from "@/lib/dates/manila";
+import { parseShowVoided, SHOW_VOIDED_PARAM, splitVoided } from "@/lib/accounting/ap-voided-filter";
+import { HiddenVoidedEmptyState, ShowVoidedToggle } from "../_components/show-voided-toggle";
 
 const PHP = new Intl.NumberFormat("en-PH", { style: "currency", currency: "PHP" });
 
@@ -134,14 +136,26 @@ export function PaymentsIndexClient({
   const size = parsePageSize(searchParams.get("size") ?? undefined, DEFAULT_PAGE_SIZE);
   const page = parsePage(searchParams.get("page") ?? undefined);
 
+  // Voided payments are hidden unless ?voided=1 — see ap-voided-filter.
+  const showVoided = parseShowVoided(searchParams.get(SHOW_VOIDED_PARAM));
+  const { visible, hiddenVoided } = useMemo(
+    () => splitVoided(initialPayments, (p) => p.voided_at !== null, showVoided),
+    [initialPayments, showVoided],
+  );
+  const voidedCount = useMemo(
+    () => initialPayments.filter((p) => p.voided_at !== null).length,
+    [initialPayments],
+  );
+
   const sorted = useMemo(
-    () => [...initialPayments].sort((a, b) => comparePayments(a, b, sort)),
+    () => [...visible].sort((a, b) => comparePayments(a, b, sort)),
     // eslint-disable-next-line react-hooks/exhaustive-deps -- sort.key/sort.dir are the actual dependency; `sort` is a fresh object every render
-    [initialPayments, sort.key, sort.dir],
+    [visible, sort.key, sort.dir],
   );
 
   // The pager's total is the length of the (already-filtered) array actually
-  // on screen, not some raw unfiltered count.
+  // on screen, not some raw unfiltered count — so hidden voided payments are
+  // not in it.
   const total = sorted.length;
   const totalPages = pageCount(total, size);
   // Clamped defensively: a filter Apply that shrinks the result set navigates
@@ -193,6 +207,7 @@ export function PaymentsIndexClient({
     vendor_id: searchParams.get("vendor_id"),
     method: searchParams.get("method"),
     q: searchParams.get("q"),
+    [SHOW_VOIDED_PARAM]: showVoided ? "1" : null,
     sort: isDefaultSort ? null : sort.key,
     dir: isDefaultSort ? null : sort.dir,
     size: size === DEFAULT_PAGE_SIZE ? null : String(size),
@@ -207,6 +222,12 @@ export function PaymentsIndexClient({
       page: null,
     });
   };
+
+  // Flipping the switch changes which rows exist, so drop back to page 1.
+  const toggleVoidedHref = buildListHref(BASE_PATH, baseParams, {
+    [SHOW_VOIDED_PARAM]: showVoided ? null : "1",
+    page: null,
+  });
 
   const th = (key: SortColumn, label: string, align: "left" | "right" = "left") => (
     <SortableTh key={key} label={label} href={sortHref(key)} state={ariaSortFor(sort, key)} align={align} />
@@ -273,6 +294,10 @@ export function PaymentsIndexClient({
         </div>
       </div>
 
+      <div className="flex justify-end">
+        <ShowVoidedToggle checked={showVoided} voidedCount={voidedCount} toggleHref={toggleVoidedHref} />
+      </div>
+
       <div className="overflow-x-auto rounded-md border border-gray-200">
         <table className="w-full min-w-[820px] text-sm">
           <thead className="bg-gray-50 text-left text-xs font-semibold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
@@ -315,16 +340,27 @@ export function PaymentsIndexClient({
         </table>
       </div>
 
-      {total === 0 && (
-        <p className="rounded-md border border-dashed border-gray-300 bg-gray-50 p-6 text-center text-sm text-[color:var(--color-brand-text-soft)]">
-          No payments match your filters.
+      {total === 0 &&
+        (hiddenVoided > 0 ? (
+          <HiddenVoidedEmptyState noun="payment" hiddenVoided={hiddenVoided} showHref={toggleVoidedHref} />
+        ) : (
+          <p className="rounded-md border border-dashed border-gray-300 bg-gray-50 p-6 text-center text-sm text-[color:var(--color-brand-text-soft)]">
+            No payments match your filters.
+          </p>
+        ))}
+
+      {total > 0 && hiddenVoided > 0 && (
+        <p className="text-xs text-[color:var(--color-brand-text-soft)]">
+          {hiddenVoided} voided payment{hiddenVoided !== 1 ? "s" : ""} hidden.
         </p>
       )}
 
       {/* The fetch IS the universe this pager describes, so on the day the
           clinic has more than AP_INDEX_MAX_ROWS matching payments the pager would
           quietly describe a truncated set. Say so instead. */}
-      {total >= AP_INDEX_MAX_ROWS && (
+      {/* Measured on the fetch, not the visible rows: hidden voided payments
+          still used up part of the ceiling. */}
+      {initialPayments.length >= AP_INDEX_MAX_ROWS && (
         <p className="mt-4 rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
           Showing the first {AP_INDEX_MAX_ROWS.toLocaleString("en-PH")} payments that match — narrow the
           filters above to see the rest.
