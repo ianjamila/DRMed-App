@@ -4,6 +4,7 @@ import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Panel } from "@/components/ui/panel";
+import { FixedBottomBar } from "@/components/staff/fixed-bottom-bar";
 import { BulkBar } from "@/components/staff/row-selection/bulk-bar";
 import { useRowSelection } from "@/components/staff/row-selection/selection-context";
 import { deleteTestRequestsManyAction } from "@/lib/actions/visits/queue-deletion";
@@ -130,25 +131,21 @@ export function QueueBulkBar({ rowsByKey, hasPanels }: Props) {
 
   if (count === 0) {
     if (!outcome) return null;
-    // Same fixed slot the bar uses (see bulk-bar.tsx for why not sticky);
-    // z-30 keeps it under any dialog/sheet overlay.
     return (
-      <div className="fixed inset-x-0 bottom-0 z-30 px-4 pb-3 md:left-64 print:hidden">
-        <div className="mx-auto w-full max-w-screen-2xl">
-          <Panel role="status" className="flex items-start gap-3 p-3 text-xs shadow-lg">
-            <p className="max-h-48 flex-1 overflow-y-auto whitespace-pre-line text-[color:var(--color-brand-text-mid)]">
-              {outcome}
-            </p>
-            <button
-              type="button"
-              onClick={() => setOutcome(null)}
-              className="min-h-[44px] rounded-md border border-[color:var(--color-brand-bg-mid)] bg-white px-3 font-semibold"
-            >
-              Dismiss
-            </button>
-          </Panel>
-        </div>
-      </div>
+      <FixedBottomBar>
+        <Panel role="status" className="flex items-start gap-3 p-3 text-xs shadow-lg">
+          <p className="max-h-48 flex-1 overflow-y-auto whitespace-pre-line text-[color:var(--color-brand-text-mid)]">
+            {outcome}
+          </p>
+          <button
+            type="button"
+            onClick={() => setOutcome(null)}
+            className="min-h-[44px] rounded-md border border-[color:var(--color-brand-bg-mid)] bg-white px-3 font-semibold"
+          >
+            Dismiss
+          </button>
+        </Panel>
+      </FixedBottomBar>
     );
   }
 
