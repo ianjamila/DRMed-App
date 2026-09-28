@@ -11,6 +11,8 @@ import { loadHiddenCardIds } from "@/lib/dashboards/card-prefs";
 import { loadCandidatePairsWithStatus } from "@/lib/patients/find-duplicates";
 import { fetchOutdatedCopies } from "@/lib/results/copy-followups.server";
 import { cappedCountLabel } from "@/lib/results/copy-followups";
+import { loadNewPatientsToday } from "@/lib/marketing/patient-sources.server";
+import { formatNewToday, type ReportResult, type SeriesRow } from "@/lib/marketing/patient-sources";
 import {
   fetchAllRows,
   REPORT_EXPORT_MAX_ROWS,
@@ -145,6 +147,7 @@ async function loadAdminStats(show: (id: string) => boolean) {
     booksLines,
     newMessagesCount,
     resultFollowups,
+    newToday,
   ] = await Promise.all([
     // The audit wanted all three of these cut as "throughput decoration".
     // The owner deferred Visits today and Queue to a LATER re-review, so
@@ -453,6 +456,9 @@ async function loadAdminStats(show: (id: string) => boolean) {
     show("admin.result_followups")
       ? fetchOutdatedCopies(supabase, false)
       : Promise.resolve({ ok: true as const, rows: [], capped: false }),
+    show("admin.new_patients_today")
+      ? loadNewPatientsToday(supabase, today)
+      : Promise.resolve(null),
   ]);
 
   // "Unclaimed": lab lines nobody holds yet, on the same money gate as the
@@ -703,6 +709,7 @@ async function loadAdminStats(show: (id: string) => boolean) {
     resultFollowupsCount: resultFollowups.ok ? resultFollowups.rows.length : 0,
     resultFollowupsCapped: resultFollowups.ok && resultFollowups.capped,
     resultFollowupsError: !resultFollowups.ok,
+    newToday: newToday as ReportResult<SeriesRow[]> | null,
     currentFiscalYear,
     today,
     monthStart,
@@ -758,7 +765,15 @@ export async function AdminDashboard({ session }: { session: StaffSession }) {
 
   const showPayrollRunsCard =
     show("admin.payroll_runs") && (stats.payrollRunsError || stats.payrollRunsInProgress > 0);
-  const showPeople = show("admin.active_employees") || showPayrollRunsCard;
+  const showPeople =
+    show("admin.active_employees") || showPayrollRunsCard || show("admin.new_patients_today");
+
+  // P17: an admin viewing as reception is refused by the report functions
+  // (has_role follows View-as) — `newToday` is then `{ ok: false }`, not a
+  // thrown error, so this tile degrades to "Couldn't load" like any other
+  // failed widget rather than breaking the rest of the dashboard.
+  const newTodayFormatted = stats.newToday?.ok ? formatNewToday(stats.newToday.data) : null;
+  const newTodayError = !stats.newToday?.ok;
 
   const releasedByStaffItems: ActivityItem[] = stats.releasedByStaffRows.map(
     (r) => ({
@@ -1007,6 +1022,15 @@ export async function AdminDashboard({ session }: { session: StaffSession }) {
                 href={`/staff/admin/payroll/runs?year=${stats.currentFiscalYear}`}
                 accent="warn"
                 error={stats.payrollRunsError}
+              />
+            )}
+            {show("admin.new_patients_today") && (
+              <StatCard
+                label="New patients today"
+                value={newTodayFormatted ? newTodayFormatted.total : 0}
+                hint={newTodayFormatted?.hint}
+                href={`/staff/marketing/patients?from=${stats.today}&to=${stats.today}`}
+                error={newTodayError}
               />
             )}
           </div>
