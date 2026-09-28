@@ -57,12 +57,11 @@ describe("bulkQueueMessage", () => {
     ).toBe(["Nothing unclaimed.", "Not changed (1):", "• CBC — Santos, Maria: Gone."].join("\n"));
   });
 
-  it("caps the named list at five and counts the rest", () => {
-    const skipped = Array.from({ length: 7 }, (_, i) => ({ id: `x${i}`, reason: "Gone." }));
+  it("names every skipped row, however many", () => {
+    const skipped = Array.from({ length: 7 }, (_, i) => ({ id: `x${i}`, reason: `Gone ${i}.` }));
     const msg = bulkQueueMessage("Deleted", 7, { changedIds: [], skipped }, {});
     const lines = msg.split("\n");
     expect(lines[1]).toBe("Not changed (7):");
-    expect(lines.filter((l) => l.startsWith("• A test"))).toHaveLength(5);
-    expect(lines.at(-1)).toBe("• …and 2 more");
+    expect(lines.slice(2)).toEqual(skipped.map((s) => `• A test: ${s.reason}`));
   });
 });

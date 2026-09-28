@@ -42,15 +42,15 @@ export interface QueueRowInfo {
   assignedTo: string | null;
 }
 
-const NAMED_SKIPS = 5;
-
 function tests(n: number): string {
   return `test${n === 1 ? "" : "s"}`;
 }
 
 /**
- * "Claimed 3 of 5 tests." plus one line per skipped row, naming it and why —
- * the first five, then "…and N more". `verb` is past tense, capitalised.
+ * "Claimed 3 of 5 tests." plus one line per skipped row, naming it and why.
+ * Every skipped row is named (at most 100, the action cap): the bar clears
+ * the selection afterwards, so this message is the only record of what was
+ * left alone. `verb` is past tense, capitalised.
  */
 export function bulkQueueMessage(
   verb: string,
@@ -66,10 +66,8 @@ export function bulkQueueMessage(
         ? `${verb} ${changed} ${tests(changed)}.`
         : `${verb} ${changed} of ${sentCount} ${tests(sentCount)}.`;
   if (result.skipped.length === 0) return head;
-  const lines = result.skipped
-    .slice(0, NAMED_SKIPS)
-    .map((s) => `• ${rowsByKey[s.id]?.label ?? "A test"}: ${s.reason}`);
-  const more = result.skipped.length - NAMED_SKIPS;
-  if (more > 0) lines.push(`• …and ${more} more`);
+  const lines = result.skipped.map(
+    (s) => `• ${rowsByKey[s.id]?.label ?? "A test"}: ${s.reason}`,
+  );
   return [head, `Not changed (${result.skipped.length}):`, ...lines].join("\n");
 }

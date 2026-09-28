@@ -3,6 +3,7 @@
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
+import { Panel } from "@/components/ui/panel";
 import { BulkBar } from "@/components/staff/row-selection/bulk-bar";
 import { useRowSelection } from "@/components/staff/row-selection/selection-context";
 import { deleteTestRequestsManyAction } from "@/lib/actions/visits/queue-deletion";
@@ -28,7 +29,7 @@ type Panel = null | "unclaim" | "delete";
 // acts on the selected rows that carry its kind; the server re-proves every
 // row and reports the ones it skipped by name.
 export function QueueBulkBar({ rowsByKey, hasPanels }: Props) {
-  const { keysByKind, clearKeys } = useRowSelection();
+  const { keysByKind, clearKeys, count } = useRowSelection();
   const router = useRouter();
   const [pending, start] = useTransition();
   const [panel, setPanel] = useState<Panel>(null);
@@ -37,6 +38,10 @@ export function QueueBulkBar({ rowsByKey, hasPanels }: Props) {
   // Which button started the transition in flight — one useTransition serves
   // all three, so without this every visible button would read "…ing".
   const [running, setRunning] = useState<"claim" | "unclaim" | "delete" | null>(null);
+  // The last action's outcome, naming every skipped test. It outlives the
+  // selection it reports on (which is cleared on success), so it is kept here
+  // and shown in place of the bar until dismissed or a new selection starts.
+  const [outcome, setOutcome] = useState<string | null>(null);
 
   const known = (keys: string[] | undefined) =>
     (keys ?? []).filter((key) => rowsByKey[key] !== undefined);
@@ -59,8 +64,8 @@ export function QueueBulkBar({ rowsByKey, hasPanels }: Props) {
       else alert(result.error);
       return;
     }
-    alert(bulkQueueMessage(verb, keys.length, result, rowsByKey));
-    // Pruning wins (spec §4): clear everything sent; the alert is the record.
+    setOutcome(bulkQueueMessage(verb, keys.length, result, rowsByKey));
+    // Pruning wins (spec §4): clear everything sent; the outcome panel is the record.
     clearKeys(keys);
     closePanel();
     router.refresh();
@@ -114,12 +119,38 @@ export function QueueBulkBar({ rowsByKey, hasPanels }: Props) {
   // prunes them). Close it then, so it never reopens by itself — with the old
   // reason — over a later, unrelated selection. Render-time adjustment, the
   // same pattern SelectionProvider uses for resetKey.
+  // A new selection replaces the last outcome; it never comes back later.
+  if (count > 0 && outcome !== null) setOutcome(null);
   if (panel !== null && panelCount === 0) {
     setPanel(null);
     setReason("");
     setErr(null);
   }
   const n = (count: number) => `${count} test${count === 1 ? "" : "s"}`;
+
+  if (count === 0) {
+    if (!outcome) return null;
+    // Same fixed slot the bar uses (see bulk-bar.tsx for why not sticky);
+    // z-30 keeps it under any dialog/sheet overlay.
+    return (
+      <div className="fixed inset-x-0 bottom-0 z-30 px-4 pb-3 md:left-64 print:hidden">
+        <div className="mx-auto w-full max-w-screen-2xl">
+          <Panel role="status" className="flex items-start gap-3 p-3 text-xs shadow-lg">
+            <p className="max-h-48 flex-1 overflow-y-auto whitespace-pre-line text-[color:var(--color-brand-text-mid)]">
+              {outcome}
+            </p>
+            <button
+              type="button"
+              onClick={() => setOutcome(null)}
+              className="min-h-[44px] rounded-md border border-[color:var(--color-brand-bg-mid)] bg-white px-3 font-semibold"
+            >
+              Dismiss
+            </button>
+          </Panel>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <BulkBar noun="test">
