@@ -2183,3 +2183,114 @@ $$;
 
 revoke all on function public.create_visit_encounter(uuid, uuid, text, jsonb, uuid, jsonb) from public, anon, authenticated;
 grant execute on function public.create_visit_encounter(uuid, uuid, text, jsonb, uuid, jsonb) to service_role;
+
+-- ---------------------------------------------------------------------------
+-- (7) result_create_linked — the results row and ALL its result_test_requests
+-- links in one transaction. Before this, each creation path inserted the row,
+-- then the links in a second call; a failure between them left an orphan
+-- results row that no resume check could find (it keys off the links), and a
+-- first PDF upload removed the object while the row still pointed at it.
+--   structured: a draft (storage_path NULL, finalised_at NULL — the 0059
+--     trigger only advances a structured test once finalised_at is set, which
+--     result_finalise_commit does). p_report_group_id marks a consolidated
+--     report (finalised_by_staff_id = actor, as finalise-consolidated did).
+--   uploaded: the PDF is already stored at an attempt-unique path; linking
+--     advances the tests (0059).
+-- Tests are row-locked in id order after the patient lock, so two first
+-- uploads of one test serialise; the loser gets P0066 ("already has a
+-- result", message passes through — the result family's code, 0172).
+-- ---------------------------------------------------------------------------
+create or replace function public.result_create_linked(
+  p_actor            uuid,
+  p_test_request_ids uuid[],
+  p_generation_kind  text,
+  p_report_group_id  uuid default null,
+  p_storage_path     text default null,
+  p_file_size_bytes  int  default null,
+  p_notes            text default null
+)
+returns uuid
+language plpgsql
+volatile
+security definer
+set search_path = pg_catalog, public, pg_temp
+as $$
+declare
+  v_ids      uuid[] := public.lifecycle_norm(array_remove(p_test_request_ids, null));
+  v_patients uuid[];
+  v_live     int;
+  v_result   uuid;
+begin
+  if p_actor is null or not exists (
+    select 1 from public.staff_profiles s
+     where s.id = p_actor and s.role in ('medtech', 'pathologist', 'xray_technician', 'admin')
+       and s.is_active and s.deleted_at is null
+  ) then
+    raise exception 'only active lab staff can record a result' using errcode = '42501';
+  end if;
+  if p_generation_kind is null or p_generation_kind not in ('structured', 'uploaded') then
+    raise exception 'unknown result kind %', p_generation_kind using errcode = '22023';
+  end if;
+  if p_generation_kind = 'uploaded' and (p_storage_path is null or p_file_size_bytes is null) then
+    raise exception 'an uploaded result needs its stored PDF' using errcode = '22023';
+  end if;
+  if p_generation_kind = 'structured' and p_storage_path is not null then
+    raise exception 'a structured draft has no PDF until it is finalised' using errcode = '22023';
+  end if;
+  if p_report_group_id is not null and p_generation_kind <> 'structured' then
+    raise exception 'only a structured result can be a consolidated report' using errcode = '22023';
+  end if;
+  if cardinality(v_ids) = 0 or cardinality(v_ids) <> cardinality(p_test_request_ids) then
+    raise exception 'list each test once' using errcode = '22023';
+  end if;
+
+  -- The new result's id is minted here so its MEMBERSHIP lock (exclusive —
+  -- this call creates the membership) is taken first, as everywhere else:
+  -- membership lock → patient locks → row locks.
+  v_result := gen_random_uuid();
+  perform public.lifecycle_lock_results(array[v_result], true);
+  v_patients := public.lifecycle_norm(array_remove(public.lifecycle_patients_of_test_requests(v_ids), null));
+  -- 0184 deviation from plan text: lock_and_assert BEFORE the one-patient
+  -- check (not after, as the plan's Step 2 SQL had it) — matching the
+  -- guard trigger's own order ((c) lock_and_assert, then (d) one-patient-
+  -- per-result, lines ~858-880 above). An inactive/merged/vanished patient
+  -- mixed into the set must win with P0058 over the generic 23514, which is
+  -- also what the plan's own smoke s10.7 asserts (an active + a deleted
+  -- patient's test together → P0058, not 23514).
+  perform public.lifecycle_lock_and_assert(v_patients, false);
+  if cardinality(v_patients) > 1 then
+    raise exception 'a result can only hold one patient''s tests — create a separate result for each patient'
+      using errcode = '23514';
+  end if;
+
+  perform 1 from public.test_requests tr where tr.id = any(v_ids) order by tr.id for update;
+  select count(*) into v_live
+    from public.test_requests tr
+    join public.visits v on v.id = tr.visit_id
+   where tr.id = any(v_ids) and tr.deleted_at is null and v.deleted_at is null;
+  if v_live <> cardinality(v_ids) then
+    raise exception 'a test was not found or has been deleted — reload the page' using errcode = 'P0066';
+  end if;
+  if public.lifecycle_norm(array_remove(public.lifecycle_patients_of_test_requests(v_ids), null))
+       is distinct from v_patients then
+    raise exception 'the patient on this test changed while the result was being saved — try again'
+      using errcode = 'P0072';
+  end if;
+  if exists (select 1 from public.result_test_requests rtr where rtr.test_request_id = any(v_ids)) then
+    raise exception 'this test already has a result — reload the page' using errcode = 'P0066';
+  end if;
+
+  insert into public.results (id, generation_kind, storage_path, file_size_bytes, uploaded_by, notes,
+                              report_group_id, finalised_by_staff_id, finalised_at)
+  values (v_result, p_generation_kind, p_storage_path, p_file_size_bytes, p_actor, nullif(btrim(coalesce(p_notes, '')), ''),
+          p_report_group_id, case when p_report_group_id is not null then p_actor end, null);
+
+  insert into public.result_test_requests (result_id, test_request_id)
+  select v_result, x from unnest(v_ids) x;
+
+  return v_result;
+end;
+$$;
+
+revoke all on function public.result_create_linked(uuid, uuid[], text, uuid, text, int, text) from public, anon, authenticated;
+grant execute on function public.result_create_linked(uuid, uuid[], text, uuid, text, int, text) to service_role;

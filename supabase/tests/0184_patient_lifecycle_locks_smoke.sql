@@ -1532,4 +1532,65 @@ begin
 end
 $s9$;
 
+-- --- s10: result_create_linked ---------------------------------------------------------
+do $s10$
+declare
+  k_med constant uuid := 'a2000000-0000-4000-8000-000000000184';
+  k_rec constant uuid := 'a1000000-0000-4000-8000-000000000184';
+  a uuid := pg_temp.mk_patient('S10A');
+  b uuid := pg_temp.mk_patient('S10B');
+  d uuid := pg_temp.mk_patient('S10D');
+  va uuid; vb uuid; vd uuid; t1 uuid; t2 uuid; t3 uuid; t4 uuid; tb uuid; td uuid; tdel uuid;
+  r uuid; n int;
+begin
+  va := pg_temp.mk_visit(a);
+  vd := pg_temp.mk_visit(d);
+  t1 := pg_temp.mk_line(va, 'in_progress', 100, null, false, 'c1000000-0000-4000-8000-000000000184');
+  t2 := pg_temp.mk_line(va, 'in_progress', 100, null, false, 'c1000000-0000-4000-8000-000000000184');
+  t3 := pg_temp.mk_line(va, 'in_progress', 100);
+  t4 := pg_temp.mk_line(va, 'in_progress', 100);
+  tdel := pg_temp.mk_line(va, 'in_progress', 100);
+  update public.test_requests set deleted_at = now(), deleted_by = k_med, delete_reason = 'smoke' where id = tdel;
+  td := pg_temp.mk_line(vd, 'in_progress', 100);
+  vb := pg_temp.mk_visit(b);
+  tb := pg_temp.mk_line(vb, 'in_progress', 100);
+  perform pg_temp.kill(d);
+
+  r := public.result_create_linked(k_med, array[t1, t2], 'structured', null, null, null, null);
+  perform pg_temp.expect('s10.1 structured draft linked to both tests',
+    (select count(*)::text from public.result_test_requests where result_id = r), '2');
+  perform pg_temp.expect('s10.2 …not finalised, tests not advanced',
+    (select (finalised_at is null)::text from public.results where id = r)
+      || '|' || (select string_agg(distinct status, ',') from public.test_requests where id in (t1, t2)), 'true|in_progress');
+  r := public.result_create_linked(k_med, array[t3], 'uploaded', null, 'p/v/t3/attempt-1.pdf', 1234, '  note  ');
+  perform pg_temp.expect('s10.3 uploaded result: path, size, trimmed note',
+    (select storage_path || '|' || file_size_bytes || '|' || notes from public.results where id = r), 'p/v/t3/attempt-1.pdf|1234|note');
+  perform pg_temp.expect('s10.4 …and the link advanced the test (0059 trigger)',
+    (select (status <> 'in_progress')::text from public.test_requests where id = t3), 'true');
+
+  n := (select count(*) from public.results);
+  perform pg_temp.expect('s10.5 a test that already has a result',
+    pg_temp.state_of(format($q$select public.result_create_linked(%L, array[%L]::uuid[], 'uploaded', null, 'x.pdf', 1, null)$q$, k_med, t3)), 'P0066');
+  perform pg_temp.expect('s10.6 deleted patient''s test',
+    pg_temp.state_of(format($q$select public.result_create_linked(%L, array[%L]::uuid[], 'uploaded', null, 'x.pdf', 1, null)$q$, k_med, td)), 'P0058');
+  perform pg_temp.expect('s10.7 an active and a deleted patient''s test together',
+    pg_temp.state_of(format($q$select public.result_create_linked(%L, array[%L, %L]::uuid[], 'structured', null, null, null, null)$q$, k_med, t4, td)), 'P0058');
+  perform pg_temp.expect('s10.8 a soft-deleted test',
+    pg_temp.state_of(format($q$select public.result_create_linked(%L, array[%L]::uuid[], 'structured', null, null, null, null)$q$, k_med, tdel)), 'P0066');
+  perform pg_temp.expect('s10.9 an uploaded result without a file',
+    pg_temp.state_of(format($q$select public.result_create_linked(%L, array[%L]::uuid[], 'uploaded', null, null, null, null)$q$, k_med, t4)), '22023');
+  perform pg_temp.expect('s10.10 a test listed twice',
+    pg_temp.state_of(format($q$select public.result_create_linked(%L, array[%L, %L]::uuid[], 'structured', null, null, null, null)$q$, k_med, t4, t4)), '22023');
+  perform pg_temp.expect('s10.11 reception cannot create results',
+    pg_temp.state_of(format($q$select public.result_create_linked(%L, array[%L]::uuid[], 'structured', null, null, null, null)$q$, k_rec, t4)), '42501');
+  perform pg_temp.expect('s10.11b two ACTIVE patients'' tests in one result',
+    pg_temp.state_of(format($q$select public.result_create_linked(%L, array[%L, %L]::uuid[], 'structured', null, null, null, null)$q$, k_med, t4, tb)), '23514');
+  perform pg_temp.expect('s10.12 no results row was left by any refusal',
+    (select count(*) from public.results)::text, n::text);
+  perform pg_temp.expect('s10.13 EXECUTE service_role only',
+    (has_function_privilege('service_role', 'public.result_create_linked(uuid,uuid[],text,uuid,text,integer,text)', 'execute')
+     and not has_function_privilege('authenticated', 'public.result_create_linked(uuid,uuid[],text,uuid,text,integer,text)', 'execute'))::text, 'true');
+end
+$s10$;
+
 rollback;
