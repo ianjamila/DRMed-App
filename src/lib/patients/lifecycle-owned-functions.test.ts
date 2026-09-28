@@ -68,6 +68,32 @@ export const OWNED: Record<string, Owned> = {
   },
 };
 
+// 0184 also DROPS public.set_patient_context (the old portal RLS bridge;
+// nothing calls it once current_patient_id is JWT-only, 0184 section (10a)) —
+// a function this migration REMOVES rather than re-creates, so it has no
+// place in OWNED above (there is no "highest-numbered definition [that] must
+// carry a marker" — the function must have NO definition at all above 0184).
+// 0184's own post-condition (do $post$ … to_regprocedure(...) is null) only
+// proves it is gone AT 0184'S OWN deploy time; nothing stops a LATER
+// migration from re-creating it, since that post-condition never runs again.
+// This is the standing gate for that regression (fix round 7, task 3).
+const DROPPED_ABOVE: Record<string, string> = {
+  set_patient_context: LIFECYCLE,
+};
+
+/** Problems with functions 0184 drops and expects to stay dropped: any re-creation numbered above the drop point. */
+export function droppedFunctionProblems(files: { name: string; text: string }[]): string[] {
+  const problems: string[] = [];
+  for (const [name, droppedIn] of Object.entries(DROPPED_ABOVE)) {
+    for (const [file] of definitions(files, name)) {
+      if (file > droppedIn) {
+        problems.push(`${name}: re-created in ${file}, above ${droppedIn} — it was dropped there and must stay dropped`);
+      }
+    }
+  }
+  return problems;
+}
+
 /** Every definition of public.<name>(…) in the given files: [file, body] in file order. */
 export function definitions(files: { name: string; text: string }[], name: string): [string, string][] {
   const head = new RegExp(`create\\s+(?:or\\s+replace\\s+)?function\\s+public\\.${name}\\s*\\(`, "gi");
@@ -140,5 +166,20 @@ describe("0184-owned functions survive replay AND ship order", () => {
     const body = definitions(real, "recompute_clinic_fee_for_unreleased").find(([f]) => f === LIFECYCLE)![1];
     // Over-capture would run past this function into resolve_patient_guarded (5).
     expect(body).not.toContain("resolve_patient_guarded");
+  });
+
+  it("no problems with functions 0184 dropped (set_patient_context) on the real migrations", () => {
+    expect(droppedFunctionProblems(real)).toEqual([]);
+  });
+
+  it("mutation: a synthetic branch above 0184 re-creating set_patient_context is caught", () => {
+    const intruder = {
+      name: "9999_zz_synthetic_intruder.sql",
+      text: "create or replace function public.set_patient_context(p_patient_id uuid) returns void language sql as $$ select 1\n$$;",
+    };
+    const files = [...real, intruder].sort((a, b) => a.name.localeCompare(b.name));
+    expect(droppedFunctionProblems(files).join("\n")).toMatch(
+      /set_patient_context: re-created in 9999_zz_synthetic_intruder\.sql, above 0184_patient_lifecycle_locks\.sql/,
+    );
   });
 });

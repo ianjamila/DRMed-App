@@ -69,6 +69,42 @@
 -- =============================================================================
 
 -- ---------------------------------------------------------------------------
+-- Deploy safety: lock timeout. `drop trigger if exists` / `create trigger`
+-- below take ACCESS EXCLUSIVE on each of the 18 tables it touches and hold
+-- it until commit. With no lock_timeout, one long-running or idle-in-
+-- transaction session on prod (holding so much as an ACCESS SHARE on
+-- public.visits) makes this migration queue for that lock — and every
+-- ordinary query against the same tables then queues BEHIND this migration's
+-- pending ACCESS EXCLUSIVE request (Postgres grants locks in request order,
+-- not by strength), stalling the app for as long as the blocker lives. A
+-- lock_timeout makes the push fail fast and roll back cleanly instead.
+--
+-- Deliberately plain `SET`, not `SET LOCAL`, with an explicit `RESET` at the
+-- very end of the file (not relying on transaction end to clear it) — this
+-- is the one form that is correct regardless of how this file gets run:
+--   - `psql -1` wraps the whole script in one implicit BEGIN…COMMIT. A plain
+--     `SET` inside a transaction block applies immediately and, because it
+--     is not LOCAL, survives that transaction's COMMIT into the rest of the
+--     session — exactly why the explicit RESET below matters even here.
+--   - The Supabase CLI (`db push` / `db reset`) does not document per-file
+--     transaction wrapping, and empirically applies a project's migrations
+--     over one persistent connection/session, back to back, so a setting
+--     left dangling after this file would leak into the next one's session.
+--     Whether or not the CLI additionally wraps this individual file in a
+--     transaction, a plain `SET` takes effect for the rest of the session
+--     from the point it runs (transactional GUCs only roll back the change
+--     on ROLLBACK, not on COMMIT) — so it is live for every statement below
+--     it in this file either way, and the RESET at the end always cleans it
+--     up rather than depending on an implicit-transaction boundary that may
+--     or may not exist. `SET LOCAL` here would be the wrong choice under a
+--     no-wrapping CLI: outside of an explicit transaction each standalone
+--     statement is its own implicit transaction, so a LOCAL setting would
+--     revert before the very next statement even ran, silently doing
+--     nothing.
+-- ---------------------------------------------------------------------------
+set lock_timeout = '5s';
+
+-- ---------------------------------------------------------------------------
 -- (1) Lock primitives. SECURITY DEFINER, owned by the migration owner (which
 -- owns every patient-owned table and is not subject to their RLS): an
 -- RLS-hidden parent can never look like "no patient". EXECUTE is revoked from
@@ -2885,5 +2921,23 @@ begin
       raise exception '0184 post-condition: % is executable by a client role', f;
     end if;
   end loop;
+  -- (8c) The batch-before-items lock: both hmo_payment_allocations and
+  -- hmo_claim_resolutions must carry an enabled a_lifecycle_hmo_batch_lock,
+  -- the same way the loop above checks a_lifecycle_guard — this is a
+  -- SEPARATE trigger (a different name, a different function) that the
+  -- a_lifecycle_guard loop does not touch, so it needs its own assertion or
+  -- a re-run of this migration that lost the trigger (e.g. a DROP with no
+  -- matching re-create) would deploy clean.
+  foreach t in array array['hmo_payment_allocations', 'hmo_claim_resolutions'] loop
+    if not exists (select 1 from pg_trigger where tgrelid = ('public.' || t)::regclass
+                    and tgname = 'a_lifecycle_hmo_batch_lock' and tgenabled = 'O') then
+      raise exception '0184 post-condition: public.% has no enabled a_lifecycle_hmo_batch_lock', t;
+    end if;
+  end loop;
 end
 $post$;
+
+-- Restore the session's lock_timeout to whatever it was before this file ran
+-- (see the comment at the top) — never leave a 5s timeout leaking into
+-- whatever the CLI or psql session runs next.
+reset lock_timeout;

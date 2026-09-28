@@ -815,6 +815,54 @@ async function main() {
         await second.conn.query(second.st === "ok" ? "commit" : "rollback").catch(() => undefined);
       }
     });
+
+    // (c-control) Control arm for the race above (fix round 7, task 4): the
+    // sorted arm asserting "0 deadlocks over N iterations" only means
+    // something if the harness genuinely makes the two sessions overlap on
+    // the same two keys. Without a control, "0 deadlocks" could just as
+    // easily mean the sort works OR that A and B's second statements never
+    // actually raced in the first place (e.g. one always settles before the
+    // other starts). This proves the overlap is real: the SAME two sessions
+    // take two RAW pg_advisory_xact_lock calls — no lifecycle_lock, no sort —
+    // on the SAME two keys in OPPOSITE order, using the identical key
+    // derivation lifecycle_lock uses internally (section (1):
+    // `hashtext('patient_lifecycle')` as classid, `hashtext(<id>::text)` as
+    // objid — just called directly, unsorted). Over 20 iterations this MUST
+    // produce at least one real 40P01: if it never does, the harness itself
+    // is not overlapping the two sessions and the sorted arm's "0" above
+    // proves nothing. Every lock taken here is xact-scoped and every
+    // iteration ends in commit/rollback, so nothing leaks past this race.
+    await race("control: unsorted raw advisory locks in opposite order DO deadlock (>=1 of 20) — proves the harness overlaps", async (a, b, s2) => {
+      const p1 = await mkPatient(s2, "CTL1");
+      const p2 = await mkPatient(s2, "CTL2");
+      const rawLock = (c: Client, id: string) =>
+        c.query(`select pg_advisory_xact_lock(hashtext('patient_lifecycle'), hashtext($1::text))`, [id]);
+      let deadlocks = 0;
+      for (let i = 0; i < 20; i++) {
+        await a.query("begin");
+        await b.query("begin");
+        // First lock of each session: different keys, uncontended — both grant
+        // immediately, establishing "A holds p1" / "B holds p2" before either
+        // reaches for the other's key.
+        await rawLock(a, p1.id);
+        await rawLock(b, p2.id);
+        // Second lock of each, OPPOSITE order, fired concurrently: A now wants
+        // p2 (held by B), B now wants p1 (held by A) — the classic AB-BA
+        // shape. Never await one before starting the other, or there is
+        // nothing left to overlap.
+        const ra = stateOf(rawLock(a, p2.id));
+        const rb = stateOf(rawLock(b, p1.id));
+        const [got_a, got_b] = await Promise.all([ra, rb]);
+        if (got_a === "40P01" || got_b === "40P01") deadlocks++;
+        // Whichever side aborted must rollback (its transaction is already
+        // dead); the other can commit or rollback freely — either releases
+        // its xact-scoped advisory locks the same way.
+        await a.query(got_a === "40P01" ? "rollback" : "commit").catch(() => undefined);
+        await b.query(got_b === "40P01" ? "rollback" : "commit").catch(() => undefined);
+      }
+      console.log(`  (control arm: ${deadlocks}/20 iterations produced a real 40P01)`);
+      expectEq("at least one of 20 iterations produced a real 40P01 (the harness overlaps the two sessions)", deadlocks >= 1, true);
+    });
   } finally {
     await cleanup(s).catch((e) => console.error("cleanup failed:", (e as Error).message));
     await s.end();
