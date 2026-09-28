@@ -57,6 +57,9 @@
 - Create: `supabase/migrations/0187_view_as_followups.sql`
 - Create: `src/lib/auth/view-as-followups-migration.test.ts`
 - Modify: `src/types/database.ts` (the `Functions:` block of `public`, alphabetical)
+- Modify: `src/lib/accounting/pg-errors.ts` (P0074 case — `pg-error-coverage.test.ts` fails without it)
+
+Numbers are CLAIMED already (`npm run claim -- list`): migration 0187 and P0074 belong to this branch. Do not claim more.
 
 - [ ] **Step 1: Write the failing pin test**
 
@@ -375,10 +378,19 @@ In `src/types/database.ts`, inside `public` → `Functions`, add in alphabetical
 ```
 (`audit_log_stamp_view_as` is a trigger function; generated types omit those.)
 
-- [ ] **Step 7: Commit**
+- [ ] **Step 7: Translate P0074** in `src/lib/accounting/pg-errors.ts`, after the `P0068` case, same style:
+
+```ts
+    // 0187: view_as_transition — the caller is not an active admin.
+    case "P0074":
+      return "Only an admin can view the app as another role.";
+```
+Run `npx vitest run src/lib/accounting/pg-error-coverage.test.ts` → PASS.
+
+- [ ] **Step 8: Commit**
 
 ```sh
-git add supabase/migrations/0187_view_as_followups.sql src/lib/auth/view-as-followups-migration.test.ts src/types/database.ts
+git add supabase/migrations/0187_view_as_followups.sql src/lib/auth/view-as-followups-migration.test.ts src/types/database.ts src/lib/accounting/pg-errors.ts
 git commit -m "feat(view-as): 0187 atomic transition, lazy expiry, acting_as audit stamp"
 ```
 
@@ -1805,7 +1817,7 @@ git commit -m "feat(view-as): Active role views readout and chip on Staff Users"
 - [ ] **Step 2:** `npx eslint $(git diff --name-only origin/main -- '*.ts' '*.tsx')` → clean.
 - [ ] **Step 3:** `npx tsc --noEmit 2>&1 | grep -E "$(git diff --name-only origin/main -- '*.ts' '*.tsx' | sed 's/[()]/./g' | paste -sd'|' -)"` → nothing.
 - [ ] **Step 4:** `npm run build 2>&1 | tail -30` → success (catches the `"use server"` non-async-export trap).
-- [ ] **Step 5:** Re-run both smoke scripts (0182, 0187) against the local DB (check columns first — sibling resets).
+- [ ] **Step 5:** Re-run both smoke scripts (0182, 0187) against the local DB (check columns first — sibling resets). Do NOT `db reset` the shared stack; the full-history replay (CLAUDE.md schema step 2) is covered by applying 0187 twice (idempotent) on top of the current local ledger — say so in the PR.
 - [ ] **Step 6:** Commit any fixes: `git commit -m "chore(view-as): sweep fixes"`.
 
 ---
@@ -1825,12 +1837,14 @@ git commit -m "feat(view-as): Active role views readout and chip on Staff Users"
 
 - [ ] **Step 4: Bump the version** — `grep -n "v2\.[0-9][0-9]" docs/drmed-user-guide.html`; take the next number after the highest on `origin/main` at this moment (`git fetch -q && git show origin/main:docs/drmed-user-guide.html | grep -o "v2\.[0-9]*" | sort -V | tail -1`), expected **v2.33**. Update both the TOC tag and the footer line; footer date `28 September 2026` (or today) and add `0187 (View-as follow-ups)` to the migration list in the footer sentence.
 
-- [ ] **Step 5: CLAUDE.md ledger** — leave for the controller at merge time (the PR number is not known yet). Do not edit.
+- [ ] **Step 5: Skills** — `.claude/skills/drmed-migrations/SKILL.md`: add a `0187_view_as_followups.sql ← …` line to the migration tree in the same style as its neighbours (two RPCs, trigger, P0074, service_role-only, smoke `supabase/tests/0187_*.sql`), and add P0074 to the P-code registry paragraph ("P0074 = view_as_transition: not an active admin — 0187"). `.claude/skills/drmed-rls-and-auth/SKILL.md`: under "Not every audit row comes from `audit()`" add that `staff.view_as.*` rows are written inside `view_as_transition`/`view_as_expire` (0187), and that a BEFORE INSERT trigger stamps `metadata.acting_as` on staff rows written while the actor is viewing as another role. In `CLAUDE.md`, add P0074 to the "in use on main" P-code list sentence and bump the guide version mention (`v2.32` → the new version).
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 6: CLAUDE.md ledger** — leave for the controller at merge time (the PR number is not known yet). Do not edit the ledger paragraph.
+
+- [ ] **Step 7: Commit**
 
 ```sh
-git add docs/superpowers/specs/2026-09-25-staff-view-as-role-design.md docs/drmed-user-guide.html
+git add docs/superpowers/specs/2026-09-25-staff-view-as-role-design.md docs/drmed-user-guide.html .claude/skills/drmed-migrations/SKILL.md .claude/skills/drmed-rls-and-auth/SKILL.md CLAUDE.md
 git commit -m "docs(view-as): guide v2.33 §View-as follow-ups, fix duplicate 5.8, spec expiry rule"
 ```
 
