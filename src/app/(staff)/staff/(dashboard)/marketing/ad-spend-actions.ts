@@ -40,7 +40,8 @@ const MAX_CSV_CHARS = 5_000_000;
 // browser's looser in-browser parser (ad-dashboard.tsx) are never trusted.
 // All-or-nothing: `ad_spend_import` (0189) upserts every row in one
 // transaction and is itself admin-gated (`has_role`) and audited
-// (`ad_spend.imported`), so this action does not repeat either check.
+// (`ad_spend.imported`), so this action does not write its own audit row;
+// it still checks for an admin up front so a non-admin never uploads a file.
 export async function saveAdSpendAction(csvText: string): Promise<AdSpendSaveResult> {
   await requireAdminStaff();
   if (typeof csvText !== "string" || csvText.trim() === "") return { ok: false, error: "The file is empty." };
