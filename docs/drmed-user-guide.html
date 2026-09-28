@@ -247,7 +247,7 @@
 <div class="layout">
 <nav class="toc" aria-label="Contents">
   <p class="toc-brand">drmed<span>.</span>ph</p>
-  <p class="toc-tag">User guide · v2.32</p>
+  <p class="toc-tag">User guide · v2.36</p>
   <div class="filter" role="group" aria-label="Show chapters for">
     <button type="button" data-filter="all" aria-pressed="true">All roles</button>
     <button type="button" data-filter="reception">Reception</button>
@@ -1154,14 +1154,15 @@
   </section>
 
   <section class="sub" id="adm-view-as">
-    <h3>5.8 Seeing the app as another role</h3>
+    <h3>5.9 Seeing the app as another role</h3>
     <p>To check what Reception, a Medical Tech, an X-ray Technician or a Pathologist actually sees, you do not need a second login.</p>
     <ol class="steps">
-      <li><p class="step-title">Pick a role under <b>View as</b> in the sidebar footer (on a phone: open the menu, it is under your name).</p><p>You land on the staff home page. The sidebar, dashboard, buttons and lists now match that role exactly — including which lab work you may claim.</p></li>
-      <li><p class="step-title">An amber bar stays at the top of every page: <q>Viewing as Reception. Anything you save is recorded under your name. Ends in 3h 40m.</q></p><p>Everything you do is real and is logged against <b>you</b> (the admin), not a fictitious user. Use the same <b>View as</b> picker in the bar to hop to another role.</p></li>
-      <li><p class="step-title">Tap <kbd class="ui">Exit</kbd> in the bar to return to Admin.</p><p>If you forget, the view ends by itself after four hours. Other staff never see this control.</p></li>
+      <li><p class="step-title">Pick a role under <b>View as</b> in the sidebar footer (on a phone: open the menu, it is under your name).</p><p>You land on the page you were on, if the new role can use it, or the staff home page otherwise. The sidebar, dashboard, buttons and lists now match that role exactly — including which lab work you may claim. On a phone the menu closes as soon as the switch goes through.</p></li>
+      <li><p class="step-title">An amber bar stays at the top of every page: <q>Viewing as Reception until 4:00 PM · 3h 40m left. Anything you save is recorded under your name.</q></p><p>The time left counts down on its own and the <q>until</q> time is the clinic's clock, not your device's, so it can't be thrown off by a wrong phone clock. Everything you do is real and is logged under <b>you</b> (the admin) — the record is also tagged with the role you were viewing as, so it's clear which hat you were wearing when you saved it. Use the same <b>View as</b> picker in the bar to hop to another role without exiting first; if a switch can't go through, a message appears under the picker and nothing changes.</p></li>
+      <li><p class="step-title">Tap <kbd class="ui">Exit</kbd> in the bar to return to Admin.</p><p>You land back on the page you were on, or the staff home page if Admin can't use it. If you forget, the view ends by itself after four hours — the app records that it ended the next time anyone loads a page, so there's no gap in the record. Other staff never see this control.</p></li>
     </ol>
     <p>Admin-only pages redirect to the staff home page while you are viewing as another role — that is the role's real experience, not an error.</p>
+    <p>Under Staff Users, an <b>Active role views</b> panel lists every admin currently viewing as another role — who, which role, and until when — and that admin's row in the table below carries a small amber <q>Viewing as Reception</q>-style tag next to their name.</p>
   </section>
 </section>
 
@@ -1315,7 +1316,7 @@
 </section>
 
 <footer class="end">
-  <p>drmed.ph User Guide · v2.32 · 28 September 2026 · Matches the production release at migration 0186, plus 0182, 0179 (corrected-result follow-ups), 0176 and 0170 (applied out of order) and 0167 (patient delete and restore). Every label in this guide was checked against the application code on that date. Print with <b>Ctrl/Cmd + P</b>; each chapter starts on a new page.</p>
+  <p>drmed.ph User Guide · v2.36 · 28 September 2026 · Matches the production release at migration 0186, plus 0187 (View-as follow-ups), 0182, 0179 (corrected-result follow-ups), 0176 and 0170 (applied out of order) and 0167 (patient delete and restore). Every label in this guide was checked against the application code on that date. Print with <b>Ctrl/Cmd + P</b>; each chapter starts on a new page.</p>
 </footer>
 </main>
 </div>

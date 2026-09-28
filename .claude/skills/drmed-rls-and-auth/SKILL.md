@@ -113,7 +113,7 @@ await audit({
 - Inserts via admin client. Failures log to console, never block the operation.
 - Append-only — never UPDATE or DELETE an audit row.
 - Admin-only read via RLS policy.
-- **Not every audit row comes from `audit()`.** `result.patient_contacted` (0179) is written by an `insert into audit_log` inside `result_mark_copy_contacted`'s own SQL body, in the same transaction as the write — the RPC is the one place that can prove the mark actually happened under the row lock, so it audits itself rather than round-tripping through the TS helper.
+- **Not every audit row comes from `audit()`.** `result.patient_contacted` (0179) is written by an `insert into audit_log` inside `result_mark_copy_contacted`'s own SQL body, in the same transaction as the write — the RPC is the one place that can prove the mark actually happened under the row lock, so it audits itself rather than round-tripping through the TS helper. Same pattern for `staff.view_as.started` / `staff.view_as.ended` (0187): they're written inside `view_as_transition` / `view_as_expire`, not through the TS helper, so the audit row and the state change share the row lock. A BEFORE INSERT trigger on `audit_log` (`audit_log_stamp_view_as`, also 0187) stamps `metadata.acting_as` onto any OTHER staff audit row inserted while its actor has an active view-as override — including one a SQL function writes directly with `auth.uid()`, like `result_mark_copy_contacted` above, not just calls through `audit()` — so a simulated action is tagged with the role being viewed no matter which code path logged it.
 
 ## Patient consent (RA 10173) — the `patient_consents` ledger
 
