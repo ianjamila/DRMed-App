@@ -62,8 +62,12 @@ export function matchRevenuePreset(
  */
 export function yearOnYearChange(current: number, prior: number): string | null {
   if (!(prior > 0)) return null;
-  const pct = Math.round(((current - prior) / prior) * 100);
-  if (pct === 0) return "0%";
+  // Direction comes from the money, compared in whole centavos — never from
+  // the rounded percentage, or ₱1,004,000 vs ₱1,000,000 reads as "0%" / flat.
+  const diffCents = Math.round(current * 100) - Math.round(prior * 100);
+  if (diffCents === 0) return "0%";
+  const pct = Math.round((diffCents / 100 / prior) * 100);
+  if (pct === 0) return diffCents > 0 ? "+<1%" : "−<1%";
   return pct > 0 ? `+${pct}%` : `−${Math.abs(pct)}%`;
 }
 
@@ -117,6 +121,71 @@ export interface RevenueTrendPoint {
   lab: number;
   consult: number;
   procedure: number;
+  /**
+   * The same dates one year earlier (`priorYearRange` — so the current,
+   * partial month is compared day-for-day, not against a whole month).
+   */
+  prior: { lab: number; consult: number; procedure: number };
+}
+
+export function trendTotal(p: { lab: number; consult: number; procedure: number }): number {
+  return p.lab + p.consult + p.procedure;
+}
+
+/** "↑ +12%" / "↓ −5%" direction for a trend month vs the same dates last year. */
+export function trendDirection(p: RevenueTrendPoint): {
+  dir: "up" | "down" | "flat" | "none";
+  change: string | null;
+} {
+  const change = yearOnYearChange(trendTotal(p), trendTotal(p.prior));
+  if (change === null) return { dir: "none", change: null };
+  if (change === "0%") return { dir: "flat", change };
+  // yearOnYearChange already signs by the centavo difference, so "+<1%" is up.
+  return { dir: change.startsWith("+") ? "up" : "down", change };
+}
+
+/**
+ * The 12-month table as CSV rows (header first) for the bookkeeper. Plain
+ * numbers (no ₱, no thousands separators) so a spreadsheet reads them as
+ * numbers; month as YYYY-MM so it sorts.
+ */
+export function revenueTrendCsvRows(points: readonly RevenueTrendPoint[]): (string | number)[][] {
+  const money = (n: number) => Number(n.toFixed(2));
+  return [
+    [
+      "Month",
+      "Partial month",
+      // "Billed … by visit date" in every money header: the file travels
+      // without the page's explanation, and this is NOT released revenue.
+      "Lab Tests billed PHP (by visit date)",
+      "Doctor Consults billed PHP (by visit date)",
+      "Doctor Procedures billed PHP (by visit date)",
+      "Total billed PHP (by visit date)",
+      "Same dates last year: Lab Tests billed PHP",
+      "Same dates last year: Doctor Consults billed PHP",
+      "Same dates last year: Doctor Procedures billed PHP",
+      "Same dates last year: Total billed PHP",
+      "Change vs last year %",
+    ],
+    ...points.map((p) => [
+      p.key,
+      p.partial ? `to ${p.end}` : "",
+      money(p.lab),
+      money(p.consult),
+      money(p.procedure),
+      money(trendTotal(p)),
+      money(p.prior.lab),
+      money(p.prior.consult),
+      money(p.prior.procedure),
+      money(trendTotal(p.prior)),
+      // A number, not "+12%": a leading "+" is neutralised as a formula by the
+      // CSV writer, and a bare number is what a spreadsheet can chart.
+      // One decimal, so a small change is not flattened to 0.
+      trendTotal(p.prior) > 0
+        ? Math.round(((trendTotal(p) - trendTotal(p.prior)) / trendTotal(p.prior)) * 1000) / 10
+        : "",
+    ]),
+  ];
 }
 
 /**
