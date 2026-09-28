@@ -247,7 +247,7 @@
 <div class="layout">
 <nav class="toc" aria-label="Contents">
   <p class="toc-brand">drmed<span>.</span>ph</p>
-  <p class="toc-tag">User guide · v2.37</p>
+  <p class="toc-tag">User guide · v2.38</p>
   <div class="filter" role="group" aria-label="Show chapters for">
     <button type="button" data-filter="all" aria-pressed="true">All roles</button>
     <button type="button" data-filter="reception">Reception</button>
@@ -830,7 +830,7 @@
     <div class="screen"><div class="where">Sidebar › Lab &amp; Imaging › <kbd class="ui">Queue</kbd> · <code class="route">/staff/queue</code></div>
       <dl><dt>Tabs</dt><dd><span class="tab">All</span> · <span class="tab">Unclaimed</span> (paid work nobody has picked up — the same count as the dashboard cards) · <span class="tab">Pending release</span> · <span class="tab">Released today</span> · <span class="tab">Mine</span></dd>
       <dt>Filters</dt><dd><b>Requested from</b> / <b>…to</b> (on <span class="tab">Released today</span>: <b>Released from</b>). Left blank, every tab shows work from any date — only <span class="tab">Released today</span> keeps to today, and the line under the dates says which applies · <b>Patient / test search</b> (name, test or DRM-ID) · <b>Visit #</b> · <kbd class="ui">Apply</kbd> · <kbd class="ui">Clear filters</kbd></dd>
-      <dt>Row buttons</dt><dd><kbd class="ui">Claim</kbd> · <kbd class="ui">Unclaim</kbd> (on a test you hold; an Admin sees it on every claimed test)</dd>
+      <dt>Row buttons</dt><dd><kbd class="ui">Claim</kbd> · <kbd class="ui">Unclaim</kbd> (on a test you hold; an Admin sees it on every claimed test) · tick boxes at the start of each single-test row → a bar at the bottom of the page acts on all ticked tests</dd>
       <dt>Remarks</dt><dd>The last column: who claimed the test, who unclaimed it and why, any reassignment, and — for a finished result that was later corrected — <q>Updated <i>date/time</i> by <i>who</i> — “<i>reason</i>”</q>, oldest first with the time of each (the three most recent; older ones fold into <q>+N earlier</q>). Unclaims, reassignments and updates show in amber. Reception never sees the update lines or their reasons, and a medtech or x-ray technician sees them only for a report wholly inside their own sections.</dd></dl></div>
     <p>Rows are oldest first — click <b>Requested</b>, <b>Visit</b> or <b>Status</b> to re-sort, and a rows-per-page picker sits at the bottom. On <span class="tab">Released today</span> the first column reads <b>Released</b> and shows when the test left the bench, which is the order that tab is in, and each row with a file on record has <b>Print result</b> and <b>View PDF →</b> for the patient's paper copy. Reception also sees this tab (and only this tab), so the counter can print without asking you. Each row shows the patient, the test (code and name), the visit number and a status chip. A chemistry order shows as one row, for example <q>Chemistry Panel (3 tests)</q>, because the whole panel is reported on one form (4.4). On <span class="tab">Released today</span> a panel that went out on two separate reports (a test added after the first report, for example) shows one row per report, each with its own <b>Print result</b>, so the patient gets every page. Package headers never appear; only the tests inside them do.</p>
     <ol class="steps">
@@ -839,6 +839,7 @@
       <li><p class="step-title">Use <span class="tab">Mine</span> to get back to anything you left half-done.</p></li>
     </ol>
     <div class="note tip"><span class="k">Claimed the wrong one?</span><div><p>Put it back yourself — either straight from the queue with the row's <kbd class="ui">Unclaim</kbd> (type an optional reason, then <kbd class="ui">Confirm</kbd>; a chemistry panel row hands back the whole panel), or on the test page, under <b>Your claim</b>, click <kbd class="ui">Unclaim — put it back in the queue</kbd>, type a reason if you want one on record, then <kbd class="ui">Confirm unclaim</kbd>. The test returns to <span class="status">requested</span> for anyone in your section to pick up, the unclaim is written to the audit log, and it shows in the row's <b>Remarks</b> — and under <b>History</b> on the test page — so the next person knows it was handed back. A chemistry panel's page has the same <kbd class="ui">Unclaim</kbd> beside its History block.</p><p>It works only while the test is still <span class="status">in progress</span> and nothing has been uploaded to it. Once a result is attached you get <q>You can only unclaim a test you currently hold that has no result yet.</q> and need an Admin, who has the <b>Assignment (admin)</b> panel with <kbd class="ui">Unclaim</kbd> and <kbd class="ui">Reassign to…</kbd> on any claimed test.</p></div></div>
+    <div class="note tip"><span class="k">Several tests at once</span><div><p>Tick the boxes at the start of the rows (the box in the header ticks every test on the page). A bar appears at the bottom with only what applies to what you ticked: <kbd class="ui">Claim</kbd>, <kbd class="ui">Unclaim</kbd> (type an optional reason, then <kbd class="ui">Confirm unclaim</kbd>) and, for Admins on unpaid entries, <kbd class="ui">Delete</kbd> (a reason is required, then <kbd class="ui">Confirm delete</kbd>). Up to 100 tests at a time. Changing the tab, filters, sort or page clears the ticks; <kbd>Esc</kbd> clears them too.</p><p>Each test is checked again when you press the button. Any test that changed in the meantime — claimed by a colleague, already unclaimed, on a visit that is now paid — is left alone, and the message afterwards names it and says why. Chemistry panels have no tick box: claim or unclaim a panel from its own page.</p></div></div>
   </section>
 
   <!-- 4.3 -->
@@ -1327,7 +1328,7 @@
 </section>
 
 <footer class="end">
-  <p>drmed.ph User Guide · v2.37 · 28 September 2026 · Matches the production release at migration 0186, plus 0188 (why a patient notice failed), 0183 (waived balance in the books), 0182, 0179 (corrected-result follow-ups), 0176 and 0170 (applied out of order) and 0167 (patient delete and restore). Every label in this guide was checked against the application code on that date. Print with <b>Ctrl/Cmd + P</b>; each chapter starts on a new page.</p>
+  <p>drmed.ph User Guide · v2.38 · 28 September 2026 · Matches the production release at migration 0186, plus 0188 (why a patient notice failed), 0183 (waived balance in the books), 0182, 0179 (corrected-result follow-ups), 0176 and 0170 (applied out of order) and 0167 (patient delete and restore). Every label in this guide was checked against the application code on that date. Print with <b>Ctrl/Cmd + P</b>; each chapter starts on a new page.</p>
 </footer>
 </main>
 </div>

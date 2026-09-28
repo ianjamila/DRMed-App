@@ -149,16 +149,21 @@ these, it does not grow its own pager.
 (client; wraps the server-rendered tables; `resetKey` = a joined string of every list
 param, because search-param navigation does not remount client state), `RowSelectCheckbox`
 (`rowKey`/`kinds`/`weight`/`label`; prunes itself on unmount or kind change),
-`SelectAllCheckbox` (header, indeterminate), `BulkBar` (sticky bottom, count, Clear,
-Escape). Caps live in `src/lib/ui/bulk-selection.ts` (100 rows / 500 records, pure,
-tested). A page adds a leading checkbox column, builds a serialisable `…ByKey` map for its
-bar, and writes ONE bar component with page-specific buttons. Server actions take the
-grouped ids, enforce their own cap and status/ownership predicates, audit one row per
-record from the rows the write RETURNED, and return `changedIds` so the bar can report
-partial results. Live example: `appointments/appointments-bulk-bar.tsx` +
-`src/lib/appointments/bulk-eligibility.ts`. The visit page's Tests section predates the
-kit and keeps its own copy (`visits/[id]/selection-context.tsx`); the HMO-claims pages are
-client-state tables. Spec: `docs/superpowers/specs/2026-09-25-bulk-row-selection-design.md`.
+`SelectAllCheckbox` (header, indeterminate), `BulkBar` (**fixed** bottom — never `sticky`
+inside the staff shell, `<main>` is a scroll container; count, Clear, Escape). Caps live in
+`src/lib/ui/bulk-selection.ts` (100 rows / 500 records, pure, tested). A page adds a leading
+checkbox column, builds a serialisable `…ByKey` map for its bar, and writes ONE bar
+component with page-specific buttons. Server actions take the grouped ids, enforce their
+own cap and status/ownership predicates, audit one row per record from the rows the write
+RETURNED, and return `changedIds` so the bar can report partial results. Live example:
+`appointments/appointments-bulk-bar.tsx` + `src/lib/appointments/bulk-eligibility.ts`.
+Second example: the lab queue — `queue/queue-bulk-bar.tsx` +
+`src/lib/queue/{bulk-queue,claim-eligibility}.ts` (per-row loops, named skips, cross-visit
+delete over a per-visit core). The visit page's Tests section predates the kit and keeps
+its own copy (`visits/[id]/selection-context.tsx`); the HMO-claims pages are client-state
+tables. `SelectionProvider` resets itself on `resetKey` — never put a React `key` on it (a
+remount wipes sibling client state, e.g. the no-show Undo banner). Spec:
+`docs/superpowers/specs/2026-09-25-bulk-row-selection-design.md`.
 
 ## 4a · The three page-shape standards (agreed 2026-09-11)
 
