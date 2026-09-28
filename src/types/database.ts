@@ -6522,6 +6522,61 @@ export type Database = {
           },
         ]
       }
+      visit_waiver_allocations: {
+        Row: {
+          amount_php: number
+          created_at: string
+          discount_account: string
+          id: string
+          journal_entry_id: string | null
+          recognised_at: string | null
+          test_request_id: string
+          visit_id: string
+        }
+        Insert: {
+          amount_php: number
+          created_at?: string
+          discount_account: string
+          id?: string
+          journal_entry_id?: string | null
+          recognised_at?: string | null
+          test_request_id: string
+          visit_id: string
+        }
+        Update: {
+          amount_php?: number
+          created_at?: string
+          discount_account?: string
+          id?: string
+          journal_entry_id?: string | null
+          recognised_at?: string | null
+          test_request_id?: string
+          visit_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "visit_waiver_allocations_journal_entry_id_fkey"
+            columns: ["journal_entry_id"]
+            isOneToOne: false
+            referencedRelation: "journal_entries"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "visit_waiver_allocations_test_request_id_fkey"
+            columns: ["test_request_id"]
+            isOneToOne: true
+            referencedRelation: "test_requests"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "visit_waiver_allocations_visit_id_fkey"
+            columns: ["visit_id"]
+            isOneToOne: false
+            referencedRelation: "visits"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       visits: {
         Row: {
           attending_physician_id: string | null
@@ -6547,6 +6602,10 @@ export type Database = {
           visit_date: string
           visit_group_id: string | null
           visit_number: string
+          waive_reason: string | null
+          waived_at: string | null
+          waived_by: string | null
+          waived_php: number | null
         }
         Insert: {
           attending_physician_id?: string | null
@@ -6572,6 +6631,10 @@ export type Database = {
           visit_date?: string
           visit_group_id?: string | null
           visit_number?: string
+          waive_reason?: string | null
+          waived_at?: string | null
+          waived_by?: string | null
+          waived_php?: number | null
         }
         Update: {
           attending_physician_id?: string | null
@@ -6597,6 +6660,10 @@ export type Database = {
           visit_date?: string
           visit_group_id?: string | null
           visit_number?: string
+          waive_reason?: string | null
+          waived_at?: string | null
+          waived_by?: string | null
+          waived_php?: number | null
         }
         Relationships: [
           {
@@ -6653,6 +6720,13 @@ export type Database = {
             columns: ["patient_id"]
             isOneToOne: false
             referencedRelation: "v_patients_without_consent"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "visits_waived_by_fkey"
+            columns: ["waived_by"]
+            isOneToOne: false
+            referencedRelation: "staff_profiles"
             referencedColumns: ["id"]
           },
         ]
@@ -7568,6 +7642,22 @@ export type Database = {
           visits: number
         }[]
       }
+      waive_visit_balance: {
+        Args: { p_actor_id: string; p_reason: string; p_visit_id: string }
+        Returns: Json
+      }
+      waiver_post_allocation: {
+        Args: { p_actor_id: string; p_allocation_id: string }
+        Returns: string
+      }
+      waiver_unrecognise_line: {
+        Args: {
+          p_actor_id: string
+          p_reason: string
+          p_test_request_id: string
+        }
+        Returns: undefined
+      }
     }
     Enums: {
       account_normal_balance: "debit" | "credit"
@@ -7605,6 +7695,7 @@ export type Database = {
         | "petty_cash"
         | "gift_code_sale"
         | "gift_code_breakage"
+        | "visit_waiver"
       je_status: "draft" | "posted" | "reversed"
       period_status: "open" | "closed"
     }
@@ -7773,6 +7864,7 @@ export const Constants = {
         "petty_cash",
         "gift_code_sale",
         "gift_code_breakage",
+        "visit_waiver",
       ],
       je_status: ["draft", "posted", "reversed"],
       period_status: ["open", "closed"],
