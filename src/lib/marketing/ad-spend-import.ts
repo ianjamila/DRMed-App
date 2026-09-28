@@ -12,13 +12,14 @@ import { daysInMonth } from "@/lib/dates/manila";
 import { normaliseCampaignName } from "@/lib/marketing/campaign-results";
 
 export type AdPlatform = "meta" | "google";
-export type AdSpendRejectReason = "date_range" | "bad_date" | "no_campaign" | "bad_spend";
+export type AdSpendRejectReason = "date_range" | "bad_date" | "no_campaign" | "bad_spend" | "malformed_row";
 
 export const REJECT_REASON_LABEL: Record<AdSpendRejectReason, string> = {
   date_range: "covers more than one day — export with a 1-day breakdown",
   bad_date: "date not readable",
   no_campaign: "no campaign name",
   bad_spend: "Spend is blank or not a valid amount",
+  malformed_row: "Row has extra or missing columns — amounts with commas must be quoted",
 };
 
 export interface AdSpendRow {
@@ -53,9 +54,15 @@ function isoOf(y: number, m: number, d: number): string | null {
   return `${y}-${pad(m)}-${pad(d)}`;
 }
 
+// Codex #3: the trailing group after the date must be a real timestamp
+// suffix — HH:MM, optional :SS, optional fractional seconds, optional
+// Z/±HH:MM offset — never arbitrary text. A bare `.*` here let a two-date
+// cell like "2026-09-01 to 2026-09-30" silently parse as just its first day.
+const ISO_TIME_SUFFIX = /[ T]\d{2}:\d{2}(?::\d{2})?(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?/;
+
 function parseOneDate(s: string): string | null {
   const t = s.trim();
-  let m = t.match(/^(\d{4})-(\d{1,2})-(\d{1,2})(?:[ T].*)?$/);
+  let m = t.match(new RegExp(`^(\\d{4})-(\\d{1,2})-(\\d{1,2})(?:${ISO_TIME_SUFFIX.source})?$`));
   if (m) return isoOf(+m[1], +m[2], +m[3]);
   m = t.match(/^(\d{4})[/.](\d{1,2})[/.](\d{1,2})$/);
   if (m) return isoOf(+m[1], +m[2], +m[3]);
@@ -84,7 +91,10 @@ function parseOneDate(s: string): string | null {
 
 export function parseDateCell(raw: string): { ok: true; date: string } | { ok: false; reason: "date_range" | "bad_date" } {
   const s = String(raw ?? "").trim();
-  const range = s.match(/^(.+?)\s+[-–—]\s+(.+)$/);
+  // Codex #3: "A to B" (Google's spoken-word range wording) is a two-date
+  // cell exactly like "A - B" — never let the word "to" fall through to
+  // parseOneDate's trailing-text branch, which would silently keep only A.
+  const range = s.match(/^(.+?)\s+(?:[-–—]|to)\s+(.+)$/i);
   if (range) {
     const a = parseOneDate(range[1]);
     const b = parseOneDate(range[2]);
@@ -116,7 +126,15 @@ function count(v: string | undefined): number | null {
   return /^\d+$/.test(s) ? Number(s) : null;
 }
 
-export function parseAdSpendCsv(records: readonly Record<string, string>[], headers: readonly string[]): AdSpendParse {
+export function parseAdSpendCsv(
+  records: readonly Record<string, string>[],
+  headers: readonly string[],
+  // Codex #2: row indexes PapaParse itself flagged (TooManyFields /
+  // TooFewFields / quote errors) — an unquoted comma inside a peso amount
+  // ("1,234.50") shifts every later column, so the row must never reach the
+  // money/campaign parsing below at all.
+  malformedRowIndexes?: ReadonlySet<number> | readonly number[],
+): AdSpendParse {
   const byNorm = new Map(headers.map((x) => [h(x), x]));
   const col = (...names: string[]) => names.map((n) => byNorm.get(n)).find((x) => x !== undefined);
   const colStarts = (prefix: string) => headers.find((x) => h(x).startsWith(prefix));
@@ -159,8 +177,11 @@ export function parseAdSpendCsv(records: readonly Record<string, string>[], head
   const rejected = new Map<AdSpendRejectReason, number>();
   const reject = (r: AdSpendRejectReason) => rejected.set(r, (rejected.get(r) ?? 0) + 1);
   const rows = new Map<string, AdSpendRow>();
+  const badRows = malformedRowIndexes instanceof Set ? malformedRowIndexes : new Set(malformedRowIndexes ?? []);
 
-  for (const r of records) {
+  for (let idx = 0; idx < records.length; idx++) {
+    const r = records[idx]!;
+    if (badRows.has(idx)) { reject("malformed_row"); continue; }
     const campaign = String((campaignCol && r[campaignCol]) ?? "").trim();
     if (/^total\b/i.test(campaign) || (dayCol && /^total\b/i.test(String(r[dayCol] ?? "").trim()))) continue;
 
@@ -199,10 +220,15 @@ export function parseAdSpendCsv(records: readonly Record<string, string>[], head
     const impressions = imprCol ? count(r[imprCol]) : null;
     const clicks = clickCol ? count(r[clickCol]) : null;
 
+    const campaignKey = normaliseCampaignName(campaign);
+    // Sonnet review #3: a campaign like "---" or "___" passes the `!campaign`
+    // check above but normalises to "" — ad_spend_daily's campaign_key check
+    // (char_length between 1 and 300) would then fail the WHOLE all-or-nothing
+    // upload with a generic DB error instead of a clean per-row rejection.
+    if (!campaignKey) { reject("no_campaign"); continue; }
     const adId = adIdCol ? String(r[adIdCol] ?? "").trim() : "";
     const adName = adNameCol ? normaliseCampaignName(String(r[adNameCol] ?? "")) : "";
-    const campaignKey = normaliseCampaignName(campaign);
-    const adKey = adId ? `id:${adId}` : adName || "(campaign)";
+    const adKey = (adId ? `id:${adId}` : adName) || "(campaign)";
     const key = `${date}|${platform}|${campaignKey}|${adKey}`;
     const prev = rows.get(key);
     if (prev) {
@@ -214,6 +240,25 @@ export function parseAdSpendCsv(records: readonly Record<string, string>[], head
         spend_date: date, platform, campaign_key: campaignKey.slice(0, 300), ad_key: adKey.slice(0, 300),
         campaign_label: campaign.slice(0, 300), spend_php: spend, impressions, clicks,
       });
+    }
+  }
+
+  // Codex #1 (parser half): within ONE file, a campaign-day that carries both
+  // a campaign-total row (ad_key "(campaign)") and per-ad rows would upsert
+  // under different ad_keys and double-count when saved — refuse the whole
+  // file rather than silently keep both granularities.
+  const groupHasTotal = new Set<string>();
+  const groupHasPerAd = new Set<string>();
+  for (const row of rows.values()) {
+    const groupKey = `${row.spend_date}|${row.platform}|${row.campaign_key}`;
+    (row.ad_key === "(campaign)" ? groupHasTotal : groupHasPerAd).add(groupKey);
+  }
+  for (const groupKey of groupHasTotal) {
+    if (groupHasPerAd.has(groupKey)) {
+      return {
+        ok: false,
+        error: "This file mixes campaign totals and per-ad rows for the same campaign and day — export one level only.",
+      };
     }
   }
 

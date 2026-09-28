@@ -19,6 +19,19 @@ describe("parseDateCell", () => {
     expect(parseDateCell("2026-02-30")).toEqual({ ok: false, reason: "bad_date" });
     expect(parseDateCell("MAX")).toEqual({ ok: false, reason: "bad_date" });
   });
+  it("rejects an 'A to B' range in one cell as date_range, not a silent first-day truncation (Codex #3)", () => {
+    expect(parseDateCell("2026-09-01 to 2026-09-30")).toEqual({ ok: false, reason: "date_range" });
+    expect(parseDateCell("2026-09-01 to 2026-09-01")).toEqual({ ok: true, date: "2026-09-01" });
+  });
+  it("rejects unrecognised trailing text after an ISO date instead of silently dropping it (Codex #3)", () => {
+    expect(parseDateCell("2026-09-01 something else")).toEqual({ ok: false, reason: "bad_date" });
+    expect(parseDateCell("2026-09-01 00:00 something else")).toEqual({ ok: false, reason: "bad_date" });
+  });
+  it("still accepts real timestamp suffixes on an ISO date", () => {
+    expect(parseDateCell("2026-09-01T00:00:00")).toEqual({ ok: true, date: "2026-09-01" });
+    expect(parseDateCell("2026-09-01 00:00:00.123")).toEqual({ ok: true, date: "2026-09-01" });
+    expect(parseDateCell("2026-09-01T00:00:00+08:00")).toEqual({ ok: true, date: "2026-09-01" });
+  });
 });
 
 describe("locateHeader", () => {
@@ -126,6 +139,61 @@ describe("parseAdSpendCsv", () => {
     expect(r).toMatchObject({ ok: true, rows: [], rejected: expect.arrayContaining([
       { reason: "bad_spend", count: 2 }, { reason: "no_campaign", count: 1 },
     ]) });
+  });
+  it("rejects a campaign name that normalises to empty (Sonnet review #3)", () => {
+    const r = parseAdSpendCsv(
+      [
+        { Day: "2026-09-01", Campaign: "---", Cost: "5" },
+        { Day: "2026-09-01", Campaign: "___", Cost: "5" },
+        { Day: "2026-09-01", Campaign: "C", Cost: "5" },
+      ],
+      ["Day", "Campaign", "Cost"],
+    );
+    expect(r).toMatchObject({ ok: true, rejected: [{ reason: "no_campaign", count: 2 }] });
+    if (!r.ok) throw new Error();
+    expect(r.rows).toEqual([expect.objectContaining({ campaign_key: "c" })]);
+  });
+  it("rejects rows PapaParse flagged as malformed (extra/missing columns), never saving their value (Codex #2)", () => {
+    // "Day,Campaign,Cost" header; row 1 has an extra unquoted comma inside the
+    // amount ("1,234.50"), which PapaParse reports as a TooManyFields error at
+    // row index 0 — the amount must never be silently read as "1".
+    const r = parseAdSpendCsv(
+      [
+        { Day: "2026-09-01", Campaign: "Brand", Cost: "1" },
+        { Day: "2026-09-02", Campaign: "Brand", Cost: "50" },
+      ],
+      ["Day", "Campaign", "Cost"],
+      new Set([0]),
+    );
+    expect(r).toMatchObject({ ok: true, rejected: [{ reason: "malformed_row", count: 1 }] });
+    if (!r.ok) throw new Error();
+    expect(r.rows).toEqual([expect.objectContaining({ spend_date: "2026-09-02", spend_php: 50 })]);
+  });
+  it("refuses a file that mixes a campaign-total row with per-ad rows for the same campaign and day (Codex #1)", () => {
+    const r = parseAdSpendCsv(
+      [
+        { Date: "2026-09-01", Platform: "Facebook", Campaign: "C", "Ad name": "", Spend: "100" },
+        { Date: "2026-09-01", Platform: "Facebook", Campaign: "C", "Ad name": "Video A", Spend: "60" },
+        { Date: "2026-09-01", Platform: "Facebook", Campaign: "C", "Ad name": "Video B", Spend: "40" },
+      ],
+      ["Date", "Platform", "Campaign", "Ad name", "Spend"],
+    );
+    expect(r).toEqual({ ok: false, error: expect.stringMatching(/mixes campaign totals and per-ad rows/) });
+  });
+  it("allows per-ad rows alone, and campaign-total rows alone, for the same campaign/day", () => {
+    const perAd = parseAdSpendCsv(
+      [
+        { Date: "2026-09-01", Platform: "Facebook", Campaign: "C", "Ad name": "Video A", Spend: "60" },
+        { Date: "2026-09-01", Platform: "Facebook", Campaign: "C", "Ad name": "Video B", Spend: "40" },
+      ],
+      ["Date", "Platform", "Campaign", "Ad name", "Spend"],
+    );
+    expect(perAd).toMatchObject({ ok: true, rejected: [] });
+    const total = parseAdSpendCsv(
+      [{ Date: "2026-09-01", Platform: "Facebook", Campaign: "C", "Ad name": "", Spend: "100" }],
+      ["Date", "Platform", "Campaign", "Ad name", "Spend"],
+    );
+    expect(total).toMatchObject({ ok: true, rejected: [] });
   });
 });
 

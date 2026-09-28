@@ -48,7 +48,14 @@ export async function saveAdSpendAction(csvText: string): Promise<AdSpendSaveRes
   if (csvText.length > MAX_CSV_CHARS) return { ok: false, error: "The file is larger than 5 MB — export a shorter date range." };
 
   const parsed = Papa.parse<Record<string, string>>(locateHeader(csvText), { header: true, skipEmptyLines: true });
-  const result = parseAdSpendCsv(parsed.data, parsed.meta.fields ?? []);
+  // Codex #2: PapaParse's own structural errors (TooManyFields, TooFewFields,
+  // quote errors) point at a row whose columns shifted — e.g. an unquoted
+  // comma inside "1,234.50" — so that row's values (including spend) must
+  // never reach the saved data.
+  const malformedRows = new Set(
+    parsed.errors.map((e) => e.row).filter((row): row is number => typeof row === "number"),
+  );
+  const result = parseAdSpendCsv(parsed.data, parsed.meta.fields ?? [], malformedRows);
   if (!result.ok) return { ok: false, error: result.error };
   const rejected = result.rejected.map((r) => ({ reason: REJECT_REASON_LABEL[r.reason], count: r.count }));
   if (result.rows.length === 0) {
