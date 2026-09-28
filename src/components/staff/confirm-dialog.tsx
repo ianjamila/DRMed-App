@@ -46,6 +46,8 @@ interface Props {
   // Caller-owned extra reason to keep confirm disabled (e.g. a reason picker
   // not yet chosen, or open blockers). OR'd with the built-in checks.
   confirmDisabled?: boolean;
+  // id of an element explaining why confirm is disabled (e.g. the blocker list) — announced with the button
+  confirmDescribedBy?: string;
 }
 
 export function ConfirmDialog({
@@ -63,6 +65,7 @@ export function ConfirmDialog({
   onReasonChange,
   errorMessage,
   confirmDisabled: confirmDisabledProp = false,
+  confirmDescribedBy,
 }: Props) {
   const panelRef = useFocusTrap<HTMLDivElement>(open);
 
@@ -170,6 +173,7 @@ export function ConfirmDialog({
               void onConfirm();
             }}
             disabled={confirmDisabled}
+            aria-describedby={confirmDescribedBy}
             className={`min-h-[44px] rounded-md px-4 py-2 text-sm font-bold disabled:opacity-50 ${confirmClass}`}
           >
             {isPending ? "Working..." : confirmLabel}

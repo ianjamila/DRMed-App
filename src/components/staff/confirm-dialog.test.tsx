@@ -34,4 +34,12 @@ describe("ConfirmDialog", () => {
   it("renders nothing when closed", () => {
     expect(renderToStaticMarkup(<ConfirmDialog {...base} open={false} />)).toBe("");
   });
+  it("announces confirmDescribedBy on the confirm button", () => {
+    const html = confirmButton(renderToStaticMarkup(<ConfirmDialog {...base} confirmDescribedBy="blockers-1" />));
+    expect(html).toMatch(/aria-describedby="blockers-1"/);
+  });
+  it("omits aria-describedby when confirmDescribedBy is not set", () => {
+    const html = confirmButton(renderToStaticMarkup(<ConfirmDialog {...base} />));
+    expect(html).not.toMatch(/aria-describedby/);
+  });
 });
