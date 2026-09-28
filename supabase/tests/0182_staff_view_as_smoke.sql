@@ -36,7 +36,8 @@
 --      control. A-as-pathologist reads the fixture row exactly as genuine
 --      pathologist P does (both via the unconditional branch — the row is
 --      deliberately left unfinished/unassigned so this does not lean on the
---      medtech/xray branch); A-as-reception reads 0.
+--      medtech/xray branch). Two controls: A-as-reception (A's own override
+--      set to 'reception') reads 0, and so does genuine reception R.
 --   P9 X-ray claim write: public.test_requests UPDATE is governed by two
 --      current permissive policies (verified live via pg_policy): "test_
 --      requests: medtech/pathologist update" (0151, ~line 1261) —
@@ -54,9 +55,12 @@
 --      (is_active = false): has_role()/staff_role() filter on is_active, so
 --      a real xray_technician row with is_active = false is refused by both
 --      policies — a genuine, differently-shaped "effective role the policy
---      refuses". A-as-xray_technician claims its line exactly as genuine X
---      claims its own (1 row, assigned_to/status set); the deactivated
---      xray_technician's claim affects 0 rows.
+--      refuses". Before A's claim, has_role(admin) is asserted false and
+--      staff_role() = 'xray_technician', so the write is proven to go
+--      through the xray_technician branch and not admin's FOR ALL policy.
+--      A-as-xray_technician claims its line exactly as genuine X claims its
+--      own (1 row, assigned_to/status set); the deactivated xray_technician's
+--      claim affects 0 rows.
 begin;
 
 -- fixtures ------------------------------------------------------------------
@@ -306,11 +310,22 @@ begin
     raise exception 'P8: pathologist equivalence broken (A=% P=%)', v_n, v_n2;
   end if;
 
+  -- CONTROL 1: genuine reception R.
   perform pg_temp.become(k_reception);
   select count(*) into v_n from public.result_values where id = '40000000-0000-4000-8000-000000000182';
   perform pg_temp.unbecome();
-  if v_n <> 0 then raise exception 'P8 CONTROL: reception should see 0 rows (got %)', v_n; end if;
-  raise notice 'P8 ok: pathologist equivalence (result_values); reception control 0 rows';
+  if v_n <> 0 then raise exception 'P8 CONTROL: genuine reception R should see 0 rows (got %)', v_n; end if;
+
+  -- CONTROL 2: A-as-reception (the admin's own override, not a separate user).
+  update public.staff_profiles
+     set view_as_role = 'reception', view_as_until = now() + interval '4 hours'
+   where id = k_admin;
+  perform pg_temp.become(k_admin);
+  select count(*) into v_n from public.result_values where id = '40000000-0000-4000-8000-000000000182';
+  perform pg_temp.unbecome();
+  if v_n <> 0 then raise exception 'P8 CONTROL: A-as-reception should see 0 rows (got %)', v_n; end if;
+
+  raise notice 'P8 ok: pathologist equivalence (result_values); reception + A-as-reception controls both 0 rows';
 
   -- P9 -------------------------------------------------------------------
   -- See header for the two policies exercised and why the control is a
@@ -320,6 +335,14 @@ begin
    where id = k_admin;
 
   perform pg_temp.become(k_admin);
+  -- Prove the write goes through the xray_technician branch of "test_
+  -- requests: medtech/pathologist update", not admin's FOR ALL policy
+  -- (same pattern as P2/P7): while viewing as xray_technician, A is not
+  -- admin at all.
+  select public.has_role(array['admin']) into v_bool;
+  if v_bool then raise exception 'P9: has_role(admin) should be false while viewing as xray_technician'; end if;
+  select public.staff_role() into v_text;
+  if v_text <> 'xray_technician' then raise exception 'P9: staff_role() = % (want xray_technician)', v_text; end if;
   update public.test_requests
      set status = 'in_progress', assigned_to = k_admin, started_at = now()
    where id = 'f1000000-0000-4000-8000-000000000182' and status = 'requested';
