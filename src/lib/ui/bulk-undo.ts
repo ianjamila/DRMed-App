@@ -13,6 +13,22 @@ export function undoWindowStartIso(nowMs: number): string {
   return new Date(nowMs - UNDO_WINDOW_MS).toISOString();
 }
 
+/**
+ * Do two ISO timestamps name the SAME instant? PostgREST normalizes a
+ * `.toISOString()` "Z" suffix to "+00:00" on read-back (empirically verified
+ * against the local stack), so a raw string comparison between a value this
+ * app wrote (via `new Date().toISOString()`) and the same value read back
+ * from a SELECT silently never matches — exactly the exact-predicate checks
+ * this file's callers use to prove an Undo is reversing the SAME write it
+ * made, not a coincidentally-identical later one. Always compare as instants.
+ */
+export function sameInstant(a: string | null | undefined, b: string | null | undefined): boolean {
+  if (a == null || b == null) return false;
+  const ta = Date.parse(a);
+  const tb = Date.parse(b);
+  return !Number.isNaN(ta) && !Number.isNaN(tb) && ta === tb;
+}
+
 /** Result of an Undo. Ids are the keys the bar knows: appointment ids, or queue selection keys. */
 export type BulkUndoResult =
   | { ok: true; restoredIds: string[]; notRestored: Array<{ id: string; reason: string }> }
@@ -21,6 +37,15 @@ export type BulkUndoResult =
 export const UNDO_EXPIRED =
   "Undo is no longer available — it lasts 10 minutes and only for your own bulk changes.";
 export const UNDO_ALREADY = "This bulk change was already undone.";
+/**
+ * A row the batch touched has a NEWER audit row (any actor, any action) that
+ * does not belong to this batch — someone or something else changed it since,
+ * so Undo refuses it (a whole panel, for a queue panel) rather than risk
+ * reversing a change it never made. Same reason used whether the guard caught
+ * it up front (loadOwnBatchRows' `changedSince`) or the write's own predicate
+ * simply didn't match at Undo time.
+ */
+export const CHANGED_SINCE_REASON = "changed again since — refresh to see its status";
 
 export interface AuditRowForUndo {
   resource_id: string | null;
@@ -71,9 +96,16 @@ export function bucketAppointmentUndo(
 }
 
 export type QueueUndoStep =
-  | { kind: "unclaim"; id: string; visitId: string | null; panelKey: string | null }
+  // startedAt: the exact value the original bulk claim wrote (metadata.started_at) —
+  // the Undo's unclaim write predicates on it, so it can only ever reverse
+  // THIS claim, never a same-holder reclaim that happened since (P1: undo
+  // overwriting a newer change).
+  | { kind: "unclaim"; id: string; visitId: string | null; panelKey: string | null; startedAt: string | null }
   | { kind: "reclaim"; id: string; visitId: string | null; holder: string; startedAt: string | null; panelKey: string | null }
-  | { kind: "restore"; id: string; visitId: string; panelKey: string | null };
+  // deletedAt: the exact value the original bulk delete wrote
+  // (metadata.deleted_at) — restoreTestRequestsForVisit's expectedDeletedAtOf
+  // predicates on it, same reason.
+  | { kind: "restore"; id: string; visitId: string; panelKey: string | null; deletedAt: string | null };
 
 const str = (v: unknown): string | null => (typeof v === "string" && v.length > 0 ? v : null);
 
@@ -88,12 +120,12 @@ export function planQueueUndo(rows: readonly AuditRowForUndo[]): QueueUndoStep[]
     const panelKey = str(m.panel_key);
     let step: QueueUndoStep | null = null;
     if (row.action === "test_request.claimed") {
-      step = { kind: "unclaim", id, visitId, panelKey };
+      step = { kind: "unclaim", id, visitId, panelKey, startedAt: str(m.started_at) };
     } else if (row.action === "test_request.unclaimed") {
       const holder = str(m.previous_assignee);
       if (holder) step = { kind: "reclaim", id, visitId, holder, startedAt: str(m.previous_started_at), panelKey };
     } else if (row.action === "test_request.deleted") {
-      if (visitId) step = { kind: "restore", id, visitId, panelKey };
+      if (visitId) step = { kind: "restore", id, visitId, panelKey, deletedAt: str(m.deleted_at) };
     }
     if (!step) continue;
     seen.add(id);
