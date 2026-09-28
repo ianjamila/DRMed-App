@@ -940,4 +940,86 @@ begin
 end
 $s5$;
 
+-- --- s6: HMO + PF guards, mixed batch ---------------------------------------------
+do $s6$
+declare
+  k_admin constant uuid := 'a0000000-0000-4000-8000-000000000184';
+  a  uuid := pg_temp.mk_patient('S6A');   -- active, open item
+  d  uuid := pg_temp.mk_patient('S6D');   -- deleted, SETTLED item in the same batch
+  va uuid; vd uuid; ta uuid; td uuid; td_un uuid;
+  bat uuid; bat2 uuid; ia uuid; id_ uuid; id_un uuid;
+  pay_d uuid; alloc_d uuid; pf_d uuid; pay_a uuid;
+  phys uuid; disb uuid;
+begin
+  va := pg_temp.mk_visit(a, true);
+  vd := pg_temp.mk_visit(d, true);
+  ta := pg_temp.mk_line(va, 'released', 1000);
+  td := pg_temp.mk_line(vd, 'released', 1000);
+  td_un := pg_temp.mk_line(vd, 'released', 500);
+  insert into public.hmo_claim_batches (provider_id, status) values ('b0000000-0000-4000-8000-000000000184', 'submitted') returning id into bat;
+  insert into public.hmo_claim_items (batch_id, test_request_id, billed_amount_php) values (bat, ta, 1000) returning id into ia;
+  insert into public.hmo_claim_items (batch_id, test_request_id, billed_amount_php) values (bat, td, 1000) returning id into id_;
+  -- d's item: settled (paid 1000).
+  pay_d := pg_temp.mk_pay(vd, 1000, 'hmo');
+  insert into public.hmo_payment_allocations (payment_id, item_id, amount_php) values (pay_d, id_, 1000) returning id into alloc_d;
+  -- d's second item sits in a VOIDED batch (the reopen case).
+  insert into public.hmo_claim_batches (provider_id, status) values ('b0000000-0000-4000-8000-000000000184', 'submitted') returning id into bat2;
+  insert into public.hmo_claim_items (batch_id, test_request_id, billed_amount_php) values (bat2, td_un, 500) returning id into id_un;
+  update public.hmo_claim_batches set voided_at = now(), voided_by = k_admin, void_reason = 'smoke', status = 'voided' where id = bat2;
+  insert into public.physicians (slug, full_name, specialty) values ('lk-smoke-doc', 'LK Smoke Doc', 'General')
+    returning id into phys;
+  insert into public.doctor_pf_entries (test_request_id, physician_id, pf_php, recognition_basis, recognized_at)
+    values (td, phys, 100, 'cash_at_release', now())
+    returning id into pf_d;
+  perform pg_temp.kill(d);
+
+  -- Mixed batch: settling ACTIVE a's item succeeds although deleted d's settled item shares the batch.
+  pay_a := pg_temp.mk_pay(va, 1000, 'hmo');
+  perform pg_temp.expect('s6.1 mixed batch: settling the active patient''s item succeeds',
+    pg_temp.state_of(format($q$insert into public.hmo_payment_allocations (payment_id, item_id, amount_php) values (%L, %L, 1000)$q$, pay_a, ia)), 'ok');
+  perform pg_temp.expect('s6.2 …and the batch rolled up (recompute touched only batches + a''s item)',
+    (select status from public.hmo_claim_batches where id = bat), 'paid');
+
+  perform pg_temp.expect('s6.3 voiding the deleted patient''s allocation is refused (reopens a settled balance)',
+    pg_temp.state_of(format($q$update public.hmo_payment_allocations set voided_at = now(), voided_by = %L, void_reason = 'x' where id = %L$q$, k_admin, alloc_d)), 'P0058');
+  perform pg_temp.expect('s6.4 a resolution on the deleted patient''s item is refused',
+    pg_temp.state_of(format($q$insert into public.hmo_claim_resolutions (item_id, destination, amount_php, resolved_by) values (%L, 'write_off', 1, %L)$q$, id_, k_admin)), 'P0058');
+  perform pg_temp.expect('s6.5 editing the deleted patient''s claim item is refused',
+    pg_temp.state_of(format($q$update public.hmo_claim_items set hmo_response = 'paid' where id = %L$q$, id_)), 'P0058');
+  perform pg_temp.expect('s6.6 reopening a voided batch that holds a deleted patient''s item is refused (nested write checked)',
+    pg_temp.state_of(format($q$update public.hmo_claim_batches set voided_at = null, voided_by = null, void_reason = null, status = 'submitted' where id = %L$q$, bat2)), 'P0058');
+  perform pg_temp.expect('s6.7 …and the batch stayed voided',
+    (select (voided_at is not null)::text from public.hmo_claim_batches where id = bat2), 'true');
+
+  -- doctor_pf_entries: linking a disbursement is allowed; anything else is refused.
+  insert into public.doctor_pf_disbursements (batch_number, physician_id, posted_date, method, total_php, recorded_by)
+    values ((select coalesce(max(batch_number), 0) + 1 from public.doctor_pf_disbursements),
+            phys, (now() at time zone 'Asia/Manila')::date, 'cash', 100, k_admin)
+    returning id into disb;
+  perform pg_temp.expect('s6.8 paying the doctor (disbursement link) is allowed',
+    pg_temp.state_of(format($q$update public.doctor_pf_entries set disbursement_id = %L where id = %L$q$, disb, pf_d)), 'ok');
+  perform pg_temp.expect('s6.9 voiding the PF entry is refused',
+    pg_temp.state_of(format($q$update public.doctor_pf_entries set voided_at = now(), voided_by = %L, void_reason = 'x' where id = %L$q$, k_admin, pf_d)), 'P0058');
+  -- Mismatched references (Codex plan review P1-1): a PF entry for an ACTIVE
+  -- patient's test that points at a DELETED patient's HMO allocation.
+  perform pg_temp.expect('s6.10 a PF entry whose allocation belongs to a deleted patient is refused',
+    pg_temp.state_of(format($q$insert into public.doctor_pf_entries (test_request_id, physician_id, pf_php, recognition_basis, recognized_at, hmo_allocation_id) values (%L, %L, 10, 'hmo_at_settlement', now(), %L)$q$, ta, phys, alloc_d)), 'P0058');
+  perform pg_temp.expect('s6.11 an allocation of an ACTIVE item to a deleted patient''s payment is refused',
+    pg_temp.state_of(format($q$insert into public.hmo_payment_allocations (payment_id, item_id, amount_php) values (%L, %L, 1)$q$, pay_d, ia)), 'P0058');
+
+  -- a_lifecycle_guard fires FIRST among BEFORE row triggers on all four
+  -- newly guarded tables too (same catalog check as s3.28/s5.35).
+  perform pg_temp.expect('s6.12 a_lifecycle_guard fires first among BEFORE row triggers on the four HMO/PF tables',
+    (select string_agg(first_trigger, ',' order by rel) from (
+       select c.relname as rel,
+              (select t.tgname from pg_trigger t
+                where t.tgrelid = c.oid and not t.tgisinternal and (t.tgtype & 2) = 2 and (t.tgtype & 1) = 1
+                order by t.tgname collate "C" limit 1) as first_trigger
+         from pg_class c
+        where c.relnamespace = 'public'::regnamespace
+          and c.relname in ('hmo_claim_items', 'hmo_payment_allocations', 'hmo_claim_resolutions', 'doctor_pf_entries')) s),
+    'a_lifecycle_guard,a_lifecycle_guard,a_lifecycle_guard,a_lifecycle_guard');
+end
+$s6$;
+
 rollback;

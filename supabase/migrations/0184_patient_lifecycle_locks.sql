@@ -893,3 +893,27 @@ drop trigger if exists a_lifecycle_guard on public.critical_alerts;
 create trigger a_lifecycle_guard
   before insert or update or delete on public.critical_alerts
   for each row execute function public.enforce_patient_activity();
+
+-- HMO sub-ledger rows and doctor PF entries (via test_request / item / payment).
+-- hmo_claim_batches is NOT guarded: a batch holds many patients, and
+-- recompute_hmo_batch_status only ever writes batches. A reopen that would
+-- un-void an inactive patient's item fails in that item's guard.
+drop trigger if exists a_lifecycle_guard on public.hmo_claim_items;
+create trigger a_lifecycle_guard
+  before insert or update or delete on public.hmo_claim_items
+  for each row execute function public.enforce_patient_activity();
+
+drop trigger if exists a_lifecycle_guard on public.hmo_payment_allocations;
+create trigger a_lifecycle_guard
+  before insert or update or delete on public.hmo_payment_allocations
+  for each row execute function public.enforce_patient_activity();
+
+drop trigger if exists a_lifecycle_guard on public.hmo_claim_resolutions;
+create trigger a_lifecycle_guard
+  before insert or update or delete on public.hmo_claim_resolutions
+  for each row execute function public.enforce_patient_activity();
+
+drop trigger if exists a_lifecycle_guard on public.doctor_pf_entries;
+create trigger a_lifecycle_guard
+  before insert or update or delete on public.doctor_pf_entries
+  for each row execute function public.enforce_patient_activity();
