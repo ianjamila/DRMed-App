@@ -187,6 +187,9 @@ select count(*) from (select rtr.result_id from public.result_test_requests rtr
 select count(*) from public.test_requests c join public.test_requests h on h.id = c.parent_id where c.visit_id <> h.visit_id;
 select count(*) from public.critical_alerts ca join public.test_requests tr on tr.id = ca.test_request_id
   join public.visits v on v.id = tr.visit_id where ca.patient_id is distinct from v.patient_id;
+-- An alert withdrawn by a correction of ANOTHER result: expect 0 (Task 4's guard refuses new ones).
+select count(*) from public.critical_alerts ca join public.result_amendments am on am.id = ca.withdrawn_by_amendment
+ where am.result_id <> ca.result_id;
 -- The rollup function's ACL, to restate exactly in Task 12.
 select proacl, prosecdef, proconfig from pg_proc where oid = 'public.recompute_hmo_batch_status(uuid)'::regprocedure;
 select version from supabase_migrations.schema_migrations order by version desc limit 5;
@@ -475,7 +478,7 @@ declare
   pay uuid;
   b  uuid;
   it uuid;
-  q uuid; vq uuid; hq uuid; payq uuid; rq uuid; amq uuid; itq uuid; alq uuid;
+  q uuid; vq uuid; hq uuid; payq uuid; rq uuid; amq uuid; itq uuid; alq uuid; r2 uuid;
   pq uuid[];
   s0 int;
   x0 int;
@@ -616,12 +619,16 @@ begin
     (select array_agg(x order by x) from unnest(array[r, rq]) x)::text);
   perform pg_temp.expect('s1.36 result ids of a non-results row → empty',
     public.lifecycle_result_ids_of_row('visits', jsonb_build_object('id', v))::text, '{}');
+  -- Fresh ids: once Task 6 installs the junction guard, r and rq already hold
+  -- membership locks from their links, and a re-entrant acquisition adds no
+  -- pg_locks row (Codex recheck P2-4).
   s0 := pg_temp.held_results('ShareLock');
-  perform public.lifecycle_lock_results(array[r, r, null], false);
+  r2 := gen_random_uuid();
+  perform public.lifecycle_lock_results(array[r2, r2, null], false);
   perform pg_temp.expect('s1.37 shared membership lock, once per distinct result, NULLs ignored',
     (pg_temp.held_results('ShareLock') - s0)::text, '1');
   x0 := pg_temp.held_results('ExclusiveLock');
-  perform public.lifecycle_lock_results(array[rq], true);
+  perform public.lifecycle_lock_results(array[gen_random_uuid()], true);
   perform pg_temp.expect('s1.38 exclusive membership lock',
     (pg_temp.held_results('ExclusiveLock') - x0)::text, '1');
 
@@ -1305,6 +1312,13 @@ $s3$;
 --  4. result_test_requests INSERT/UPDATE: one patient per result — the new
 --     link's patient must be the patient of the result's other links
 --     (23514). Under the exclusive membership lock this cannot race.
+--     critical_alerts: withdrawn_by_amendment must be a correction of the
+--     alert's own result (23514).
+-- Before 1-4: the references other rows depend on indirectly are immutable
+-- (result_amendments.result_id/test_request_id; critical_alerts.result_id/
+-- test_request_id/patient_id — 23514), and 0179's ON DELETE SET NULL of
+-- critical_alerts.withdrawn_by_amendment is recognised (the vanished OLD
+-- reference is dropped; the alert's other references are still checked).
 --
 -- Installed as a_lifecycle_guard: same-timing triggers fire in name order and
 -- every other BEFORE trigger is tg_*/trg_*, so this lock is always taken
@@ -1360,6 +1374,38 @@ begin
     end if;
   end if;
 
+  -- (a2) Ownership references that other rows depend on INDIRECTLY are
+  -- immutable (Codex recheck P1): a withdrawn alert reaches a second result
+  -- through its amendment, so re-pointing an amendment at another result (or
+  -- an alert at another result/test/patient) would change what dependent
+  -- writers must lock without taking any lock they conflict with. Nothing in
+  -- the app or SQL rebinds these; a correction is a new row.
+  if tg_op = 'UPDATE' then
+    if tg_table_name = 'result_amendments' and v_changed && array['result_id', 'test_request_id'] then
+      raise exception 'a correction record stays on its result and test — record a new correction instead'
+        using errcode = '23514';
+    end if;
+    if tg_table_name = 'critical_alerts' and v_changed && array['result_id', 'test_request_id', 'patient_id'] then
+      raise exception 'a critical alert stays on its result, test and patient'
+        using errcode = '23514';
+    end if;
+  end if;
+
+  -- (a3) ON DELETE SET NULL on critical_alerts.withdrawn_by_amendment (0179):
+  -- deleting an amendment (directly, or cascading from its result or test)
+  -- UPDATEs the alert after the amendment row is gone. That OLD reference
+  -- can no longer be resolved; drop just that key so it does not fail closed
+  -- as "patient not found" — the alert's result, test and patient_id are
+  -- still locked and asserted below. Only this exact shape qualifies: the new
+  -- value is NULL and the referenced amendment no longer exists.
+  if tg_op = 'UPDATE' and tg_table_name = 'critical_alerts'
+     and v_o ->> 'withdrawn_by_amendment' is not null
+     and v_n ->> 'withdrawn_by_amendment' is null
+     and not exists (select 1 from public.result_amendments am
+                      where am.id = (v_o ->> 'withdrawn_by_amendment')::uuid) then
+    v_o := v_o - 'withdrawn_by_amendment';
+  end if;
+
   -- (b) Results family: the membership lock FIRST (see header, step 1).
   if tg_table_name in ('results', 'result_test_requests', 'result_values', 'result_amendments', 'critical_alerts') then
     perform public.lifecycle_lock_results(
@@ -1406,6 +1452,16 @@ begin
       raise exception 'a result can only hold one patient''s tests — create a separate result for this test'
         using errcode = '23514';
     end if;
+  end if;
+  -- An alert can only be withdrawn by a correction of ITS OWN result (what
+  -- result_edit_commit does, 0179) — so the indirect path adds no result.
+  if tg_table_name = 'critical_alerts' and tg_op <> 'DELETE'
+     and v_n ->> 'withdrawn_by_amendment' is not null
+     and not exists (select 1 from public.result_amendments am
+                      where am.id = (v_n ->> 'withdrawn_by_amendment')::uuid
+                        and am.result_id = (v_n ->> 'result_id')::uuid) then
+    raise exception 'an alert can only be withdrawn by a correction of its own result'
+      using errcode = '23514';
   end if;
 
   return case when tg_op = 'DELETE' then old else new end;
@@ -1593,7 +1649,7 @@ declare
   ta uuid; ta2 uuid; ta3 uuid; ta4 uuid; tb uuid; td uuid; td2 uuid;
   ra uuid; rd uuid; r_new uuid; r_un uuid; r_b uuid;
   tpl uuid; prm uuid;
-  al uuid; am_d uuid; am_a uuid;
+  al uuid; am_d uuid; am_a uuid; am_b uuid; am_w uuid; al_w uuid; rw uuid; ta5 uuid; am_rw uuid; al_rw uuid;
   s0 int; x0 int;
 begin
   insert into public.result_templates (service_id, layout) values ('c1000000-0000-4000-8000-000000000184', 'simple')
@@ -1623,6 +1679,9 @@ begin
   insert into public.result_amendments (result_id, test_request_id, prior_storage_path, prior_uploaded_by,
                                         prior_uploaded_at, reason, amended_by, amendment_seq)
     values (ra, ta, 'x', k_med, now(), 'smoke', k_med, 1) returning id into am_a;
+  insert into public.result_amendments (result_id, test_request_id, prior_storage_path, prior_uploaded_by,
+                                        prior_uploaded_at, reason, amended_by, amendment_seq)
+    values (r_b, tb, 'x', k_med, now(), 'smoke', k_med, 1) returning id into am_b;
   perform pg_temp.kill(d);
 
   perform pg_temp.expect('s5.1 an UNLINKED result row can always be inserted (inert)',
@@ -1704,6 +1763,40 @@ begin
     (pg_temp.held_results('ExclusiveLock') - x0)::text, '1');
   perform pg_temp.expect('s5.27 CONTROL an active patient''s amendment reason can still change',
     pg_temp.state_of(format($q$update public.result_amendments set reason = 'y' where id = %L$q$, am_a)), 'ok');
+
+  -- Indirect references are immutable / consistent (Codex recheck P1).
+  perform pg_temp.expect('s5.28 re-pointing a correction at another result is refused',
+    pg_temp.state_of(format($q$update public.result_amendments set result_id = %L where id = %L$q$, r_new, am_a)), '23514');
+  insert into public.critical_alerts (result_id, test_request_id, parameter_id, direction, parameter_name, patient_id)
+    values (ra, ta, prm, 'high', 'LK param', a) returning id into al_w;
+  perform pg_temp.expect('s5.29 re-pointing an alert at another result is refused',
+    pg_temp.state_of(format($q$update public.critical_alerts set result_id = %L where id = %L$q$, r_new, al_w)), '23514');
+  perform pg_temp.expect('s5.30 an alert withdrawn by a correction of ANOTHER result is refused',
+    pg_temp.state_of(format($q$update public.critical_alerts set withdrawn_at = now(), withdrawn_by = %L, withdrawn_by_amendment = %L where id = %L$q$, k_med, am_b, al_w)), '23514');
+
+  -- 0179's ON DELETE SET NULL through the guard, active patient (Codex recheck P2-3).
+  insert into public.result_amendments (result_id, test_request_id, prior_storage_path, prior_uploaded_by,
+                                        prior_uploaded_at, reason, amended_by, amendment_seq)
+    values (ra, ta, 'x', k_med, now(), 'smoke', k_med, 2) returning id into am_w;
+  update public.critical_alerts set withdrawn_at = now(), withdrawn_by = k_med, withdrawn_by_amendment = am_w where id = al_w;
+  perform pg_temp.expect('s5.31 deleting the correction that withdrew an alert (SET NULL on the alert) is allowed',
+    pg_temp.state_of(format($q$delete from public.result_amendments where id = %L$q$, am_w)), 'ok');
+  perform pg_temp.expect('s5.32 …and the alert survives with the reference cleared',
+    (select (withdrawn_by_amendment is null)::text from public.critical_alerts where id = al_w), 'true');
+  ta5 := pg_temp.mk_line(va, 'in_progress', 100, null, false, 'c1000000-0000-4000-8000-000000000184');
+  insert into public.results (generation_kind, uploaded_by) values ('structured', k_med) returning id into rw;
+  insert into public.result_test_requests (result_id, test_request_id) values (rw, ta5);
+  insert into public.result_amendments (result_id, test_request_id, prior_storage_path, prior_uploaded_by,
+                                        prior_uploaded_at, reason, amended_by, amendment_seq)
+    values (rw, ta5, 'x', k_med, now(), 'smoke', k_med, 1) returning id into am_rw;
+  insert into public.critical_alerts (result_id, test_request_id, parameter_id, direction, parameter_name, patient_id,
+                                      withdrawn_at, withdrawn_by, withdrawn_by_amendment)
+    values (rw, ta5, prm, 'low', 'LK param', a, now(), k_med, am_rw) returning id into al_rw;
+  perform pg_temp.expect('s5.33 deleting an active patient''s result that carries a correction and an alert it withdrew (cascades) is allowed',
+    pg_temp.state_of(format($q$delete from public.results where id = %L$q$, rw)), 'ok');
+  perform pg_temp.expect('s5.34 …and everything under it is gone',
+    (select count(*)::text from public.critical_alerts where id = al_rw)
+      || (select count(*)::text from public.result_amendments where id = am_rw), '00');
 end
 $s5$;
 ```
@@ -1742,7 +1835,7 @@ create trigger a_lifecycle_guard
 
 - [ ] **Step 3: Apply, run — PASS** (s1–s5). Run `0172_result_edit_commit_smoke.sql` and the 0179 smoke (`supabase/tests/0179_*_smoke.sql` if present) — must stay green (active patients only).
 
-- [ ] **Step 4: Mutation checks** (each must FAIL, then restore + re-apply): (a) in the guard, pass `false` instead of the exclusive expression to `lifecycle_lock_results` → s5.26 fails; (b) delete step (d) (one patient per result) → s5.20 fails; (c) drop the `result_id` term from the `critical_alerts` branch of `lifecycle_patients_of_row` → s5.15 fails; (d) drop the `result_amendments` follow-up exception → s5.22 fails. The race half of the membership protocol is proven in Task 16 (`membership_*` races).
+- [ ] **Step 4: Mutation checks** (each must FAIL, then restore + re-apply): (a) in the guard, pass `false` instead of the exclusive expression to `lifecycle_lock_results` → s5.26 fails; (b) delete step (d) (one patient per result) → s5.20 fails; (c) drop the `result_id` term from the `critical_alerts` branch of `lifecycle_patients_of_row` → s5.15 fails; (d) drop the `result_amendments` follow-up exception → s5.22 fails; (e) delete step (a2) → s5.28/s5.29 must FAIL (the re-point then succeeds); (f) delete step (a3) → s5.31 and s5.33 fail with P0058; (g) delete the withdrawn-by-own-result check → s5.30 fails. The race half of the membership protocol is proven in Task 16 (`membership_*` races).
 
 - [ ] **Step 5: Commit** — `feat(db): lifecycle guard on the results family — membership lock, every reference, one patient per result (0184 part 5)`.
 
@@ -3047,6 +3140,69 @@ grant execute on function public.record_hmo_settlement(uuid, uuid, numeric, time
 ```
   Copy `recompute_hmo_batch_status` from `0034_hmo_ar_subledger.sql` (the `create or replace function public.recompute_hmo_batch_status(p_batch_id uuid)` statement, ~line 383, through its `$$;`). Change exactly: (1) `set search_path = public` → `set search_path = pg_catalog, public, pg_temp`; (2) the first statement `select status into v_current from public.hmo_claim_batches where id = p_batch_id;` → `select status into v_current from public.hmo_claim_batches where id = p_batch_id for no key update;  -- 0184: serialise the rollup per batch`. Then restate the ACL exactly as prod has it (Task 0 Step 6 `proacl`; on 2026-09-28 local, compare with `\df+ public.recompute_hmo_batch_status`) — e.g. `revoke all … from public, anon, authenticated;` + the same grants it has today. Do NOT widen it. If a trigger function that calls it is SECURITY INVOKER, the grant it relies on must stay — check `tg_hmo_batch_status_rollup_from_item`'s `prosecdef` first.
 
+```sql
+-- ---------------------------------------------------------------------------
+-- (8c) One HMO lock order: the BATCH row before any ITEM row (Codex recheck
+-- P2-2). record_hmo_settlement locks batch → items. A plain allocation or
+-- resolution write used to go item-first: its AFTER trigger updates the item
+-- (0034 recompute_hmo_item_paid_amount), and only then does the rollup (8b)
+-- lock the batch — the inverse order, so an allocation holding item I and
+-- waiting for batch B could deadlock with a settlement holding B and waiting
+-- for I, on a single item. This BEFORE trigger locks the batch of the row's
+-- item(s) (old and new, id order) first. It sorts after a_lifecycle_guard
+-- (advisory lock still first) and before every tg_*/trg_* trigger, and the
+-- item update happens in AFTER triggers, so batch → item holds on every
+-- allocation/resolution path. Remaining item-first writers are direct
+-- hmo_claim_items UPDATE/DELETE statements (the tuple is locked before any
+-- trigger runs): admin batch-editing actions, which Task 24 retries once on
+-- 40P01. SECURITY DEFINER (RLS must not hide the batch), EXECUTE revoked.
+-- ---------------------------------------------------------------------------
+create or replace function public.lock_hmo_batch_before_items()
+returns trigger
+language plpgsql
+security definer
+set search_path = pg_catalog, public, pg_temp
+as $$
+begin
+  perform 1
+     from public.hmo_claim_batches b
+    where b.id in (select i.batch_id from public.hmo_claim_items i
+                    where i.id in (nullif(case when tg_op <> 'INSERT' then to_jsonb(old) ->> 'item_id' end, '')::uuid,
+                                   nullif(case when tg_op <> 'DELETE' then to_jsonb(new) ->> 'item_id' end, '')::uuid))
+    order by b.id
+      for no key update of b;
+  return case when tg_op = 'DELETE' then old else new end;
+end;
+$$;
+
+revoke all on function public.lock_hmo_batch_before_items() from public, anon, authenticated, service_role;
+
+drop trigger if exists a_lifecycle_hmo_batch_lock on public.hmo_payment_allocations;
+create trigger a_lifecycle_hmo_batch_lock
+  before insert or update or delete on public.hmo_payment_allocations
+  for each row execute function public.lock_hmo_batch_before_items();
+
+drop trigger if exists a_lifecycle_hmo_batch_lock on public.hmo_claim_resolutions;
+create trigger a_lifecycle_hmo_batch_lock
+  before insert or update or delete on public.hmo_claim_resolutions
+  for each row execute function public.lock_hmo_batch_before_items();
+```
+Add to s11 (before `s11.12 EXECUTE`):
+
+```sql
+  perform pg_temp.expect('s11.12d allocations and resolutions: lifecycle guard, then the batch lock, then everything else',
+    (select string_agg(rel || ':' || trg, ',' order by rel) from (
+       select c.relname as rel,
+              (select string_agg(t.tgname, '>' order by t.tgname collate "C") from (
+                 select t2.tgname from pg_trigger t2
+                  where t2.tgrelid = c.oid and not t2.tgisinternal and (t2.tgtype & 2) = 2 and (t2.tgtype & 1) = 1
+                  order by t2.tgname collate "C" limit 2) t) as trg
+         from pg_class c where c.relnamespace = 'public'::regnamespace
+          and c.relname in ('hmo_payment_allocations', 'hmo_claim_resolutions')) s),
+    'hmo_claim_resolutions:a_lifecycle_guard>a_lifecycle_hmo_batch_lock,hmo_payment_allocations:a_lifecycle_guard>a_lifecycle_hmo_batch_lock');
+```
+(s14.3/s14.4 in Task 15 already list `lock_hmo_batch_before_items`.)
+
 - [ ] **Step 3: Apply, run — PASS** (s1–s11). Re-run `0147_hmo_claim_delete_guard_smoke.sql` and `0030_op_gl_bridge_smoke.sql` (they settle HMO items): green.
 
 - [ ] **Step 3b: Mutation checks.** (a) Remove `for no key update` from the rollup: s11.12c fails here, and Task 16's `hmo_last_two_items_both_commit` race must fail (batch left `submitted`) — run it once in this state after Task 16 exists, or record this mutation for Task 29 Step 2. (b) Replace the centavo total check with a raw `v_sum <> p_total_amount_php` numeric comparison: s11.12a must FAIL (22023 — 100.10000000000001 + 200.2 is not 300.29999999999995). Restore.
@@ -3469,7 +3625,7 @@ begin
         and p.proname in ('lifecycle_lock', 'lifecycle_lock_and_assert', 'lifecycle_lock_results', 'lifecycle_patients_of_visits',
           'lifecycle_patients_of_test_requests', 'lifecycle_patients_of_result', 'lifecycle_patients_of_hmo_items',
           'lifecycle_patients_of_payments', 'lifecycle_patients_of_amendments', 'lifecycle_patients_of_allocations',
-          'lifecycle_via', 'lifecycle_result_ids_of_row', 'recompute_hmo_batch_status',
+          'lifecycle_via', 'lifecycle_result_ids_of_row', 'recompute_hmo_batch_status', 'lock_hmo_batch_before_items',
           'lifecycle_patients_of_row', 'enforce_patient_activity',
           'create_visit_encounter', 'result_create_linked', 'record_hmo_settlement',
           'reschedule_closure_appointments', 'current_patient_id')
@@ -3479,6 +3635,7 @@ begin
     (select coalesce(string_agg(p.proname, ','), 'none') from pg_proc p
       where p.pronamespace = 'public'::regnamespace
         and p.proname in ('lifecycle_lock', 'lifecycle_lock_and_assert', 'lifecycle_norm', 'enforce_patient_activity',
+          'lifecycle_lock_results', 'lock_hmo_batch_before_items', 'recompute_hmo_batch_status',
           'create_visit_encounter', 'result_create_linked', 'record_hmo_settlement',
           'reschedule_closure_appointments', 'notification_skip_summary', 'resolve_patient_guarded',
           'result_save_draft', 'result_finalise_commit', 'result_edit_commit', 'correct_payment',
@@ -3488,7 +3645,8 @@ begin
   -- resolver follows (Facts table). A new such column fails here until
   -- lifecycle_patients_of_row learns it (Codex plan review P1-1).
   perform pg_temp.expect('s14.5 the resolver knows every patient-bearing FK',
-    (select string_agg(c.conrelid::regclass::text || '.' || a.attname, ',' order by 1)
+    (select string_agg(c.conrelid::regclass::text || '.' || a.attname, ','
+                       order by (c.conrelid::regclass::text || '.' || a.attname) collate "C")
        from pg_constraint c join pg_attribute a on a.attrelid = c.conrelid and a.attnum = c.conkey[1]
       where c.contype = 'f' and cardinality(c.conkey) = 1
         and c.conrelid::regclass::text = any(k_tables)
@@ -3637,9 +3795,11 @@ describe("0184-owned functions survive replay AND ship order", () => {
 
   it("mutation: a lower-numbered branch re-creating correct_payment is caught", () => {
     const body = definitions(real, "correct_payment").at(-1)![1];
-    const intruder = { name: "0183_waived_balance_gl.sql", text: `${body}\n$$;` };
+    // A synthetic name that can never be in allowedBelow (Codex recheck P3 —
+    // 0183 itself may legitimately be allow-listed if it lands first).
+    const intruder = { name: "0183_zz_synthetic_intruder.sql", text: `${body}\n$$;` };
     const files = [...real, intruder].sort((a, b) => a.name.localeCompare(b.name));
-    expect(ownedFunctionProblems(files).join("\n")).toMatch(/correct_payment: re-created in 0183_waived_balance_gl\.sql/);
+    expect(ownedFunctionProblems(files).join("\n")).toMatch(/correct_payment: re-created in 0183_zz_synthetic_intruder\.sql/);
   });
 
   it("mutation: a higher-numbered definition without the lock is caught", () => {
@@ -4211,6 +4371,36 @@ async function main() {
       expectEq("durable: batch paid (the rollup saw A's commit)", (await batchState(s2, f.bat)).split("|")[0], "paid");
     });
 
+    // Mixed HMO writers (Codex recheck P2-2): the settlement RPC against the
+    // EXISTING allocation action's plain insert, each going first, on
+    // different items and on the SAME item. One lock order (batch → items)
+    // means the second waits on the batch row and is never a deadlock victim.
+    for (const sameItem of [false, true]) {
+      for (const first of ["settlement", "allocation"] as const) {
+        await race(`mixed HMO writers, ${first} first, ${sameItem ? "same" : "different"} item → no deadlock`, async (a, b, s2) => {
+          const f = await mkBatchOfTwo(s2, `X${sameItem ? "S" : "D"}${first === "settlement" ? "S" : "A"}`);
+          const allocItem = sameItem ? f.ia : f.ib;
+          const allocPay = await mkPayment(s2, sameItem ? f.va : f.vb, 100, "hmo");
+          const doSettle = (c: Client) => settle(c, f.bat, f.ia);
+          const doAlloc = (c: Client) =>
+            c.query(`insert into public.hmo_payment_allocations (payment_id, item_id, amount_php) values ($1, $2, 100)`, [allocPay, allocItem]);
+          const [one, two] = first === "settlement" ? [doSettle, doAlloc] : [doAlloc, doSettle];
+          await a.query("begin");
+          await one(a);
+          await b.query("begin");
+          const w = stateOf(two(b));
+          expectEq("the second writer waits", await stillWaiting(w), true);
+          expectEq("…on a row (the batch), not in a deadlock", await waitingOn(s2, b), "row");
+          await a.query("commit");
+          const got = await w;
+          expectEq("never a deadlock victim", got === "40P01", false);
+          expectEq("second writer outcome", got, sameItem ? "P0012" : "ok");
+          await b.query(sameItem ? "rollback" : "commit");
+          expectEq("durable batch state", await batchState(s2, f.bat), sameItem ? "submitted|1|1|1" : "paid|2|2|2");
+        });
+      }
+    }
+
     // Result membership (Codex plan review P1-2).
     async function mkResult(s2: Client): Promise<string> {
       const r = (await s2.query(`insert into public.results (generation_kind, uploaded_by) values ('structured', $1) returning id`, [ADMIN])).rows[0].id as string;
@@ -4326,7 +4516,7 @@ void main();
 - [ ] **Step 2: Add the npm script** in `package.json` next to `"smoke:print"`: `"smoke:locks": "tsx scripts/smoke-lifecycle-locks.ts",`.
 
 - [ ] **Step 3: Run it.** `npm run -s smoke:locks > $SCRATCH/smoke-locks.log 2>&1; echo exit=$?; tail -25 $SCRATCH/smoke-locks.log`
-Expected: `21/21 races passed`, `exit=0`. The closure race picks its own empty past day (`isolatedPastDay`) and proves it holds only its three appointments before changing anything; its cleanup deletes only the closure day it inserted.
+Expected: `25/25 races passed`, `exit=0`. The closure race picks its own empty past day (`isolatedPastDay`) and proves it holds only its three appointments before changing anything; its cleanup deletes only the closure day it inserted.
 Mutation checks (each must FAIL, then restore + re-apply): make the junction branch take the SHARED membership lock → both `membership:` races fail (no wait); remove the batch lock from `recompute_hmo_batch_status` → "the rollup itself serialises" fails (batch left `submitted`); remove the batch lock from `record_hmo_settlement` only → "two settlements … BOTH commit" still passes (the rollup lock covers it) — expected, the two locks are belt and braces; note it in the report.
 A fixture failure ("fixture is not deletable — adjust it, blockers: […]") means the local blocker rules differ from this plan's assumption — adjust the fixture to clear exactly the listed blocker (the blocker JSON names it), never the assertion. A scenario that ends `got "ok", want "P0058"` is a real hole: stop and debug (superpowers:systematic-debugging).
 
@@ -5312,13 +5502,15 @@ describe("runUndoSteps", () => {
 
 ### Task 24: Remaining writers retry once; full gate
 
-**Files:** `src/app/(staff)/staff/(dashboard)/queue/[id]/actions.ts` (`saveDraftValues`), `src/app/(staff)/staff/(dashboard)/payments/[id]/{edit,move}/actions.ts` (the `correct_payment` callers).
+**Files:** `src/app/(staff)/staff/(dashboard)/queue/[id]/actions.ts` (`saveDraftValues`), `src/app/(staff)/staff/(dashboard)/payments/[id]/{edit,move}/actions.ts` (the `correct_payment` callers), `src/app/(staff)/staff/(dashboard)/admin/accounting/hmo-claims/actions.ts` (every single-statement write to `hmo_claim_items`, `hmo_payment_allocations`, `hmo_claim_resolutions`).
 
 - [ ] **Step 1:** Wrap `admin.rpc("result_save_draft", …)` in `saveDraftValues` and each `admin.rpc("correct_payment", …)` call in `withLifecycleRetry(() => …)`. No other change: their errors already go through `translatePgError`, which now words P0072/40P01.
 
+- [ ] **Step 1b: HMO writers (Codex recheck P2-2).** In `hmo-claims/actions.ts`, wrap each single PostgREST write to those three tables (on origin/main ~l.120, 221, 255/269, 306, 446/453, 488/494, 551, 568, 605, 619, 819 — re-find them with `grep -n 'from("hmo_' …`) in `withLifecycleRetry(() => …)`. A direct `hmo_claim_items` UPDATE/DELETE locks the item before any trigger and the rollup then locks the batch — the one remaining item-before-batch order — so it can lose a deadlock to a settlement; the whole statement rolled back, so one retry is safe. Allocation/resolution writes no longer deadlock (8c) but get the same wrapper for P0072. Only single-statement writes: a multi-call sequence in one action must not be retried piecemeal — leave those calls unwrapped and note them in the report.
+
 - [ ] **Step 2: Full gate.** `npm test > $SCRATCH/test.log 2>&1; echo test=$?; npm run typecheck > $SCRATCH/tc.log 2>&1; echo tc=$?; npm run lint > $SCRATCH/lint.log 2>&1; echo lint=$?` — all `0`; on failure read only the failing part of the log.
 
-- [ ] **Step 3: Commit** — `feat(patients): result drafts and payment edits retry once on a lost lifecycle race`.
+- [ ] **Step 3: Commit** — `feat(patients): result drafts, payment edits and HMO claim writes retry once on a lost lifecycle race`.
 
 ---
 ### Task 25: Owner extras — "Patient messages not sent", Sentry on lookup failures, merge-notice skip audit
@@ -5605,7 +5797,7 @@ for f in 0184_patient_lifecycle_locks 0167_patient_soft_delete 0147_hmo_claim_de
 done
 SMOKE_LOCKS_DB_URL=postgresql://postgres:postgres@127.0.0.1:55322/postgres npm run -s smoke:locks > $SCRATCH/replay-locks.log 2>&1; echo exit=$?; tail -3 $SCRATCH/replay-locks.log
 ```
-Expected: no ERROR/FAILED in any file, `21/21 races passed`.
+Expected: no ERROR/FAILED in any file, `25/25 races passed`.
 
 **Order equivalence.** Re-apply 0184 on the SHARED stack last (the Conventions apply command — this is the prod order: 0184 after 0186), then compare every 0184-owned function's definition on both stacks:
 
@@ -5665,7 +5857,7 @@ PR 3a of the patient-delete rollout (spec: docs/superpowers/specs/2026-09-24-pat
 - Undo-merge clears the source marker first and stops on the first error; Cron Health lists patient messages that were not sent; the portal identity comes from the JWT only (`set_patient_context` dropped).
 - Migration 0184, P0072–P0073.
 
-Verification: npm test / typecheck / lint; 0184 smoke s1–s14 + neighbouring smokes; `npm run smoke:locks` (21 two-connection races, incl. result membership and HMO batch rollup); isolated fresh replay + replay/ship-order equivalence (Task 29 Step 3); browser smoke; Opus review + Codex xhigh review.
+Verification: npm test / typecheck / lint; 0184 smoke s1–s14 + neighbouring smokes; `npm run smoke:locks` (25 two-connection races, incl. result membership, HMO batch rollup and mixed HMO writers); isolated fresh replay + replay/ship-order equivalence (Task 29 Step 3); browser smoke; Opus review + Codex xhigh review.
 
 Not in this PR: merge/undo RPCs, consent re-sync, merge snapshots, dedup chain flattening, CLI actor, merge-marker enforcement (PR 3b).
 
@@ -5705,7 +5897,7 @@ If any check fails, stop and report — do not merge.
 
 - **Spec coverage (3a).** Lock modes + admission + deadlock analysis → T2–T4, T8 (NO KEY UPDATE T3; triggers fire first by name T4; RPCs pre-acquire T8–T13; exclusive on ownership change T4). Re-resolution / P0072 → T4 (guard), T8, T9, T11, T12; race proof T16. Helper security contract → T2 (definer, pinned, EXECUTE revoked; fail closed on unresolved parent). Default-refuse matrix, every row → T4–T7 (appointments/visit_pins/critical_alerts/doctor_pf_entries exceptions; results unlinked insert; batches unguarded; reopen refused s6.6; mixed batch s6.1; `cogs_send_out_entries` gone — noted). Transactional creation: visit encounter T10/T18, results (structured + upload, attempt path, probe, lost response, overlapping first uploads — row locks + P0066 + commitWithUploads) T11/T19, HMO settlement T12/T20 (competing allocations + concurrent settlements in one batch: T16), closure reschedule + dry-run preview + >1,000 rows + inactive skip + concurrent cancel/delete T13/T16/T21, resolver T9/T22, merge/undo compatibility T23. Owner extras: Cron Health card + Sentry + merge notice T25; drop GUC T14; README + ConfirmDialog T26. Owner decisions: HMO billing of a deleted patient stays refused (guards on items, s6.4/s6.5); case-insensitive resolver (s8.3); cancel/no-show allowed (s3.14–s3.16); split 3a/3b (scope line).
 - **Deliberately PR 3b:** merge/undo RPCs under `patient_merge_writer`, consent reconciliation, snapshots, chain re-parenting, CLI actor, merge-marker enforcement.
-- **Known limits, stated in code comments:** the closure RPC takes one advisory lock per distinct patient (Task 1 measures the ceiling); `previous_status` in the closure audit is now the real status; hard-deleting a payment in `smoke:locks` cleanup leaves a net-zero reversal pair in the local ledger. The rollup's batch lock is taken after the item row lock inside the item trigger, so two MULTI-item plain statements touching the same two items of one batch in opposite orders can deadlock (40P01 — rolled back whole; RPC callers retry once); the settlement RPC avoids it by locking the batch before its items.
+- **Known limits, stated in code comments:** the closure RPC takes one advisory lock per distinct patient (Task 1 measures the ceiling); `previous_status` in the closure audit is now the real status; hard-deleting a payment in `smoke:locks` cleanup leaves a net-zero reversal pair in the local ledger. HMO lock order is batch → items on every allocation/resolution path (settlement RPC; `a_lifecycle_hmo_batch_lock`, 8c); the one remaining item-first order is a direct `hmo_claim_items` UPDATE/DELETE (tuple locked before triggers, then the rollup locks the batch), which can lose a deadlock (40P01, rolled back whole) and is retried once by its action (Task 24 Step 1b). Indirect result references (an amendment's result/test, an alert's result/test/patient) are immutable, so no race can re-point them; s5.28–s5.30 prove the refusals.
 
 ### Revision 2026-09-28 — Codex xhigh plan review (session 01a0e5c1-1296-7010-b660-52b5a813ae6f)
 
@@ -5719,4 +5911,10 @@ If any check fails, stop and report — do not merge.
 | **P2-6** s5.2 control could never pass | s5.2 links a fresh, never-linked test `ta2` |
 | **P2-7** closure race could touch other sessions' rows | `isolatedPastDay` (verified empty before any change), closure inserted without `ON CONFLICT` and recorded only after it succeeds, "exactly our three appointments" pre-check, moved-rows ⊆ ours post-check; s12 isolation pre-check |
 | **P3** `position()` = 0 passed; elapsed time alone | s7.1/s7.2/s7.1m/s11.12b/s11.12c require every position > 0 + mutation checks; `waitingOn` names the lock a waiter is blocked on in the key races |
+| Recheck P1 — indirect membership (alert → withdrawing amendment → result) not stable | Guard step (a2): `result_amendments.result_id/test_request_id` and `critical_alerts.result_id/test_request_id/patient_id` immutable (23514); an alert may only be withdrawn by a correction of its own result (23514); s5.28–s5.30 + mutations; Task 0 Step 6 checks prod has none |
+| Recheck P2 — batch/item lock inversion with the existing allocation action | (8c) `a_lifecycle_hmo_batch_lock` BEFORE trigger on allocations/resolutions: batch → items everywhere; s11.12d; four mixed races (settlement vs plain allocation, each first, different/same item: no 40P01); direct item UPDATE/DELETE actions retry once (Task 24 Step 1b) |
+| Recheck P2 — ON DELETE SET NULL of `withdrawn_by_amendment` failed closed | Guard step (a3) recognises exactly that shape; s5.31–s5.34 (amendment delete, result delete cascade, active patient) |
+| Recheck P2 — s1.37/s1.38 counted re-entrant locks | Fresh uuids for the lock-count assertions |
+| Recheck P2 — `string_agg(… order by 1)` | Orders by the expression, `collate "C"` |
+| Recheck P3 — mutation used `0183_waived_balance_gl.sql` | Synthetic `0183_zz_synthetic_intruder.sql` |
 | Found while revising (0179 merged after the plan was written) | `result_edit_commit` copied from 0179 (+ the 0179 hunks pinned in the standing test); the 0179 follow-up columns on `result_amendments` are a fifth guard exception (s5.22–s5.24) |
