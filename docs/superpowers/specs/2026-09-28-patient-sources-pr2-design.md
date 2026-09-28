@@ -245,3 +245,66 @@ appears after the owner unpauses.
 - PR 3 small tabs (gift codes, flyers, home service, procedure HMO) — feeds this page later.
 - A weekly "new patients by channel" email to the owner, reusing `patient_sources_summary`.
 - A per-channel trend line on the admin dashboard.
+
+## 8. Planning refinements (2026-09-28)
+
+Binding decisions made while planning (Task 0 of the implementation plan), each already reflected in the
+sections above; listed here for a single audit trail against `00-context.md`.
+
+- **P1** — Migration **0189** (`0189_patient_sources.sql`), claimed 2026-09-28. No new P-codes: standard
+  SQLSTATEs only (`42501` not admin, `22023` bad period/grain/mode/ad rows, `feature_not_supported` = `0A000`
+  converted mode).
+- **P2** — Survivor resolution is a SQL helper `_ps_survivors()`, a recursive walk of `patients.merged_into_id`
+  capped at 10 hops (mirrors `buildPatientIndex().survivor`); a chain past 10 hops or a cycle drops the row
+  rather than mis-attributing it.
+- **P3** — The loose key of a confirmed patient is computed in SQL by `_ps_loose_key(last, first)`, the twin of
+  `looseKeyOf`/`normalizeName`; parity proven against the TS function in the DB proof's case table.
+- **P4** — Returning is read from `patient_acquisition_facts` only: the `sheet_new_repeat` of the group's
+  earliest-dated fact (tie → `repeat`); when no fact has a date, any `repeat` wins. Name identities are never
+  Returning.
+- **P5** — Undated = a confirmed or name identity with no encounter since 2023-12-01, no registration date, and
+  (for confirmed) no live visit before 2023-12-01; a patient who only visited before Dec 2023 counts nowhere
+  (`basis = 'before_window'`), not as undated. User-approved exception to §1.2 (2026-09-28, Codex review #9).
+- **P6** — Unlinked Customers rows (`patient_id is null`) are unconfirmed name identities `name:<loose_key>`;
+  with no encounter they count on `min(registered_on)` across the rows sharing that key, undated when none has
+  a date.
+- **P7** — `patient_sources_series` also accepts `p_grain = 'period'` (one bucket = the whole period), used by
+  the per-channel table, the previous-period comparison and the CSV.
+- **P8** — `patient_sources_summary` returns four more columns than §3.2's list — `sync_paused`,
+  `last_synced_at`, `sheet_rows_present`, `last_run_status` — for the sheet banner (P19), in one call.
+- **P9** — `patient_sources_overlaps` also returns `drm_id`; `patient_sources_people` also returns `identity`
+  and `total_count`, and accepts `p_mode = 'returning'`.
+- **P10** — Two admin-gated functions the spec implies but does not name: `ad_spend_daily_totals(from, to)` and
+  `ad_spend_coverage()` — PostgREST cannot aggregate.
+- **P11** — The referrer normaliser lives in SQL (`_ps_doctor_norm`), not TS, because the grouping happens
+  there; it also drops placeholder answers (`none`, `n a`, `na`, `no`, `nil`, `self`).
+- **P12** — CSV routes follow the report-CSV pattern: `/api/admin/reports/patient-sources.csv` (counts) and
+  `/api/admin/reports/patient-sources-people.csv` (names), via `reportCsvResponse`, audit actions
+  `report.patient_sources.exported` / `report.patient_sources_people.exported`.
+- **P13** — Period presets on both Marketing report pages: Today, Yesterday, Last 7 days, This month, Last
+  month (spec) + Year-to-date, Last 12 months, Last year (kept from Booking Sources) + Custom. "This year" is
+  dropped (identical to Year-to-date for these reports). Max span 400 days still holds for every preset.
+- **P14** — The Ad Performance upload is re-parsed on the server from the raw CSV text (≤ 5 MB); browser-computed
+  rows are never trusted. Google's title lines and a UTF-8 BOM are skipped; "Total:" rows are ignored, not
+  rejected. Ambiguous numeric dates follow the in-browser view. No spend column → whole file refused; a blank
+  spend cell → that row rejected; an explicit 0 is kept (a correction upload can zero a day). Any row whose
+  platform isn't Meta or Google refuses the whole file.
+- **P15** — Reception prompt: the patient update uses the RLS server client, is conditional on
+  `referral_source is null`, never blocks the visit, and is audited `patient.referral_source_recorded`
+  (`{ referral_source, via: 'new_visit' }`). Sits inside `createVisitAction`.
+- **P16** — Cost per new patient maps Meta → `online_facebook` and Google → `online_google` only; Instagram/
+  TikTok are not attributed to Meta spend.
+- **P17** — `has_role` follows View-as (0182): an admin viewing as reception is refused by every report
+  function — that is the access matrix, not a bug.
+- **P18** — Registration date of a confirmed (merged) group = the earliest `registered_on` among the group's
+  facts rows when any has a date; otherwise the earliest Manila `created_at` date among the group's app-native
+  members; otherwise undated. User-approved 2026-09-28 (Codex plan review #1).
+- **P19** — The sheet banner has three states read from the summary (`sheet_rows_present`, `sync_paused`,
+  `last_run_status`): nothing loaded yet → "Sheet data is not included yet …"; loaded but paused → "The sheet
+  sync is paused …"; last run partial/failed → "The last sheet sync did not finish every tab …". Pausing never
+  hides data already in the mirror (Codex plan review #10; supersedes §3.2.2's single sentence).
+- **P20** — Every disclosure is audited: the Patient Sources page writes `patient_sources.overlaps_viewed`
+  (payload `{ from, to, count, truncated }`, no names or amounts) whenever the double-entry panel carries rows;
+  the people list writes `patient_sources.viewed`; the CSVs write `report.*.exported`.
+- **P21** — `resolvePeriod` rejects impossible calendar dates (e.g. `2026-02-30`), not just malformed strings, so
+  a crafted URL never reaches SQL (Codex plan review P3).
