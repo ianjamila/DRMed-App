@@ -101,6 +101,10 @@ const EXEMPT: Record<string, string> = {
     "A deleted/merged patient has no open lines to claim; claiming does not bill or release.",
   [`src/app/(staff)/staff/(dashboard)/queue/actions.ts:performUnclaim`]:
     "Handing a claim back reduces work, same reasoning as claimTestAction; shared by unclaimTestAction/unclaimOwnTestAction/unclaimFromQueueAction.",
+  [`src/app/(staff)/staff/(dashboard)/queue/actions.ts:claimTestsAction`]:
+    "Bulk form of claimTestAction — claiming does not bill or release, and a deleted/merged patient has no open lines to claim.",
+  [`src/app/(staff)/staff/(dashboard)/queue/actions.ts:unclaimTestsAction`]:
+    "Bulk form of the queue list's Unclaim — handing a claim back reduces work, same reasoning as performUnclaim.",
   [`src/app/(staff)/staff/(dashboard)/queue/actions.ts:reassignTestAction`]:
     "Reassigning an already-claimed line does not put new work or money on the record.",
   [`src/app/(staff)/staff/(dashboard)/queue/consolidated/[visitId]/[groupId]/actions.ts:claimConsolidated`]:

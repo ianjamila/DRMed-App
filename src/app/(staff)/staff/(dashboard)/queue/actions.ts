@@ -18,6 +18,8 @@ import {
   evaluateClaim,
   evaluateUnclaim,
 } from "@/lib/queue/claim-eligibility";
+import { ipAndAgent } from "@/lib/server/action-helpers";
+import type { BulkQueueResult, SkippedRow } from "@/lib/queue/bulk-queue";
 
 export type ClaimResult = { ok: true } | { ok: false; error: string };
 
@@ -247,6 +249,211 @@ export async function unclaimFromQueueAction(
     reason,
     session.role === "admin" ? null : session.user_id,
   );
+}
+
+// ---------------------------------------------------------------------------
+// Bulk claim / unclaim from the queue list's selection bar (spec §6).
+// Per-row atomicity: each row is evaluated and written on its own, one skip
+// never blocks the rest, and every id sent comes back in exactly one of
+// changedIds / skipped. Independent single-test rows only — chemistry panels
+// get no checkbox, so performUnclaim's all-or-nothing panel contract above is
+// untouched.
+// ---------------------------------------------------------------------------
+
+const NOT_LAB_STAFF = "Only lab staff can claim or unclaim tests from the queue.";
+const BULK_INPUT_ERROR = "Could not read the selection — refresh the queue and try again.";
+
+const BulkClaimSchema = z.array(z.string().uuid()).min(1).max(MAX_BULK_SELECTION);
+
+export async function claimTestsAction(input: unknown): Promise<BulkQueueResult> {
+  // Role before anything candidate-dependent (spec §9 item 5).
+  const session = await requireActiveStaff();
+  if (!(LAB_CAPABLE_ROLES as readonly string[]).includes(session.role)) {
+    return { ok: false, error: NOT_LAB_STAFF };
+  }
+  const parsed = BulkClaimSchema.safeParse(input);
+  if (!parsed.success) return { ok: false, error: BULK_INPUT_ERROR };
+  const ids = Array.from(new Set(parsed.data));
+
+  const supabase = await createClient();
+  const { data: rows, error: readError } = await supabase
+    .from("test_requests")
+    .select(
+      "id, is_package_header, services!inner ( kind, section, name ), visits!inner ( deleted_at, payment_status, hmo_provider_id )",
+    )
+    .in("id", ids)
+    // A queue-deleted line (0125) reads as not found.
+    .is("deleted_at", null);
+  if (readError) return { ok: false, error: translatePgError(readError) };
+  const byId = new Map((rows ?? []).map((r) => [r.id, r]));
+
+  const changed: Array<{ id: string; visit_id: string }> = [];
+  const skipped: SkippedRow[] = [];
+  const startedAt = new Date().toISOString();
+  for (const id of ids) {
+    const row = byId.get(id);
+    if (!row) {
+      skipped.push({ id, reason: "Deleted from the queue or no longer exists." });
+      continue;
+    }
+    const verdict = evaluateClaim(
+      {
+        isPackageHeader: row.is_package_header,
+        isDoctorLine: isDoctorKind(row.services.kind),
+        section: row.services.section,
+        visitDeleted: row.visits.deleted_at !== null,
+        visit: row.visits,
+      },
+      session.role,
+    );
+    if (!verdict.ok) {
+      skipped.push({ id, reason: verdict.error });
+      continue;
+    }
+    // The state the operator saw: requested, nobody holding it.
+    const { data, error } = await supabase
+      .from("test_requests")
+      .update({ status: "in_progress", assigned_to: session.user_id, started_at: startedAt })
+      .eq("id", id)
+      .eq("status", "requested")
+      .is("assigned_to", null)
+      .is("deleted_at", null)
+      .select("id, visit_id")
+      .maybeSingle();
+    if (error) {
+      skipped.push({ id, reason: translatePgError(error) });
+    } else if (!data) {
+      skipped.push({ id, reason: "Claimed by someone else or changed just now." });
+    } else {
+      changed.push(data);
+    }
+  }
+
+  const { ip, ua } = await ipAndAgent();
+  for (const row of changed) {
+    await audit({
+      actor_id: session.user_id,
+      actor_type: "staff",
+      action: "test_request.claimed",
+      resource_type: "test_request",
+      resource_id: row.id,
+      metadata: { visit_id: row.visit_id, bulk_batch_size: ids.length },
+      ip_address: ip,
+      user_agent: ua,
+    });
+  }
+
+  if (changed.length > 0) {
+    revalidatePath("/staff/queue");
+    for (const row of changed) revalidatePath(`/staff/queue/${row.id}`);
+  }
+  return { ok: true, changedIds: changed.map((r) => r.id), skipped };
+}
+
+const BulkUnclaimSchema = z.object({
+  items: z
+    .array(
+      z.object({
+        testRequestId: z.string().uuid(),
+        // The holder the operator SAW — the write only lands while it still holds.
+        assignedTo: z.string().uuid(),
+      }),
+    )
+    .min(1)
+    .max(MAX_BULK_SELECTION),
+  reason: z.string().max(500).optional(),
+});
+
+export async function unclaimTestsAction(input: unknown): Promise<BulkQueueResult> {
+  const session = await requireActiveStaff();
+  if (!(LAB_CAPABLE_ROLES as readonly string[]).includes(session.role)) {
+    return { ok: false, error: NOT_LAB_STAFF };
+  }
+  const parsed = BulkUnclaimSchema.safeParse(input);
+  if (!parsed.success) return { ok: false, error: BULK_INPUT_ERROR };
+  // First occurrence of an id wins.
+  const seenHolder = new Map<string, string>();
+  for (const item of parsed.data.items) {
+    if (!seenHolder.has(item.testRequestId)) seenHolder.set(item.testRequestId, item.assignedTo);
+  }
+  const ids = [...seenHolder.keys()];
+  const reason = parsed.data.reason?.trim() || null;
+  // Same power as the row's Unclaim: admin anyone's, everyone else their own.
+  const ownerId = session.role === "admin" ? null : session.user_id;
+
+  const supabase = await createClient();
+  const { data: before, error: readError } = await supabase
+    .from("test_requests")
+    .select("id, assigned_to, status, visits!inner ( id )")
+    .in("id", ids)
+    .is("deleted_at", null)
+    .is("visits.deleted_at", null);
+  if (readError) return { ok: false, error: translatePgError(readError) };
+  const byId = new Map((before ?? []).map((r) => [r.id, r]));
+
+  const changed: Array<{ id: string; visit_id: string; previous: string }> = [];
+  const skipped: SkippedRow[] = [];
+  for (const id of ids) {
+    const row = byId.get(id);
+    const saw = seenHolder.get(id)!;
+    if (!row) {
+      skipped.push({ id, reason: "Deleted from the queue — restore it before unclaiming it." });
+      continue;
+    }
+    const verdict = evaluateUnclaim(row, ownerId);
+    if (!verdict.ok) {
+      skipped.push({ id, reason: verdict.error });
+      continue;
+    }
+    if (row.assigned_to !== saw) {
+      skipped.push({ id, reason: "Someone else holds this test now — refresh the queue." });
+      continue;
+    }
+    const { data, error } = await supabase
+      .from("test_requests")
+      .update({ status: "requested", assigned_to: null, started_at: null })
+      .eq("id", id)
+      .eq("status", "in_progress")
+      .eq("assigned_to", saw)
+      .is("deleted_at", null)
+      .select("id, visit_id")
+      .maybeSingle();
+    if (error) {
+      skipped.push({ id, reason: translatePgError(error) });
+    } else if (!data) {
+      skipped.push({ id, reason: "Changed just now — refresh the queue." });
+    } else {
+      changed.push({ id: data.id, visit_id: data.visit_id, previous: saw });
+    }
+  }
+
+  // Same audit shape as performUnclaim, so the queue's Remarks column
+  // (queue_claim_remarks, 0160) reads bulk unclaims unchanged.
+  const { ip, ua } = await ipAndAgent();
+  for (const row of changed) {
+    await audit({
+      actor_id: session.user_id,
+      actor_type: "staff",
+      action: "test_request.unclaimed",
+      resource_type: "test_request",
+      resource_id: row.id,
+      metadata: {
+        visit_id: row.visit_id,
+        previous_assignee: row.previous,
+        reason,
+        self_service: ownerId !== null,
+        bulk_batch_size: ids.length,
+      },
+      ip_address: ip,
+      user_agent: ua,
+    });
+  }
+
+  if (changed.length > 0) {
+    revalidatePath("/staff/queue");
+    for (const row of changed) revalidatePath(`/staff/queue/${row.id}`);
+  }
+  return { ok: true, changedIds: changed.map((r) => r.id), skipped };
 }
 
 export async function reassignTestAction(
