@@ -247,17 +247,23 @@ as $$
     from confirmed_keys k join name_enc n on n.identity = 'name:' || k.k
   ),
   confirmed as (
+    -- Owner decision 2026-09-28: a live visit before 2023-12-01 outranks a
+    -- registration date — such a customer is an OLD customer (before_window,
+    -- first_date null, counted nowhere), never New, even when they also have
+    -- a later sheet registered_on or app created_at. An encounter since
+    -- December 2023 still wins over everything (unchanged).
     select 'patient:' || r.survivor_id::text as identity,
            true as confirmed,
            r.survivor_id,
            null::text as loose_key,
            case when fe.d is not null then fe.d
                 when sup.survivor_id is not null then null
+                when ov.survivor_id is not null then null
                 else r.reg_on end as first_date,
            case when fe.d is not null then 'encounter'
                 when sup.survivor_id is not null then 'suppressed'
-                when r.reg_on is not null then 'registration'
                 when ov.survivor_id is not null then 'before_window'
+                when r.reg_on is not null then 'registration'
                 else 'undated' end as basis,
            r.is_returning,
            coalesce(sp.referral_source, 'not_recorded') as channel

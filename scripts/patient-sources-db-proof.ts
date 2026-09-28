@@ -90,6 +90,26 @@
 //      would go on to read 200, then 300 after the per-ad-ID upload, had the
 //      check not already failed on the replaced count first).
 //
+//   L. _patient_sources_identities, `confirmed` CASE (owner decision
+//      2026-09-28): put registration back ahead of before_window:
+//        when sup.survivor_id is not null then null
+//        when ov.survivor_id is not null then null
+//        else r.reg_on end as first_date,
+//        …
+//        when sup.survivor_id is not null then 'suppressed'
+//        when ov.survivor_id is not null then 'before_window'
+//        when r.reg_on is not null then 'registration'
+//        -> when sup.survivor_id is not null then null
+//           else r.reg_on end as first_date,
+//           …
+//           when sup.survivor_id is not null then 'suppressed'
+//           when r.reg_on is not null then 'registration'
+//           when ov.survivor_id is not null then 'before_window'
+//      Expect: FAIL P5: an old visitor with a later registration date is not
+//      New. Confirmed 2026-09-28:
+//        FAIL … — expected basis 'before_window' (not 'registration'), got
+//        {"first_date":"2026-06-15","basis":"registration", …}
+//
 //   for each letter: edit $MIG, then
 //     $PSQL $DB -v ON_ERROR_STOP=1 -f $MIG
 //     npm run patient-sources:db-proof
@@ -1241,33 +1261,30 @@ async function main() {
       assert(idTwo?.channel === "not_recorded", `(iii) expected channel not_recorded for a 2-row key, got ${idTwo?.channel}`);
     }));
 
-    // 24. P5: old visitor with a registration date counts on that date -------
-    // Pins the plan's precedence (Codex review uncertainty): the `confirmed`
-    // CTE's CASE checks `r.reg_on is not null` (-> 'registration') BEFORE it
-    // checks `old_visitors` (-> 'before_window'). So a confirmed patient whose
-    // only live visit predates the 2023-12-01 window, but who ALSO has a
-    // (later) registration date, is basis 'registration' and counts as New on
-    // that date — it does NOT fall into 'before_window' just because its only
-    // visit is old. This is what the plan's precedence already implements;
-    // the owner has been asked to confirm this is the intended behaviour
-    // (P5's "counted nowhere" language was written for an old visitor with NO
-    // registration date at all — see check 9's control).
-    await check("P5: old visitor with a registration date counts on that date — owner to confirm", () => scoped(async () => {
+    // 24. P5: an old visitor with a later registration date is not New ------
+    // Owner decision 2026-09-28: a confirmed customer with ANY live visit
+    // before 2023-12-01 is an OLD customer — counted nowhere (basis
+    // 'before_window', first_date null) — even when they also have a later
+    // registration date (sheet registered_on or app created_at). The
+    // `confirmed` CTE's CASE order is now encounter -> suppressed ->
+    // before_window -> registration -> undated, so before_window outranks a
+    // registration date. An encounter since December 2023 still wins over
+    // everything (unchanged); name identities are unaffected.
+    await check("P5: an old visitor with a later registration date is not New — owner decision 2026-09-28", () => scoped(async () => {
       await setRole("postgres", null);
       const before = await summary();
 
       const xId = await patient("Zzproofp5", "OldVisitReg");
-      await visit(xId, "2022-01-15"); // before 2023-12-01: not an "encounter" on its own
-      await facts(xId, "2026-06-15", "new");
+      await visit(xId, "2022-01-15"); // before 2023-12-01: an old visit
+      await facts(xId, "2026-06-15", "new"); // a later registration date must NOT override it
 
       const idX = await identityRow(`patient:${xId}`);
-      assert(idX?.basis === "registration", `expected basis 'registration' (not 'before_window'), got ${JSON.stringify(idX)}`);
-      assert(idX?.first_date === "2026-06-15", `expected first_date 2026-06-15 (the registration date), got ${idX?.first_date}`);
+      assert(idX?.basis === "before_window", `expected basis 'before_window' (not 'registration'), got ${JSON.stringify(idX)}`);
+      assert(idX?.first_date === null, `expected first_date null (counted nowhere), got ${idX?.first_date}`);
 
       const after = await summary();
       const d = delta(before, after);
-      assert(d.new_confirmed === 1, `expected new_confirmed delta 1 (counted New on 2026-06-15), got ${d.new_confirmed}`);
-      assert(d.undated_registrations === 0, `expected undated_registrations delta 0 (it is dated, not undated), got ${d.undated_registrations}`);
+      assert(allZero(d), `expected an all-zero delta (never New, never undated — an old customer), got ${JSON.stringify(d)}`);
     }));
   } finally {
     // Never persisted. This proof never writes anything real.

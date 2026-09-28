@@ -265,6 +265,10 @@ sections above; listed here for a single audit trail against `00-context.md`.
 - **P5** — Undated = a confirmed or name identity with no encounter since 2023-12-01, no registration date, and
   (for confirmed) no live visit before 2023-12-01; a patient who only visited before Dec 2023 counts nowhere
   (`basis = 'before_window'`), not as undated. User-approved exception to §1.2 (2026-09-28, Codex review #9).
+  **Owner decision 2026-09-28:** a live visit before 2023-12-01 also outranks a registration date — such a
+  customer is never New, even when they also have a later registration date (sheet `registered_on` or app
+  `created_at`). The `confirmed` CTE's CASE order is encounter → suppressed → before_window → registration →
+  undated (before_window ahead of registration); an encounter since December 2023 still wins over everything.
 - **P6** — Unlinked Customers rows (`patient_id is null`) are unconfirmed name identities `name:<loose_key>`;
   with no encounter they count on `min(registered_on)` across the rows sharing that key, undated when none has
   a date.
