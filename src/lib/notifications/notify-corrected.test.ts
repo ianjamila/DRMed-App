@@ -91,7 +91,7 @@ vi.mock("@/lib/observability/report-error", () => ({
 import { sendEmail } from "./email";
 import { sendSms } from "./sms";
 import { fetchCopyStateAdmin } from "@/lib/results/copy-followups.server";
-import { notifyResultCorrected, resolveCorrectedNotifyOutcome } from "./notify-corrected";
+import { describeSendFailure, notifyResultCorrected, resolveCorrectedNotifyOutcome } from "./notify-corrected";
 
 const okClaim = () =>
   Promise.resolve({
@@ -220,6 +220,37 @@ describe("notifyResultCorrected", () => {
     expect(fx.recordCalls[0].p_channels).toEqual([]);
     expect(typeof fx.recordCalls[0].p_error).toBe("string");
     expect(fx.recordCalls[0].p_error).toContain("no contact on file");
+  });
+
+  it("contact on file but neither provider configured: not_set_up, reason names the setup, not the patient", async () => {
+    vi.mocked(sendSms).mockResolvedValue({ ok: false, kind: "skipped", reason: "SEMAPHORE_API_KEY / SEMAPHORE_SENDER_NAME not configured" });
+    vi.mocked(sendEmail).mockResolvedValue({ ok: false, kind: "skipped", reason: "RESEND_API_KEY / RESEND_FROM_EMAIL not configured" });
+    const out = await notifyResultCorrected(args);
+    expect(out).toBe("not_set_up");
+    expect(fx.recordCalls[0].p_channels).toEqual([]);
+    expect(fx.recordCalls[0].p_error).toMatch(/^notices not set up: /);
+    expect(fx.recordCalls[0].p_error).toContain("SEMAPHORE_API_KEY");
+    expect(fx.recordCalls[0].p_error).toContain("RESEND_API_KEY");
+    expect(fx.recordCalls[0].p_error).not.toContain("no contact on file");
+  });
+
+  it("phone only and SMS not configured: not_set_up (the old wording blamed a missing contact)", async () => {
+    vi.mocked(sendSms).mockResolvedValue({ ok: false, kind: "skipped", reason: "NOTIFICATIONS_LIVE not enabled in this environment" });
+    fx.patient = { ...fx.patient!, email: null };
+    const out = await notifyResultCorrected(args);
+    expect(out).toBe("not_set_up");
+    expect(sendEmail).not.toHaveBeenCalled();
+    expect(fx.recordCalls[0].p_error).toBe(
+      "notices not set up: NOTIFICATIONS_LIVE not enabled in this environment; patient has no email on file",
+    );
+  });
+
+  it("a real provider error is still a plain failure, never not_set_up", async () => {
+    vi.mocked(sendSms).mockResolvedValue({ ok: false, kind: "skipped", reason: "SEMAPHORE_API_KEY / SEMAPHORE_SENDER_NAME not configured" });
+    vi.mocked(sendEmail).mockResolvedValue({ ok: false, kind: "error", error: "Resend 500" });
+    const out = await notifyResultCorrected(args);
+    expect(out).toBe("failed");
+    expect(fx.recordCalls[0].p_error).toBe("SEMAPHORE_API_KEY / SEMAPHORE_SENDER_NAME not configured; Resend 500");
   });
 
   it("audit throws after a send: still returns sent and does not throw", async () => {
@@ -376,6 +407,27 @@ const offeredState = {
   has_email: true,
   has_phone: false,
 };
+
+describe("describeSendFailure", () => {
+  const noPhone = { ok: false as const, kind: "skipped" as const, reason: "patient has no phone on file" };
+  const noEmail = { ok: false as const, kind: "skipped" as const, reason: "patient has no email on file" };
+  const unconfigured = { ok: false as const, kind: "skipped" as const, reason: "RESEND_API_KEY / RESEND_FROM_EMAIL not configured" };
+  it("no contact on file only when both channels lack a contact", () => {
+    expect(describeSendFailure(noPhone, noEmail)).toEqual({ error: "no contact on file", notSetUp: false });
+  });
+  it("a provider skip makes it not set up", () => {
+    expect(describeSendFailure(noPhone, unconfigured)).toEqual({
+      error: "notices not set up: patient has no phone on file; RESEND_API_KEY / RESEND_FROM_EMAIL not configured",
+      notSetUp: true,
+    });
+  });
+  it("an error on either channel keeps it a plain failure", () => {
+    expect(describeSendFailure({ ok: false, kind: "error", error: "timeout" }, noEmail)).toEqual({
+      error: "timeout; patient has no email on file",
+      notSetUp: false,
+    });
+  });
+});
 
 describe("resolveCorrectedNotifyOutcome", () => {
   const helperArgs = {
