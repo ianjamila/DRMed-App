@@ -45,6 +45,8 @@ export async function GET(req: NextRequest) {
       label: m.label,
       year: m.year,
       partial: m.partial,
+      start: m.start,
+      end: m.end,
       lab: byClass.get("lab") ?? 0,
       consult: byClass.get("consult") ?? 0,
       procedure: byClass.get("procedure") ?? 0,
