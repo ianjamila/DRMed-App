@@ -4,7 +4,7 @@
 
 **Goal:** Nothing can add work, money or clinical data to a deleted or merged patient — not through the app, not through a stale PostgREST write, not by racing a delete. Every patient-owned write takes the patient's lifecycle lock (shared), delete/restore take it exclusive, and the four multi-step creation paths (new visit, first result, HMO settlement, closure reschedule) become single transactions.
 
-**Architecture:** One migration (**0184**) adds a lock primitive `lifecycle_lock_and_assert(uuid[], p_exclusive boolean)` (+ lock-only `lifecycle_lock`) and patient-path resolvers; one generic SECURITY DEFINER guard trigger `enforce_patient_activity()` installed as `a_lifecycle_guard` (the name sorts first, so it fires before every other BEFORE trigger) on 16 patient-owned tables, default-refuse on an inactive patient with four narrow column-shaped exceptions; re-creates `delete_patient`/`restore_patient` with `FOR NO KEY UPDATE`; makes five existing RPCs take the advisory lock before their row locks; adds `create_visit_encounter`, `result_create_linked`, `record_hmo_settlement`, `reschedule_closure_appointments` and `notification_skip_summary`; hardens `resolve_patient_guarded` (case-insensitive, lock + re-read); makes `current_patient_id()` JWT-only and drops `set_patient_context`. The app switches those four flows to the RPCs, retries once on P0072 / deadlock, re-resolves a booking once on P0058, re-orders undo-merge, and gains a "Patient messages not sent" section on Cron Health.
+**Architecture:** One migration (**0184**) adds a lock primitive `lifecycle_lock_and_assert(uuid[], p_exclusive boolean)` (+ lock-only `lifecycle_lock`), a **result-membership lock** `lifecycle_lock_results(uuid[], p_exclusive boolean)` (changing which tests a result holds takes it exclusive; every other results-family write takes it shared, BEFORE resolving the result's patients) and patient-path resolvers that follow **every** patient-bearing reference of a row (the union is locked and asserted); one generic SECURITY DEFINER guard trigger `enforce_patient_activity()` installed as `a_lifecycle_guard` (the name sorts first, so it fires before every other BEFORE trigger) on 16 patient-owned tables, default-refuse on an inactive patient with five narrow column-shaped exceptions, plus one-patient-per-result on result links; re-creates `recompute_hmo_batch_status` with a batch row lock (concurrent settlements can no longer leave a settled batch `submitted`); re-creates `delete_patient`/`restore_patient` with `FOR NO KEY UPDATE`; makes five existing RPCs take the advisory lock before their row locks; adds `create_visit_encounter`, `result_create_linked`, `record_hmo_settlement`, `reschedule_closure_appointments` and `notification_skip_summary`; hardens `resolve_patient_guarded` (case-insensitive, lock + re-read); makes `current_patient_id()` JWT-only and drops `set_patient_context`. The app switches those four flows to the RPCs, retries once on P0072 / deadlock, re-resolves a booking once on P0058, re-orders undo-merge, and gains a "Patient messages not sent" section on Cron Health.
 
 **Tech Stack:** Postgres 17 (Supabase local stack on OrbStack, container `supabase_db_DRMed`), psql smoke tests in `supabase/tests/`, a two-connection Node `pg` script, Next.js 16 server actions, vitest, Playwright MCP for the browser smoke.
 
@@ -16,13 +16,53 @@
 
 **Numbers (claimed in `~/Claude/DRMed/.claims/`):** migration **0184**; **P0072** = patient changed mid-save (retry once), **P0073** = visit encounter could not be created (message passes through). Other in-flight claims: 0179 `feat/result-copy-followups`, 0182 `feat/staff-view-as-role`, 0183 `feat/waived-balance-gl` (plan only), 0185 `feat/eod-date-picker`, 0170 `feat/sheet-sync`. P0054 payment-edit, P0057–P0061 0167, P0062–P0064 sheet-sync, P0065–P0067 released-chemistry-edit, P0068 result-copy, P0069–P0071 waived-balance. New RPC input validation uses standard SQLSTATEs (`22023` invalid_parameter_value, `42501` insufficient_privilege) whose messages pass through `translatePgError`'s `default:` — `pg-error-coverage.test.ts` accepts standard codes.
 
-**Function overlaps with in-flight branches (coordinate — Task 0 Step 4, Task 31 Step 1):**
+**Function overlaps and the REPLAY rule (revised 2026-09-28 after Codex plan review P1-3; coordinate — Task 0 Step 4, Task 15 Step 6, Task 29 Step 3, Task 31 Step 1).**
 
-| Function | 0184 changes | Also re-created by | Rule |
+Deploy order and replay order differ: prod applies a migration when its PR ships (0184 will land on prod AFTER 0186, with `--include-all`), a fresh replay applies files in NUMBER order. When two migrations re-create the same function, the final body must be the same under both orders. So:
+
+- **If the other migration is already on main when 0184 is rebased** (numbered below 0184): 0184 copies ITS body and re-applies 0184's marked edits. 0184 is higher-numbered and lands later, so both orders end on 0184's body.
+- **If 0184 reaches main first**, the other branch is the second-lander and its number is LOWER than 0184: it must **not** re-create the function in its own low-numbered file (on prod it would land after 0184 and win; on replay 0184 would win — two different databases). It moves that re-creation into a **NEW migration, claimed fresh and numbered above 0184**, whose body is 0184's body plus its own edits. Task 15 Step 6's standing test (`lifecycle-owned-functions.test.ts`) fails on that branch until it does.
+- **A migration numbered ABOVE 0184 that is already on main** and re-creates a 0184-owned function would beat 0184 on replay while losing to it on prod: 0184 must then be renumbered above it (claim a new number) — the same standing test's "highest-numbered definition carries the lifecycle marker" check catches it.
+- **Fresh-replay equivalence is a ship prerequisite, not a note** (Task 29 Step 3, re-run in Task 31 Step 1 if main moved): an isolated fresh replay must pass the smokes, and every 0184-owned function's definition on the replay must equal the one on the prod-order stack.
+
+| Function | 0184 changes | Other definers (state 2026-09-28) | What happens |
 |---|---|---|---|
-| `resolve_patient_guarded` | case-insensitive last name, lifecycle lock + re-read, P0072 | 0170 sheet-sync (`set search_path = ''`, sets `app.referral_origin = 'patient'` around the insert) | 0184's body is a **superset** (it also sets the GUC and uses `search_path = ''`). If 0170 reaches main first, re-copy its body and re-apply 0184's edits. If 0184 lands first, 0170 must copy 0184's body. |
-| `result_edit_commit` | lifecycle lock before the row lock; replay pre-check | 0179 result-copy-followups | Whichever lands second copies the other's body. |
-| `correct_payment` | lifecycle lock before the row lock | 0183 waived-balance-gl (plan: copies the 0174 body) | Same. |
+| `result_edit_commit` | membership + lifecycle lock before the row lock; replay pre-check | **0179 — MERGED (#239, on prod)** | 0184 copies **0179's** body (0176 + three `-- 0179` hunks). No action for 0179. |
+| `resolve_patient_guarded` | case-insensitive last name, lifecycle lock + re-read, P0072 | 0170 sheet-sync (unmerged; `set search_path = ''`, `app.referral_origin = 'patient'` around the insert) | 0184's body is a superset. 0170 lands first → 0184 re-copies. 0184 lands first → 0170 moves its re-creation to a new migration > 0184 (body = 0184's + its edits). |
+| `correct_payment` | lifecycle lock before the row lock | 0183 waived-balance-gl (unmerged; Tasks 1–5 committed, re-creates it from 0174) | Same rule as above. |
+| `recompute_hmo_batch_status` | batch row lock before reading the items (P2-5) | 0034 only (0118 changed grants) | New overlap: none in flight (checked 2026-09-28). |
+| `delete_patient`, `restore_patient`, `result_save_draft`, `result_finalise_commit`, `appointments_insert_slot_guarded`, `current_patient_id` | see Tasks 3, 8, 14 | 0167, 0172, 0154, 0167 | No in-flight branch re-creates them (checked 2026-09-28). |
+
+0182 (`has_role`/`staff_role`), 0185 (`eod_unclosed_days`) and 0186 (alert settings) are on prod above 0184's number and re-create none of the functions above (checked 2026-09-28) — 0184 can keep its number; Task 31 Step 1 re-checks.
+
+**State on 2026-09-28 (re-check at Task 0).** `origin/main` = `1e73db7c` (0179 merged, #239); prod head **0186** (0182, 0185, 0186 applied; 0179 applied). The local stack's ledger reads `…0179,0180,0181,0182,0183,0185,0186` plus `0170` — **0170 and 0183 are other sessions' unmerged branches applied locally**; never reset to "clean them up". Local has **zero** results whose tests span more than one patient (the one-patient-per-result rule below changes nothing existing); Task 0 Step 6 checks prod read-only.
+
+**Every patient-bearing reference on the 16 guarded tables** (FK catalog, local, 2026-09-28 — Codex plan review P1-1). The guard locks and asserts the UNION of all of them, so a row whose references disagree (an active patient's test linked to a deleted patient's result, a component whose `parent_id` sits on a deleted patient's visit) is refused instead of passing on the one path that happens to be checked:
+
+| Table | References followed (→ patient) |
+|---|---|
+| `visits`, `patient_consents` | `patient_id` |
+| `appointments`, `appointment_attachments` | `patient_id` (NULL = walk-in / not yet linked: no patient) |
+| `test_requests` | `visit_id` → visit; `parent_id` → header test → visit |
+| `payments` | `visit_id` → visit; `corrects_payment_id` → payment → visit |
+| `visit_pins` | `visit_id` → visit |
+| `results` | its own membership: `result_test_requests` rows → tests → visits (unlinked = none) |
+| `result_test_requests` | `test_request_id` → test; `result_id` → the result's membership |
+| `result_values` | `result_id` → membership |
+| `result_amendments` | `result_id` → membership; `test_request_id` → test |
+| `critical_alerts` | `result_id` → membership; `test_request_id` → test; `patient_id`; `withdrawn_by_amendment` → amendment → its result + test (0179) |
+| `hmo_claim_items` | `test_request_id` → test (`batch_id` names no patient) |
+| `hmo_payment_allocations` | `item_id` → item; `payment_id` → payment |
+| `hmo_claim_resolutions` | `item_id` → item |
+| `doctor_pf_entries` | `test_request_id` → test; `hmo_allocation_id` → allocation → item ∪ payment |
+
+Not patient-bearing (checked): `results.report_group_id` (report_groups has no patient/visit column), `hmo_claim_items.batch_id`, `visits.visit_group_id` (no FK), `appointments.booking_group_id`, `*.legacy_import_run_id`, `test_requests.discount_kind`.
+
+**Result membership (Codex plan review P1-2).** Which patient a results-family row belongs to is decided by `result_test_requests`, a separate table. A patient lock alone cannot stop the membership changing under a writer (a value insert resolves patient A; a link to patient B commits; B is deleted; the value commits under B, whose lock it never held). So membership has its own advisory lock, key `(hashtext('result_membership'), hashtext(result_id::text))`: `result_test_requests` INSERT/UPDATE/DELETE and `results` DELETE take it **exclusive**; every other results-family write (`results` UPDATE, `result_values`, `result_amendments`, `critical_alerts`) takes it **shared** — including on an UNLINKED result — and only then resolves the patients. Global lock order: **membership lock(s) → patient lifecycle lock(s) → row locks → re-read.** Delete/restore and ownership moves never take a membership lock, so no cycle can form through it.
+
+**0179 follow-up columns** (`result_amendments.patient_contacted_at/_by`, `patient_notified_at`, `patient_notified_channels`, `patient_notify_error`): written by `result_mark_copy_contacted`, `result_claim_patient_notify`, `result_record_patient_notify` AFTER they row-lock the amendment. They are follow-up bookkeeping (the sender itself checks the recipient is active, `checkPatientRecipient`) — the fifth guard exception, like alert acknowledgement; no lock taken, so no row-lock-before-advisory-lock ordering is introduced in those functions.
+
+**Money is compared in centavos (Codex plan review P2-4).** Every money column involved is `numeric(10,2)` (`visits.total_php`, `test_requests.*_php`, `payments.amount_php`) or `numeric(12,2)` (`hmo_payment_allocations.amount_php`). The app computes line prices with JS numbers (`discounts.ts` rounds a percent discount to centavos, but `base - discount` and any sum are floats: 100.10 + 200.20 = 300.29999999999995). So both the app and the RPCs normalise every amount to integer centavos (`Math.round(x * 100)` / `round(x * 100)::bigint`) before comparing or summing.
 
 **Schema (local stack, 2026-09-25).**
 - `cogs_send_out_entries` no longer exists (dropped by 0166) — the spec matrix row is moot; no guard.
@@ -88,10 +128,12 @@
 - The local stack is **shared by every worktree and other live sessions**. Never `supabase db reset` without the check in Task 29. Never run a fixture against prod (no MCP `execute_sql` fixtures; read-only SELECTs only).
 - Every smoke section is a `do $sN$ … $sN$;` block appended **before the file's final `rollback;`**; it raises `notice '0184 sN.k OK'` per assertion via `pg_temp.expect`, and captures SQLSTATEs with `pg_temp.state_of` (so a "should have failed" is asserted OUTSIDE the failing statement — the NOTE ON SHAPE in `0147_hmo_claim_delete_guard_smoke.sql`).
 - Every new/replaced function pins `set search_path = pg_catalog, public, pg_temp` (except `resolve_patient_guarded`, which uses `''` to stay a superset of 0170) and schema-qualifies objects. Every new function revokes `all` from `public, anon, authenticated` and grants exactly what the task says. Trigger functions revoke from `service_role` too (firing needs no EXECUTE).
-- Lock order everywhere: **advisory lifecycle lock(s) first (sorted), then row locks, then a fresh re-read.** Never shared-then-exclusive on one key in one transaction.
+- Lock order everywhere: **result-membership lock(s) (results family only, sorted) → patient lifecycle lock(s) (sorted) → row locks → a fresh re-read.** Never shared-then-exclusive on one key in one transaction (take the exclusive first when a transaction will change membership).
+- Money: compare and sum in integer centavos (`round(x * 100)::bigint` in SQL, `Math.round(x * 100)` in TS), never raw `numeric = numeric` against a JS float.
+- A smoke assertion about lock ORDER or text position must require every position it compares to be `> 0` (a missing call returns 0 and would otherwise pass) and gets a mutation check that removes the call.
 - Unit tests: `npx vitest run <file>`. Before every TS commit: `npm run typecheck && npx vitest run <changed tests>`; full `npm test && npm run lint` at Tasks 24 and 29. Capture long output to a log file in the scratchpad and report only failures.
 - Commits: Conventional Commits ending with `Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>`. Nothing is pushed until Task 31.
-- Scratchpad for throwaway files: `/private/tmp/claude-501/-Users-jamila/4e6c6486-6e3b-4387-8903-13a294ce12b8/scratchpad/` (below: `$SCRATCH`).
+- Scratchpad for throwaway files: the executing session's scratchpad (2026-09-28: `/private/tmp/claude-501/-Users-jamila/68a00369-7b20-4431-96c1-fbeea5171386/scratchpad/`; below: `$SCRATCH`).
 
 ---
 
@@ -105,7 +147,7 @@
 cd /Users/jamila/Claude/DRMed/.worktrees/patient-delete-locks
 git fetch -q origin && git rebase origin/main && git log --oneline -5
 ```
-Expected: the spec + plan commits on top of `origin/main` (175f53ee or later). If main now contains 0170, 0179 or 0183, note which — Step 4 and Task 8/9 must copy those bodies instead of 0154/0172/0174/0176/0167.
+Expected: the spec + plan commits on top of `origin/main` (`1e73db7c` or later — it already holds **0179**, so Task 8 (4c) copies 0179's `result_edit_commit`). If main now also contains 0170 or 0183, note which — Task 8/9 must copy those bodies instead of 0174/0167 (see the replay rule in Facts). Also list every migration on main numbered above 0184 and grep it for the 0184-owned functions (table in Facts): `for f in $(ls supabase/migrations | awk -F_ '$1>"0184"'); do grep -oiE "function +public\.(delete_patient|restore_patient|result_save_draft|result_finalise_commit|result_edit_commit|correct_payment|appointments_insert_slot_guarded|resolve_patient_guarded|current_patient_id|recompute_hmo_batch_status)\b" supabase/migrations/$f; done` — expected: nothing. Any hit means 0184 must be renumbered above it (stop and ask the controller to claim a new number).
 
 - [ ] **Step 2: Confirm the claims.**
 
@@ -114,22 +156,18 @@ npm run -s claim -- list | grep -E "0184|P0072|P0073"
 ```
 Expected: all three held by `feat/patient-delete-locks`. If any is gone, stop and ask the controller.
 
-- [ ] **Step 3: Local stack at 0181, by object.**
+- [ ] **Step 3: Local stack at ≥ 0186 with 0179 applied, by object.**
 
 ```bash
-docker exec supabase_db_DRMed psql -U postgres -d postgres -Atc "select max(version) from supabase_migrations.schema_migrations; select count(*) from information_schema.columns where table_name='visits' and column_name='is_sample'; select rolsuper, rolcreaterole from pg_roles where rolname='postgres';"
+docker exec supabase_db_DRMed psql -U postgres -d postgres -Atc "select max(version) from supabase_migrations.schema_migrations; select count(*) from information_schema.columns where table_name='visits' and column_name='is_sample'; select count(*) from information_schema.columns where table_name='result_amendments' and column_name='patient_contacted_at'; select rolsuper, rolcreaterole from pg_roles where rolname='postgres';"
 ```
-Expected: version ≥ `0181`, `1`, `f|t`. If the ledger is below 0181 or the column is missing, apply it (0181 is re-runnable — `add column if not exists`, `create index if not exists`):
+Expected (2026-09-28): version `0186`, `1`, `1`, `f|t`. If the 0179 column is missing, stop and ask (0179 is merged and should have been applied by its session). If the ledger is below 0181 or the `is_sample` column is missing, apply it (0181 is re-runnable — `add column if not exists`, `create index if not exists`):
 `docker exec -i supabase_db_DRMed psql -U postgres -d postgres -v ON_ERROR_STOP=1 -1 < supabase/migrations/0181_visit_sample_flag.sql`
 and, only if the ledger row is missing afterwards, stamp it:
 `docker exec supabase_db_DRMed psql -U postgres -d postgres -c "insert into supabase_migrations.schema_migrations (version, name, statements) values ('0181','visit_sample_flag','{}') on conflict do nothing"`.
 Note the ledger head (other sessions apply their branches here — 0170's `trg_patients_referral_origin` is present locally although 0170 is not on main; that's fine, don't reset).
 
-- [ ] **Step 4: Record the three function overlaps where the other sessions will see them.** Append one paragraph to each memory file below (they are the other sessions' start-here notes), then verify with `tail -3`:
-  - `~/.claude/projects/-Users-jamila/memory/drmed-sheet-sync.md`: "**2026-09-25 — 0184 (feat/patient-delete-locks) re-creates `resolve_patient_guarded`** as a superset of 0170's (same `search_path = ''` and `app.referral_origin = 'patient'` GUC around the insert, plus case-insensitive last name, lifecycle lock + re-read, P0072). If 0184 reaches main first, 0170 must copy 0184's body instead of 0158's; if 0170 lands first, 0184 re-copies. 0184 also installs `a_lifecycle_guard` triggers on visits/test_requests/payments/appointments/etc. — 0170's backfill writes none of those tables, so only `trg_patients_lifecycle_guard` needs the agreed scoped disable."
-  - `~/.claude/projects/-Users-jamila/memory/drmed-result-copy-followups.md`: "**2026-09-25 — 0184 re-creates `result_edit_commit`** (lifecycle lock before the results row lock + a replay pre-check). Whichever of 0179/0184 lands second copies the other's body."
-  - `~/.claude/projects/-Users-jamila/memory/drmed-released-unpaid-followups-decisions.md`: "**2026-09-25 — 0184 re-creates `correct_payment`** (lifecycle lock before the payment row lock). 0183's plan copies the 0174 body: if 0184 lands first, copy 0184's instead. 0184's `a_lifecycle_guard` on payments/test_requests/visits fires before 0183's guards (name order), so the advisory lock precedes 0183's `visits FOR UPDATE`."
-  Also run `ListAgents`; if a live session for sheet-sync (jamila-08), result-copy or waived-balance is listed, `SendMessage` it the same sentence.
+- [ ] **Step 4: Confirm the overlap notes are where the other sessions will see them.** The plan revision of 2026-09-28 appended a "**2026-09-28 — 0184 overlap / REPLAY rule**" paragraph to each of these memory files (the other sessions' start-here notes): `~/.claude/projects/-Users-jamila/memory/drmed-sheet-sync.md` (`resolve_patient_guarded`), `drmed-result-copy-followups.md` (`result_edit_commit`; 0179 merged — informational, plus the 0179 follow-up-column exception), `drmed-released-unpaid-followups-decisions.md` (`correct_payment`). Verify with `grep -c "0184 overlap / REPLAY rule"` on each (expect 1). The rule they state: if 0184 reaches main first, the second-lander must NOT re-create the function in its own lower-numbered file — it ships a new migration, claimed fresh and numbered above 0184, holding 0184's body plus its edits; fresh-replay equivalence is its ship prerequisite. Also run `ListAgents`; if a live session for sheet-sync (jamila-08) or waived-balance is listed, `SendMessage` it that rule in one paragraph.
 
 - [ ] **Step 5: Link files for the later `db push`, and deps.**
 
@@ -137,6 +175,23 @@ Note the ledger head (other sessions apply their branches here — 0170's `trg_p
 mkdir -p supabase/.temp && cp /Users/jamila/Claude/DRMed/supabase/.temp/{project-ref,linked-project.json,pooler-url} supabase/.temp/ 2>&1 | tail -2
 test -d node_modules || npm ci
 ```
+
+- [ ] **Step 6: Read-only prod facts the design relies on** (MCP `execute_sql`, SELECT only — never a fixture):
+
+```sql
+-- One-patient-per-result: expect 0 (the new junction check then changes nothing existing).
+select count(*) from (select rtr.result_id from public.result_test_requests rtr
+  join public.test_requests tr on tr.id = rtr.test_request_id join public.visits v on v.id = tr.visit_id
+  group by 1 having count(distinct v.patient_id) > 1) s;
+-- A component whose header sits on a different visit, an alert whose patient differs from its test's: expect 0 / 0.
+select count(*) from public.test_requests c join public.test_requests h on h.id = c.parent_id where c.visit_id <> h.visit_id;
+select count(*) from public.critical_alerts ca join public.test_requests tr on tr.id = ca.test_request_id
+  join public.visits v on v.id = tr.visit_id where ca.patient_id is distinct from v.patient_id;
+-- The rollup function's ACL, to restate exactly in Task 12.
+select proacl, prosecdef, proconfig from pg_proc where oid = 'public.recompute_hmo_batch_status(uuid)'::regprocedure;
+select version from supabase_migrations.schema_migrations order by version desc limit 5;
+```
+Record the numbers in the Task 0 report. A non-zero first count means an existing multi-patient result: STOP and ask — the one-patient-per-result check (Task 6) would then refuse re-linking it. Non-zero second/third counts are informational (the union lock covers them).
 
 ---
 
@@ -381,6 +436,20 @@ create function pg_temp.held(mode text) returns int language sql as $f$
      and classid = (hashtext('patient_lifecycle'))::oid;
 $f$;
 
+-- Same, for the result-membership namespace.
+create function pg_temp.held_results(mode text) returns int language sql as $f$
+  select count(*)::int from pg_locks
+   where locktype = 'advisory' and pid = pg_backend_pid() and pg_locks.mode = held_results.mode
+     and classid = (hashtext('result_membership'))::oid;
+$f$;
+
+-- Does this backend hold the lifecycle lock on patient p in mode m?
+create function pg_temp.holds(p uuid, m text) returns boolean language sql as $f$
+  select exists (select 1 from pg_locks
+   where locktype = 'advisory' and pid = pg_backend_pid() and mode = m
+     and classid = (hashtext('patient_lifecycle'))::oid and objid = (hashtext(p::text))::oid);
+$f$;
+
 -- 0119 strips PUBLIC EXECUTE from every function postgres creates, temp ones
 -- included; helpers called after `set local role …` need an explicit grant.
 do $grant$
@@ -406,6 +475,8 @@ declare
   pay uuid;
   b  uuid;
   it uuid;
+  q uuid; vq uuid; hq uuid; payq uuid; rq uuid; amq uuid; itq uuid; alq uuid;
+  pq uuid[];
   s0 int;
   x0 int;
 begin
@@ -491,19 +562,87 @@ begin
   perform pg_temp.expect('s1.25 row resolver: unknown table fails closed',
     pg_temp.state_of($q$select public.lifecycle_patients_of_row('staff_profiles', '{}'::jsonb, false)$q$), 'P0058');
 
+  -- Every patient-bearing reference is followed (Codex plan review P1-1).
+  -- q is a second active patient; each row below names p on one path and q on another.
+  q  := pg_temp.mk_patient('S1Q');
+  vq := pg_temp.mk_visit(q, true);
+  hq := pg_temp.mk_line(vq, 'in_progress', 0, null, true, 'c2000000-0000-4000-8000-000000000184');
+  payq := pg_temp.mk_pay(vq, 10, 'hmo');
+  insert into public.results (generation_kind, uploaded_by) values ('structured', 'a2000000-0000-4000-8000-000000000184')
+    returning id into rq;
+  insert into public.result_test_requests (result_id, test_request_id) values (rq, pg_temp.mk_line(vq, 'in_progress', 10));
+  insert into public.result_amendments (result_id, test_request_id, prior_storage_path, prior_uploaded_by,
+                                        prior_uploaded_at, reason, amended_by, amendment_seq)
+    values (rq, (select test_request_id from public.result_test_requests where result_id = rq), 'x', 'a2000000-0000-4000-8000-000000000184',
+            now(), 'smoke', 'a2000000-0000-4000-8000-000000000184', 1)
+    returning id into amq;
+  insert into public.hmo_claim_items (batch_id, test_request_id, billed_amount_php)
+    values (b, pg_temp.mk_line(vq, 'released', 10), 10) returning id into itq;
+  insert into public.hmo_payment_allocations (payment_id, item_id, amount_php) values (payq, itq, 10)
+    returning id into alq;
+  pq := array[p, q];
+  pq := (select array_agg(x order by x) from unnest(pq) x);
+  perform pg_temp.expect('s1.26 test_requests: visit ∪ parent header',
+    public.lifecycle_norm(public.lifecycle_patients_of_row('test_requests',
+      jsonb_build_object('visit_id', v, 'parent_id', hq), false))::text, pq::text);
+  perform pg_temp.expect('s1.27 payments: visit ∪ corrected payment',
+    public.lifecycle_norm(public.lifecycle_patients_of_row('payments',
+      jsonb_build_object('visit_id', v, 'corrects_payment_id', payq), false))::text, pq::text);
+  perform pg_temp.expect('s1.28 result_test_requests: test ∪ the result''s membership',
+    public.lifecycle_norm(public.lifecycle_patients_of_row('result_test_requests',
+      jsonb_build_object('test_request_id', tr, 'result_id', rq), false))::text, pq::text);
+  perform pg_temp.expect('s1.29 result_amendments: result ∪ test',
+    public.lifecycle_norm(public.lifecycle_patients_of_row('result_amendments',
+      jsonb_build_object('result_id', rq, 'test_request_id', tr), false))::text, pq::text);
+  perform pg_temp.expect('s1.30 critical_alerts: result ∪ test ∪ patient_id ∪ withdrawn_by_amendment',
+    public.lifecycle_norm(public.lifecycle_patients_of_row('critical_alerts',
+      jsonb_build_object('result_id', r, 'test_request_id', tr, 'patient_id', p, 'withdrawn_by_amendment', amq), false))::text, pq::text);
+  perform pg_temp.expect('s1.31 doctor_pf_entries: test ∪ HMO allocation',
+    public.lifecycle_norm(public.lifecycle_patients_of_row('doctor_pf_entries',
+      jsonb_build_object('test_request_id', tr, 'hmo_allocation_id', alq), false))::text, pq::text);
+  perform pg_temp.expect('s1.32 an optional reference that is NULL adds nothing',
+    public.lifecycle_norm(public.lifecycle_patients_of_row('test_requests',
+      jsonb_build_object('visit_id', v, 'parent_id', null), false))::text, array[p]::text);
+  perform pg_temp.expect('s1.33 an optional reference to a MISSING row fails closed (NULL element)',
+    (array_position(public.lifecycle_patients_of_row('payments',
+      jsonb_build_object('visit_id', v, 'corrects_payment_id', gen_random_uuid()), false), null) is not null)::text, 'true');
+  perform pg_temp.expect('s1.34 result resolver can leave one test out (junction UPDATE)',
+    public.lifecycle_patients_of_result(r, tr)::text, '{}');
+
+  -- Result-membership lock (Codex plan review P1-2).
+  perform pg_temp.expect('s1.35 result ids of a row: critical alert = result ∪ withdrawing amendment''s result',
+    public.lifecycle_norm(public.lifecycle_result_ids_of_row('critical_alerts',
+      jsonb_build_object('result_id', r, 'withdrawn_by_amendment', amq)))::text,
+    (select array_agg(x order by x) from unnest(array[r, rq]) x)::text);
+  perform pg_temp.expect('s1.36 result ids of a non-results row → empty',
+    public.lifecycle_result_ids_of_row('visits', jsonb_build_object('id', v))::text, '{}');
+  s0 := pg_temp.held_results('ShareLock');
+  perform public.lifecycle_lock_results(array[r, r, null], false);
+  perform pg_temp.expect('s1.37 shared membership lock, once per distinct result, NULLs ignored',
+    (pg_temp.held_results('ShareLock') - s0)::text, '1');
+  x0 := pg_temp.held_results('ExclusiveLock');
+  perform public.lifecycle_lock_results(array[rq], true);
+  perform pg_temp.expect('s1.38 exclusive membership lock',
+    (pg_temp.held_results('ExclusiveLock') - x0)::text, '1');
+
   -- ACLs: no runtime role may call the primitives.
-  perform pg_temp.expect('s1.26 no runtime EXECUTE on primitives',
+  perform pg_temp.expect('s1.39 no runtime EXECUTE on primitives',
     (select bool_or(has_function_privilege(r2, f, 'execute'))::text
        from unnest(array['anon','authenticated','service_role']) r2,
             unnest(array[
               'public.lifecycle_lock(uuid[],boolean)',
               'public.lifecycle_lock_and_assert(uuid[],boolean)',
+              'public.lifecycle_lock_results(uuid[],boolean)',
               'public.lifecycle_norm(uuid[])',
               'public.lifecycle_patients_of_visits(uuid[])',
               'public.lifecycle_patients_of_test_requests(uuid[])',
-              'public.lifecycle_patients_of_result(uuid)',
+              'public.lifecycle_patients_of_result(uuid,uuid)',
               'public.lifecycle_patients_of_hmo_items(uuid[])',
               'public.lifecycle_patients_of_payments(uuid[])',
+              'public.lifecycle_patients_of_amendments(uuid[])',
+              'public.lifecycle_patients_of_allocations(uuid[])',
+              'public.lifecycle_via(text,text)',
+              'public.lifecycle_result_ids_of_row(text,jsonb)',
               'public.lifecycle_patients_of_row(text,jsonb,boolean)']) f),
     'false');
 end
@@ -533,7 +672,8 @@ Run: the smoke command from Conventions. Expected: `ERROR:  function public.life
 -- everywhere: advisory lock(s) first, sorted by key → row locks → fresh re-read.
 -- Never shared-then-exclusive on one key in one transaction (upgrades deadlock).
 --
--- (1) lifecycle_lock / lifecycle_lock_and_assert + patient-path resolvers
+-- (1) lifecycle_lock / lifecycle_lock_and_assert, the result-membership lock
+--     lifecycle_lock_results, and resolvers that follow EVERY patient-bearing reference
 -- (2) delete_patient / restore_patient re-created with FOR NO KEY UPDATE
 -- (3) enforce_patient_activity(): the default-refuse guard, as a_lifecycle_guard
 -- (4) existing RPCs take the lock before their row locks
@@ -668,8 +808,11 @@ as $$
     left join public.visits v on v.id = tr.visit_id;
 $$;
 
--- A result has no patient until it is linked (0051): an unlinked draft is inert.
-create or replace function public.lifecycle_patients_of_result(p_result_id uuid)
+-- A result has no patient until it is linked (0051): an unlinked draft is
+-- inert. Callers hold the result's MEMBERSHIP lock (below) before calling
+-- this, so the answer cannot change under them. p_except_test leaves one link
+-- out (a junction UPDATE judges the result's OTHER links).
+create or replace function public.lifecycle_patients_of_result(p_result_id uuid, p_except_test uuid default null)
 returns uuid[]
 language sql
 volatile
@@ -680,7 +823,138 @@ as $$
     from public.result_test_requests rtr
     left join public.test_requests tr on tr.id = rtr.test_request_id
     left join public.visits v on v.id = tr.visit_id
-   where rtr.result_id = p_result_id;
+   where rtr.result_id = p_result_id
+     and rtr.test_request_id is distinct from p_except_test;
+$$;
+
+-- A result amendment belongs to its result's patients and its test's patient.
+create or replace function public.lifecycle_patients_of_amendments(p_amendment_ids uuid[])
+returns uuid[]
+language plpgsql
+volatile
+security definer
+set search_path = pg_catalog, public, pg_temp
+as $$
+declare
+  v_out uuid[] := '{}';
+  a     record;
+begin
+  for a in
+    select x, am.id, am.result_id, am.test_request_id
+      from unnest(p_amendment_ids) x
+      left join public.result_amendments am on am.id = x
+  loop
+    if a.id is null then
+      v_out := v_out || null::uuid;   -- missing: fail closed
+    else
+      v_out := v_out || public.lifecycle_patients_of_result(a.result_id)
+                     || public.lifecycle_patients_of_test_requests(array[a.test_request_id]);
+    end if;
+  end loop;
+  return v_out;
+end;
+$$;
+
+-- An HMO allocation belongs to its claim item's patient and its payment's patient.
+create or replace function public.lifecycle_patients_of_allocations(p_allocation_ids uuid[])
+returns uuid[]
+language sql
+volatile
+security definer
+set search_path = pg_catalog, public, pg_temp
+as $$
+  select coalesce(array_agg(pid), '{}'::uuid[]) from (
+    select v1.patient_id as pid
+      from unnest(p_allocation_ids) x
+      left join public.hmo_payment_allocations al on al.id = x
+      left join public.hmo_claim_items i on i.id = al.item_id
+      left join public.test_requests tr on tr.id = i.test_request_id
+      left join public.visits v1 on v1.id = tr.visit_id
+    union all
+    select v2.patient_id
+      from unnest(p_allocation_ids) x
+      left join public.hmo_payment_allocations al on al.id = x
+      left join public.payments pay on pay.id = al.payment_id
+      left join public.visits v2 on v2.id = pay.visit_id
+  ) s;
+$$;
+
+-- One reference → its patients. A NULL/empty reference names nobody ('{}');
+-- a reference to a row that does not exist yields a NULL element (fail closed).
+create or replace function public.lifecycle_via(p_kind text, p_id text)
+returns uuid[]
+language plpgsql
+volatile
+security definer
+set search_path = pg_catalog, public, pg_temp
+as $$
+begin
+  if nullif(p_id, '') is null then
+    return '{}'::uuid[];
+  end if;
+  return case p_kind
+    when 'patient'      then array[p_id::uuid]   -- a missing patient fails in lifecycle_lock_and_assert
+    when 'visit'        then public.lifecycle_patients_of_visits(array[p_id::uuid])
+    when 'test_request' then public.lifecycle_patients_of_test_requests(array[p_id::uuid])
+    when 'payment'      then public.lifecycle_patients_of_payments(array[p_id::uuid])
+    when 'result'       then public.lifecycle_patients_of_result(p_id::uuid)
+    when 'amendment'    then public.lifecycle_patients_of_amendments(array[p_id::uuid])
+    when 'hmo_item'     then public.lifecycle_patients_of_hmo_items(array[p_id::uuid])
+    when 'allocation'   then public.lifecycle_patients_of_allocations(array[p_id::uuid])
+  end;
+end;
+$$;
+
+-- The results whose MEMBERSHIP a results-family row depends on.
+create or replace function public.lifecycle_result_ids_of_row(p_table text, p_row jsonb)
+returns uuid[]
+language sql
+volatile
+security definer
+set search_path = pg_catalog, public, pg_temp
+as $$
+  select array_remove(case
+    when p_row is null then '{}'::uuid[]
+    when p_table = 'results' then array[nullif(p_row ->> 'id', '')::uuid]
+    when p_table in ('result_test_requests', 'result_values', 'result_amendments')
+      then array[nullif(p_row ->> 'result_id', '')::uuid]
+    when p_table = 'critical_alerts'
+      then array[nullif(p_row ->> 'result_id', '')::uuid,
+                 (select am.result_id from public.result_amendments am
+                   where am.id = nullif(p_row ->> 'withdrawn_by_amendment', '')::uuid)]
+    else '{}'::uuid[]
+  end, null);
+$$;
+
+-- The result-membership lock: key (hashtext('result_membership'),
+-- hashtext(result_id)), sorted, NULLs ignored. EXCLUSIVE when the write
+-- changes which tests a result holds (result_test_requests insert/update/
+-- delete, results delete); SHARED for every other results-family write. Taken
+-- BEFORE the patient lock — the patient set of a result is only stable while
+-- its membership is.
+create or replace function public.lifecycle_lock_results(p_result_ids uuid[], p_exclusive boolean)
+returns void
+language plpgsql
+volatile
+security definer
+set search_path = pg_catalog, public, pg_temp
+as $$
+declare
+  v_key int;
+begin
+  for v_key in
+    select distinct hashtext(x::text) as k
+      from unnest(coalesce(p_result_ids, '{}'::uuid[])) x
+     where x is not null
+     order by k
+  loop
+    if p_exclusive then
+      perform pg_advisory_xact_lock(hashtext('result_membership'), v_key);
+    else
+      perform pg_advisory_xact_lock_shared(hashtext('result_membership'), v_key);
+    end if;
+  end loop;
+end;
 $$;
 
 create or replace function public.lifecycle_patients_of_hmo_items(p_item_ids uuid[])
@@ -710,8 +984,13 @@ as $$
     left join public.visits v on v.id = pay.visit_id;
 $$;
 
--- The patients a row (as jsonb) belongs to. For a DELETE a vanished parent is
--- dropped: it can only be a cascade from the parent's own (guarded) delete.
+-- The patients a row (as jsonb) belongs to: the UNION over EVERY
+-- patient-bearing reference the row carries (Facts table; Codex plan review
+-- P1-1), so references that disagree are all locked and asserted, never just
+-- the one path someone thought of. For a DELETE a vanished parent is dropped:
+-- it can only be a cascade from the parent's own (guarded) delete. A new
+-- patient-bearing column on any of these tables must be added here AND to
+-- the Facts table; s14.5 fails on an FK the resolver does not know.
 create or replace function public.lifecycle_patients_of_row(p_table text, p_row jsonb, p_for_delete boolean)
 returns uuid[]
 language plpgsql
@@ -721,27 +1000,35 @@ set search_path = pg_catalog, public, pg_temp
 as $$
 declare
   v uuid[];
-  v_pid uuid := nullif(p_row->>'patient_id', '')::uuid;
 begin
   v := case p_table
-    when 'visits'                  then array[v_pid]
-    when 'patient_consents'        then array[v_pid]
-    when 'appointments'            then case when v_pid is null then '{}'::uuid[] else array[v_pid] end
-    when 'appointment_attachments' then case when v_pid is null then '{}'::uuid[] else array[v_pid] end
-    when 'test_requests'           then public.lifecycle_patients_of_visits(array[(p_row->>'visit_id')::uuid])
-    when 'payments'                then public.lifecycle_patients_of_visits(array[(p_row->>'visit_id')::uuid])
-    when 'visit_pins'              then public.lifecycle_patients_of_visits(array[(p_row->>'visit_id')::uuid])
-    when 'result_test_requests'    then public.lifecycle_patients_of_test_requests(array[(p_row->>'test_request_id')::uuid])
-    when 'result_amendments'       then public.lifecycle_patients_of_test_requests(array[(p_row->>'test_request_id')::uuid])
-    when 'doctor_pf_entries'       then public.lifecycle_patients_of_test_requests(array[(p_row->>'test_request_id')::uuid])
-    when 'hmo_claim_items'         then public.lifecycle_patients_of_test_requests(array[(p_row->>'test_request_id')::uuid])
-    when 'critical_alerts'         then public.lifecycle_patients_of_test_requests(array[(p_row->>'test_request_id')::uuid])
-                                        || case when v_pid is null then '{}'::uuid[] else array[v_pid] end
-    when 'results'                 then public.lifecycle_patients_of_result((p_row->>'id')::uuid)
-    when 'result_values'           then public.lifecycle_patients_of_result((p_row->>'result_id')::uuid)
-    when 'hmo_payment_allocations' then public.lifecycle_patients_of_hmo_items(array[(p_row->>'item_id')::uuid])
-                                        || public.lifecycle_patients_of_payments(array[(p_row->>'payment_id')::uuid])
-    when 'hmo_claim_resolutions'   then public.lifecycle_patients_of_hmo_items(array[(p_row->>'item_id')::uuid])
+    when 'visits'                  then public.lifecycle_via('patient', p_row ->> 'patient_id')
+                                        || case when p_row ->> 'patient_id' is null then array[null::uuid] else '{}'::uuid[] end
+    when 'patient_consents'        then public.lifecycle_via('patient', p_row ->> 'patient_id')
+                                        || case when p_row ->> 'patient_id' is null then array[null::uuid] else '{}'::uuid[] end
+    when 'appointments'            then public.lifecycle_via('patient', p_row ->> 'patient_id')
+    when 'appointment_attachments' then public.lifecycle_via('patient', p_row ->> 'patient_id')
+    when 'test_requests'           then public.lifecycle_via('visit', p_row ->> 'visit_id')
+                                        || public.lifecycle_via('test_request', p_row ->> 'parent_id')
+    when 'payments'                then public.lifecycle_via('visit', p_row ->> 'visit_id')
+                                        || public.lifecycle_via('payment', p_row ->> 'corrects_payment_id')
+    when 'visit_pins'              then public.lifecycle_via('visit', p_row ->> 'visit_id')
+    when 'results'                 then public.lifecycle_via('result', p_row ->> 'id')
+    when 'result_test_requests'    then public.lifecycle_via('test_request', p_row ->> 'test_request_id')
+                                        || public.lifecycle_via('result', p_row ->> 'result_id')
+    when 'result_values'           then public.lifecycle_via('result', p_row ->> 'result_id')
+    when 'result_amendments'       then public.lifecycle_via('result', p_row ->> 'result_id')
+                                        || public.lifecycle_via('test_request', p_row ->> 'test_request_id')
+    when 'critical_alerts'         then public.lifecycle_via('result', p_row ->> 'result_id')
+                                        || public.lifecycle_via('test_request', p_row ->> 'test_request_id')
+                                        || public.lifecycle_via('patient', p_row ->> 'patient_id')
+                                        || public.lifecycle_via('amendment', p_row ->> 'withdrawn_by_amendment')
+    when 'hmo_claim_items'         then public.lifecycle_via('test_request', p_row ->> 'test_request_id')
+    when 'hmo_payment_allocations' then public.lifecycle_via('hmo_item', p_row ->> 'item_id')
+                                        || public.lifecycle_via('payment', p_row ->> 'payment_id')
+    when 'hmo_claim_resolutions'   then public.lifecycle_via('hmo_item', p_row ->> 'item_id')
+    when 'doctor_pf_entries'       then public.lifecycle_via('test_request', p_row ->> 'test_request_id')
+                                        || public.lifecycle_via('allocation', p_row ->> 'hmo_allocation_id')
   end;
   if v is null then
     raise exception 'lifecycle guard: no patient path for table %', p_table using errcode = 'P0058';
@@ -756,17 +1043,24 @@ $$;
 revoke all on function public.lifecycle_norm(uuid[]) from public, anon, authenticated, service_role;
 revoke all on function public.lifecycle_lock(uuid[], boolean) from public, anon, authenticated, service_role;
 revoke all on function public.lifecycle_lock_and_assert(uuid[], boolean) from public, anon, authenticated, service_role;
+revoke all on function public.lifecycle_lock_results(uuid[], boolean) from public, anon, authenticated, service_role;
 revoke all on function public.lifecycle_patients_of_visits(uuid[]) from public, anon, authenticated, service_role;
 revoke all on function public.lifecycle_patients_of_test_requests(uuid[]) from public, anon, authenticated, service_role;
-revoke all on function public.lifecycle_patients_of_result(uuid) from public, anon, authenticated, service_role;
+revoke all on function public.lifecycle_patients_of_result(uuid, uuid) from public, anon, authenticated, service_role;
 revoke all on function public.lifecycle_patients_of_hmo_items(uuid[]) from public, anon, authenticated, service_role;
 revoke all on function public.lifecycle_patients_of_payments(uuid[]) from public, anon, authenticated, service_role;
+revoke all on function public.lifecycle_patients_of_amendments(uuid[]) from public, anon, authenticated, service_role;
+revoke all on function public.lifecycle_patients_of_allocations(uuid[]) from public, anon, authenticated, service_role;
+revoke all on function public.lifecycle_via(text, text) from public, anon, authenticated, service_role;
+revoke all on function public.lifecycle_result_ids_of_row(text, jsonb) from public, anon, authenticated, service_role;
 revoke all on function public.lifecycle_patients_of_row(text, jsonb, boolean) from public, anon, authenticated, service_role;
 ```
 
-- [ ] **Step 4: Apply and run — expect PASS.** Apply (Conventions), run the smoke. Expected: `0184 s1.1 OK` … `0184 s1.26 OK`, no ERROR.
+Note on `visits`/`patient_consents`: `patient_id` is NOT NULL there, so a NULL can only mean a malformed row — the extra `array[null]` makes it fail closed rather than read as "nobody". On `appointments`/`appointment_attachments` NULL is a real walk-in / not-yet-linked upload and names nobody.
 
-- [ ] **Step 5: Mutation check (vacuous-assertions rule).** Temporarily change `lifecycle_lock_and_assert`'s `where p.id is null or p.deleted_at is not null …` to `where false`, re-apply, re-run: s1.6/s1.7/s1.8 must FAIL. Restore, re-apply, re-run: PASS.
+- [ ] **Step 4: Apply and run — expect PASS.** Apply (Conventions), run the smoke. Expected: `0184 s1.1 OK` … `0184 s1.39 OK`, no ERROR.
+
+- [ ] **Step 5: Mutation check (vacuous-assertions rule).** Temporarily change `lifecycle_lock_and_assert`'s `where p.id is null or p.deleted_at is not null …` to `where false`, re-apply, re-run: s1.6/s1.7/s1.8 must FAIL. Then make `lifecycle_patients_of_row`'s `test_requests` branch drop its `parent_id` term: s1.26 must FAIL. Then make `lifecycle_lock_results` take the SHARED lock when asked for exclusive: s1.38 must FAIL. Restore each, re-apply, re-run: PASS.
 
 - [ ] **Step 6: Commit.**
 
@@ -847,7 +1141,7 @@ grant execute on function public.restore_patient(uuid, uuid, jsonb) to service_r
 ---
 ### Task 4: The guard — `enforce_patient_activity()` on visits, appointments, patient_consents, appointment_attachments
 
-One trigger function serves every table (Tasks 4–7 only add `create trigger` lines). Rule: on an inactive patient every INSERT/UPDATE/DELETE is refused (P0058) except four column-shaped exceptions and two deletes; a no-op UPDATE is always allowed; there is no trigger-depth exemption, so nested writes are checked like any other.
+One trigger function serves every table (Tasks 4–7 only add `create trigger` lines). Rule: on an inactive patient every INSERT/UPDATE/DELETE is refused (P0058) except five column-shaped exceptions, two deletes and the unlinked results insert; a no-op UPDATE is always allowed; there is no trigger-depth exemption, so nested writes are checked like any other. Results-family rows take the result-membership lock before resolving patients; every patient-bearing reference of a row is locked and asserted (Facts table); a result link must keep the result to one patient.
 
 **Files:** Modify the migration, the 0184 smoke, and `supabase/tests/0167_patient_soft_delete_smoke.sql`.
 
@@ -984,18 +1278,33 @@ $s3$;
 --   critical_alerts   UPDATE changing only acknowledged_at / acknowledged_by
 --   doctor_pf_entries UPDATE changing only disbursement_id (paying a doctor
 --                     for work already done adds nothing to the patient)
+--   result_amendments UPDATE changing only the 0179 follow-up bookkeeping
+--                     (patient_contacted_at/_by, patient_notified_at,
+--                     patient_notified_channels, patient_notify_error) — the
+--                     notice sender checks the recipient itself
 --   results           INSERT (unlinked until result_test_requests — inert)
 -- A no-op UPDATE (nothing but updated_at changes) is always allowed: the
 -- recompute triggers rewrite identical values. There is NO trigger-depth
 -- exemption — a nested write (a batch reopen propagating batch_voided to an
 -- inactive patient's claim item) is refused like any other.
 --
--- Everything else: resolve the row's patients (old and new), take the
--- lifecycle lock — EXCLUSIVE on old+new when the write moves the row to a
--- different patient set, SHARED otherwise — assert all active, then resolve
--- again: if the set moved while we waited, raise P0072 (the caller retries in
--- a fresh transaction; never "lock the new one too" — a newly found key may
--- sort below one already held).
+-- Everything else:
+--  1. results family only: take the result-MEMBERSHIP lock on every result
+--     the row depends on (old and new) — EXCLUSIVE for a result_test_requests
+--     write or a results DELETE (membership changes), SHARED otherwise. From
+--     here on no link to those results can be added or removed until commit,
+--     so the patients resolved in step 2 are the result's real patients.
+--  2. resolve the row's patients over EVERY patient-bearing reference (old
+--     and new), take the lifecycle lock — EXCLUSIVE on old+new when the write
+--     moves the row to a different patient set, SHARED otherwise — and assert
+--     all active.
+--  3. resolve again: if the set moved while we waited (a visit/test moved to
+--     another patient), raise P0072 (the caller retries in a fresh
+--     transaction; never "lock the new one too" — a newly found key may sort
+--     below one already held).
+--  4. result_test_requests INSERT/UPDATE: one patient per result — the new
+--     link's patient must be the patient of the result's other links
+--     (23514). Under the exclusive membership lock this cannot race.
 --
 -- Installed as a_lifecycle_guard: same-timing triggers fire in name order and
 -- every other BEFORE trigger is tg_*/trg_*, so this lock is always taken
@@ -1017,6 +1326,7 @@ declare
   v_new     uuid[] := '{}';
   v_set     uuid[];
   v_again   uuid[];
+  v_owner   uuid[];
 begin
   -- (a) Allowed whatever the patient's state; no lock.
   if tg_op = 'DELETE' and tg_table_name in ('appointments', 'visit_pins') then
@@ -1042,12 +1352,22 @@ begin
        or (tg_table_name = 'critical_alerts'
           and v_changed <@ array['acknowledged_at', 'acknowledged_by'])
        or (tg_table_name = 'doctor_pf_entries'
-          and v_changed = array['disbursement_id']) then
+          and v_changed = array['disbursement_id'])
+       or (tg_table_name = 'result_amendments'
+          and v_changed <@ array['patient_contacted_at', 'patient_contacted_by', 'patient_notified_at',
+                                 'patient_notified_channels', 'patient_notify_error']) then
       return new;
     end if;
   end if;
 
-  -- (b) Lock the owning patients, assert, re-resolve.
+  -- (b) Results family: the membership lock FIRST (see header, step 1).
+  if tg_table_name in ('results', 'result_test_requests', 'result_values', 'result_amendments', 'critical_alerts') then
+    perform public.lifecycle_lock_results(
+      public.lifecycle_result_ids_of_row(tg_table_name, v_o) || public.lifecycle_result_ids_of_row(tg_table_name, v_n),
+      tg_table_name = 'result_test_requests' or (tg_table_name = 'results' and tg_op = 'DELETE'));
+  end if;
+
+  -- (c) Lock the owning patients, assert, re-resolve.
   if v_o is not null then
     v_old := public.lifecycle_patients_of_row(tg_table_name, v_o, tg_op = 'DELETE');
   end if;
@@ -1070,6 +1390,22 @@ begin
   if v_again is distinct from v_set then
     raise exception 'the patient on this record changed while it was being saved — try again'
       using errcode = 'P0072';
+  end if;
+
+  -- (d) One patient per result (Codex plan review P1-1, "enforce ownership
+  -- consistency"): a link may only join a result whose OTHER links belong to
+  -- the same patient. Stable under the exclusive membership lock from (b).
+  if tg_table_name = 'result_test_requests' and tg_op <> 'DELETE' then
+    v_owner := public.lifecycle_norm(array_remove(
+                 public.lifecycle_patients_of_result((v_n ->> 'result_id')::uuid,
+                   case when tg_op = 'UPDATE' and (v_o ->> 'result_id') = (v_n ->> 'result_id')
+                        then (v_o ->> 'test_request_id')::uuid end)
+                 || public.lifecycle_patients_of_test_requests(array[(v_n ->> 'test_request_id')::uuid]),
+                 null));
+    if cardinality(v_owner) > 1 then
+      raise exception 'a result can only hold one patient''s tests — create a separate result for this test'
+        using errcode = '23514';
+    end if;
   end if;
 
   return case when tg_op = 'DELETE' then old else new end;
@@ -1140,6 +1476,7 @@ declare
   d  uuid := pg_temp.mk_patient('S4D');
   va uuid; vd uuid; vd2 uuid;
   la uuid; ld uuid; ld_rel uuid;
+  ha uuid; hd uuid;
   pa uuid; pd uuid;
   pin_d uuid;
 begin
@@ -1149,6 +1486,8 @@ begin
   la := pg_temp.mk_line(va, 'requested', 100);
   ld := pg_temp.mk_line(vd, 'requested', 100);
   ld_rel := pg_temp.mk_line(vd2, 'released', 0);
+  ha := pg_temp.mk_line(va, 'in_progress', 0, null, true, 'c2000000-0000-4000-8000-000000000184');
+  hd := pg_temp.mk_line(vd, 'in_progress', 0, null, true, 'c2000000-0000-4000-8000-000000000184');
   pd := pg_temp.mk_pay(vd, 50);
   insert into public.visit_pins (visit_id, pin_hash) values (vd, '$2a$12$abcdefghijklmnopqrstuuM2ZyN0bN6o5uX0B0Qe0b8bOIG8J8r5a')
     returning id into pin_d;
@@ -1169,6 +1508,14 @@ begin
     pg_temp.state_of(format($q$update public.test_requests set visit_id = %L where id = %L$q$, vd, la)), 'P0058');
   perform pg_temp.expect('s4.7 a line pointing at a visit that does not exist fails closed',
     pg_temp.state_of(format($q$select pg_temp.mk_line(%L, 'requested', 10)$q$, gen_random_uuid())), 'P0058');
+  -- Mismatched references (Codex plan review P1-1): every reference is locked and asserted.
+  perform pg_temp.expect('s4.7a CONTROL a component under its own visit''s header',
+    pg_temp.state_of(format($q$select pg_temp.mk_line(%L, 'requested', 0, %L, false)$q$, va, ha)), 'ok');
+  perform pg_temp.expect('s4.7b a component on an ACTIVE visit whose parent header is on a deleted patient''s visit is refused',
+    pg_temp.state_of(format($q$select pg_temp.mk_line(%L, 'requested', 0, %L, false)$q$, va, hd)), 'P0058');
+  perform pg_temp.expect('s4.7c a payment on an ACTIVE visit that corrects a deleted patient''s payment is refused',
+    pg_temp.state_of(format($q$insert into public.payments (visit_id, amount_php, method, received_by, corrects_payment_id) values (%L, 10, 'cash', %L, %L)$q$,
+      va, 'a1000000-0000-4000-8000-000000000184', pd)), 'P0058');
 
   -- payments
   perform pg_temp.expect('s4.8 CONTROL payment on an active patient''s visit',
@@ -1237,37 +1584,53 @@ create trigger a_lifecycle_guard
 -- --- s5: guards on the results family ---------------------------------------------
 do $s5$
 declare
-  k_med constant uuid := 'a2000000-0000-4000-8000-000000000184';
+  k_admin constant uuid := 'a0000000-0000-4000-8000-000000000184';
+  k_med   constant uuid := 'a2000000-0000-4000-8000-000000000184';
   a  uuid := pg_temp.mk_patient('S5A');
+  b  uuid := pg_temp.mk_patient('S5B');
   d  uuid := pg_temp.mk_patient('S5D');
-  va uuid; vd uuid;
-  ta uuid; td uuid; td2 uuid;
-  ra uuid; rd uuid; r_new uuid;
+  va uuid; vb uuid; vd uuid;
+  ta uuid; ta2 uuid; ta3 uuid; ta4 uuid; tb uuid; td uuid; td2 uuid;
+  ra uuid; rd uuid; r_new uuid; r_un uuid; r_b uuid;
   tpl uuid; prm uuid;
-  al uuid;
+  al uuid; am_d uuid; am_a uuid;
+  s0 int; x0 int;
 begin
   insert into public.result_templates (service_id, layout) values ('c1000000-0000-4000-8000-000000000184', 'simple')
     returning id into tpl;
   insert into public.result_template_params (template_id, sort_order, parameter_name, input_type)
     values (tpl, 1, 'LK param', 'numeric') returning id into prm;
   va := pg_temp.mk_visit(a);
+  vb := pg_temp.mk_visit(b);
   vd := pg_temp.mk_visit(d);
-  ta := pg_temp.mk_line(va, 'in_progress', 100, null, false, 'c1000000-0000-4000-8000-000000000184');
-  td := pg_temp.mk_line(vd, 'in_progress', 100, null, false, 'c1000000-0000-4000-8000-000000000184');
+  ta  := pg_temp.mk_line(va, 'in_progress', 100, null, false, 'c1000000-0000-4000-8000-000000000184');
+  ta2 := pg_temp.mk_line(va, 'in_progress', 100, null, false, 'c1000000-0000-4000-8000-000000000184');  -- never linked
+  ta3 := pg_temp.mk_line(va, 'in_progress', 100, null, false, 'c1000000-0000-4000-8000-000000000184');  -- never linked
+  ta4 := pg_temp.mk_line(va, 'in_progress', 100, null, false, 'c1000000-0000-4000-8000-000000000184');  -- never linked
+  tb  := pg_temp.mk_line(vb, 'in_progress', 100, null, false, 'c1000000-0000-4000-8000-000000000184');
+  td  := pg_temp.mk_line(vd, 'in_progress', 100, null, false, 'c1000000-0000-4000-8000-000000000184');
   td2 := pg_temp.mk_line(vd, 'in_progress', 100, null, false, 'c1000000-0000-4000-8000-000000000184');
   insert into public.results (generation_kind, uploaded_by) values ('structured', k_med) returning id into ra;
   insert into public.results (generation_kind, uploaded_by) values ('structured', k_med) returning id into rd;
-  insert into public.result_test_requests (result_id, test_request_id) values (ra, ta), (rd, td);
+  insert into public.results (generation_kind, uploaded_by) values ('structured', k_med) returning id into r_b;
+  insert into public.result_test_requests (result_id, test_request_id) values (ra, ta), (rd, td), (r_b, tb);
   insert into public.result_values (result_id, parameter_id, numeric_value_si) values (rd, prm, 1);
   insert into public.critical_alerts (result_id, test_request_id, parameter_id, direction, parameter_name, patient_id)
     values (rd, td, prm, 'high', 'LK param', d) returning id into al;
+  insert into public.result_amendments (result_id, test_request_id, prior_storage_path, prior_uploaded_by,
+                                        prior_uploaded_at, reason, amended_by, amendment_seq)
+    values (rd, td, 'x', k_med, now(), 'smoke', k_med, 1) returning id into am_d;
+  insert into public.result_amendments (result_id, test_request_id, prior_storage_path, prior_uploaded_by,
+                                        prior_uploaded_at, reason, amended_by, amendment_seq)
+    values (ra, ta, 'x', k_med, now(), 'smoke', k_med, 1) returning id into am_a;
   perform pg_temp.kill(d);
 
   perform pg_temp.expect('s5.1 an UNLINKED result row can always be inserted (inert)',
     pg_temp.state_of(format($q$insert into public.results (generation_kind, uploaded_by) values ('structured', %L)$q$, k_med)), 'ok');
   insert into public.results (generation_kind, uploaded_by) values ('structured', k_med) returning id into r_new;
-  perform pg_temp.expect('s5.2 CONTROL link a result to an active patient''s test',
-    pg_temp.state_of(format($q$insert into public.result_test_requests (result_id, test_request_id) values (%L, %L)$q$, r_new, ta)), 'ok');
+  -- ta2 was never linked (uq_result_test_requests_test_request allows one result per test).
+  perform pg_temp.expect('s5.2 CONTROL link a result to an active patient''s unlinked test',
+    pg_temp.state_of(format($q$insert into public.result_test_requests (result_id, test_request_id) values (%L, %L)$q$, r_new, ta2)), 'ok');
   perform pg_temp.expect('s5.3 linking a result to a deleted patient''s test is refused',
     pg_temp.state_of(format($q$insert into public.result_test_requests (result_id, test_request_id) values (%L, %L)$q$, r_new, td2)), 'P0058');
   perform pg_temp.expect('s5.4 editing a deleted patient''s result row is refused',
@@ -1277,7 +1640,7 @@ begin
   perform pg_temp.expect('s5.6 saving a value on a deleted patient''s result is refused',
     pg_temp.state_of(format($q$update public.result_values set numeric_value_si = 2 where result_id = %L$q$, rd)), 'P0058');
   perform pg_temp.expect('s5.7 inserting an amendment row is refused',
-    pg_temp.state_of(format($q$insert into public.result_amendments (result_id, test_request_id, prior_storage_path, prior_uploaded_by, prior_uploaded_at, reason, amended_by, amendment_seq) values (%L, %L, 'x', %L, now(), 'x', %L, 1)$q$, rd, td, k_med, k_med)), 'P0058');
+    pg_temp.state_of(format($q$insert into public.result_amendments (result_id, test_request_id, prior_storage_path, prior_uploaded_by, prior_uploaded_at, reason, amended_by, amendment_seq) values (%L, %L, 'x', %L, now(), 'x', %L, 2)$q$, rd, td, k_med, k_med)), 'P0058');
   perform pg_temp.expect('s5.8 acknowledging a deleted patient''s critical alert is allowed',
     pg_temp.state_of(format($q$update public.critical_alerts set acknowledged_at = now(), acknowledged_by = %L where id = %L$q$, k_med, al)), 'ok');
   perform pg_temp.expect('s5.9 changing anything else on the alert is refused',
@@ -1288,10 +1651,63 @@ begin
     pg_temp.state_of(format($q$delete from public.results where id = %L$q$, rd)), 'P0058');
   perform pg_temp.expect('s5.12 unlinking (junction delete) is refused',
     pg_temp.state_of(format($q$delete from public.result_test_requests where result_id = %L$q$, rd)), 'P0058');
+
+  -- Mismatched references (Codex plan review P1-1): every reference is locked and asserted.
+  perform pg_temp.expect('s5.13 linking an ACTIVE patient''s test to a DELETED patient''s result is refused',
+    pg_temp.state_of(format($q$insert into public.result_test_requests (result_id, test_request_id) values (%L, %L)$q$, rd, ta3)), 'P0058');
+  perform pg_temp.expect('s5.14 an amendment naming an active test but a deleted patient''s result is refused',
+    pg_temp.state_of(format($q$insert into public.result_amendments (result_id, test_request_id, prior_storage_path, prior_uploaded_by, prior_uploaded_at, reason, amended_by, amendment_seq) values (%L, %L, 'x', %L, now(), 'x', %L, 9)$q$, rd, ta, k_med, k_med)), 'P0058');
+  perform pg_temp.expect('s5.15 an alert naming an active test + patient but a deleted patient''s result is refused',
+    pg_temp.state_of(format($q$insert into public.critical_alerts (result_id, test_request_id, parameter_id, direction, parameter_name, patient_id) values (%L, %L, %L, 'low', 'LK param', %L)$q$, rd, ta, prm, a)), 'P0058');
+  perform pg_temp.expect('s5.16 an alert on an active result + test but patient_id = the deleted patient is refused',
+    pg_temp.state_of(format($q$insert into public.critical_alerts (result_id, test_request_id, parameter_id, direction, parameter_name, patient_id) values (%L, %L, %L, 'low', 'LK param', %L)$q$, ra, ta, prm, d)), 'P0058');
+  perform pg_temp.expect('s5.17 an alert on an active result withdrawn by a DELETED patient''s amendment is refused',
+    pg_temp.state_of(format($q$insert into public.critical_alerts (result_id, test_request_id, parameter_id, direction, parameter_name, patient_id, withdrawn_by_amendment) values (%L, %L, %L, 'low', 'LK param', %L, %L)$q$, ra, ta, prm, a, am_d)), 'P0058');
+
+  -- The same Codex case through the real client path: an authenticated admin
+  -- under RLS (0151's admin manage policy on the junction).
+  set local role authenticated;
+  perform set_config('request.jwt.claims', json_build_object('role', 'authenticated', 'sub', k_admin)::text, true);
+  perform set_config('request.jwt.claim.sub', k_admin::text, true);
+  perform pg_temp.expect('s5.18 authenticated admin: active test → deleted patient''s result is refused',
+    pg_temp.state_of(format($q$insert into public.result_test_requests (result_id, test_request_id) values (%L, %L)$q$, rd, ta3)), 'P0058');
+  perform pg_temp.expect('s5.19 authenticated admin CONTROL: active test → an unlinked result',
+    pg_temp.state_of(format($q$insert into public.result_test_requests (result_id, test_request_id) values (%L, %L)$q$, r_new, ta3)), 'ok');
+  reset role;
+  perform set_config('request.jwt.claims', '', true);
+  perform set_config('request.jwt.claim.sub', '', true);
+
+  -- One patient per result.
+  perform pg_temp.expect('s5.20 linking another ACTIVE patient''s test to a result is refused (one patient per result)',
+    pg_temp.state_of(format($q$insert into public.result_test_requests (result_id, test_request_id) values (%L, %L)$q$, r_b, ta4)), '23514');
+  perform pg_temp.expect('s5.21 CONTROL a second test of the SAME patient joins the result',
+    pg_temp.state_of(format($q$insert into public.result_test_requests (result_id, test_request_id) values (%L, %L)$q$, ra, ta4)), 'ok');
+
+  -- 0179 follow-up bookkeeping on a deleted patient's amendment: allowed; anything else refused.
+  perform pg_temp.expect('s5.22 marking a deleted patient contacted about a correction is allowed',
+    pg_temp.state_of(format($q$update public.result_amendments set patient_contacted_at = now(), patient_contacted_by = %L where id = %L$q$, k_med, am_d)), 'ok');
+  perform pg_temp.expect('s5.23 recording a notice outcome is allowed',
+    pg_temp.state_of(format($q$update public.result_amendments set patient_notified_at = now(), patient_notified_channels = '{}', patient_notify_error = 'skipped' where id = %L$q$, am_d)), 'ok');
+  perform pg_temp.expect('s5.24 changing the amendment''s reason is refused',
+    pg_temp.state_of(format($q$update public.result_amendments set reason = 'x', patient_contacted_at = now() where id = %L$q$, am_d)), 'P0058');
+
+  -- Membership lock modes (Codex plan review P1-2).
+  insert into public.results (generation_kind, uploaded_by) values ('structured', k_med) returning id into r_un;
+  s0 := pg_temp.held_results('ShareLock');
+  insert into public.result_values (result_id, parameter_id, numeric_value_si) values (r_un, prm, 5);
+  perform pg_temp.expect('s5.25 a value on an UNLINKED result still takes the SHARED membership lock',
+    (pg_temp.held_results('ShareLock') - s0)::text, '1');
+  x0 := pg_temp.held_results('ExclusiveLock');
+  insert into public.result_test_requests (result_id, test_request_id)
+    values (r_un, pg_temp.mk_line(va, 'in_progress', 100, null, false, 'c1000000-0000-4000-8000-000000000184'));
+  perform pg_temp.expect('s5.26 a link takes the EXCLUSIVE membership lock',
+    (pg_temp.held_results('ExclusiveLock') - x0)::text, '1');
+  perform pg_temp.expect('s5.27 CONTROL an active patient''s amendment reason can still change',
+    pg_temp.state_of(format($q$update public.result_amendments set reason = 'y' where id = %L$q$, am_a)), 'ok');
 end
 $s5$;
 ```
-Run: expect `s5.3 FAILED: got [ok]`.
+Run: expect `s5.3 FAILED: got [ok]`. (If a `result_values` trigger refuses a value on an UNLINKED result, s5.25 inserts the value after linking instead and counts the shared lock on a SECOND value for another unlinked result via `results` UPDATE — the point is that an unlinked result's writer takes the shared membership lock.)
 
 - [ ] **Step 2: Add the triggers.**
 
@@ -1324,9 +1740,11 @@ create trigger a_lifecycle_guard
   for each row execute function public.enforce_patient_activity();
 ```
 
-- [ ] **Step 3: Apply, run — PASS** (s1–s5). Run `0172_result_edit_commit_smoke.sql` — must stay green (active patients only).
+- [ ] **Step 3: Apply, run — PASS** (s1–s5). Run `0172_result_edit_commit_smoke.sql` and the 0179 smoke (`supabase/tests/0179_*_smoke.sql` if present) — must stay green (active patients only).
 
-- [ ] **Step 4: Commit** — `feat(db): lifecycle guard on the results family (0184 part 5)`.
+- [ ] **Step 4: Mutation checks** (each must FAIL, then restore + re-apply): (a) in the guard, pass `false` instead of the exclusive expression to `lifecycle_lock_results` → s5.26 fails; (b) delete step (d) (one patient per result) → s5.20 fails; (c) drop the `result_id` term from the `critical_alerts` branch of `lifecycle_patients_of_row` → s5.15 fails; (d) drop the `result_amendments` follow-up exception → s5.22 fails. The race half of the membership protocol is proven in Task 16 (`membership_*` races).
+
+- [ ] **Step 5: Commit** — `feat(db): lifecycle guard on the results family — membership lock, every reference, one patient per result (0184 part 5)`.
 
 ---
 
@@ -1397,6 +1815,12 @@ begin
     pg_temp.state_of(format($q$update public.doctor_pf_entries set disbursement_id = %L where id = %L$q$, disb, pf_d)), 'ok');
   perform pg_temp.expect('s6.9 voiding the PF entry is refused',
     pg_temp.state_of(format($q$update public.doctor_pf_entries set voided_at = now(), voided_by = %L, void_reason = 'x' where id = %L$q$, k_admin, pf_d)), 'P0058');
+  -- Mismatched references (Codex plan review P1-1): a PF entry for an ACTIVE
+  -- patient's test that points at a DELETED patient's HMO allocation.
+  perform pg_temp.expect('s6.10 a PF entry whose allocation belongs to a deleted patient is refused',
+    pg_temp.state_of(format($q$insert into public.doctor_pf_entries (test_request_id, physician_id, pf_php, recognition_basis, recognized_at, hmo_allocation_id) values (%L, %L, 10, 'hmo_at_settlement', now(), %L)$q$, ta, phys, alloc_d)), 'P0058');
+  perform pg_temp.expect('s6.11 an allocation of an ACTIVE item to a deleted patient''s payment is refused',
+    pg_temp.state_of(format($q$insert into public.hmo_payment_allocations (payment_id, item_id, amount_php) values (%L, %L, 1)$q$, pay_d, ia)), 'P0058');
 end
 $s6$;
 ```
@@ -1456,22 +1880,33 @@ declare
   d  uuid := pg_temp.mk_patient('S7D');
   va uuid; vd uuid; td uuid; td2 uuid; rd uuid; rd2 uuid; pd uuid; att uuid := gen_random_uuid();
   f  text;
+  def text;
+  lp int; rp int; mp int;
   res jsonb;
 begin
-  -- Text order: the lifecycle call comes before the first FOR UPDATE / slot lock.
+  -- Text order: the lifecycle call comes before the first FOR UPDATE / slot
+  -- lock. BOTH positions must be > 0: position() returns 0 for a missing call,
+  -- and 0 < n would pass (Codex plan review P3).
   foreach f in array array[
     'public.result_save_draft(uuid,jsonb)',
     'public.result_finalise_commit(uuid,uuid,jsonb,text,integer,timestamp with time zone,jsonb,jsonb)',
     'public.result_edit_commit(uuid,uuid,integer,uuid,text,uuid,text,integer,jsonb,jsonb,jsonb)',
     'public.correct_payment(uuid,numeric,text,text,text,text,uuid,uuid,jsonb)']
   loop
-    perform pg_temp.expect('s7.1 lock before row lock: ' || f,
-      (position('lifecycle_lock_and_assert' in pg_get_functiondef(f::regprocedure))
-         < position('for update' in lower(pg_get_functiondef(f::regprocedure))))::text, 'true');
+    def := lower(pg_get_functiondef(f::regprocedure));
+    lp := position('lifecycle_lock_and_assert' in def);
+    rp := position('for update' in def);
+    perform pg_temp.expect('s7.1 lock before row lock: ' || f, (lp > 0 and rp > 0 and lp < rp)::text, 'true');
+    -- The three result RPCs take the membership lock before the patient lock.
+    if f like 'public.result_%' then
+      mp := position('lifecycle_lock_results' in def);
+      perform pg_temp.expect('s7.1m membership lock before patient lock: ' || f, (mp > 0 and lp > 0 and mp < lp)::text, 'true');
+    end if;
   end loop;
-  perform pg_temp.expect('s7.2 lock before slot lock: appointments_insert_slot_guarded',
-    (position('lifecycle_lock_and_assert' in pg_get_functiondef('public.appointments_insert_slot_guarded(jsonb,uuid,timestamp with time zone,boolean)'::regprocedure))
-       < position('appt_slot:' in pg_get_functiondef('public.appointments_insert_slot_guarded(jsonb,uuid,timestamp with time zone,boolean)'::regprocedure)))::text, 'true');
+  def := pg_get_functiondef('public.appointments_insert_slot_guarded(jsonb,uuid,timestamp with time zone,boolean)'::regprocedure);
+  lp := position('lifecycle_lock_and_assert' in def);
+  rp := position('appt_slot:' in def);
+  perform pg_temp.expect('s7.2 lock before slot lock: appointments_insert_slot_guarded', (lp > 0 and rp > 0 and lp < rp)::text, 'true');
 
   -- Behaviour on a deleted patient.
   va := pg_temp.mk_visit(a);
@@ -1535,7 +1970,9 @@ Run: expect `s7.1 … FAILED`. (If s7.6's argument list does not match 0176's va
   - in `declare`, add `  v_patients uuid[];  -- 0184`
   - immediately after `begin`, insert:
 ```sql
-  -- 0184: the patient lifecycle lock before the result row lock.
+  -- 0184: the result-membership lock (shared), then the patient lifecycle
+  -- lock, before the result row lock.
+  perform public.lifecycle_lock_results(array[p_result_id], false);
   v_patients := public.lifecycle_norm(array_remove(public.lifecycle_patients_of_result(p_result_id), null));
   perform public.lifecycle_lock_and_assert(v_patients, false);
 ```
@@ -1552,7 +1989,7 @@ Run: expect `s7.1 … FAILED`. (If s7.6's argument list does not match 0176's va
 
   **(4b) `result_finalise_commit`** — copy 0172 lines 437–562 and its `revoke`/`grant` (563–568). Same three edits as (4a) (declare `v_patients uuid[];`, the lock block after `begin`, the P0072 block after the row lock's not-found check).
 
-  **(4c) `result_edit_commit`** — copy `0176_result_patient_download_and_remarks.sql` lines 224–499 and its `revoke`/`grant` (500–505). Edits:
+  **(4c) `result_edit_commit`** — copy **`0179_result_copy_followups.sql`** (merged, #239 — it is 0176's body plus three `-- 0179` hunks): the `create or replace function public.result_edit_commit(` statement at line 56 through its closing `$$;`, and its `revoke`/`grant` (~342–347). Keep the three `-- 0179` hunks byte-for-byte (`result-copy-followups-migration.test.ts` pins them — run it after). Edits:
   - declare: `  v_patients uuid[];  -- 0184` and `  v_replay_first boolean;  -- 0184`
   - immediately after `begin`, insert:
 ```sql
@@ -1562,6 +1999,7 @@ Run: expect `s7.1 … FAILED`. (If s7.6's argument list does not match 0176's va
   -- attempt takes the lifecycle lock — before the result row lock.
   v_replay_first := exists (select 1 from public.result_amendments a where a.attempt_id = p_attempt_id);
   if not v_replay_first then
+    perform public.lifecycle_lock_results(array[p_result_id], false);
     v_patients := public.lifecycle_norm(array_remove(public.lifecycle_patients_of_result(p_result_id), null));
     perform public.lifecycle_lock_and_assert(v_patients, false);
   end if;
@@ -1580,7 +2018,6 @@ Run: expect `s7.1 … FAILED`. (If s7.6's argument list does not match 0176's va
       using errcode = 'P0072';
   end if;
 ```
-  If 0179 (`feat/result-copy-followups`) is on main by now, copy ITS `result_edit_commit` instead of 0176's and apply the same edits.
 
   **(4d) `correct_payment`** — copy `0174_correct_payment_stale_guard.sql` lines 48–187, changing `create function` to `create or replace function` (same signature, so the 0174 ACL is kept), and its `comment`/`revoke`/`grant` (192–198). Edits:
   - declare: `  v_patients uuid[];  -- 0184`
@@ -1624,7 +2061,7 @@ Run: expect `s7.1 … FAILED`. (If s7.6's argument list does not match 0176's va
 
 - [ ] **Step 3: Apply, run — PASS** (s1–s7). Re-run `0172_result_edit_commit_smoke.sql`, `0161_payment_correction_smoke.sql`, `0174_correct_payment_stale_guard_smoke.sql`: green (behaviour on active patients unchanged).
 
-- [ ] **Step 4: Mutation check.** Remove the `if not v_replay_first then` wrapper in (4c) (lock always): s7.6 must FAIL with P0058. Restore.
+- [ ] **Step 4: Mutation checks.** (a) Remove the `if not v_replay_first then` wrapper in (4c) (lock always): s7.6 must FAIL with P0058. (b) Delete the `perform public.lifecycle_lock_and_assert(v_patients, false);` line from `correct_payment`: s7.1 for correct_payment must FAIL (lp = 0) — before the P3 fix it silently passed. (c) Move `lifecycle_lock_results` below the patient lock in `result_save_draft`: s7.1m must FAIL. Restore each, re-apply, PASS.
 
 - [ ] **Step 5: Commit** — `feat(db): result/payment/booking RPCs take the patient lock before row locks (0184 part 7)`.
 
@@ -1851,7 +2288,7 @@ begin
     'package.decomposed:2,visit.created,visit_pin.issued');
   perform pg_temp.expect('s9.7 visit.created metadata counts order lines, not components',
     (select (metadata ->> 'service_count') || '|' || (metadata ->> 'total_php')
-       from public.audit_log where patient_id = a and action = 'visit.created'), '2|1900');
+       from public.audit_log where patient_id = a and action = 'visit.created' order by created_at limit 1), '2|1900.00');
 
   -- Split encounter + pre-registered patient.
   update public.patients set pre_registered = true where id = pr;
@@ -1895,6 +2332,40 @@ begin
       pg_temp.enc_visit(400, jsonb_build_array(pg_temp.enc_line(gen_random_uuid(), gen_random_uuid(), 400, null, false, 'requested'))),
       gen_random_uuid())), '23503');
   perform pg_temp.expect('s9.19 …visit count unchanged', (select count(*) from public.visits where patient_id = a)::text, n::text);
+  -- Centavo normalisation (Codex plan review P2-4): the app sums JS floats.
+  n := (select count(*) from public.visits where patient_id = a);
+  res := public.create_visit_encounter(k_rec, a, hash, jsonb_build_array(
+    pg_temp.enc_visit(300.29999999999995, jsonb_build_array(
+      pg_temp.enc_line(gen_random_uuid(), k_lab, 100.10, null, false, 'requested'),
+      pg_temp.enc_line(gen_random_uuid(), k_lab2, 200.20, null, false, 'requested')))), null, null);
+  vid := (res -> 'visits' -> 0 ->> 'id')::uuid;
+  perform pg_temp.expect('s9.21 100.10 + 200.20 sent as the JS float 300.29999999999995 is accepted, stored 300.30',
+    (select total_php::text from public.visits where id = vid), '300.30');
+  res := public.create_visit_encounter(k_rec, a, hash, jsonb_build_array(
+    pg_temp.enc_visit(79.99000000000001, jsonb_build_array(
+      jsonb_set(jsonb_set(pg_temp.enc_line(gen_random_uuid(), k_lab, 79.99000000000001, null, false, 'requested'),
+                          '{base_price_php}', '99.99'), '{discount_amount_php}', '20')))), null, null);
+  vid := (res -> 'visits' -> 0 ->> 'id')::uuid;
+  perform pg_temp.expect('s9.22 a discounted line whose float final is 79.99000000000001 is stored 79.99',
+    (select total_php::text || '|' || (select final_price_php::text from public.test_requests where visit_id = vid)
+       from public.visits where id = vid), '79.99|79.99');
+  res := public.create_visit_encounter(k_rec, a, hash, jsonb_build_array(
+    pg_temp.enc_visit(0.30000000000000004, jsonb_build_array(
+      pg_temp.enc_line(gen_random_uuid(), k_con, 0.1, null, false, 'requested'),
+      pg_temp.enc_line(gen_random_uuid(), k_con, 0.2, null, false, 'requested'))),
+    pg_temp.enc_visit(100.1, jsonb_build_array(pg_temp.enc_line(gen_random_uuid(), k_lab, 100.1, null, false, 'requested')))),
+    gen_random_uuid(), null);
+  perform pg_temp.expect('s9.23 a split encounter with fractional totals on both halves',
+    (select string_agg(total_php::text, ',' order by total_php) from public.visits
+      where id in (select (x ->> 'id')::uuid from jsonb_array_elements(res -> 'visits') x)), '0.30,100.10');
+  perform pg_temp.expect('s9.24 a real one-centavo mismatch is still refused',
+    pg_temp.state_of(format($q$select public.create_visit_encounter(%L, %L, %L, jsonb_build_array(%L::jsonb))$q$, k_rec, a, hash,
+      pg_temp.enc_visit(300.31, jsonb_build_array(
+        pg_temp.enc_line(gen_random_uuid(), k_lab, 100.10, null, false, 'requested'),
+        pg_temp.enc_line(gen_random_uuid(), k_lab2, 200.20, null, false, 'requested'))))), 'P0073');
+  perform pg_temp.expect('s9.25 …three encounters, four visits written',
+    ((select count(*) from public.visits where patient_id = a) - n)::text, '4');
+
   perform pg_temp.expect('s9.20 EXECUTE service_role only',
     (has_function_privilege('service_role', 'public.create_visit_encounter(uuid,uuid,text,jsonb,uuid,jsonb)', 'execute')
      and not has_function_privilege('authenticated', 'public.create_visit_encounter(uuid,uuid,text,jsonb,uuid,jsonb)', 'execute')
@@ -1941,7 +2412,7 @@ declare
   v_visit    jsonb;
   v_lines    jsonb;
   v_total    numeric;
-  v_sum      numeric;
+  v_sum_c    bigint;    -- centavos
   v_id       uuid;
   v_number   text;
   v_hmo      uuid;
@@ -1995,11 +2466,14 @@ begin
       raise exception 'a bill line is malformed (missing id, bad status, or a component without its package)'
         using errcode = 'P0073';
     end if;
+    -- Compared in integer CENTAVOS: the app sums JS numbers (100.10 + 200.20
+    -- arrives as 300.29999999999995) and every money column is numeric(10,2).
     v_total := (v_visit -> 'visit' ->> 'total_php')::numeric;
-    select coalesce(sum((l ->> 'final_price_php')::numeric), 0) into v_sum
+    select coalesce(sum(round((l ->> 'final_price_php')::numeric * 100)), 0)::bigint into v_sum_c
       from jsonb_array_elements(v_lines) l;
-    if v_total is null or v_total <> v_sum then
-      raise exception 'the visit total (%) does not match its lines (%)', v_total, v_sum using errcode = 'P0073';
+    if v_total is null or round(v_total * 100)::bigint <> v_sum_c then
+      raise exception 'the visit total (%) does not match its lines (%)', round(v_total, 2), v_sum_c / 100.0
+        using errcode = 'P0073';
     end if;
   end loop;
 
@@ -2018,7 +2492,7 @@ begin
 
   for v_visit in select value from jsonb_array_elements(p_visits) with ordinality as t(value, n) order by n loop
     v_lines := v_visit -> 'lines';
-    v_total := (v_visit -> 'visit' ->> 'total_php')::numeric;
+    v_total := round((v_visit -> 'visit' ->> 'total_php')::numeric, 2);   -- centavos, as checked above
     v_hmo   := nullif(v_visit -> 'visit' ->> 'hmo_provider_id', '')::uuid;
 
     insert into public.visits (patient_id, total_php, notes, created_by, hmo_provider_id, hmo_approval_date,
@@ -2031,7 +2505,8 @@ begin
             coalesce((v_visit -> 'visit' ->> 'is_sample')::boolean, false))
     returning id, visit_number into v_id, v_number;
 
-    -- Headers + standalone lines, then components.
+    -- Headers + standalone lines, then components. The money columns are
+    -- numeric(10,2): the assignment cast rounds every amount to centavos.
     insert into public.test_requests (id, visit_id, service_id, requested_by, base_price_php, discount_kind,
                                       discount_amount_php, final_price_php, hmo_provider_id, hmo_approval_date,
                                       hmo_authorization_no, receptionist_remarks, clinic_fee_php, doctor_pf_php,
@@ -2115,7 +2590,9 @@ revoke all on function public.create_visit_encounter(uuid, uuid, text, jsonb, uu
 grant execute on function public.create_visit_encounter(uuid, uuid, text, jsonb, uuid, jsonb) to service_role;
 ```
 
-- [ ] **Step 3: Apply, run — PASS** (s1–s9). If s9.7's `total_php` renders as `1900.00` rather than `1900`, the audit is storing numeric text differently from the app's JS number — change the expectation to whatever `jsonb_build_object('total_php', 1900::numeric)` yields (`1900`), not the SQL.
+- [ ] **Step 3: Apply, run — PASS** (s1–s9). `visit.created` metadata now carries the centavo-rounded total (`1900.00` in jsonb; a JS reader parses it as 1900).
+
+- [ ] **Step 3b: Mutation check.** Replace the centavo comparison with the old `v_total <> sum(...)` numeric comparison: s9.21/s9.22/s9.23 must FAIL with P0073. Restore.
 
 - [ ] **Step 4: Commit** — `feat(db): create_visit_encounter — visit, lines, PIN and audits in one transaction (0184 part 9)`.
 
@@ -2135,8 +2612,9 @@ declare
   k_med constant uuid := 'a2000000-0000-4000-8000-000000000184';
   k_rec constant uuid := 'a1000000-0000-4000-8000-000000000184';
   a uuid := pg_temp.mk_patient('S10A');
+  b uuid := pg_temp.mk_patient('S10B');
   d uuid := pg_temp.mk_patient('S10D');
-  va uuid; vd uuid; t1 uuid; t2 uuid; t3 uuid; t4 uuid; td uuid; tdel uuid;
+  va uuid; vb uuid; vd uuid; t1 uuid; t2 uuid; t3 uuid; t4 uuid; tb uuid; td uuid; tdel uuid;
   r uuid; n int;
 begin
   va := pg_temp.mk_visit(a);
@@ -2148,6 +2626,8 @@ begin
   tdel := pg_temp.mk_line(va, 'in_progress', 100);
   update public.test_requests set deleted_at = now(), deleted_by = k_med, delete_reason = 'smoke' where id = tdel;
   td := pg_temp.mk_line(vd, 'in_progress', 100);
+  vb := pg_temp.mk_visit(b);
+  tb := pg_temp.mk_line(vb, 'in_progress', 100);
   perform pg_temp.kill(d);
 
   r := public.result_create_linked(k_med, array[t1, t2], 'structured', null, null, null, null);
@@ -2177,6 +2657,8 @@ begin
     pg_temp.state_of(format($q$select public.result_create_linked(%L, array[%L, %L]::uuid[], 'structured', null, null, null, null)$q$, k_med, t4, t4)), '22023');
   perform pg_temp.expect('s10.11 reception cannot create results',
     pg_temp.state_of(format($q$select public.result_create_linked(%L, array[%L]::uuid[], 'structured', null, null, null, null)$q$, k_rec, t4)), '42501');
+  perform pg_temp.expect('s10.11b two ACTIVE patients'' tests in one result',
+    pg_temp.state_of(format($q$select public.result_create_linked(%L, array[%L, %L]::uuid[], 'structured', null, null, null, null)$q$, k_med, t4, tb)), '23514');
   perform pg_temp.expect('s10.12 no results row was left by any refusal',
     (select count(*) from public.results)::text, n::text);
   perform pg_temp.expect('s10.13 EXECUTE service_role only',
@@ -2250,7 +2732,16 @@ begin
     raise exception 'list each test once' using errcode = '22023';
   end if;
 
+  -- The new result's id is minted here so its MEMBERSHIP lock (exclusive —
+  -- this call creates the membership) is taken first, as everywhere else:
+  -- membership lock → patient locks → row locks.
+  v_result := gen_random_uuid();
+  perform public.lifecycle_lock_results(array[v_result], true);
   v_patients := public.lifecycle_norm(array_remove(public.lifecycle_patients_of_test_requests(v_ids), null));
+  if cardinality(v_patients) > 1 then
+    raise exception 'a result can only hold one patient''s tests — create a separate result for each patient'
+      using errcode = '23514';
+  end if;
   perform public.lifecycle_lock_and_assert(v_patients, false);
 
   perform 1 from public.test_requests tr where tr.id = any(v_ids) order by tr.id for update;
@@ -2270,11 +2761,10 @@ begin
     raise exception 'this test already has a result — reload the page' using errcode = 'P0066';
   end if;
 
-  insert into public.results (generation_kind, storage_path, file_size_bytes, uploaded_by, notes,
+  insert into public.results (id, generation_kind, storage_path, file_size_bytes, uploaded_by, notes,
                               report_group_id, finalised_by_staff_id, finalised_at)
-  values (p_generation_kind, p_storage_path, p_file_size_bytes, p_actor, nullif(btrim(coalesce(p_notes, '')), ''),
-          p_report_group_id, case when p_report_group_id is not null then p_actor end, null)
-  returning id into v_result;
+  values (v_result, p_generation_kind, p_storage_path, p_file_size_bytes, p_actor, nullif(btrim(coalesce(p_notes, '')), ''),
+          p_report_group_id, case when p_report_group_id is not null then p_actor end, null);
 
   insert into public.result_test_requests (result_id, test_request_id)
   select v_result, x from unnest(v_ids) x;
@@ -2309,9 +2799,10 @@ declare
   b uuid := pg_temp.mk_patient('S11B');
   d uuid := pg_temp.mk_patient('S11D');
   va uuid; vb uuid; vd uuid;
-  ia1 uuid; ia2 uuid; ib uuid; id_ uuid; iother uuid;
-  bat uuid; bat_other uuid;
+  ia1 uuid; ia2 uuid; ib uuid; id_ uuid; iother uuid; ic1 uuid; ic2 uuid;
+  bat uuid; bat_other uuid; bat_c uuid;
   res jsonb; n int;
+  def text; lp int; bp int; ip int;
 begin
   va := pg_temp.mk_visit(a, true); vb := pg_temp.mk_visit(b, true); vd := pg_temp.mk_visit(d, true);
   insert into public.hmo_claim_batches (provider_id, status) values ('b0000000-0000-4000-8000-000000000184', 'submitted') returning id into bat;
@@ -2360,6 +2851,34 @@ begin
     pg_temp.state_of(format($q$select public.record_hmo_settlement(%L, %L, 90, now(), jsonb_build_array(jsonb_build_object('item_id', %L, 'amount_php', 50), jsonb_build_object('item_id', %L, 'amount_php', 40)))$q$, k_admin, bat_other, iother, ia1)), 'P0012');
   perform pg_temp.expect('s11.11 …leaving no payment behind (the old compensating loop is gone)',
     (select count(*) from public.payments where method = 'hmo')::text, n::text);
+  -- Centavos (Codex plan review P2-4): amounts arrive as JS floats.
+  insert into public.hmo_claim_batches (provider_id, status) values ('b0000000-0000-4000-8000-000000000184', 'submitted') returning id into bat_c;
+  insert into public.hmo_claim_items (batch_id, test_request_id, billed_amount_php) values
+    (bat_c, pg_temp.mk_line(va, 'released', 100.10), 100.10) returning id into ic1;
+  insert into public.hmo_claim_items (batch_id, test_request_id, billed_amount_php) values
+    (bat_c, pg_temp.mk_line(va, 'released', 200.20), 200.20) returning id into ic2;
+  res := public.record_hmo_settlement(k_admin, bat_c, 300.29999999999995, now(), jsonb_build_array(
+    jsonb_build_object('item_id', ic1, 'amount_php', 100.10000000000001),
+    jsonb_build_object('item_id', ic2, 'amount_php', 200.2)));
+  perform pg_temp.expect('s11.12a fractional amounts: one payment of 300.30, allocations 100.10 + 200.20, batch paid',
+    (select amount_php::text from public.payments where id = (res -> 'payment_ids' ->> 0)::uuid)
+      || '|' || (select string_agg(amount_php::text, ',' order by amount_php) from public.hmo_payment_allocations where item_id in (ic1, ic2))
+      || '|' || (select status from public.hmo_claim_batches where id = bat_c),
+    '300.30|100.10,200.20|paid');
+
+  -- Batch-level serialisation (Codex plan review P2-5): text order, every position > 0.
+  def := lower(pg_get_functiondef('public.record_hmo_settlement(uuid,uuid,numeric,timestamp with time zone,jsonb,text,jsonb)'::regprocedure));
+  lp := position('lifecycle_lock_and_assert' in def);
+  bp := position('from public.hmo_claim_batches b where b.id = p_batch_id for no key update' in def);
+  ip := position('order by i.id for update' in def);
+  perform pg_temp.expect('s11.12b settlement: patient locks → batch row → item rows',
+    (lp > 0 and bp > 0 and ip > 0 and lp < bp and bp < ip)::text, 'true');
+  def := lower(pg_get_functiondef('public.recompute_hmo_batch_status(uuid)'::regprocedure));
+  bp := position('for no key update' in def);
+  ip := position('from public.hmo_claim_items' in def);
+  perform pg_temp.expect('s11.12c the rollup locks the batch row before it reads the items',
+    (bp > 0 and ip > 0 and bp < ip)::text, 'true');
+
   perform pg_temp.expect('s11.12 EXECUTE service_role only',
     (has_function_privilege('service_role', 'public.record_hmo_settlement(uuid,uuid,numeric,timestamp with time zone,jsonb,text,jsonb)', 'execute')
      and not has_function_privilege('authenticated', 'public.record_hmo_settlement(uuid,uuid,numeric,timestamp with time zone,jsonb,text,jsonb)', 'execute'))::text, 'true');
@@ -2381,7 +2900,10 @@ $s11$;
 -- serialise settlements of different patients in one batch. A deleted
 -- patient's item refuses the whole call (restore first); a mixed batch whose
 -- OTHER items belong to deleted patients is fine. p_received_at receives the
--- same value the action used to write to payments.received_at.
+-- same value the action used to write to payments.received_at. Lock order:
+-- patient locks → the BATCH row (two settlements of one batch serialise, so
+-- the rollup never misses the other one's items) → the items in id order.
+-- All money is normalised to integer centavos before any comparison.
 -- ---------------------------------------------------------------------------
 create or replace function public.record_hmo_settlement(
   p_actor            uuid,
@@ -2401,7 +2923,7 @@ as $$
 declare
   v_ip          inet;
   v_items       uuid[];
-  v_sum         numeric;
+  v_sum_c       bigint;   -- centavos
   v_patients    uuid[];
   v_payment     uuid;
   v_payment_ids uuid[] := '{}';
@@ -2434,20 +2956,29 @@ begin
                  or coalesce((x ->> 'amount_php')::numeric, 0) <= 0) then
     raise exception 'every claim item needs an amount above zero' using errcode = '22023';
   end if;
-  select array_agg((x ->> 'item_id')::uuid), sum((x ->> 'amount_php')::numeric)
-    into v_items, v_sum
+  -- Money in integer CENTAVOS (the app sends JS numbers).
+  select array_agg((x ->> 'item_id')::uuid), sum(round((x ->> 'amount_php')::numeric * 100))::bigint
+    into v_items, v_sum_c
     from jsonb_array_elements(p_items) x;
   if cardinality(public.lifecycle_norm(v_items)) <> cardinality(v_items) then
     raise exception 'a claim item is listed twice' using errcode = '22023';
   end if;
-  if p_total_amount_php is null or abs(v_sum - p_total_amount_php) > 0.005 then
-    raise exception 'the item amounts (%) must add up to the total (%)', v_sum, p_total_amount_php
+  if p_total_amount_php is null or v_sum_c <> round(p_total_amount_php * 100)::bigint then
+    raise exception 'the item amounts (%) must add up to the total (%)', v_sum_c / 100.0, round(p_total_amount_php, 2)
       using errcode = '22023';
   end if;
 
   v_patients := public.lifecycle_norm(array_remove(public.lifecycle_patients_of_hmo_items(v_items), null));
   perform public.lifecycle_lock_and_assert(v_patients, false);
 
+  -- The BATCH row next (Codex plan review P2-5): two settlements of one
+  -- batch serialise here, so the second one's rollup sees the first one's
+  -- items paid. Then the items, in id order (competing allocations on one
+  -- item serialise on these).
+  perform 1 from public.hmo_claim_batches b where b.id = p_batch_id for no key update;
+  if not found then
+    raise exception 'this claim batch no longer exists — reload the page' using errcode = '22023';
+  end if;
   perform 1 from public.hmo_claim_items i where i.id = any(v_items) order by i.id for update;
   if (select count(*) from public.hmo_claim_items i where i.id = any(v_items)) <> cardinality(v_items) then
     raise exception 'some claim items were not found — reload the batch' using errcode = '22023';
@@ -2463,7 +2994,7 @@ begin
 
   for r in
     select tr.visit_id,
-           round(sum((x ->> 'amount_php')::numeric), 2) as amount,
+           sum(round((x ->> 'amount_php')::numeric * 100))::bigint / 100.0 as amount,
            array_agg(i.id) as item_ids
       from jsonb_array_elements(p_items) x
       join public.hmo_claim_items i on i.id = (x ->> 'item_id')::uuid
@@ -2477,7 +3008,7 @@ begin
     v_payment_ids := v_payment_ids || v_payment;
 
     insert into public.hmo_payment_allocations (payment_id, item_id, amount_php)
-    select v_payment, (x ->> 'item_id')::uuid, (x ->> 'amount_php')::numeric
+    select v_payment, (x ->> 'item_id')::uuid, round((x ->> 'amount_php')::numeric, 2)
       from jsonb_array_elements(p_items) x
      where (x ->> 'item_id')::uuid = any(r.item_ids);
     get diagnostics v_n = row_count;
@@ -2487,7 +3018,7 @@ begin
   insert into public.audit_log (actor_id, actor_type, action, resource_type, resource_id, metadata,
                                 ip_address, user_agent)
   values (p_actor, 'staff', 'hmo_settlement.recorded', 'hmo_claim_batch', p_batch_id,
-          jsonb_build_object('total_amount_php', p_total_amount_php,
+          jsonb_build_object('total_amount_php', round(p_total_amount_php, 2),
                              'payment_count', cardinality(v_payment_ids),
                              'allocation_count', v_alloc,
                              'payment_ids', to_jsonb(v_payment_ids),
@@ -2500,11 +3031,27 @@ $$;
 
 revoke all on function public.record_hmo_settlement(uuid, uuid, numeric, timestamptz, jsonb, text, jsonb) from public, anon, authenticated;
 grant execute on function public.record_hmo_settlement(uuid, uuid, numeric, timestamptz, jsonb, text, jsonb) to service_role;
+
+-- ---------------------------------------------------------------------------
+-- (8b) recompute_hmo_batch_status — 0034's body (lines ~383-430) with ONE
+-- change: the batch row is locked (FOR NO KEY UPDATE) before the items are
+-- read. Before, two transactions resolving the LAST two items of a batch
+-- each saw the other's item still open (uncommitted) and returned — both
+-- committed and the batch stayed 'submitted' for good (Codex plan review
+-- P2-5). Now the second waits for the first's commit and, as a volatile
+-- plpgsql function, reads the items with a fresh snapshot after the wait.
+-- NO KEY UPDATE does not conflict with the KEY SHARE an item insert's FK
+-- check takes on the batch. search_path pinned; SECURITY DEFINER and the
+-- EXECUTE ACL restated exactly as Task 0 Step 6 read them from prod.
+-- ---------------------------------------------------------------------------
 ```
+  Copy `recompute_hmo_batch_status` from `0034_hmo_ar_subledger.sql` (the `create or replace function public.recompute_hmo_batch_status(p_batch_id uuid)` statement, ~line 383, through its `$$;`). Change exactly: (1) `set search_path = public` → `set search_path = pg_catalog, public, pg_temp`; (2) the first statement `select status into v_current from public.hmo_claim_batches where id = p_batch_id;` → `select status into v_current from public.hmo_claim_batches where id = p_batch_id for no key update;  -- 0184: serialise the rollup per batch`. Then restate the ACL exactly as prod has it (Task 0 Step 6 `proacl`; on 2026-09-28 local, compare with `\df+ public.recompute_hmo_batch_status`) — e.g. `revoke all … from public, anon, authenticated;` + the same grants it has today. Do NOT widen it. If a trigger function that calls it is SECURITY INVOKER, the grant it relies on must stay — check `tg_hmo_batch_status_rollup_from_item`'s `prosecdef` first.
 
-- [ ] **Step 3: Apply, run — PASS** (s1–s11).
+- [ ] **Step 3: Apply, run — PASS** (s1–s11). Re-run `0147_hmo_claim_delete_guard_smoke.sql` and `0030_op_gl_bridge_smoke.sql` (they settle HMO items): green.
 
-- [ ] **Step 4: Commit** — `feat(db): record_hmo_settlement — payments and allocations in one transaction (0184 part 11)`.
+- [ ] **Step 3b: Mutation checks.** (a) Remove `for no key update` from the rollup: s11.12c fails here, and Task 16's `hmo_last_two_items_both_commit` race must fail (batch left `submitted`) — run it once in this state after Task 16 exists, or record this mutation for Task 29 Step 2. (b) Replace the centavo total check with a raw `v_sum <> p_total_amount_php` numeric comparison: s11.12a must FAIL (22023 — 100.10000000000001 + 200.2 is not 300.29999999999995). Restore.
+
+- [ ] **Step 4: Commit** — `feat(db): record_hmo_settlement — payments and allocations in one transaction, batch-level lock; rollup locks the batch (0184 part 11)`.
 
 ---
 
@@ -2527,6 +3074,14 @@ declare
   ap_conf uuid; ap_arr uuid; ap_walk uuid; ap_late uuid; ap_dead uuid; ap_prev uuid; ap_next uuid; ap_canc uuid;
   res jsonb; i int; p uuid;
 begin
+  -- Isolation first (Codex plan review P2-7): the RPC acts on EVERY eligible
+  -- appointment of the day, so the days must hold nothing but this fixture.
+  -- (Everything here rolls back, but a stranger's row would skew the counts.)
+  if exists (select 1 from public.clinic_closures where closed_on between '2031-03-02' and '2031-03-04')
+     or exists (select 1 from public.appointments
+                 where scheduled_at >= '2031-03-02 00:00+08' and scheduled_at < '2031-03-05 00:00+08') then
+    raise exception '0184 s12: 2031-03-02..04 are not empty on this stack (another session''s fixture?) — pick three other empty days';
+  end if;
   insert into public.clinic_closures (closed_on, reason, created_by) values (day, 'smoke', k_admin), (big, 'smoke big', k_admin);
   insert into public.appointments (patient_id, status, scheduled_at) values (a, 'confirmed', '2031-03-03 09:00+08') returning id into ap_conf;
   insert into public.appointments (patient_id, status, scheduled_at) values (a, 'arrived',   '2031-03-03 10:00+08') returning id into ap_arr;
@@ -2911,9 +3466,11 @@ begin
   perform pg_temp.expect('s14.3 every 0184 definer function is owned by postgres and search_path-pinned',
     (select coalesce(string_agg(p.proname, ','), 'none') from pg_proc p join pg_roles r on r.oid = p.proowner
       where p.pronamespace = 'public'::regnamespace
-        and p.proname in ('lifecycle_lock', 'lifecycle_lock_and_assert', 'lifecycle_patients_of_visits',
+        and p.proname in ('lifecycle_lock', 'lifecycle_lock_and_assert', 'lifecycle_lock_results', 'lifecycle_patients_of_visits',
           'lifecycle_patients_of_test_requests', 'lifecycle_patients_of_result', 'lifecycle_patients_of_hmo_items',
-          'lifecycle_patients_of_payments', 'lifecycle_patients_of_row', 'enforce_patient_activity',
+          'lifecycle_patients_of_payments', 'lifecycle_patients_of_amendments', 'lifecycle_patients_of_allocations',
+          'lifecycle_via', 'lifecycle_result_ids_of_row', 'recompute_hmo_batch_status',
+          'lifecycle_patients_of_row', 'enforce_patient_activity',
           'create_visit_encounter', 'result_create_linked', 'record_hmo_settlement',
           'reschedule_closure_appointments', 'current_patient_id')
         and (r.rolname <> 'postgres' or not p.prosecdef
@@ -2927,6 +3484,23 @@ begin
           'result_save_draft', 'result_finalise_commit', 'result_edit_commit', 'correct_payment',
           'appointments_insert_slot_guarded')
         and has_function_privilege('anon', p.oid, 'execute')), 'none');
+  -- Every FK from a guarded table into a patient-bearing table is one the row
+  -- resolver follows (Facts table). A new such column fails here until
+  -- lifecycle_patients_of_row learns it (Codex plan review P1-1).
+  perform pg_temp.expect('s14.5 the resolver knows every patient-bearing FK',
+    (select string_agg(c.conrelid::regclass::text || '.' || a.attname, ',' order by 1)
+       from pg_constraint c join pg_attribute a on a.attrelid = c.conrelid and a.attnum = c.conkey[1]
+      where c.contype = 'f' and cardinality(c.conkey) = 1
+        and c.conrelid::regclass::text = any(k_tables)
+        and c.confrelid::regclass::text in ('patients', 'visits', 'test_requests', 'payments', 'results',
+              'result_amendments', 'hmo_claim_items', 'hmo_payment_allocations')),
+    'appointment_attachments.patient_id,appointments.patient_id,critical_alerts.patient_id,critical_alerts.result_id,'
+    || 'critical_alerts.test_request_id,critical_alerts.withdrawn_by_amendment,doctor_pf_entries.hmo_allocation_id,'
+    || 'doctor_pf_entries.test_request_id,hmo_claim_items.test_request_id,hmo_claim_resolutions.item_id,'
+    || 'hmo_payment_allocations.item_id,hmo_payment_allocations.payment_id,patient_consents.patient_id,'
+    || 'payments.corrects_payment_id,payments.visit_id,result_amendments.result_id,result_amendments.test_request_id,'
+    || 'result_test_requests.result_id,result_test_requests.test_request_id,result_values.result_id,'
+    || 'test_requests.parent_id,test_requests.visit_id,visit_pins.visit_id,visits.patient_id');
 end
 $s14$;
 ```
@@ -2956,7 +3530,8 @@ begin
   if to_regprocedure('public.set_patient_context(uuid)') is not null then
     raise exception '0184 post-condition: set_patient_context still exists';
   end if;
-  foreach f in array array['public.delete_patient(uuid,text,text,uuid,jsonb)', 'public.restore_patient(uuid,uuid,jsonb)'] loop
+  foreach f in array array['public.delete_patient(uuid,text,text,uuid,jsonb)', 'public.restore_patient(uuid,uuid,jsonb)',
+                          'public.recompute_hmo_batch_status(uuid)'] loop
     if pg_get_functiondef(f::regprocedure) !~* 'for\s+no\s+key\s+update' then
       raise exception '0184 post-condition: % does not take FOR NO KEY UPDATE', f;
     end if;
@@ -2965,7 +3540,8 @@ begin
     'public.result_create_linked(uuid,uuid[],text,uuid,text,integer,text)',
     'public.record_hmo_settlement(uuid,uuid,numeric,timestamp with time zone,jsonb,text,jsonb)',
     'public.reschedule_closure_appointments(date,uuid,boolean,jsonb)',
-    'public.lifecycle_lock_and_assert(uuid[],boolean)'] loop
+    'public.lifecycle_lock_and_assert(uuid[],boolean)',
+    'public.lifecycle_lock_results(uuid[],boolean)'] loop
     if has_function_privilege('anon', f, 'execute') or has_function_privilege('authenticated', f, 'execute') then
       raise exception '0184 post-condition: % is executable by a client role', f;
     end if;
@@ -2980,12 +3556,111 @@ $post$;
 
 - [ ] **Step 5: Re-apply the whole migration twice in a row** (re-runnable check): the apply command twice, both clean.
 
-- [ ] **Step 6: Commit** — `feat(db): 0184 post-conditions and catalog sweep`.
+- [ ] **Step 6: The replay-order standing gate** (Codex plan review P1-3). Create `src/lib/patients/lifecycle-owned-functions.test.ts`. It makes the replay rule in Facts enforceable on OTHER branches: after they rebase onto a main that holds 0184, their `npm test` fails until they move a re-creation of a 0184-owned function out of their lower-numbered file.
+
+```ts
+import { readdirSync, readFileSync } from "node:fs";
+import { join } from "node:path";
+import { describe, expect, it } from "vitest";
+import { EDIT_COMMIT_0179_HUNKS } from "@/lib/results/edit-commit-0179-hunks";
+
+// 0184 (patient lifecycle locks) owns the FINAL body of these functions.
+// A fresh replay applies migrations in NUMBER order, prod in SHIP order, so
+// both must end on a body that carries 0184's lock (Codex plan review P1-3):
+//  1. the highest-numbered definition carries the function's lifecycle marker;
+//  2. no migration numbered below 0184 defines it except those already on
+//     main when 0184 shipped (frozen below). A branch numbered below 0184
+//     that still needs to change one of these (0170 sheet-sync:
+//     resolve_patient_guarded; 0183 waived-balance: correct_payment) must
+//     put that re-creation in a NEW migration, claimed fresh, numbered above
+//     0184, whose body is 0184's plus its own edits.
+//  3. 0184's result_edit_commit still carries every 0179 hunk.
+
+const MIGRATIONS_DIR = join(process.cwd(), "supabase", "migrations");
+const FILES = readdirSync(MIGRATIONS_DIR).filter((f) => /^\d{4}_.*\.sql$/.test(f)).sort();
+const LIFECYCLE = "0184_patient_lifecycle_locks.sql";
+
+type Owned = { marker: (body: string) => boolean; allowedBelow: readonly string[] };
+
+// allowedBelow: FROZEN at implementation from `git grep -liE "function +public\.<name>\(" origin/main -- supabase/migrations`
+// on the rebased branch (Task 0 Step 1) — fill each list from that output, never by hand-guessing.
+export const OWNED: Record<string, Owned> = {
+  delete_patient: { marker: (b) => /for\s+no\s+key\s+update/i.test(b), allowedBelow: [/* e.g. "0167_patient_soft_delete.sql" */] },
+  restore_patient: { marker: (b) => /for\s+no\s+key\s+update/i.test(b), allowedBelow: [] },
+  result_save_draft: { marker: (b) => /lifecycle_lock_results[\s\S]*lifecycle_lock_and_assert/.test(b), allowedBelow: [] },
+  result_finalise_commit: { marker: (b) => /lifecycle_lock_results[\s\S]*lifecycle_lock_and_assert/.test(b), allowedBelow: [] },
+  result_edit_commit: { marker: (b) => /lifecycle_lock_results[\s\S]*lifecycle_lock_and_assert/.test(b), allowedBelow: [] },
+  correct_payment: { marker: (b) => /lifecycle_lock_and_assert/.test(b), allowedBelow: [] },
+  appointments_insert_slot_guarded: { marker: (b) => /lifecycle_lock_and_assert/.test(b), allowedBelow: [] },
+  resolve_patient_guarded: { marker: (b) => /lifecycle_lock\(/.test(b) && /lower\(p\.last_name\)/.test(b), allowedBelow: [] },
+  current_patient_id: { marker: (b) => !/app\.current_patient_id/.test(b), allowedBelow: [] },
+  recompute_hmo_batch_status: { marker: (b) => /for\s+no\s+key\s+update/i.test(b), allowedBelow: [] },
+};
+
+/** Every definition of public.<name>(…) in the given files: [file, body] in file order. */
+export function definitions(files: { name: string; text: string }[], name: string): [string, string][] {
+  const head = new RegExp(`create\\s+(?:or\\s+replace\\s+)?function\\s+public\\.${name}\\s*\\(`, "gi");
+  const out: [string, string][] = [];
+  for (const f of files) {
+    for (const m of f.text.matchAll(head)) {
+      const end = f.text.indexOf("\n$$;", m.index!);
+      out.push([f.name, f.text.slice(m.index!, end < 0 ? undefined : end)]);
+    }
+  }
+  return out;
+}
+
+/** Problems with the owned functions over a migration set (pure, so it can be mutation-tested). */
+export function ownedFunctionProblems(files: { name: string; text: string }[]): string[] {
+  const problems: string[] = [];
+  for (const [name, o] of Object.entries(OWNED)) {
+    const defs = definitions(files, name);
+    const last = defs.at(-1);
+    if (!last) { problems.push(`${name}: no definition`); continue; }
+    if (last[0] < LIFECYCLE) problems.push(`${name}: last defined in ${last[0]}, below 0184`);
+    if (!o.marker(last[1])) problems.push(`${name}: its highest-numbered definition (${last[0]}) lost the 0184 lifecycle marker`);
+    for (const [file] of defs) {
+      if (file < LIFECYCLE && !o.allowedBelow.includes(file)) {
+        problems.push(`${name}: re-created in ${file}, numbered below 0184 — move it to a new migration above 0184 (see the replay rule)`);
+      }
+    }
+  }
+  return problems;
+}
+
+const real = FILES.map((name) => ({ name, text: readFileSync(join(MIGRATIONS_DIR, name), "utf8") }));
+
+describe("0184-owned functions survive replay AND ship order", () => {
+  it("no problems on the real migrations", () => {
+    expect(ownedFunctionProblems(real)).toEqual([]);
+  });
+
+  it("mutation: a lower-numbered branch re-creating correct_payment is caught", () => {
+    const body = definitions(real, "correct_payment").at(-1)![1];
+    const intruder = { name: "0183_waived_balance_gl.sql", text: `${body}\n$$;` };
+    const files = [...real, intruder].sort((a, b) => a.name.localeCompare(b.name));
+    expect(ownedFunctionProblems(files).join("\n")).toMatch(/correct_payment: re-created in 0183_waived_balance_gl\.sql/);
+  });
+
+  it("mutation: a higher-numbered definition without the lock is caught", () => {
+    const files = [...real, { name: "9999_later.sql", text: "create or replace function public.correct_payment(x uuid) returns void language sql as $$ select 1\n$$;" }];
+    expect(ownedFunctionProblems(files).join("\n")).toMatch(/correct_payment: its highest-numbered definition \(9999_later\.sql\) lost/);
+  });
+
+  it("0184's result_edit_commit still carries every 0179 hunk", () => {
+    const body = definitions(real, "result_edit_commit").find(([f]) => f === LIFECYCLE)![1];
+    for (const h of EDIT_COMMIT_0179_HUNKS) expect(body, h.label).toContain(h.to);
+  });
+});
+```
+Fill every `allowedBelow` from the grep (each list is the files on main that define the function today, e.g. `result_edit_commit` → `0172_…`, `0176_…`, `0179_…`). Run `npx vitest run src/lib/patients/lifecycle-owned-functions.test.ts` — PASS. Mutation: temporarily delete `"0179_result_copy_followups.sql"` from `result_edit_commit.allowedBelow` → the first test FAILS naming it; restore. (If `definitions` trips on a `create function` with a different `$tag$` than `$$`, extend the end search to that tag rather than loosening the checks.)
+
+- [ ] **Step 7: Commit** — `feat(db): 0184 post-conditions, catalog sweep and the replay-order gate`.
 
 ---
 ### Task 16: Two-connection race script (`npm run smoke:locks`)
 
-Single-connection smokes cannot show *ordering*. This script opens two `pg` connections and interleaves them: for each race it proves the loser **waited** (the query was still pending 400 ms after it started) and then got the right outcome — writer-first ⇒ the delete sees the writer's blocker (P0059); delete-first ⇒ the writer is refused (P0058). It follows `scripts/smoke-print.ts`: `load-env` → `requireLocalOrExplicitProd` → refuse a non-local DB URL → `new pg.Client({ connectionString })`.
+Single-connection smokes cannot show *ordering*. This script opens two `pg` connections and interleaves them: for each race it proves the loser **waited** (the query was still pending 400 ms after it started) — and, where it matters, **on which lock** (`waitingOn` reads the waiter's ungranted `pg_locks` row: the lifecycle or membership advisory lock, or a row; elapsed time alone does not say what blocked it — Codex plan review P3) — and then got the right outcome — writer-first ⇒ the delete sees the writer's blocker (P0059); delete-first ⇒ the writer is refused (P0058). It follows `scripts/smoke-print.ts`: `load-env` → `requireLocalOrExplicitProd` → refuse a non-local DB URL → `new pg.Client({ connectionString })`.
 
 **Files:**
 - Create: `scripts/smoke-lifecycle-locks.ts`
@@ -3012,7 +3687,7 @@ import pg from "pg";
 
 requireLocalOrExplicitProd("smoke:locks", {
   writes:
-    "creates and then removes temporary staff, patients, visits, lines, payments, appointments, closures and HMO claim rows (payment deletes leave net-zero reversal journal entries)",
+    "creates and then removes temporary staff, patients, visits, lines, results, payments, appointments, one closure day it inserted itself and HMO claim rows (payment deletes leave net-zero reversal journal entries)",
 });
 
 const DB_URL =
@@ -3030,18 +3705,65 @@ const TAG = `LKR${Date.now().toString(36).toUpperCase()}`;
 const made = {
   patients: [] as string[],
   batches: [] as string[],
+  results: [] as string[],
+  // closed_on values THIS run inserted (clinic_closures' PK is closed_on) —
+  // cleanup deletes only these, never a closure that was already there (P2-7).
   closures: [] as string[],
 };
 let seq = 0;
 
-type Client = pg.Client;
+type Client = pg.Client & { pid: number };
 const results: { name: string; ok: boolean; detail: string }[] = [];
 
 async function connect(): Promise<Client> {
-  const c = new pg.Client({ connectionString: DB_URL });
+  const c = new pg.Client({ connectionString: DB_URL }) as Client;
   await c.connect();
   await c.query("set lock_timeout = '15s'");
+  c.pid = (await c.query("select pg_backend_pid() as pid")).rows[0].pid as number;
   return c;
+}
+
+/** What connection `c` is waiting for right now, read from pg_locks by `s`. */
+async function waitingOn(s: Client, c: Client): Promise<string> {
+  const { rows } = await s.query(
+    `select case when locktype = 'advisory' and classid = (hashtext('patient_lifecycle'))::oid then 'lifecycle'
+                 when locktype = 'advisory' and classid = (hashtext('result_membership'))::oid then 'membership'
+                 when locktype in ('transactionid', 'tuple') then 'row'
+                 else locktype end as what
+       from pg_locks where pid = $1 and not granted limit 1`,
+    [c.pid],
+  );
+  return rows[0]?.what ?? "none";
+}
+
+/** A past Manila day with no closure and no appointment on it — verified, not assumed (P2-7). */
+async function isolatedPastDay(s: Client): Promise<string> {
+  for (let i = 0; i < 25; i++) {
+    const y = 1975 + Math.floor(Math.random() * 20);
+    const m = 1 + Math.floor(Math.random() * 12);
+    const d = 1 + Math.floor(Math.random() * 28);
+    const day = `${y}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+    const { rows } = await s.query(
+      `select exists (select 1 from public.clinic_closures where closed_on = $1::date)
+           or exists (select 1 from public.appointments
+                       where scheduled_at >= ($1::date)::timestamp at time zone 'Asia/Manila'
+                         and scheduled_at <  ($1::date + 1)::timestamp at time zone 'Asia/Manila') as taken`,
+      [day],
+    );
+    if (!rows[0].taken) return day;
+  }
+  throw new Error("could not find an empty past day for the closure race");
+}
+
+/** The appointment ids on a Manila day. */
+async function appointmentsOn(s: Client, day: string): Promise<string[]> {
+  const { rows } = await s.query(
+    `select id from public.appointments
+      where scheduled_at >= ($1::date)::timestamp at time zone 'Asia/Manila'
+        and scheduled_at <  ($1::date + 1)::timestamp at time zone 'Asia/Manila' order by id`,
+    [day],
+  );
+  return rows.map((r) => r.id as string);
 }
 
 /** SQLSTATE a promise rejected with, or "ok". */
@@ -3179,8 +3901,11 @@ async function cleanup(s: Client) {
     `delete from public.audit_log where patient_id = any($1::uuid[])`,
     `delete from public.patients where id = any($1::uuid[])`,
   ];
+  // Results first: their links reference test_requests with ON DELETE RESTRICT.
+  if (made.results.length > 0) await s.query(`delete from public.results where id = any($1::uuid[])`, [made.results]);
   for (const sql of steps) await s.query(sql, [ids]);
   if (made.batches.length > 0) await s.query(`delete from public.hmo_claim_batches where id = any($1::uuid[])`, [made.batches]);
+  // Only the days THIS run inserted (recorded from the insert that succeeded).
   if (made.closures.length > 0) await s.query(`delete from public.clinic_closures where closed_on = any($1::date[])`, [made.closures]);
   await s.query(`delete from public.audit_log where actor_id = any($1::uuid[])`, [[ADMIN, RECEPTION]]);
   await s.query(`delete from public.services where id = $1`, [SERVICE]);
@@ -3202,6 +3927,7 @@ async function main() {
       await b.query("begin");
       const w = stateOf(b.query(`insert into public.visits (patient_id, payment_status, total_php, paid_php) values ($1, 'unpaid', 0, 0)`, [p.id]));
       expectEq("writer waited", await stillWaiting(w), true);
+      expectEq("…on the lifecycle lock (not a row)", await waitingOn(s2, b), "lifecycle");
       await a.query("commit");
       expectEq("writer outcome", await w, "P0058");
     });
@@ -3213,6 +3939,7 @@ async function main() {
       await a.query("begin");
       const d = stateOf(del(a, p.id));
       expectEq("delete waited", await stillWaiting(d), true);
+      expectEq("…on the lifecycle lock", await waitingOn(s2, a), "lifecycle");
       await b.query("commit");
       expectEq("delete outcome", await d, "P0059");
     });
@@ -3366,6 +4093,7 @@ async function main() {
         `insert into public.test_requests (visit_id, service_id, status, requested_by, base_price_php, final_price_php) values ($1, $2, 'requested', $3, 10, 10)`,
         [v, SERVICE, ADMIN]));
       expectEq("writer waited", await stillWaiting(w), true);
+      expectEq("…on the lifecycle lock", await waitingOn(s2, b), "lifecycle");
       await a.query("commit");
       expectEq("writer outcome", await w, "P0072");
     });
@@ -3408,28 +4136,127 @@ async function main() {
       }
     });
 
-    await race("settlements of two patients in one batch run concurrently; one item cannot be over-settled", async (a, b, s2) => {
-      const pa = await mkPatient(s2, "SA");
-      const pb = await mkPatient(s2, "SB");
+    // HMO batch rollup (Codex plan review P2-5). Three separate scenarios:
+    // both successful settlements COMMIT and the batch ends paid; a competing
+    // settlement of one item is refused; and the rollup's own batch lock
+    // (not only the RPC's) serialises two plain allocation inserts.
+    async function mkBatchOfTwo(s2: Client, label: string) {
+      const pa = await mkPatient(s2, `${label}A`);
+      const pb = await mkPatient(s2, `${label}B`);
       const va = await mkVisit(s2, pa.id, true);
       const vb = await mkVisit(s2, pb.id, true);
-      const bat = (await s2.query(`insert into public.hmo_claim_batches (provider_id, status) values ($1, 'submitted') returning id`, [HMO])).rows[0].id;
+      const bat = (await s2.query(`insert into public.hmo_claim_batches (provider_id, status) values ($1, 'submitted') returning id`, [HMO])).rows[0].id as string;
       made.batches.push(bat);
-      const ia = (await s2.query(`insert into public.hmo_claim_items (batch_id, test_request_id, billed_amount_php) values ($1, $2, 100) returning id`, [bat, await mkLine(s2, va, "released", 100)])).rows[0].id;
-      const ib = (await s2.query(`insert into public.hmo_claim_items (batch_id, test_request_id, billed_amount_php) values ($1, $2, 100) returning id`, [bat, await mkLine(s2, vb, "released", 100)])).rows[0].id;
-      const settle = (c: Client, item: string) =>
-        c.query(`select public.record_hmo_settlement($1, $2, 100, now(), $3::jsonb)`,
-          [ADMIN, bat, JSON.stringify([{ item_id: item, amount_php: 100 }])]);
+      const item = async (v: string) =>
+        (await s2.query(`insert into public.hmo_claim_items (batch_id, test_request_id, billed_amount_php) values ($1, $2, 100) returning id`,
+          [bat, await mkLine(s2, v, "released", 100)])).rows[0].id as string;
+      return { bat, va, vb, ia: await item(va), ib: await item(vb) };
+    }
+    const settle = (c: Client, bat: string, item: string) =>
+      c.query(`select public.record_hmo_settlement($1, $2, 100, now(), $3::jsonb)`,
+        [ADMIN, bat, JSON.stringify([{ item_id: item, amount_php: 100 }])]);
+    async function batchState(s2: Client, bat: string) {
+      const { rows } = await s2.query(
+        `select b.status,
+                (select count(*) from public.hmo_claim_items i where i.batch_id = b.id and i.paid_amount_php = i.billed_amount_php)::int as paid_items,
+                (select count(*) from public.hmo_payment_allocations al join public.hmo_claim_items i on i.id = al.item_id
+                  where i.batch_id = b.id and al.voided_at is null)::int as allocations,
+                (select count(*) from public.payments p join public.hmo_payment_allocations al on al.payment_id = p.id
+                  join public.hmo_claim_items i on i.id = al.item_id where i.batch_id = b.id and p.voided_at is null)::int as payments
+           from public.hmo_claim_batches b where b.id = $1`, [bat]);
+      return `${rows[0].status}|${rows[0].paid_items}|${rows[0].allocations}|${rows[0].payments}`;
+    }
+
+    await race("two settlements of the last two items of one batch BOTH commit → batch paid", async (a, b, s2) => {
+      const f = await mkBatchOfTwo(s2, "S2");
       await a.query("begin");
-      await settle(a, ia);
+      await settle(a, f.bat, f.ia);
       await b.query("begin");
-      const other = stateOf(settle(b, ib));
-      expectEq("different patients do not wait for each other", await stillWaiting(other, 300), false);
+      const other = stateOf(settle(b, f.bat, f.ib));
+      expectEq("the second settlement waits for the first (batch row)", await stillWaiting(other), true);
+      expectEq("…on a row lock, not a patient lock", await waitingOn(s2, b), "row");
+      await a.query("commit");
       expectEq("B settled", await other, "ok");
-      const same = stateOf(settle(b, ia));
-      expectEq("the same item waits on its row lock", await stillWaiting(same), true);
+      await b.query("commit");
+      expectEq("durable: batch paid, 2 items paid, 2 allocations, 2 payments", await batchState(s2, f.bat), "paid|2|2|2");
+    });
+
+    await race("a competing settlement of the SAME item is refused (P0012)", async (a, b, s2) => {
+      const f = await mkBatchOfTwo(s2, "SC");
+      await a.query("begin");
+      await settle(a, f.bat, f.ia);
+      await b.query("begin");
+      const same = stateOf(settle(b, f.bat, f.ia));
+      expectEq("the same item waits", await stillWaiting(same), true);
       await a.query("commit");
       expectEq("the second settlement of that item", await same, "P0012");
+      await b.query("rollback");
+      expectEq("durable: only A's allocation", await batchState(s2, f.bat), "submitted|1|1|1");
+    });
+
+    await race("the rollup itself serialises: two plain allocation inserts on the last two items → batch paid", async (a, b, s2) => {
+      const f = await mkBatchOfTwo(s2, "SR");
+      const pa = await mkPayment(s2, f.va, 100, "hmo");
+      const pb = await mkPayment(s2, f.vb, 100, "hmo");
+      const alloc = (c: Client, pay: string, item: string) =>
+        c.query(`insert into public.hmo_payment_allocations (payment_id, item_id, amount_php) values ($1, $2, 100)`, [pay, item]);
+      await a.query("begin");
+      await alloc(a, pa, f.ia);
+      await b.query("begin");
+      const second = stateOf(alloc(b, pb, f.ib));
+      expectEq("the second rollup waits on the batch row", await stillWaiting(second), true);
+      await a.query("commit");
+      expectEq("B allocated", await second, "ok");
+      await b.query("commit");
+      expectEq("durable: batch paid (the rollup saw A's commit)", (await batchState(s2, f.bat)).split("|")[0], "paid");
+    });
+
+    // Result membership (Codex plan review P1-2).
+    async function mkResult(s2: Client): Promise<string> {
+      const r = (await s2.query(`insert into public.results (generation_kind, uploaded_by) values ('structured', $1) returning id`, [ADMIN])).rows[0].id as string;
+      made.results.push(r);
+      return r;
+    }
+    const resultWrite = (c: Client, r: string) =>
+      c.query(`update public.results set notes = 'race' where id = $1`, [r]);   // a results-family write (shared membership)
+    const link = (c: Client, r: string, tr: string) =>
+      c.query(`insert into public.result_test_requests (result_id, test_request_id) values ($1, $2)`, [r, tr]);
+
+    await race("membership: linking a result waits for a writer of that (still unlinked) result", async (a, b, s2) => {
+      const p = await mkPatient(s2, "MU");
+      const v = await mkVisit(s2, p.id);
+      const tr = await mkLine(s2, v, "in_progress", 10);
+      const r = await mkResult(s2);
+      await a.query("begin");
+      await resultWrite(a, r);                       // unlinked: patients {} — only the membership lock
+      await b.query("begin");
+      const l = stateOf(link(b, r, tr));
+      expectEq("the link waited", await stillWaiting(l), true);
+      expectEq("…on the membership lock", await waitingOn(s2, b), "membership");
+      await a.query("commit");
+      expectEq("link outcome", await l, "ok");
+      await b.query("commit");
+    });
+
+    await race("membership: a writer queued behind a link then locks the NEW patient", async (a, b, s2) => {
+      const q = await mkPatient(s2, "MQ2");
+      const v = await mkVisit(s2, q.id);
+      const tr = await mkLine(s2, v, "in_progress", 10);
+      const r = await mkResult(s2);
+      await b.query("begin");
+      await link(b, r, tr);                          // exclusive membership on r, shared lifecycle on q
+      await a.query("begin");
+      const w = stateOf(resultWrite(a, r));
+      expectEq("the writer waited", await stillWaiting(w), true);
+      expectEq("…on the membership lock", await waitingOn(s2, a), "membership");
+      await b.query("commit");
+      expectEq("writer outcome", await w, "ok");
+      const { rows } = await s2.query(
+        `select exists (select 1 from pg_locks where pid = $1 and locktype = 'advisory' and granted
+                         and classid = (hashtext('patient_lifecycle'))::oid and objid = (hashtext($2::text))::oid) as held`,
+        [a.pid, q.id]);
+      expectEq("the writer holds the lifecycle lock of the patient the result now belongs to", rows[0].held, true);
+      await a.query("commit");
     });
 
     await race("cancel/no-show never wait for a delete in progress (no lock on the exception path)", async (a, b, s2) => {
@@ -3448,27 +4275,39 @@ async function main() {
     });
 
     await race("closure reschedule: a delete committed first is skipped; a cancel committed first is left alone", async (a, b, s2) => {
-      const day = "2020-01-06"; // past day: its confirmed appointments do not block deletion
-      await s2.query(`insert into public.clinic_closures (closed_on, reason, created_by) values ($1, 'race', $2) on conflict (closed_on) do nothing`, [day, ADMIN]);
-      made.closures.push(day);
+      // An ISOLATED past day (Codex plan review P2-7): the RPC acts on every
+      // eligible appointment of the day, so the day must hold only ours —
+      // checked BEFORE anything is changed. Past, so its confirmed
+      // appointments do not block deletion. The closure is inserted with no
+      // ON CONFLICT: if it already existed the insert fails and nothing of
+      // anyone else's is touched or later deleted.
+      const day = await isolatedPastDay(s2);
+      await s2.query(`insert into public.clinic_closures (closed_on, reason, created_by) values ($1, 'race', $2)`, [day, ADMIN]);
+      made.closures.push(day);                      // recorded only after OUR insert succeeded
       const pd = await mkPatient(s2, "CD");
       const pc = await mkPatient(s2, "CC");
       const pk = await mkPatient(s2, "CK");
       const ins = `insert into public.appointments (patient_id, status, scheduled_at) values ($1, 'confirmed', $2::timestamptz) returning id`;
-      await s2.query(ins, [pd.id, `${day} 09:00+08`]);
-      const apC = (await s2.query(ins, [pc.id, `${day} 10:00+08`])).rows[0].id;
-      await s2.query(ins, [pk.id, `${day} 11:00+08`]);
+      const apD = (await s2.query(ins, [pd.id, `${day} 09:00+08`])).rows[0].id as string;
+      const apC = (await s2.query(ins, [pc.id, `${day} 10:00+08`])).rows[0].id as string;
+      const apK = (await s2.query(ins, [pk.id, `${day} 11:00+08`])).rows[0].id as string;
+      expectEq("the day holds exactly our three appointments", (await appointmentsOn(s2, day)).join(","), [apD, apC, apK].sort().join(","));
       await assertDeletable(s2, pd.id);
       await a.query("begin");
       await del(a, pd.id);
       await a.query(`update public.appointments set status = 'cancelled' where id = $1`, [apC]);
       const w = b.query(`select public.reschedule_closure_appointments($1, $2, false, null) as r`, [day, ADMIN]);
       expectEq("reschedule waited", await stillWaiting(w.then(() => undefined)), true);
+      expectEq("…on the deleted patient's lifecycle lock", await waitingOn(s2, b), "lifecycle");
       await a.query("commit");
       const r = (await w).rows[0].r as { affected: number; skipped_inactive: number; skipped_changed: number };
       expectEq("only the untouched patient moved", r.affected, 1);
       expectEq("the deleted patient was skipped", r.skipped_inactive, 1);
       expectEq("the cancelled row counted as changed", r.skipped_changed, 1);
+      const { rows: moved } = await s2.query(
+        `select resource_id from public.audit_log where action = 'appointment.bulk_rescheduled_for_closure'
+            and metadata ->> 'closed_on' = $1 order by 1`, [day]);
+      expectEq("the moved row is ours and only ours", moved.map((m) => m.resource_id).join(","), apK);
     });
   } finally {
     await cleanup(s).catch((e) => console.error("cleanup failed:", (e as Error).message));
@@ -3487,7 +4326,8 @@ void main();
 - [ ] **Step 2: Add the npm script** in `package.json` next to `"smoke:print"`: `"smoke:locks": "tsx scripts/smoke-lifecycle-locks.ts",`.
 
 - [ ] **Step 3: Run it.** `npm run -s smoke:locks > $SCRATCH/smoke-locks.log 2>&1; echo exit=$?; tail -25 $SCRATCH/smoke-locks.log`
-Expected: `17/17 races passed`, `exit=0`. The closure race must use a day with no other local appointments — if `affected` is higher, another session's fixture sits on 2020-01-06; pick another past Monday and re-run.
+Expected: `21/21 races passed`, `exit=0`. The closure race picks its own empty past day (`isolatedPastDay`) and proves it holds only its three appointments before changing anything; its cleanup deletes only the closure day it inserted.
+Mutation checks (each must FAIL, then restore + re-apply): make the junction branch take the SHARED membership lock → both `membership:` races fail (no wait); remove the batch lock from `recompute_hmo_batch_status` → "the rollup itself serialises" fails (batch left `submitted`); remove the batch lock from `record_hmo_settlement` only → "two settlements … BOTH commit" still passes (the rollup lock covers it) — expected, the two locks are belt and braces; note it in the report.
 A fixture failure ("fixture is not deletable — adjust it, blockers: […]") means the local blocker rules differ from this plan's assumption — adjust the fixture to clear exactly the listed blocker (the blocker JSON names it), never the assertion. A scenario that ends `got "ok", want "P0058"` is a real hole: stop and debug (superpowers:systematic-debugging).
 
 - [ ] **Step 4: Confirm the guard-coverage test accepts the new runner.** `npx vitest run scripts/lib/guard-coverage.test.ts` — PASS (the script builds no service-role client; the guard call comes first anyway).
@@ -3620,7 +4460,7 @@ From the full file, copy into `src/types/database.ts` exactly these `Functions` 
 
 ```ts
 import { describe, expect, it } from "vitest";
-import { buildEncounterVisit, type EncounterLineInput } from "./encounter-payload";
+import { buildEncounterVisit, toCentavos, type EncounterLineInput } from "./encounter-payload";
 
 let n = 0;
 const nextId = () => `00000000-0000-4000-8000-${String(++n).padStart(12, "0")}`;
@@ -3683,6 +4523,43 @@ describe("buildEncounterVisit", () => {
       hmo, attendingPhysicianId: null, receptionistRemarks: null, notes: null, isSample: false,
     }, nextId);
     expect(r.ok).toBe(false);
+  });
+
+  it("sums fractional prices in centavos: 100.10 + 200.20 is 300.3, not 300.29999999999995", () => {
+    const r = buildEncounterVisit({
+      lines: [line("s1", 100.1), line("s2", 200.2)], decompositions: [], hmo, attendingPhysicianId: null,
+      receptionistRemarks: null, notes: null, isSample: false,
+    }, nextId);
+    expect(r.ok && r.payload.visit.total_php).toBe(300.3);
+    expect(100.1 + 200.2).not.toBe(300.3); // the float trap this guards against
+  });
+
+  it("normalises a float-noisy discounted line to centavos (99.99 − 20 → 79.99)", () => {
+    const noisy = 99.99 - 20; // 79.99000000000001
+    const r = buildEncounterVisit({
+      lines: [line("s1", noisy, { base_price_php: 99.99, discount_kind: "promo", discount_amount_php: 20 })],
+      decompositions: [], hmo, attendingPhysicianId: null, receptionistRemarks: null, notes: null, isSample: false,
+    }, nextId);
+    if (!r.ok) throw new Error(r.error);
+    expect(r.payload.lines[0]!.final_price_php).toBe(79.99);
+    expect(r.payload.visit.total_php).toBe(79.99);
+  });
+
+  it("each half of a split encounter carries its own centavo total", () => {
+    const half = (prices: number[]) => buildEncounterVisit({
+      lines: prices.map((p, i) => line(`s${i}`, p)), decompositions: [], hmo, attendingPhysicianId: null,
+      receptionistRemarks: null, notes: null, isSample: false,
+    }, nextId);
+    const doctor = half([0.1, 0.2]);
+    const lab = half([100.1]);
+    expect(doctor.ok && doctor.payload.visit.total_php).toBe(0.3);
+    expect(lab.ok && lab.payload.visit.total_php).toBe(100.1);
+  });
+
+  it("toCentavos rounds float noise to the nearest centavo", () => {
+    expect(toCentavos(300.29999999999995)).toBe(30030);
+    expect(toCentavos(79.99000000000001)).toBe(7999);
+    expect(toCentavos(0)).toBe(0);
   });
 
   it("gives standalone lines status requested and every line an id", () => {
@@ -3760,25 +4637,33 @@ export interface EncounterVisitInput {
   isSample: boolean;
 }
 
+/** Integer centavos. create_visit_encounter (0184) compares totals in centavos,
+ *  and JS sums drift (100.10 + 200.20 = 300.29999999999995). */
+export const toCentavos = (php: number): number => Math.round(php * 100);
+const fromCentavos = (centavos: number): number => centavos / 100;
+const money = (php: number): number => fromCentavos(toCentavos(php));
+const moneyOrNull = (php: number | null): number | null => (php === null ? null : money(php));
+
 export function buildEncounterVisit(
   input: EncounterVisitInput,
   newId: () => string,
 ): { ok: true; payload: EncounterVisitPayload } | { ok: false; error: string } {
   const packageServiceIds = new Set(input.decompositions.map((d) => d.headerLine.service_id));
+  // Every amount leaves here rounded to centavos (numeric(10,2) in the DB).
   const base = (l: EncounterLineInput) => ({
     service_id: l.service_id,
-    base_price_php: l.base_price_php,
+    base_price_php: money(l.base_price_php),
     discount_kind: l.discount_kind,
-    discount_amount_php: l.discount_amount_php,
-    final_price_php: l.final_price_php,
+    discount_amount_php: money(l.discount_amount_php),
+    final_price_php: money(l.final_price_php),
     hmo_provider_id: input.hmo.hmo_provider_id,
     hmo_approval_date: input.hmo.hmo_approval_date,
     hmo_authorization_no: input.hmo.hmo_authorization_no,
     receptionist_remarks: input.receptionistRemarks,
-    clinic_fee_php: l.clinic_fee_php,
-    doctor_pf_php: l.doctor_pf_php,
+    clinic_fee_php: moneyOrNull(l.clinic_fee_php),
+    doctor_pf_php: moneyOrNull(l.doctor_pf_php),
     procedure_description: l.procedure_description,
-    hmo_approved_amount_php: l.hmo_approved_amount_php,
+    hmo_approved_amount_php: moneyOrNull(l.hmo_approved_amount_php),
   });
 
   // Duplicate package lines pair up with their decompositions in order.
@@ -3825,7 +4710,8 @@ export function buildEncounterVisit(
     ok: true,
     payload: {
       visit: {
-        total_php: input.lines.reduce((sum, l) => sum + l.final_price_php, 0),
+        // Summed in integer centavos, so it equals the RPC's own sum exactly.
+        total_php: fromCentavos(input.lines.reduce((sum, l) => sum + toCentavos(l.final_price_php), 0)),
         notes: input.notes,
         ...input.hmo,
         attending_physician_id: input.attendingPhysicianId,
@@ -4678,10 +5564,10 @@ describe("creation paths (0184)", () => {
 - [ ] **Step 2: User guide.** Bump the version line (next minor, today's date). Add, where the guide describes deleting a patient ("Delete a patient record" in 5.6 Patient tools), one sentence: `While a record is being deleted, anything saved for that patient at the same moment waits a moment and is then refused with <q>… is deleted — restore the record before changing it</q>; cancelling or marking an appointment as a no-show still works on a deleted record.` In the closures section, say the preview number is exactly how many appointments will move, and that appointments of deleted or merged records are left alone. In Cron Health (if the guide documents it), describe **Patient messages not sent**. Update the booking section: a returning patient is matched on email, last name (capital letters don't matter) and birthdate.
 
 - [ ] **Step 3: CLAUDE.md.** In "Payment-gating…/Other DB-side automation", add a bullet:
-  `- **Patient lifecycle lock (0184):** every write to a patient-owned table (visits, lines, payments, PINs, appointments, consents, uploads, results + links/values/amendments/alerts, HMO items/allocations/resolutions, PF entries) passes the \`a_lifecycle_guard\` trigger: shared lock on the patient, refuse (P0058) if deleted or merged — except cancel/no-show, PIN sign-in bookkeeping and retention delete, alert acknowledgement and PF disbursement links. Delete/restore take the lock exclusive. Multi-step creation goes through \`create_visit_encounter\`, \`result_create_linked\`, \`record_hmo_settlement\`, \`reschedule_closure_appointments\` — never direct inserts (\`creation-paths.test.ts\`). P0072 = the record moved mid-save: callers retry once (\`withLifecycleRetry\`).`
+  `- **Patient lifecycle lock (0184):** every write to a patient-owned table (visits, lines, payments, PINs, appointments, consents, uploads, results + links/values/amendments/alerts, HMO items/allocations/resolutions, PF entries) passes the \`a_lifecycle_guard\` trigger: shared lock on the patient, refuse (P0058) if deleted or merged — except cancel/no-show, PIN sign-in bookkeeping and retention delete, alert acknowledgement and PF disbursement links. Delete/restore take the lock exclusive. Results-family writes first take a result-MEMBERSHIP lock (exclusive to add/remove a link), and a result holds one patient's tests only. Every patient-bearing reference of a row is locked and asserted. Multi-step creation goes through \`create_visit_encounter\`, \`result_create_linked\`, \`record_hmo_settlement\`, \`reschedule_closure_appointments\` — never direct inserts (\`creation-paths.test.ts\`). P0072 = the record moved mid-save: callers retry once (\`withLifecycleRetry\`).`
   Replace "The older `set_patient_context()` function still exists but nothing calls it." with "`set_patient_context()` was dropped in 0184; `current_patient_id()` reads only the JWT claim." Update the P-code list ("in use on main") when this merges: `P0072–P0073`. Add a "Where things live" row: `| Lifecycle-lock retry (\`withLifecycleRetry\`), booking patient recovery, undo-merge step order | \`src/lib/patients/{lifecycle-retry,undo-merge-steps}.ts\`, \`src/lib/appointments/patient-recovery.ts\` |`.
 
-- [ ] **Step 4: Skills** (tracked under `.claude/skills/` in this worktree; if a skill folder is not tracked here, update the container copy `~/Claude/DRMed/.claude/skills/` instead and say so in the commit message): `drmed-migrations` — P-code registry P0072/P0073, the `a_lifecycle_guard` naming rule (must sort first), "a new patient-owned table needs `a_lifecycle_guard` + a `lifecycle_patients_of_row` branch", lock order (advisory → row → re-read), `smoke:locks`. `drmed-rls-and-auth` — `current_patient_id()` JWT-only, `set_patient_context` gone. `drmed-booking-and-intake` — resolver case-insensitive + oldest-first + P0072 retry, `insertWithPatientRecovery`. `drmed-payments` — `record_hmo_settlement`, `correct_payment` lock order, guard exceptions (PF disbursement link). `drmed-result-templates` — `result_create_linked`, attempt-unique first-upload paths via `commitWithUploads`.
+- [ ] **Step 4: Skills** (tracked under `.claude/skills/` in this worktree; if a skill folder is not tracked here, update the container copy `~/Claude/DRMed/.claude/skills/` instead and say so in the commit message): `drmed-migrations` — P-code registry P0072/P0073, the `a_lifecycle_guard` naming rule (must sort first), "a new patient-owned table needs `a_lifecycle_guard` + a `lifecycle_patients_of_row` branch, and a new patient-bearing FK column on a guarded table needs a `lifecycle_via` term (s14.5 fails otherwise)", lock order (membership → patient → row → re-read), one patient per result, money compared in centavos, the REPLAY rule for 0184-owned functions (a lower-numbered branch re-creating one must ship a new migration above 0184; `lifecycle-owned-functions.test.ts`), fresh replay on an isolated second stack (Task 29 Step 3's recipe), `smoke:locks`. `drmed-rls-and-auth` — `current_patient_id()` JWT-only, `set_patient_context` gone. `drmed-booking-and-intake` — resolver case-insensitive + oldest-first + P0072 retry, `insertWithPatientRecovery`. `drmed-payments` — `record_hmo_settlement`, `correct_payment` lock order, guard exceptions (PF disbursement link). `drmed-result-templates` — `result_create_linked`, attempt-unique first-upload paths via `commitWithUploads`.
 
 - [ ] **Step 5: Commit** — `docs: lifecycle locks in the user guide, CLAUDE.md, skills and spec`.
 
@@ -4691,18 +5577,47 @@ describe("creation paths (0184)", () => {
 
 - [ ] **Step 1: Static gates.** `npm test && npm run typecheck && npm run lint` (logs to `$SCRATCH`) — all PASS.
 
-- [ ] **Step 2: Mutation checks** (each must FAIL, then revert): remove the `a_lifecycle_guard` trigger on `payments` in a scratch copy of the migration and re-apply → s4.9/s4.10 fail; swap the order of `lifecycle_lock_and_assert` and the row lock in `result_save_draft` → s7.1 fails; make `withLifecycleRetry` never retry → its test fails; delete `patient-merge` from `SKIP_SENDER_LABEL` → skip-labels test fails. Re-apply the real migration after the SQL ones.
+- [ ] **Step 2: Mutation checks** (each must FAIL, then revert): remove the `a_lifecycle_guard` trigger on `payments` in a scratch copy of the migration and re-apply → s4.9/s4.10 fail; swap the order of `lifecycle_lock_and_assert` and the row lock in `result_save_draft` → s7.1 fails; delete the lifecycle call from `correct_payment` → s7.1 fails (both-positions rule); make the junction branch take the SHARED membership lock → s5.26 and both `membership:` races fail; remove the batch lock from `recompute_hmo_batch_status` → s11.12c and the rollup race fail; compare visit totals as raw numerics → s9.21–s9.23 fail; make `withLifecycleRetry` never retry → its test fails; delete `patient-merge` from `SKIP_SENDER_LABEL` → skip-labels test fails; add a fake lower-numbered definer to `lifecycle-owned-functions.test.ts`'s input → its mutation test proves the check fires. Re-apply the real migration after the SQL ones.
 
-- [ ] **Step 3: Fresh replay — coordinate first.** The local stack is shared and other sessions have unmerged migrations applied to it (0170 etc.): `supabase db reset` wipes them. Ask the controller/owner before running it. If approved:
+- [ ] **Step 3: Fresh replay on an ISOLATED stack — a ship prerequisite** (Codex plan review P1-3). Never `supabase db reset` the shared stack for this (other sessions' unmerged 0170/0183 live there). Instead bring up a second, throwaway Supabase stack from a copy of this branch's `supabase/` folder with its own project id and ports; `supabase start` on an empty project applies every migration in NUMBER order — that is the fresh replay.
 
 ```bash
-/opt/homebrew/bin/supabase db reset 2>&1 | tail -5
-for f in 0184_patient_lifecycle_locks 0167_patient_soft_delete 0147_hmo_claim_delete_guard 0161_payment_correction 0172_result_edit_commit 0174_correct_payment_stale_guard 0151_rls_initplan 0163_drm_id_width; do
-  echo "== $f"; docker exec -i supabase_db_DRMed psql -U postgres -d postgres -v ON_ERROR_STOP=1 < supabase/tests/${f}_smoke.sql 2>&1 | grep -cE "OK"; docker exec -i supabase_db_DRMed psql -U postgres -d postgres -v ON_ERROR_STOP=1 < supabase/tests/${f}_smoke.sql 2>&1 | grep -E "ERROR|FAILED" | head -3
-done
-npm run -s smoke:locks | tail -3
+R=$SCRATCH/replay && rm -rf $R && mkdir -p $R && cp -R supabase $R/supabase && rm -rf $R/supabase/.temp/project-ref $R/supabase/.temp/linked-project.json $R/supabase/.temp/pooler-url
+# Keep supabase/.temp/postgres-version if present: it pins the Postgres image (see memory
+# supabase-postgres-denied-function-segfault — never run 17.6.1.106/.111).
+node -e '
+const fs=require("fs");const p=process.argv[1];let s=fs.readFileSync(p,"utf8");
+s=s.replace(/^project_id = ".*"$/m,"project_id = \"DRMed_replay\"");
+for (const [a,b] of [[54321,55321],[54322,55322],[54320,55320],[54329,55329],[54323,55323],[54324,55324],[54325,55325],[54326,55326],[54327,55327],[54328,55328]]) s=s.split(`port = ${a}`).join(`port = ${b}`);
+for (const sec of ["studio","inbucket","edge_runtime","analytics"]) s=s.replace(new RegExp(`(\\[${sec}\\][^\\[]*?)enabled = true`),"$1enabled = false");
+fs.writeFileSync(p,s);' $R/supabase/config.toml
+grep -nE "^project_id|^port|shadow_port" $R/supabase/config.toml
+/opt/homebrew/bin/supabase start --workdir $R > $SCRATCH/replay-start.log 2>&1; echo exit=$?; tail -5 $SCRATCH/replay-start.log
 ```
-If not approved, run the same smoke loop and `smoke:locks` on the current local stack instead and record that the fresh replay is pending.
+Expected: `exit=0`, every migration applied (the log lists them; the last is the highest on the branch). A failure here IS the finding — a migration that cannot replay from empty (fix it; never "stamp" around it). If the second stack cannot start at all (ports taken, OrbStack memory), STOP and ask the owner whether to (a) free resources and retry or (b) reset the shared stack after warning the other sessions — shipping waits for one of them.
+
+Then, against the replay container (`supabase_db_DRMed_replay`, port 55322):
+
+```bash
+RP=(docker exec -i supabase_db_DRMed_replay psql -U postgres -d postgres -v ON_ERROR_STOP=1)
+for f in 0184_patient_lifecycle_locks 0167_patient_soft_delete 0147_hmo_claim_delete_guard 0161_payment_correction 0172_result_edit_commit 0174_correct_payment_stale_guard 0151_rls_initplan 0163_drm_id_width; do
+  echo "== $f"; $RP[@] < supabase/tests/${f}_smoke.sql > $SCRATCH/replay-$f.log 2>&1; grep -cE "OK" $SCRATCH/replay-$f.log; grep -E "ERROR|FAILED" $SCRATCH/replay-$f.log | head -3
+done
+SMOKE_LOCKS_DB_URL=postgresql://postgres:postgres@127.0.0.1:55322/postgres npm run -s smoke:locks > $SCRATCH/replay-locks.log 2>&1; echo exit=$?; tail -3 $SCRATCH/replay-locks.log
+```
+Expected: no ERROR/FAILED in any file, `21/21 races passed`.
+
+**Order equivalence.** Re-apply 0184 on the SHARED stack last (the Conventions apply command — this is the prod order: 0184 after 0186), then compare every 0184-owned function's definition on both stacks:
+
+```bash
+Q="select p.oid::regprocedure::text || E'\n' || pg_get_functiondef(p.oid) || coalesce(array_to_string(p.proacl, ','), '') from pg_proc p where p.pronamespace = 'public'::regnamespace and p.proname in ('delete_patient','restore_patient','result_save_draft','result_finalise_commit','result_edit_commit','correct_payment','appointments_insert_slot_guarded','resolve_patient_guarded','current_patient_id','recompute_hmo_batch_status','enforce_patient_activity','create_visit_encounter','result_create_linked','record_hmo_settlement','reschedule_closure_appointments','notification_skip_summary') order by 1"
+docker exec supabase_db_DRMed psql -U postgres -d postgres -Atc "$Q" > $SCRATCH/defs-prod-order.txt
+docker exec supabase_db_DRMed_replay psql -U postgres -d postgres -Atc "$Q" > $SCRATCH/defs-replay.txt
+diff $SCRATCH/defs-prod-order.txt $SCRATCH/defs-replay.txt && echo EQUIVALENT
+```
+Expected: `EQUIVALENT`. Also `npx vitest run src/lib/patients/lifecycle-owned-functions.test.ts` — PASS. A diff means some migration re-creates a 0184-owned function in an order-dependent way: apply the replay rule in Facts (never paper over it by re-applying).
+
+Finally `/opt/homebrew/bin/supabase stop --workdir $R --no-backup` and `rm -rf $R`. Record in the task report: the replay's migration count and head, the smoke/race counts, and `EQUIVALENT`. **Task 31 does not start without this record for the final rebased HEAD.**
 
 - [ ] **Step 4: Browser smoke** (Playwright MCP, local dev on the port the DRMed local-smoke recipe uses, pointed at the LOCAL stack; text checks via `browser_snapshot` / `browser_evaluate`, one screenshot at most per item):
   1. New visit with a package + a consult (split) for a throwaway patient → both visits exist with the same PIN slip; the queue shows the lines; Visit page OK.
@@ -4729,7 +5644,12 @@ If not approved, run the same smoke loop and `smoke:locks` on the current local 
 
 ### Task 31: Ship — PR, prod migration, merge
 
-- [ ] **Step 1: Re-check the overlaps.** `git fetch origin && git log --oneline origin/main -10`. If 0170, 0179 or 0183 reached main since Task 0, rebase and re-copy the overlapping function bodies (`resolve_patient_guarded`, `result_edit_commit`, `correct_payment`) from THEIR migration, re-applying 0184's marked edits; re-run the 0184 smoke. `npm run -s claim -- list | grep 0184` still ours; MCP `list_migrations` shows no 0184 on prod.
+- [ ] **Step 1: Re-check the overlaps under the replay rule.** `git fetch origin && git log --oneline origin/main -10`.
+  - If 0170 or 0183 reached main since Task 0: rebase, re-copy the overlapping body (`resolve_patient_guarded` / `correct_payment`) from THEIR migration re-applying 0184's marked edits, add their file to that function's `allowedBelow` in `lifecycle-owned-functions.test.ts`, re-run the 0184 smoke.
+  - If a migration numbered ABOVE 0184 reached main and re-creates a 0184-owned function (the Task 0 Step 1 grep; the standing test's "highest-numbered definition" check fails): STOP — 0184 must be renumbered above it (claim a new number via the controller), never "copied back" into a lower file.
+  - If main moved at all since Task 29 Step 3 and brought migrations: re-run Task 29 Step 3 (isolated fresh replay + order equivalence) on the rebased HEAD. **Do not continue without a passing replay record for the exact HEAD being shipped.**
+  - `npm run -s claim -- list | grep 0184` still ours; MCP `list_migrations` shows no 0184 on prod.
+  - Re-read the three memory notes (Task 0 Step 4): if 0170/0183 are still unmerged, they carry the obligation (new migration above 0184); `SendMessage` their live sessions (if `ListAgents` shows them) that 0184 is about to reach main.
 
 - [ ] **Step 2: Push and open the PR.**
 
@@ -4745,7 +5665,7 @@ PR 3a of the patient-delete rollout (spec: docs/superpowers/specs/2026-09-24-pat
 - Undo-merge clears the source marker first and stops on the first error; Cron Health lists patient messages that were not sent; the portal identity comes from the JWT only (`set_patient_context` dropped).
 - Migration 0184, P0072–P0073.
 
-Verification: npm test / typecheck / lint; 0184 smoke s1–s14 + neighbouring smokes; `npm run smoke:locks` (17 two-connection races); browser smoke; Opus review + Codex xhigh review.
+Verification: npm test / typecheck / lint; 0184 smoke s1–s14 + neighbouring smokes; `npm run smoke:locks` (21 two-connection races, incl. result membership and HMO batch rollup); isolated fresh replay + replay/ship-order equivalence (Task 29 Step 3); browser smoke; Opus review + Codex xhigh review.
 
 Not in this PR: merge/undo RPCs, consent re-sync, merge snapshots, dedup chain flattening, CLI actor, merge-marker enforcement (PR 3b).
 
@@ -4785,4 +5705,18 @@ If any check fails, stop and report — do not merge.
 
 - **Spec coverage (3a).** Lock modes + admission + deadlock analysis → T2–T4, T8 (NO KEY UPDATE T3; triggers fire first by name T4; RPCs pre-acquire T8–T13; exclusive on ownership change T4). Re-resolution / P0072 → T4 (guard), T8, T9, T11, T12; race proof T16. Helper security contract → T2 (definer, pinned, EXECUTE revoked; fail closed on unresolved parent). Default-refuse matrix, every row → T4–T7 (appointments/visit_pins/critical_alerts/doctor_pf_entries exceptions; results unlinked insert; batches unguarded; reopen refused s6.6; mixed batch s6.1; `cogs_send_out_entries` gone — noted). Transactional creation: visit encounter T10/T18, results (structured + upload, attempt path, probe, lost response, overlapping first uploads — row locks + P0066 + commitWithUploads) T11/T19, HMO settlement T12/T20 (competing allocations + concurrent settlements in one batch: T16), closure reschedule + dry-run preview + >1,000 rows + inactive skip + concurrent cancel/delete T13/T16/T21, resolver T9/T22, merge/undo compatibility T23. Owner extras: Cron Health card + Sentry + merge notice T25; drop GUC T14; README + ConfirmDialog T26. Owner decisions: HMO billing of a deleted patient stays refused (guards on items, s6.4/s6.5); case-insensitive resolver (s8.3); cancel/no-show allowed (s3.14–s3.16); split 3a/3b (scope line).
 - **Deliberately PR 3b:** merge/undo RPCs under `patient_merge_writer`, consent reconciliation, snapshots, chain re-parenting, CLI actor, merge-marker enforcement.
-- **Known limits, stated in code comments:** the closure RPC takes one advisory lock per distinct patient (Task 1 measures the ceiling); `previous_status` in the closure audit is now the real status; hard-deleting a payment in `smoke:locks` cleanup leaves a net-zero reversal pair in the local ledger.
+- **Known limits, stated in code comments:** the closure RPC takes one advisory lock per distinct patient (Task 1 measures the ceiling); `previous_status` in the closure audit is now the real status; hard-deleting a payment in `smoke:locks` cleanup leaves a net-zero reversal pair in the local ledger. The rollup's batch lock is taken after the item row lock inside the item trigger, so two MULTI-item plain statements touching the same two items of one batch in opposite orders can deadlock (40P01 — rolled back whole; RPC callers retry once); the settlement RPC avoids it by locking the batch before its items.
+
+### Revision 2026-09-28 — Codex xhigh plan review (session 01a0e5c1-1296-7010-b660-52b5a813ae6f)
+
+| Finding | Where it is closed |
+|---|---|
+| **P1-1** resolver followed one path (junction via test only; alerts/amendments ignored `result_id`; `test_requests` ignored `parent_id`) | Facts "Every patient-bearing reference" table; Task 2 `lifecycle_via` + union `lifecycle_patients_of_row` (also `payments.corrects_payment_id`, `critical_alerts.withdrawn_by_amendment`, `doctor_pf_entries.hmo_allocation_id`) + s1.26–s1.34; one-patient-per-result (guard step (d), `result_create_linked`) + s5.20/s5.21, s10.11b; negative tests with mismatched refs s4.7b/c, s5.13–s5.17, s6.10/s6.11, incl. an **authenticated admin under RLS** s5.18; catalog sweep s14.5 fails on an unknown patient-bearing FK |
+| **P1-2** membership could change under a result writer | Facts "Result membership"; Task 2 `lifecycle_lock_results` + `lifecycle_result_ids_of_row`; guard step (b) (exclusive for links/results delete, shared for every other results-family write, incl. unlinked results); Task 8 result RPCs and Task 11 take it first (s7.1m); s5.25/s5.26; races `membership: …` ×2 (waited on the membership lock; the queued writer then holds the NEW patient's lock) |
+| **P1-3** "whichever lands second copies the body" broke replay | Facts replay rule + table (0179 now merged → copied; 0170/0183 must ship a new migration above 0184 if 0184 lands first); memory notes (Task 0 Step 4); standing gate `lifecycle-owned-functions.test.ts` (Task 15 Step 6); fresh replay on an isolated stack + replay/ship-order definition diff is a ship prerequisite (Task 29 Step 3, Task 31 Step 1) |
+| **P2-4** exact numeric vs JS float totals | Centavo comparison in `create_visit_encounter` (s9.21–s9.24) and `record_hmo_settlement` (s11.12a); `toCentavos` in `encounter-payload.ts` (+ tests with fractional prices, a float-noisy discount, a split encounter) |
+| **P2-5** concurrent settlements left the batch `submitted` | `recompute_hmo_batch_status` re-created with a batch row lock (Task 12 (8b), s11.12c); `record_hmo_settlement` locks the batch before its items (s11.12b); three races: both settlements COMMIT → durable `paid|2|2|2`; same item → P0012; plain allocations → rollup lock alone ends `paid` |
+| **P2-6** s5.2 control could never pass | s5.2 links a fresh, never-linked test `ta2` |
+| **P2-7** closure race could touch other sessions' rows | `isolatedPastDay` (verified empty before any change), closure inserted without `ON CONFLICT` and recorded only after it succeeds, "exactly our three appointments" pre-check, moved-rows ⊆ ours post-check; s12 isolation pre-check |
+| **P3** `position()` = 0 passed; elapsed time alone | s7.1/s7.2/s7.1m/s11.12b/s11.12c require every position > 0 + mutation checks; `waitingOn` names the lock a waiter is blocked on in the key races |
+| Found while revising (0179 merged after the plan was written) | `result_edit_commit` copied from 0179 (+ the 0179 hunks pinned in the standing test); the 0179 follow-up columns on `result_amendments` are a fifth guard exception (s5.22–s5.24) |
