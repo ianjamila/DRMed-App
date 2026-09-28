@@ -24,12 +24,19 @@ interface Props {
 
 type Panel = null | "unclaim" | "delete";
 
+interface Outcome {
+  message: string;
+  /** The `selectionEdits` value when this outcome was set — see the
+   * render-time drop rule below. */
+  edits: number;
+}
+
 // The lab queue's selection bar: Claim · Unclaim (optional reason) · Delete
 // (required reason, red confirm — QueueDeleteDialog's wording). Each button
 // acts on the selected rows that carry its kind; the server re-proves every
 // row and reports the ones it skipped by name.
 export function QueueBulkBar({ rowsByKey, hasPanels }: Props) {
-  const { keysByKind, clearKeys, count } = useRowSelection();
+  const { keysByKind, clearKeys, count, selectionEdits } = useRowSelection();
   const router = useRouter();
   const [pending, start] = useTransition();
   const [panel, setPanel] = useState<Panel>(null);
@@ -38,10 +45,13 @@ export function QueueBulkBar({ rowsByKey, hasPanels }: Props) {
   // Which button started the transition in flight — one useTransition serves
   // all three, so without this every visible button would read "…ing".
   const [running, setRunning] = useState<"claim" | "unclaim" | "delete" | null>(null);
-  // The last action's outcome, naming every skipped test. It outlives the
-  // selection it reports on (which is cleared on success), so it is kept here
-  // and shown in place of the bar until dismissed or a new selection starts.
-  const [outcome, setOutcome] = useState<string | null>(null);
+  // The last action's outcome, naming every skipped test. An action only
+  // clears the keys it acted on, so other selected rows (e.g. an
+  // unclaimable test under Claim) can leave `count > 0` — the outcome must
+  // still show. It survives until the operator makes a new deliberate edit
+  // (toggle/setMany bumps `selectionEdits`), not merely until count is next
+  // > 0.
+  const [outcome, setOutcome] = useState<Outcome | null>(null);
 
   const known = (keys: string[] | undefined) =>
     (keys ?? []).filter((key) => rowsByKey[key] !== undefined);
@@ -64,7 +74,7 @@ export function QueueBulkBar({ rowsByKey, hasPanels }: Props) {
       else alert(result.error);
       return;
     }
-    setOutcome(bulkQueueMessage(verb, keys.length, result, rowsByKey));
+    setOutcome({ message: bulkQueueMessage(verb, keys.length, result, rowsByKey), edits: selectionEdits });
     // Pruning wins (spec §4): clear everything sent; the outcome panel is the record.
     clearKeys(keys);
     closePanel();
@@ -121,8 +131,11 @@ export function QueueBulkBar({ rowsByKey, hasPanels }: Props) {
   // prunes them). Close it then, so it never reopens by itself — with the old
   // reason — over a later, unrelated selection. Render-time adjustment, the
   // same pattern SelectionProvider uses for resetKey.
-  // A new selection replaces the last outcome; it never comes back later.
-  if (count > 0 && outcome !== null) setOutcome(null);
+  // The operator started a new selection (a deliberate toggle/setMany) since
+  // this outcome was set — drop it. Post-action pruning (clearKeys) does NOT
+  // bump selectionEdits, so a partial action's outcome survives being shown
+  // even though rows it acted on were just removed from the selection.
+  if (outcome !== null && selectionEdits !== outcome.edits) setOutcome(null);
   if (panel !== null && panelCount === 0) {
     setPanel(null);
     setReason("");
@@ -132,11 +145,14 @@ export function QueueBulkBar({ rowsByKey, hasPanels }: Props) {
 
   if (count === 0) {
     if (!outcome) return null;
-    return <BulkOutcomePanel message={outcome} onDismiss={() => setOutcome(null)} />;
+    return <BulkOutcomePanel message={outcome.message} onDismiss={() => setOutcome(null)} />;
   }
 
   return (
     <BulkBar noun="test">
+      {outcome ? (
+        <BulkOutcomePanel inline message={outcome.message} onDismiss={() => setOutcome(null)} />
+      ) : null}
       {hasPanels ? (
         <span className="text-[11px] text-[color:var(--color-brand-text-soft)]">
           Chemistry panels are claimed from their own page.

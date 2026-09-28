@@ -51,15 +51,24 @@ const BUTTONS: Array<{
   },
 ];
 
+interface Outcome {
+  message: string;
+  /** The `selectionEdits` value when this outcome was set — see the
+   * render-time drop rule below. */
+  edits: number;
+}
+
 export function AppointmentsBulkBar({ groupsByKey, isAdmin }: Props) {
-  const { state, clearKeys, count } = useRowSelection();
+  const { state, clearKeys, count, selectionEdits } = useRowSelection();
   const router = useRouter();
   const [pending, start] = useTransition();
   // The last action's outcome, naming every booking not changed or skipped.
-  // It outlives the selection it reports on (which is cleared on success), so
-  // it is kept here and shown in place of the bar until dismissed or a new
-  // selection starts.
-  const [outcome, setOutcome] = useState<string | null>(null);
+  // An action only clears the keys it acted on, so other selected rows (e.g.
+  // a pending-callback booking under Mark arrived) can leave `count > 0` —
+  // the outcome must still show. It survives until the operator makes a new
+  // deliberate edit (toggle/setMany bumps `selectionEdits`), not merely until
+  // count is next > 0.
+  const [outcome, setOutcome] = useState<Outcome | null>(null);
 
   const selected = [...state.keys()]
     .map((key) => ({ key, info: groupsByKey[key] }))
@@ -67,8 +76,11 @@ export function AppointmentsBulkBar({ groupsByKey, isAdmin }: Props) {
     .map((g) => ({ key: g.key, status: g.info.status, patientActive: g.info.patientActive }));
   const plan = bulkActionPlan(selected, isAdmin);
   const inactiveCount = selected.filter((g) => !g.patientActive).length;
-  // A new selection replaces the last outcome; it never comes back later.
-  if (count > 0 && outcome !== null) setOutcome(null);
+  // The operator started a new selection (a deliberate toggle/setMany) since
+  // this outcome was set — drop it. Post-action pruning (clearKeys) does NOT
+  // bump selectionEdits, so a partial action's outcome survives being shown
+  // even though rows it acted on were just removed from the selection.
+  if (outcome !== null && selectionEdits !== outcome.edits) setOutcome(null);
 
   function run(button: (typeof BUTTONS)[number]) {
     const keys = plan[button.action].keys;
@@ -90,9 +102,12 @@ export function AppointmentsBulkBar({ groupsByKey, isAdmin }: Props) {
         router.refresh();
         return;
       }
-      const outcome = summariseOutcome(keys, groupsByKey, result.changedIds);
+      const outcomeResult = summariseOutcome(keys, groupsByKey, result.changedIds);
       const notSent = plan[button.action].skippedInactiveKeys;
-      setOutcome(bulkAppointmentsMessage(button, outcome, groupsByKey, notSent));
+      setOutcome({
+        message: bulkAppointmentsMessage(button, outcomeResult, groupsByKey, notSent),
+        edits: selectionEdits,
+      });
       // Pruning wins (spec §4): clear everything sent — and the inactive ones the
       // button left out, which the message now names — the panel is the record.
       clearKeys([...keys, ...notSent]);
@@ -101,11 +116,16 @@ export function AppointmentsBulkBar({ groupsByKey, isAdmin }: Props) {
   }
 
   if (count === 0) {
-    return outcome ? <BulkOutcomePanel message={outcome} onDismiss={() => setOutcome(null)} /> : null;
+    return outcome ? (
+      <BulkOutcomePanel message={outcome.message} onDismiss={() => setOutcome(null)} />
+    ) : null;
   }
 
   return (
     <BulkBar noun="booking">
+      {outcome ? (
+        <BulkOutcomePanel inline message={outcome.message} onDismiss={() => setOutcome(null)} />
+      ) : null}
       {inactiveCount > 0 ? (
         <span className="text-[11px] text-amber-700">
           {inactiveCount} skipped for Mark arrived, Confirm and Revert — patient record deleted or merged
