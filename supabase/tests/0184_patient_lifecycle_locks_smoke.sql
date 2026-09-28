@@ -1749,4 +1749,79 @@ begin
 end
 $s11$;
 
+-- --- s12: reschedule_closure_appointments --------------------------------------------------
+do $s12$
+declare
+  k_admin constant uuid := 'a0000000-0000-4000-8000-000000000184';
+  k_rec   constant uuid := 'a1000000-0000-4000-8000-000000000184';
+  day  constant date := '2031-03-03';
+  big  constant date := '2031-03-04';
+  a uuid := pg_temp.mk_patient('S12A');
+  d uuid := pg_temp.mk_patient('S12D');
+  ap_conf uuid; ap_arr uuid; ap_walk uuid; ap_late uuid; ap_dead uuid; ap_prev uuid; ap_next uuid; ap_canc uuid;
+  res jsonb; i int; p uuid;
+begin
+  -- Isolation first (Codex plan review P2-7): the RPC acts on EVERY eligible
+  -- appointment of the day, so the days must hold nothing but this fixture.
+  -- (Everything here rolls back, but a stranger's row would skew the counts.)
+  if exists (select 1 from public.clinic_closures where closed_on between '2031-03-02' and '2031-03-04')
+     or exists (select 1 from public.appointments
+                 where scheduled_at >= '2031-03-02 00:00+08' and scheduled_at < '2031-03-05 00:00+08') then
+    raise exception '0184 s12: 2031-03-02..04 are not empty on this stack (another session''s fixture?) — pick three other empty days';
+  end if;
+  insert into public.clinic_closures (closed_on, reason, created_by) values (day, 'smoke', k_admin), (big, 'smoke big', k_admin);
+  insert into public.appointments (patient_id, status, scheduled_at) values (a, 'confirmed', '2031-03-03 09:00+08') returning id into ap_conf;
+  insert into public.appointments (patient_id, status, scheduled_at) values (a, 'arrived',   '2031-03-03 10:00+08') returning id into ap_arr;
+  insert into public.appointments (walk_in_name, walk_in_phone, status, scheduled_at) values ('W', '09170000012', 'confirmed', '2031-03-03 11:00+08') returning id into ap_walk;
+  insert into public.appointments (patient_id, status, scheduled_at) values (a, 'confirmed', '2031-03-03 23:59+08') returning id into ap_late;
+  insert into public.appointments (patient_id, status, scheduled_at) values (d, 'confirmed', '2031-03-03 12:00+08') returning id into ap_dead;
+  insert into public.appointments (patient_id, status, scheduled_at) values (a, 'confirmed', '2031-03-02 23:59+08') returning id into ap_prev;
+  insert into public.appointments (patient_id, status, scheduled_at) values (a, 'confirmed', '2031-03-04 00:00+08') returning id into ap_next;
+  insert into public.appointments (patient_id, status, scheduled_at) values (a, 'cancelled', '2031-03-03 13:00+08') returning id into ap_canc;
+  perform pg_temp.kill(d);
+
+  res := public.reschedule_closure_appointments(day, k_admin, true, null);
+  perform pg_temp.expect('s12.1 dry run counts (walk-ins count, inactive skipped, Manila day bounds)',
+    (res ->> 'affected') || '|' || (res ->> 'skipped_inactive'), '4|1');
+  perform pg_temp.expect('s12.2 dry run changes nothing',
+    (select status from public.appointments where id = ap_conf), 'confirmed');
+
+  res := public.reschedule_closure_appointments(day, k_admin, false, '{"ip":"203.0.113.9","user_agent":"smoke"}');
+  perform pg_temp.expect('s12.3 real run counts', (res ->> 'affected') || '|' || (res ->> 'skipped_inactive'), '4|1');
+  perform pg_temp.expect('s12.4 eligible rows → pending_callback, no time',
+    (select count(*)::text from public.appointments
+      where id in (ap_conf, ap_arr, ap_walk, ap_late) and status = 'pending_callback' and scheduled_at is null), '4');
+  perform pg_temp.expect('s12.5 the deleted patient''s row is untouched',
+    (select status from public.appointments where id = ap_dead), 'confirmed');
+  perform pg_temp.expect('s12.6 the Manila-day boundaries hold',
+    (select string_agg(status, ',' order by scheduled_at) from public.appointments where id in (ap_prev, ap_next, ap_canc)),
+    'confirmed,cancelled,confirmed');
+  perform pg_temp.expect('s12.7 per-row audits + one summary',
+    (select count(*)::text from public.audit_log where action = 'appointment.bulk_rescheduled_for_closure'
+       and resource_id in (ap_conf, ap_arr, ap_walk, ap_late))
+      || '|' || (select (metadata ->> 'affected') || '/' || (metadata ->> 'skipped_inactive') from public.audit_log
+                  where action = 'closure.bulk_rescheduled' and metadata ->> 'closed_on' = day::text), '4|4/1');
+  res := public.reschedule_closure_appointments(day, k_admin, false, null);
+  perform pg_temp.expect('s12.8 re-running finds nothing', res ->> 'affected', '0');
+
+  -- No row cap: 1,200 patients on one day, one transaction.
+  for i in 1..1200 loop
+    insert into public.patients (drm_id, first_name, last_name, birthdate) values ('DRM-LKB' || i, 'B', 'Lkb' || i, '1990-01-01')
+      returning id into p;
+    insert into public.appointments (patient_id, status, scheduled_at) values (p, 'confirmed', '2031-03-04 09:00+08');
+  end loop;
+  res := public.reschedule_closure_appointments(big, k_admin, false, null);
+  perform pg_temp.expect('s12.9 1,200 rows in one call (no PostgREST cap, no chunk half-commit)',
+    ((res ->> 'affected')::int >= 1200)::text, 'true');   -- >= because ap_next also sits on 2031-03-04
+
+  perform pg_temp.expect('s12.10 a closure that no longer exists',
+    pg_temp.state_of(format($q$select public.reschedule_closure_appointments('2031-12-25', %L, false, null)$q$, k_admin)), '22023');
+  perform pg_temp.expect('s12.11 non-admin actor',
+    pg_temp.state_of(format($q$select public.reschedule_closure_appointments(%L, %L, false, null)$q$, day, k_rec)), '42501');
+  perform pg_temp.expect('s12.12 EXECUTE service_role only',
+    (has_function_privilege('service_role', 'public.reschedule_closure_appointments(date,uuid,boolean,jsonb)', 'execute')
+     and not has_function_privilege('authenticated', 'public.reschedule_closure_appointments(date,uuid,boolean,jsonb)', 'execute'))::text, 'true');
+end
+$s12$;
+
 rollback;

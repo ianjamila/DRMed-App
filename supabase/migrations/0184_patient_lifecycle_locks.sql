@@ -2570,3 +2570,137 @@ drop trigger if exists a_lifecycle_hmo_batch_lock on public.hmo_claim_resolution
 create trigger a_lifecycle_hmo_batch_lock
   before insert or update or delete on public.hmo_claim_resolutions
   for each row execute function public.lock_hmo_batch_before_items();
+
+-- ---------------------------------------------------------------------------
+-- (9) reschedule_closure_appointments — the admin "reschedule everyone on a
+-- closed day" action, previously a JS loop of 200-row PostgREST updates (a
+-- half-finished run was possible, and the preview counted inactive patients
+-- the action would skip). One transaction: lock every candidate patient
+-- (shared, sorted, lock only — an inactive patient is SKIPPED, never a
+-- reason to fail), row-lock the still-eligible rows, move them to
+-- pending_callback, audit each + one summary. Walk-ins are always eligible.
+-- p_dry_run returns the same counts without locking or writing (the closures
+-- page preview). The Manila day is [closed_on 00:00+08, +1 day).
+-- ---------------------------------------------------------------------------
+create or replace function public.reschedule_closure_appointments(
+  p_closed_on date,
+  p_actor     uuid,
+  p_dry_run   boolean default false,
+  p_context   jsonb   default null
+)
+returns jsonb
+language plpgsql
+volatile
+security definer
+set search_path = pg_catalog, public, pg_temp
+as $$
+declare
+  v_from       timestamptz := p_closed_on::timestamp at time zone 'Asia/Manila';
+  v_to         timestamptz := (p_closed_on + 1)::timestamp at time zone 'Asia/Manila';
+  v_ip         inet;
+  v_ua         text := left(nullif(p_context ->> 'user_agent', ''), 512);
+  v_patients   uuid[];
+  v_candidates int;
+  v_ids        uuid[] := '{}';
+  v_inactive   int;
+  v_affected   int := 0;
+  r            record;
+begin
+  if p_actor is null or not exists (
+    select 1 from public.staff_profiles s
+     where s.id = p_actor and s.role = 'admin' and s.is_active and s.deleted_at is null
+  ) then
+    raise exception 'only an active admin can reschedule a closed day' using errcode = '42501';
+  end if;
+  if p_closed_on is null or not exists (select 1 from public.clinic_closures c where c.closed_on = p_closed_on) then
+    raise exception 'this closure no longer exists — reload the page' using errcode = '22023';
+  end if;
+  if p_context is not null and (
+       jsonb_typeof(p_context) <> 'object'
+       or exists (select 1 from jsonb_object_keys(p_context) k where k not in ('ip', 'user_agent'))) then
+    raise exception 'unexpected audit context' using errcode = '22023';
+  end if;
+  begin
+    v_ip := nullif(p_context ->> 'ip', '')::inet;
+  exception when invalid_text_representation then
+    v_ip := null;
+  end;
+
+  if coalesce(p_dry_run, false) then
+    return (
+      select jsonb_build_object(
+               'affected', count(*) filter (where a.patient_id is null
+                                              or (p.deleted_at is null and p.merged_into_id is null)),
+               'skipped_inactive', count(*) filter (where a.patient_id is not null
+                                                      and (p.id is null or p.deleted_at is not null
+                                                           or p.merged_into_id is not null)),
+               'skipped_changed', 0)
+        from public.appointments a
+        left join public.patients p on p.id = a.patient_id
+       where a.scheduled_at >= v_from and a.scheduled_at < v_to
+         and a.status in ('confirmed', 'arrived'));
+  end if;
+
+  select array_agg(distinct a.patient_id) filter (where a.patient_id is not null), count(*)
+    into v_patients, v_candidates
+    from public.appointments a
+   where a.scheduled_at >= v_from and a.scheduled_at < v_to
+     and a.status in ('confirmed', 'arrived');
+  perform public.lifecycle_lock(coalesce(v_patients, '{}'::uuid[]), false);
+
+  -- Fresh read under the locks; a patient not in the locked set (booked after
+  -- the first read) is left alone and counted as changed.
+  for r in
+    select a.id
+      from public.appointments a
+      left join public.patients p on p.id = a.patient_id
+     where a.scheduled_at >= v_from and a.scheduled_at < v_to
+       and a.status in ('confirmed', 'arrived')
+       and (a.patient_id is null
+            or (a.patient_id = any(coalesce(v_patients, '{}'::uuid[]))
+                and p.deleted_at is null and p.merged_into_id is null))
+     order by a.id
+       for update of a
+  loop
+    v_ids := v_ids || r.id;
+  end loop;
+
+  select count(*) into v_inactive
+    from public.appointments a
+    join public.patients p on p.id = a.patient_id
+   where a.scheduled_at >= v_from and a.scheduled_at < v_to
+     and a.status in ('confirmed', 'arrived')
+     and (p.deleted_at is not null or p.merged_into_id is not null);
+
+  for r in
+    update public.appointments a
+       set status = 'pending_callback', scheduled_at = null
+      from (select a2.id, a2.status as previous_status from public.appointments a2 where a2.id = any(v_ids)) prev
+     where a.id = prev.id
+    returning a.id, a.patient_id, prev.previous_status
+  loop
+    v_affected := v_affected + 1;
+    insert into public.audit_log (actor_id, actor_type, patient_id, action, resource_type, resource_id,
+                                  metadata, ip_address, user_agent)
+    values (p_actor, 'staff', r.patient_id, 'appointment.bulk_rescheduled_for_closure', 'appointment', r.id,
+            jsonb_build_object('closed_on', p_closed_on, 'previous_status', r.previous_status,
+                               'new_status', 'pending_callback'),
+            v_ip, v_ua);
+  end loop;
+
+  insert into public.audit_log (actor_id, actor_type, action, resource_type, resource_id, metadata,
+                                ip_address, user_agent)
+  values (p_actor, 'staff', 'closure.bulk_rescheduled', 'clinic_closure', null,
+          jsonb_build_object('closed_on', p_closed_on, 'affected', v_affected,
+                             'skipped', v_inactive + greatest(v_candidates - v_affected - v_inactive, 0),
+                             'skipped_inactive', v_inactive,
+                             'skipped_changed', greatest(v_candidates - v_affected - v_inactive, 0)),
+          v_ip, v_ua);
+
+  return jsonb_build_object('affected', v_affected, 'skipped_inactive', v_inactive,
+                            'skipped_changed', greatest(v_candidates - v_affected - v_inactive, 0));
+end;
+$$;
+
+revoke all on function public.reschedule_closure_appointments(date, uuid, boolean, jsonb) from public, anon, authenticated;
+grant execute on function public.reschedule_closure_appointments(date, uuid, boolean, jsonb) to service_role;
