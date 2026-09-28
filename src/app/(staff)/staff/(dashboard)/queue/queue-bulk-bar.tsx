@@ -15,7 +15,7 @@ import {
   type BulkQueueResult,
   type QueueRowInfo,
 } from "@/lib/queue/bulk-queue";
-import { UNDO_WINDOW_MS, undoOutcomeMessage } from "@/lib/ui/bulk-undo";
+import { UNDO_ALREADY, UNDO_EXPIRED, UNDO_WINDOW_MS, undoOutcomeMessage } from "@/lib/ui/bulk-undo";
 import { claimTestsAction, unclaimTestsAction, undoBulkQueueAction } from "./actions";
 
 interface Props {
@@ -107,18 +107,38 @@ export function QueueBulkBar({ rowsByKey }: Props) {
   }
 
   function runUndo(u: OutcomeUndo) {
+    if (undoing) return;
+    const previousMessage = outcome?.message ?? "";
     startUndo(async () => {
       const r = await undoBulkQueueAction({ batchId: u.batchId });
       if (!r.ok) {
-        setOutcome({ message: r.error, edits: selectionEdits, undo: null });
+        // Keep the snapshot so the operator can retry inside the window —
+        // unless the server says the window/batch itself is gone, in which
+        // case retrying can only repeat the same refusal.
+        const gone = r.error === UNDO_EXPIRED || r.error === UNDO_ALREADY;
+        setOutcome({
+          message: `${r.error}\n\n${previousMessage}`,
+          edits: selectionEdits,
+          undo: gone ? null : u,
+        });
         return;
       }
-      const restoredLabels = new Set(r.restoredIds.map((id) => u.labelOf[id] ?? id));
-      const notRestored = [...new Map(r.notRestored.map((n) => [u.labelOf[n.id] ?? "A test", n.reason])).entries()].map(
-        ([label, reason]) => ({ label, reason }),
-      );
+      // Ids are already unique selection keys (test id or panel key) — no
+      // label-based collapsing needed (two unnamed walk-ins, or two same-name
+      // patients, must still count as two). The label is only for display;
+      // the first reason seen per row wins.
+      const restoredCount = new Set(r.restoredIds).size;
+      const notRestoredByKey = new Map<string, { label: string; reason: string }>();
+      for (const n of r.notRestored) {
+        if (!notRestoredByKey.has(n.id)) {
+          notRestoredByKey.set(n.id, { label: u.labelOf[n.id] ?? "A test", reason: n.reason });
+        }
+      }
       setOutcome({
-        message: undoOutcomeMessage({ one: "test", many: "tests" }, { restored: restoredLabels.size, notRestored }),
+        message: undoOutcomeMessage(
+          { one: "test", many: "tests" },
+          { restored: restoredCount, notRestored: [...notRestoredByKey.values()] },
+        ),
         edits: selectionEdits,
         undo: null,
       });

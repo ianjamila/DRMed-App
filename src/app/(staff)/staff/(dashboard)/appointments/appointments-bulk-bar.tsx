@@ -14,7 +14,7 @@ import {
   type BulkAction,
   type GroupInfo,
 } from "@/lib/appointments/bulk-eligibility";
-import { UNDO_WINDOW_MS, undoOutcomeMessage } from "@/lib/ui/bulk-undo";
+import { UNDO_ALREADY, UNDO_EXPIRED, UNDO_WINDOW_MS, undoOutcomeMessage } from "@/lib/ui/bulk-undo";
 import { bulkDeleteAction, bulkTransitionAction, undoBulkAppointmentsAction } from "./actions";
 
 interface Props {
@@ -57,8 +57,13 @@ interface OutcomeUndo {
   doneAt: number;
   /** Every appointment id of the bookings this action sent, mapped to that
    * booking's label — snapshotted here because the page refresh drops those
-   * rows from `groupsByKey`. */
+   * rows from `groupsByKey`. Display only — never used to dedupe/count. */
   labelOf: Record<string, string>;
+  /** Every appointment id, mapped back to its BOOKING key — the identity a
+   * restored/not-restored appointment id must be collapsed by, since two
+   * different bookings can share a label (same patient name, or both
+   * unnamed) and must still count as two. */
+  keyOf: Record<string, string>;
 }
 
 interface Outcome {
@@ -69,15 +74,22 @@ interface Outcome {
   undo: OutcomeUndo | null;
 }
 
-/** Maps every appointment id of the given booking keys to that booking's label. */
-function labelOfKeys(keys: readonly string[], groupsByKey: Record<string, GroupInfo>): Record<string, string> {
+/** Maps every appointment id of the given booking keys to that booking's label and key. */
+function labelOfKeys(
+  keys: readonly string[],
+  groupsByKey: Record<string, GroupInfo>,
+): { labelOf: Record<string, string>; keyOf: Record<string, string> } {
   const labelOf: Record<string, string> = {};
+  const keyOf: Record<string, string> = {};
   for (const key of keys) {
     const info = groupsByKey[key];
     if (!info) continue;
-    for (const id of info.ids) labelOf[id] = info.label;
+    for (const id of info.ids) {
+      labelOf[id] = info.label;
+      keyOf[id] = key;
+    }
   }
-  return labelOf;
+  return { labelOf, keyOf };
 }
 
 export function AppointmentsBulkBar({ groupsByKey, isAdmin }: Props) {
@@ -133,7 +145,7 @@ export function AppointmentsBulkBar({ groupsByKey, isAdmin }: Props) {
       // the server gave us a batch id and at least one row actually changed.
       const undo: OutcomeUndo | null =
         button.action !== "delete" && result.batchId && result.changedIds.length > 0
-          ? { batchId: result.batchId, doneAt: Date.now(), labelOf: labelOfKeys(keys, groupsByKey) }
+          ? { batchId: result.batchId, doneAt: Date.now(), ...labelOfKeys(keys, groupsByKey) }
           : null;
       setOutcome({
         message: bulkAppointmentsMessage(button, outcomeResult, groupsByKey, notSent),
@@ -148,19 +160,39 @@ export function AppointmentsBulkBar({ groupsByKey, isAdmin }: Props) {
   }
 
   function runUndo(u: OutcomeUndo) {
+    if (undoing) return;
+    const previousMessage = outcome?.message ?? "";
     startUndo(async () => {
       const r = await undoBulkAppointmentsAction({ batchId: u.batchId });
       if (!r.ok) {
-        setOutcome({ message: r.error, edits: selectionEdits, undo: null });
+        // Keep the snapshot so the operator can retry inside the window —
+        // unless the server says the window/batch itself is gone, in which
+        // case retrying can only repeat the same refusal.
+        const gone = r.error === UNDO_EXPIRED || r.error === UNDO_ALREADY;
+        setOutcome({
+          message: `${r.error}\n\n${previousMessage}`,
+          edits: selectionEdits,
+          undo: gone ? null : u,
+        });
         return;
       }
-      // Name bookings, not appointment rows: collapse ids to their labels.
-      const restoredLabels = new Set(r.restoredIds.map((id) => u.labelOf[id] ?? id));
-      const notRestored = [...new Map(r.notRestored.map((n) => [u.labelOf[n.id] ?? "A booking", n.reason])).entries()].map(
-        ([label, reason]) => ({ label, reason }),
-      );
+      // Name bookings, not appointment rows: collapse ids by BOOKING KEY
+      // (identity), not by label — two bookings can share a label (same
+      // patient name, or both unnamed) and must still count as two. The
+      // label is only for display; the first reason seen per booking wins.
+      const restoredKeys = new Set(r.restoredIds.map((id) => u.keyOf[id] ?? id));
+      const notRestoredByKey = new Map<string, { label: string; reason: string }>();
+      for (const n of r.notRestored) {
+        const key = u.keyOf[n.id] ?? n.id;
+        if (!notRestoredByKey.has(key)) {
+          notRestoredByKey.set(key, { label: u.labelOf[n.id] ?? "A booking", reason: n.reason });
+        }
+      }
       setOutcome({
-        message: undoOutcomeMessage({ one: "booking", many: "bookings" }, { restored: restoredLabels.size, notRestored }),
+        message: undoOutcomeMessage(
+          { one: "booking", many: "bookings" },
+          { restored: restoredKeys.size, notRestored: [...notRestoredByKey.values()] },
+        ),
         edits: selectionEdits,
         undo: null,
       });
