@@ -40,6 +40,65 @@ export interface QueueRowInfo {
   label: string;
   /** The holder the operator SAW (unclaim sends it as a predicate); null when unclaimed. */
   assignedTo: string | null;
+  /** Tests the row stands for — a chemistry panel row's members on screen. 1 when absent. */
+  testCount?: number;
+}
+
+// A chemistry panel row is selected as ONE row but claimed server-side by
+// (visit, report group): the list pages before the fold, so the ids on screen
+// can be part of the panel. Its selection key carries both ids.
+const PANEL_KEY_PREFIX = "panel:";
+
+export function panelRowKey(visitId: string, groupId: string): string {
+  return `${PANEL_KEY_PREFIX}${visitId}:${groupId}`;
+}
+
+export function parsePanelRowKey(key: string): { visitId: string; groupId: string } | null {
+  if (!key.startsWith(PANEL_KEY_PREFIX)) return null;
+  const [visitId, groupId, ...rest] = key.slice(PANEL_KEY_PREFIX.length).split(":");
+  if (!visitId || !groupId || rest.length > 0) return null;
+  return { visitId, groupId };
+}
+
+/**
+ * One result for a bulk Claim that went to two actions: single tests
+ * (claimTestsAction) and chemistry panels (claimPanelsAction). A refusal of
+ * the whole single-test call is returned as-is — the caller never sends the
+ * panels then. A refusal of the whole panel call lands every panel in
+ * `skipped`, because the single tests before it WERE claimed.
+ */
+export function combineClaimResults(
+  single: BulkQueueResult | null,
+  panels: BulkQueueResult | null,
+  panelKeys: readonly string[],
+): BulkQueueResult {
+  if (single && !single.ok) return single;
+  const changedIds = [...(single?.changedIds ?? [])];
+  const skipped = [...(single?.skipped ?? [])];
+  if (panels) {
+    if (panels.ok) {
+      changedIds.push(...panels.changedIds);
+      skipped.push(...panels.skipped);
+    } else {
+      skipped.push(...panelKeys.map((id) => ({ id, reason: panels.error })));
+    }
+  }
+  return { ok: true, changedIds, skipped };
+}
+
+/**
+ * How many TESTS a bulk action was sent: every changed test once, plus each
+ * skipped row weighted by the tests it stands for. Equal to the key count
+ * when every row is a single test.
+ */
+export function sentTestCount(
+  result: { changedIds: readonly string[]; skipped: readonly SkippedRow[] },
+  rowsByKey: Readonly<Record<string, QueueRowInfo>>,
+): number {
+  return (
+    result.changedIds.length +
+    result.skipped.reduce((n, s) => n + (rowsByKey[s.id]?.testCount ?? 1), 0)
+  );
 }
 
 function tests(n: number): string {

@@ -190,7 +190,7 @@ const SURFACES: Record<string, Surface> = {
   },
   "app/(staff)/staff/(dashboard)/queue/consolidated/[visitId]/[groupId]/actions.ts": {
     meaning: "structural",
-    why: "Acts on ids sourced only from the report-group-scoped page above, which no doctor line can reach.",
+    why: "Acts on ids sourced only from the report-group-scoped page above, or resolves a panel's members itself scoped by services.report_group_id (the queue list's panel Claim) — no doctor line can reach either.",
   },
   "lib/actions/results/finalise-consolidated.ts": {
     meaning: "structural",

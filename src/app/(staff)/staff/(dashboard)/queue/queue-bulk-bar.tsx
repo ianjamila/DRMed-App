@@ -10,15 +10,21 @@ import { deleteTestRequestsManyAction } from "@/lib/actions/visits/queue-deletio
 import {
   QUEUE_KIND,
   bulkQueueMessage,
+  combineClaimResults,
+  parsePanelRowKey,
+  sentTestCount,
   type BulkQueueResult,
   type QueueRowInfo,
 } from "@/lib/queue/bulk-queue";
 import { claimTestsAction, unclaimTestsAction } from "./actions";
+import { claimPanelsAction } from "./consolidated/[visitId]/[groupId]/actions";
 
 interface Props {
-  // Every selectable single-test row the page rendered, keyed by test id.
+  // Every selectable row the page rendered: single tests keyed by test id,
+  // chemistry panels by panelRowKey(visit, report group).
   rowsByKey: Record<string, QueueRowInfo>;
-  // The page shows at least one chemistry panel card (no checkbox, spec §6).
+  // The page shows at least one chemistry panel card — those can be bulk
+  // CLAIMED only; unclaim and delete stay on the panel's own row.
   hasPanels: boolean;
 }
 
@@ -64,7 +70,8 @@ export function QueueBulkBar({ rowsByKey, hasPanels }: Props) {
       else alert(result.error);
       return;
     }
-    setOutcome(bulkQueueMessage(verb, keys.length, result, rowsByKey));
+    // Counted in TESTS: a panel row stands for several (sentTestCount).
+    setOutcome(bulkQueueMessage(verb, sentTestCount(result, rowsByKey), result, rowsByKey));
     // Pruning wins (spec §4): clear everything sent; the outcome panel is the record.
     clearKeys(keys);
     closePanel();
@@ -74,8 +81,21 @@ export function QueueBulkBar({ rowsByKey, hasPanels }: Props) {
   function claim() {
     if (pending || claimKeys.length === 0) return;
     const keys = claimKeys;
+    // Single tests and chemistry panels go to their own actions; a panel is
+    // resolved and claimed whole on the server (the page may show part of it).
+    const singleIds = keys.filter((key) => parsePanelRowKey(key) === null);
+    const panelKeys = keys.filter((key) => parsePanelRowKey(key) !== null);
+    const panels = panelKeys.map((key) => parsePanelRowKey(key)!);
     setRunning("claim");
-    start(async () => done("Claimed", keys, await claimTestsAction(keys), false));
+    start(async () => {
+      const single = singleIds.length > 0 ? await claimTestsAction(singleIds) : null;
+      // A refused single-test call (role / input) is refused for panels too.
+      const panelResult =
+        panels.length > 0 && (single === null || single.ok)
+          ? await claimPanelsAction(panels)
+          : null;
+      done("Claimed", keys, combineClaimResults(single, panelResult, panelKeys), false);
+    });
   }
 
   function unclaim() {
@@ -156,7 +176,7 @@ export function QueueBulkBar({ rowsByKey, hasPanels }: Props) {
     <BulkBar noun="test">
       {hasPanels ? (
         <span className="text-[11px] text-[color:var(--color-brand-text-soft)]">
-          Chemistry panels are claimed from their own page.
+          Chemistry panels: unclaim or delete them from their own row.
         </span>
       ) : null}
       {claimKeys.length > 0 ? (

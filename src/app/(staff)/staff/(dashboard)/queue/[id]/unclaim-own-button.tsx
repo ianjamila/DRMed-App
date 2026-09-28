@@ -29,8 +29,8 @@ export function UnclaimOwnButton({ testRequestId }: { testRequestId: string }) {
   }
 
   return (
-    <div className="mt-3 space-y-2 rounded-md border border-[color:var(--color-brand-bg-mid)] bg-[color:var(--color-brand-bg)] p-3 text-xs">
-      <p className="font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
+    <div className="mt-3 space-y-2 rounded-md border border-rose-200 bg-rose-50 p-3 text-xs">
+      <p className="font-bold uppercase tracking-wider text-rose-800">
         Your claim
       </p>
 
@@ -38,12 +38,12 @@ export function UnclaimOwnButton({ testRequestId }: { testRequestId: string }) {
         <button
           type="button"
           onClick={() => setConfirmOpen(true)}
-          className="min-h-[44px] text-xs font-semibold text-[color:var(--color-brand-text-soft)] hover:underline"
+          className="min-h-[44px] text-xs font-semibold text-red-700 hover:underline"
         >
           Unclaim — put it back in the queue
         </button>
       ) : (
-        <div className="space-y-2 rounded-md border border-[color:var(--color-brand-bg-mid)] bg-white p-2">
+        <div className="space-y-2 rounded-md border border-rose-200 bg-white p-2">
           <p className="text-[color:var(--color-brand-text-mid)]">
             Unclaiming puts this test back in the queue for anyone in the
             section to claim. Only possible while no result has been uploaded.
@@ -61,7 +61,7 @@ export function UnclaimOwnButton({ testRequestId }: { testRequestId: string }) {
               type="button"
               onClick={onUnclaim}
               disabled={pending}
-              className="min-h-[44px] rounded-md bg-[color:var(--color-brand-navy)] px-3 text-xs font-bold uppercase tracking-wider text-white disabled:opacity-50"
+              className="min-h-[44px] rounded-md bg-red-700 px-3 text-xs font-bold uppercase tracking-wider text-white disabled:opacity-50"
             >
               {pending ? "Unclaiming…" : "Confirm unclaim"}
             </button>

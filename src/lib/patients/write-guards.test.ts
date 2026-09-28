@@ -107,8 +107,8 @@ const EXEMPT: Record<string, string> = {
     "Bulk form of the queue list's Unclaim — handing a claim back reduces work, same reasoning as performUnclaim.",
   [`src/app/(staff)/staff/(dashboard)/queue/actions.ts:reassignTestAction`]:
     "Reassigning an already-claimed line does not put new work or money on the record.",
-  [`src/app/(staff)/staff/(dashboard)/queue/consolidated/[visitId]/[groupId]/actions.ts:claimConsolidated`]:
-    "Same as claimTestAction, for a consolidated report — claiming does not bill.",
+  [`src/app/(staff)/staff/(dashboard)/queue/consolidated/[visitId]/[groupId]/actions.ts:claimPanelMembers`]:
+    "Same as claimTestAction, for a consolidated report (the panel page's Claim and the queue list's panel Claim / bulk Claim) — claiming does not bill.",
   [`src/app/(marketing)/appointments/cancel/[id]/actions.ts:cancelAppointmentAction`]:
     "Public cancel-by-link reduces work (cancels), same reasoning as staff cancel.",
   [`src/app/(marketing)/schedule/actions.ts:storeLabRequestFiles`]:

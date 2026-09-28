@@ -65,7 +65,12 @@ import { SelectionProvider } from "@/components/staff/row-selection/selection-co
 import { RowSelectCheckbox } from "@/components/staff/row-selection/row-select-checkbox";
 import { SelectAllCheckbox } from "@/components/staff/row-selection/select-all-checkbox";
 import type { SelectionEntry } from "@/lib/ui/bulk-selection";
-import { queueRowKinds, type QueueRowInfo } from "@/lib/queue/bulk-queue";
+import {
+  QUEUE_KIND,
+  panelRowKey,
+  queueRowKinds,
+  type QueueRowInfo,
+} from "@/lib/queue/bulk-queue";
 import { QueueBulkBar } from "./queue-bulk-bar";
 
 const LAB_QUEUE_SUBSCRIPTIONS = [
@@ -123,6 +128,14 @@ type QueueCardGrouped = {
   href: string;
   // All member test ids — the group deletes as one bulk action.
   memberIds: string[];
+  // The first member's section — names the owner role when the panel is
+  // outside the viewer's claim (ClaimOwnerHint), like a single row.
+  section: string | null;
+  // Claim is offered only when EVERY member is still requested and the
+  // viewer may claim every member's section — the same all-or-nothing rule
+  // claimPanelAction re-proves on the server.
+  allRequested: boolean;
+  sectionsClaimable: boolean;
   // Only when EVERY member is deletable (a package component in the panel
   // makes the whole group non-deletable; the package deletes from the visit).
   canDelete: boolean;
@@ -486,6 +499,9 @@ export default async function QueuePage({ searchParams }: SearchProps) {
         existing.orderedTests.push(test);
         existing.memberIds.push(r.id);
         existing.canDelete = existing.canDelete && rowDeletable;
+        existing.allRequested = existing.allRequested && r.status === "requested";
+        existing.sectionsClaimable =
+          existing.sectionsClaimable && canClaimSection(session.role, svc.section);
         if (!existing.printTestId && printable) existing.printTestId = r.id;
         existing.hasFile = existing.hasFile || pdfState !== undefined;
         existing.label = `${rg.name} (${existing.orderedTests.length} tests)`;
@@ -523,6 +539,9 @@ export default async function QueuePage({ searchParams }: SearchProps) {
             ? visitHref
             : `/staff/queue/consolidated/${r.visit_id}/${svc.report_group_id}`,
           memberIds: [r.id],
+          section: svc.section,
+          allRequested: r.status === "requested",
+          sectionsClaimable: canClaimSection(session.role, svc.section),
           canDelete: rowDeletable,
           printTestId: printable ? r.id : null,
           hasFile: pdfState !== undefined,
@@ -606,10 +625,14 @@ export default async function QueuePage({ searchParams }: SearchProps) {
   // Bulk selection (spec §6). Reception never gets checkboxes (it only sees
   // Released today), and Released today is a record, not a worklist. A row's
   // kinds come from the SAME predicates that render its buttons below, so
-  // the bar never offers what the row itself wouldn't. Chemistry panel cards
-  // get no checkbox: paging happens before the fold, so a visible card can
-  // hold part of a panel.
+  // the bar never offers what the row itself wouldn't. A chemistry panel card
+  // is selectable for CLAIM only, keyed by (visit, report group): paging
+  // happens before the fold, so a visible card can hold part of a panel, and
+  // claimPanelsAction resolves the whole panel on the server. Unclaim and
+  // delete of a panel stay on its own row (all-or-nothing, performUnclaim).
   const selectable = !receptionView && !releasedTab;
+  const panelClaimable = (card: QueueCardGrouped) =>
+    card.allRequested && card.sectionsClaimable;
   const singleKinds = (card: QueueCardSingle) =>
     queueRowKinds({
       claimable: card.status === "requested" && canClaimSection(session.role, card.section),
@@ -620,7 +643,22 @@ export default async function QueuePage({ searchParams }: SearchProps) {
   const rowsByKey: Record<string, QueueRowInfo> = {};
   if (selectable) {
     for (const card of matched) {
-      if (card.kind !== "single") continue;
+      if (card.kind === "grouped") {
+        if (!panelClaimable(card)) continue;
+        const rowKey = panelRowKey(card.visitId, card.groupId);
+        selectionEntries.push({
+          rowKey,
+          kinds: [QUEUE_KIND.claim],
+          weight: card.memberIds.length,
+        });
+        rowsByKey[rowKey] = {
+          visitId: card.visitId,
+          label: `${card.label} — ${card.patientName}`,
+          assignedTo: null,
+          testCount: card.memberIds.length,
+        };
+        continue;
+      }
       const kinds = singleKinds(card);
       if (kinds.length === 0) continue;
       selectionEntries.push({ rowKey: card.testRequestId, kinds, weight: 1 });
@@ -1118,7 +1156,18 @@ export default async function QueuePage({ searchParams }: SearchProps) {
                     key={card.cardKey}
                     className="hover:bg-[color:var(--color-brand-bg)]"
                   >
-                    {selectable ? <td className="px-2 py-3" aria-hidden /> : null}
+                    {selectable ? (
+                      <td className="px-2 py-3 align-middle">
+                        {panelClaimable(card) ? (
+                          <RowSelectCheckbox
+                            rowKey={panelRowKey(card.visitId, card.groupId)}
+                            kinds={[QUEUE_KIND.claim]}
+                            weight={card.memberIds.length}
+                            label={`${card.label}, ${card.patientName}`}
+                          />
+                        ) : null}
+                      </td>
+                    ) : null}
                     <td className="px-4 py-3 text-[color:var(--color-brand-text-mid)]">
                       {manilaDateTime(releasedTab ? card.releasedAt : card.requestedAt)}
                     </td>
@@ -1181,13 +1230,23 @@ export default async function QueuePage({ searchParams }: SearchProps) {
                           stale={staleFor(card.printTestId)}
                         />
                       ) : null}
-                      {receptionView ? null : (
-                        <Link
-                          href={card.href}
-                          className="text-xs font-bold text-[color:var(--color-brand-cyan)] hover:underline"
-                        >
-                          Open →
-                        </Link>
+                      {receptionView ? null : panelClaimable(card) ? (
+                        <ClaimButton
+                          panel={{ visitId: card.visitId, groupId: card.groupId }}
+                          navigateOnClaim
+                        />
+                      ) : (
+                        <>
+                          <Link
+                            href={card.href}
+                            className="text-xs font-bold text-[color:var(--color-brand-cyan)] hover:underline"
+                          >
+                            Open →
+                          </Link>
+                          {card.allRequested ? (
+                            <ClaimOwnerHint section={card.section} />
+                          ) : null}
+                        </>
                       )}
                       {canUnclaim(card) ? (
                         <div className="mt-1 flex justify-end">
