@@ -567,7 +567,10 @@ Every guard trigger calls the helper, which *takes* the lock (a re-entrant no-op
 transaction already holds it). Multi-statement RPCs and multi-patient writers additionally
 take the complete sorted set **at entry, before touching any row** — this is the only
 ordering guarantee; the trigger acquisition exists so direct/stale PostgREST writes (one
-statement = one transaction) are still covered. Entry points that pre-acquire in 3a:
+statement = one transaction) are still covered. Installed as `a_lifecycle_guard`, whose name
+sorts first among the table's BEFORE triggers (every other one is `tg_*`/`trg_*`), so it
+always fires — and takes its advisory lock — before any other trigger takes a row lock.
+Entry points that pre-acquire in 3a:
 `create_visit_encounter`, `result_create_linked`, `result_save_draft`,
 `result_finalise_commit`, `result_edit_commit`, `correct_payment`, `record_hmo_settlement`,
 `reschedule_closure_appointments`, `appointments_insert_slot_guarded`,
@@ -594,7 +597,7 @@ The retry starts a fresh transaction and locks the new sorted set. Same for the 
 when its candidate changes. Tested with a remap while the first acquisition waits.
 
 **Helper security contract (Codex P1-19).** Child guard trigger functions and the helper
-`lifecycle_lock_and_assert(patient_ids uuid[], mode text)` are **SECURITY DEFINER**, owned
+`lifecycle_lock_and_assert(patient_ids uuid[], p_exclusive boolean)` are **SECURITY DEFINER**, owned
 by the migration owner, `search_path = pg_catalog, public, pg_temp`, EXECUTE revoked from
 PUBLIC/anon/authenticated/service_role (trigger firing needs no EXECUTE grant; the definer
 trigger calls the helper as its owner). Parent resolution therefore reads through RLS-free
@@ -628,7 +631,7 @@ narrow exceptions are defined by *which columns change*, not by who initiated th
 | `hmo_claim_resolutions` | item | none (void refused — Codex P1-15) |
 | `hmo_claim_batches` | none (multi-patient header) | not guarded itself: `recompute_hmo_batch_status` is unaffected, and a reopen that would un-void an inactive patient's item fails in that item's guard (nested writes are checked) |
 | `doctor_pf_entries` | test_request | UPDATE of disbursement link/unlink columns only (`pf-disbursements.ts:81`: paying a doctor for already-done work adds nothing to the patient — Codex P1-16); void/insert refused |
-| `cogs_send_out_entries` | test_request | none |
+| `cogs_send_out_entries` | test_request | none (dropped by 0166 — nothing to guard) |
 
 `audit_log` is never guarded (it must record refusals and skipped notifications).
 Journal entries are derived from the rows above and are not patient-keyed; no guard.
@@ -702,6 +705,71 @@ deleted patient A's settled item succeeds (A's rows only change via allowed roll
 - **Small follow-ups:** README local-dev section names `SUPABASE_JWT_SECRET` (from
   `supabase status -o env`; already in `.env.example` + CLAUDE.md); ConfirmDialog gains an
   optional `confirmDescribedBy` prop and the delete dialog points it at the blocker list.
+
+### 3a — Implemented in 0184 (rules adopted during review, not in the original spec text)
+
+These decisions were made during 0184's review rounds; they refine the matrix and lock-order
+text above without changing its intent. Recorded here so a reader of the spec sees the same
+rules the shipped migration enforces.
+
+- **The guard's exception list is exactly:** five column-shaped UPDATE exceptions
+  (`appointments` status → `cancelled`/`no_show`; `visit_pins` login bookkeeping columns;
+  `critical_alerts` acknowledgement columns; `doctor_pf_entries.disbursement_id`;
+  `result_amendments`' 0179 follow-up columns) **plus** `appointments`/`visit_pins` DELETE,
+  `results` INSERT (unlinked, inert), and a no-op UPDATE (nothing but `updated_at` changed) on
+  any guarded table. Everything else on an inactive patient is refused, with no trigger-depth
+  exemption.
+- **A vanished (hard-deleted) parent is dropped, not fail-closed** — on the row's own DELETE
+  and on the OLD side of every UPDATE (sheet-sync undo and smoke fixtures hard-delete
+  `patients` rows; a soft-deleted parent still refuses normally).
+- **`payments.corrects_payment_id` is followed on INSERT only and is immutable.** An UPDATE or
+  DELETE of the correction itself no longer re-resolves through the original payment's patient
+  — otherwise a correction on an active patient would permanently P0058 once its source
+  payment's (unrelated, legitimately deleted) patient went inactive.
+- **`critical_alerts.patient_id` may change** (the merge flow repoints it) **but must always
+  equal its test's visit patient** — checked on INSERT, and on UPDATE only when `patient_id`
+  itself changed (23514). `result_id`/`test_request_id` on both `critical_alerts` and
+  `result_amendments` are immutable (23514) — a correction is a new row.
+- **One patient per result** stays enforced on `result_test_requests` writes (23514), stable
+  under the exclusive result-membership lock.
+- **`recompute_clinic_fee_for_unreleased`** is re-created by 0184 with an active-patient filter
+  (it is a bulk, all-patient scrub, not a single-record RPC, so a lock would only prove one
+  patient active while it touches many) and is 0184-owned under the REPLAY rule below.
+- **Global money-path lock order:** payment → visit → batch → items → journal counter.
+  `record_hmo_settlement` locks the affected visits before the batch (not after); a voided or
+  draft HMO batch is refused before settlement proceeds.
+- **Closure reschedule refuses more than 2,000 patients in one call** (22023) — each patient
+  lock is its own advisory-lock entry sharing the transaction's lock table with every row lock,
+  and prod's `max_locks_per_transaction` is 64; refuse cleanly rather than risk lock-table
+  exhaustion on an unusually large closed day.
+- **0184 sets `lock_timeout = '5s'`** for the whole migration file (plain `SET`, explicit
+  `RESET` at the end) — a blocked push fails fast instead of queuing every ordinary query
+  behind its pending `ACCESS EXCLUSIVE` request. Push at a quiet hour and check
+  `pg_stat_activity` for long-running/idle-in-transaction sessions first.
+- **`visit_waiver_allocations` (0183) is patient-bearing but NOT guarded by 0184.** Its only
+  writers (`waiver_post_allocation`, `waiver_unrecognise_line`) are service_role-only with no
+  app caller, and they only ever run inside a transaction that also writes a guarded row (so
+  that write is already checked). Listed here alongside `hmo_claim_batches`/`audit_log`/journal
+  tables as "not guarded, and why."
+- **A bulk data-fix migration touching any of the 16 guarded tables** takes one advisory lock
+  per distinct patient and aborts on any inactive patient's row. Filter the migration to active
+  patients, or disable/re-enable `a_lifecycle_guard` inside it, before writing one.
+- **Sheet sync (0170) needs no lifecycle lock.** Its `patients ... for update` row lock already
+  serialises with delete's `for no key update` on the same row. 0170 line ~724's TODO asking
+  whether it needs the shared lifecycle lock is answered "no" — recorded here, not edited into
+  the already-applied 0170 file.
+- **The REPLAY rule** (which migration owns a function's body when two branches both re-create
+  it, so a fresh replay and prod's deploy order agree) governs `result_edit_commit`,
+  `resolve_patient_guarded`, `correct_payment`, `recompute_hmo_batch_status`,
+  `recompute_clinic_fee_for_unreleased`, `delete_patient`, `restore_patient`,
+  `result_save_draft`, `result_finalise_commit`, `appointments_insert_slot_guarded`,
+  `current_patient_id` and `set_patient_context` (dropped by 0184; a later migration must not
+  re-create it) — the full list and the standing test that enforces it are in the
+  `drmed-migrations` skill.
+- **`withLifecycleRetry`** (retry once on P0072/40001/40P01) wraps: the four new RPCs, result
+  edits/drafts, payment edits/moves/voids, HMO item/resolution/allocation writes,
+  `waive_visit_balance`, bulk appointment actions, and attach-patient.
+- **`smoke:locks`** (`scripts/smoke-lifecycle-locks.ts`) is 29 two-connection races.
 
 ### 3b — merge / undo-merge RPCs (own PR, after 3a)
 
