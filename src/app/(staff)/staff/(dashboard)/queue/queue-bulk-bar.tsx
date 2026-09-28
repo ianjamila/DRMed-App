@@ -34,6 +34,9 @@ export function QueueBulkBar({ rowsByKey, hasPanels }: Props) {
   const [panel, setPanel] = useState<Panel>(null);
   const [reason, setReason] = useState("");
   const [err, setErr] = useState<string | null>(null);
+  // Which button started the transition in flight — one useTransition serves
+  // all three, so without this every visible button would read "…ing".
+  const [running, setRunning] = useState<"claim" | "unclaim" | "delete" | null>(null);
 
   const known = (keys: string[] | undefined) =>
     (keys ?? []).filter((key) => rowsByKey[key] !== undefined);
@@ -66,6 +69,7 @@ export function QueueBulkBar({ rowsByKey, hasPanels }: Props) {
   function claim() {
     if (pending || claimKeys.length === 0) return;
     const keys = claimKeys;
+    setRunning("claim");
     start(async () => done("Claimed", keys, await claimTestsAction(keys), false));
   }
 
@@ -76,6 +80,7 @@ export function QueueBulkBar({ rowsByKey, hasPanels }: Props) {
       testRequestId: key,
       assignedTo: rowsByKey[key]!.assignedTo!,
     }));
+    setRunning("unclaim");
     start(async () =>
       done(
         "Unclaimed",
@@ -93,6 +98,7 @@ export function QueueBulkBar({ rowsByKey, hasPanels }: Props) {
       return;
     }
     const keys = deleteKeys;
+    setRunning("delete");
     start(async () =>
       done(
         "Deleted",
@@ -104,6 +110,15 @@ export function QueueBulkBar({ rowsByKey, hasPanels }: Props) {
   }
 
   const panelCount = panel === "unclaim" ? unclaimKeys.length : panel === "delete" ? deleteKeys.length : 0;
+  // The rows behind an open panel can vanish under it (a realtime refresh
+  // prunes them). Close it then, so it never reopens by itself — with the old
+  // reason — over a later, unrelated selection. Render-time adjustment, the
+  // same pattern SelectionProvider uses for resetKey.
+  if (panel !== null && panelCount === 0) {
+    setPanel(null);
+    setReason("");
+    setErr(null);
+  }
   const n = (count: number) => `${count} test${count === 1 ? "" : "s"}`;
 
   return (
@@ -115,7 +130,7 @@ export function QueueBulkBar({ rowsByKey, hasPanels }: Props) {
       ) : null}
       {claimKeys.length > 0 ? (
         <Button type="button" size="sm" variant="brand" disabled={pending} onClick={claim}>
-          {pending ? "Working…" : `Claim (${claimKeys.length})`}
+          {pending && running === "claim" ? "Claiming…" : `Claim (${claimKeys.length})`}
         </Button>
       ) : null}
       {unclaimKeys.length > 0 ? (
@@ -189,7 +204,7 @@ export function QueueBulkBar({ rowsByKey, hasPanels }: Props) {
                 panel === "delete" ? "bg-red-700" : "bg-[color:var(--color-brand-navy)]"
               }`}
             >
-              {pending
+              {pending && running === panel
                 ? panel === "delete"
                   ? "Deleting…"
                   : "Unclaiming…"
