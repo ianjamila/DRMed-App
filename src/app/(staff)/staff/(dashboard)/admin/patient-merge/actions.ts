@@ -8,6 +8,7 @@ import { activePatients } from "@/lib/patients/active";
 import { audit } from "@/lib/audit/log";
 import { reportError } from "@/lib/observability/report-error";
 import { requireAdminStaff } from "@/lib/auth/require-admin";
+import { runUndoSteps, undoMergeSteps } from "@/lib/patients/undo-merge-steps";
 import { sendEmail } from "@/lib/notifications/email";
 import { checkPatientRecipient } from "@/lib/notifications/active-patient-recipient";
 import {
@@ -463,37 +464,11 @@ export async function undoMergeAction(
     return { ok: false, error: "Can't undo: the source patient has since been deleted. Restore it first." };
   }
 
-  const moved = (m.moved ?? {}) as Record<string, string[]>;
-  // Re-point each recorded row back to the source patient. Explicit per-table
-  // calls (literal table names) so each .update keeps its typed row shape.
-  const visitIds = moved["visits"] ?? [];
-  if (visitIds.length > 0) {
-    await admin.from("visits").update({ patient_id: m.source_id }).in("id", visitIds);
-  }
-  const apptIds = moved["appointments"] ?? [];
-  if (apptIds.length > 0) {
-    await admin.from("appointments").update({ patient_id: m.source_id }).in("id", apptIds);
-  }
-  // audit_log.id is bigserial (number), not uuid — cast from the JSON string values.
-  const auditIds = (moved["audit_log"] ?? []).map(Number);
-  if (auditIds.length > 0) {
-    await admin.from("audit_log").update({ patient_id: m.source_id }).in("id", auditIds);
-  }
-  const alertIds = moved["critical_alerts"] ?? [];
-  if (alertIds.length > 0) {
-    await admin.from("critical_alerts").update({ patient_id: m.source_id }).in("id", alertIds);
-  }
-  const consentIds = moved["patient_consents"] ?? [];
-  if (consentIds.length > 0) {
-    await admin.from("patient_consents").update({ patient_id: m.source_id }).in("id", consentIds);
-  }
-  const attachmentIds = moved["appointment_attachments"] ?? [];
-  if (attachmentIds.length > 0) {
-    await admin.from("appointment_attachments").update({ patient_id: m.source_id }).in("id", attachmentIds);
-  }
+  const moved = (m.moved ?? {}) as Record<string, (string | number)[]>;
 
   // Null out exactly the fields the merge filled (merge only fills NULL keep
-  // fields, and only from this known set). Typed to those columns.
+  // fields, and only from this known set). Typed to those columns. Computed
+  // BEFORE the step runner so the "clear_filled_fields" step below can use it.
   const filled = (m.filled_from_source ?? []) as string[];
   const clear: Partial<Record<"middle_name" | "sex" | "phone" | "email" | "address", null>> = {};
   for (const f of filled) {
@@ -501,18 +476,46 @@ export async function undoMergeAction(
       clear[f] = null;
     }
   }
-  if (Object.keys(clear).length > 0) {
-    await admin.from("patients").update(clear).eq("id", m.keep_id);
+
+  // 0184: the lifecycle guard refuses moving any row onto a still-merged
+  // (inactive) source patient, so the source's merge marker must be cleared
+  // FIRST — before any row moves back. runUndoSteps stops at the first
+  // failed step (the ledger is left NOT undone) and every step is
+  // idempotent, so re-running Undo after a partial failure is safe.
+  const outcome = await runUndoSteps(undoMergeSteps(), async (step) => {
+    switch (step.kind) {
+      case "clear_source_marker":
+        return admin.from("patients").update({ merged_into_id: null, merged_at: null }).eq("id", m.source_id);
+      case "move_back": {
+        const ids = moved[step.table] ?? [];
+        if (ids.length === 0) return { error: null };
+        // audit_log.id is bigserial (number), not uuid — cast from the JSON string values.
+        return step.table === "audit_log"
+          ? admin.from("audit_log").update({ patient_id: m.source_id }).in("id", ids.map(Number))
+          : admin.from(step.table).update({ patient_id: m.source_id }).in("id", ids as string[]);
+      }
+      case "clear_filled_fields":
+        return Object.keys(clear).length === 0
+          ? { error: null }
+          : admin.from("patients").update(clear).eq("id", m.keep_id);
+      case "mark_ledger_undone":
+        return admin
+          .from("patient_merges")
+          .update({ undone_at: new Date().toISOString(), undone_by: session.user_id })
+          .eq("id", m.id);
+    }
+  });
+  if (!outcome.ok) {
+    await reportError({
+      scope: "undoMergeAction",
+      error: new Error(outcome.error),
+      metadata: { merge_id: m.id, failed_at: outcome.failedAt, completed_steps: outcome.completed },
+    });
+    return {
+      ok: false,
+      error: `Undo stopped part-way (step ${outcome.completed + 1}: ${outcome.error}). Nothing is marked undone — run Undo again; steps already done are safe to repeat.`,
+    };
   }
-
-  // Restore the source row.
-  await admin.from("patients").update({ merged_into_id: null, merged_at: null }).eq("id", m.source_id);
-
-  // Mark the ledger row undone.
-  await admin
-    .from("patient_merges")
-    .update({ undone_at: new Date().toISOString(), undone_by: session.user_id })
-    .eq("id", m.id);
 
   const h = await headers();
   await audit({
