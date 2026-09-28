@@ -17,6 +17,9 @@ import {
   type StaffStatusFilter,
 } from "@/lib/staff/user-filters";
 import { relativeSignIn } from "@/lib/staff/last-sign-in";
+import { activeRoleViews, type ActiveRoleView } from "@/lib/staff/active-role-views";
+import { ROLE_LABEL } from "@/lib/staff/role-labels";
+import { ActiveRoleViewsPanel } from "./active-role-views-panel";
 import { StaffSearchInput } from "./search-input";
 import { RestoreButton } from "./restore-button";
 import { PageHeader } from "@/components/staff/page-header";
@@ -52,6 +55,8 @@ type StaffRow = {
   email: string;
   sign_in: SignInSummary;
   last_sign_in_at: string | null;
+  view_as_role: string | null;
+  view_as_until: string | null;
 };
 
 const BASE_PATH = "/staff/users";
@@ -140,7 +145,7 @@ async function loadStaff(): Promise<{
     admin
       .from("staff_profiles")
       .select(
-        "id, full_name, role, is_active, created_at, deleted_at, deleted_by",
+        "id, full_name, role, is_active, created_at, deleted_at, deleted_by, view_as_role, view_as_until",
       )
       .order("created_at", { ascending: false }),
     admin.auth.admin.listUsers({ page: 1, perPage: 200 }),
@@ -171,6 +176,8 @@ async function loadStaff(): Promise<{
     email: emailById.get(p.id) ?? "—",
     sign_in: signInById.get(p.id) ?? { google: false, password: false },
     last_sign_in_at: lastSignInById.get(p.id) ?? null,
+    view_as_role: p.view_as_role,
+    view_as_until: p.view_as_until,
   }));
 
   // Build a name lookup for the deleter — we want the deleted table to
@@ -229,6 +236,16 @@ function SignInBadges({ summary }: { summary: SignInSummary }) {
           Password
         </span>
       ) : null}
+    </span>
+  );
+}
+
+// Marks an admin row that is currently simulating another role — the table
+// counterpart to the "Active role views" panel above it.
+function ViewingAsChip({ role }: { role: ActiveRoleView["role"] }) {
+  return (
+    <span className="ml-2 inline-block rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold text-amber-900">
+      Viewing as {ROLE_LABEL[role]}
     </span>
   );
 }
@@ -340,6 +357,13 @@ export default async function StaffUsersPage({ searchParams }: SearchProps) {
   // Rendered once per request rather than per row, so every relative label on
   // the page is measured from the same instant.
   const now = new Date();
+
+  // Computed from the full non-deleted set — BEFORE search/role/status
+  // filters — so a filter can never hide an active override from this
+  // readout. A Map by id keeps the per-row chip lookup O(1) instead of a
+  // `find` per row.
+  const roleViews = activeRoleViews(existing, now);
+  const roleViewById = new Map(roleViews.map((v) => [v.id, v]));
 
   const onGoogle = existing.filter((u) => u.sign_in.google).length;
 
@@ -454,6 +478,8 @@ export default async function StaffUsersPage({ searchParams }: SearchProps) {
         </FilterRow>
       </div>
 
+      <ActiveRoleViewsPanel views={roleViews} now={now} />
+
       {/* Existing users */}
       <section>
         <h2 className="mb-3 font-heading text-lg font-bold text-[color:var(--color-brand-navy)]">
@@ -513,6 +539,9 @@ export default async function StaffUsersPage({ searchParams }: SearchProps) {
 
                     <div className="mt-3 flex flex-wrap items-center gap-1.5">
                       <RoleBadge role={u.role} />
+                      {roleViewById.has(u.id) ? (
+                        <ViewingAsChip role={roleViewById.get(u.id)!.role} />
+                      ) : null}
                       <StatusBadge isActive={u.is_active} />
                       <SignInBadges summary={u.sign_in} />
                     </div>
@@ -565,6 +594,9 @@ export default async function StaffUsersPage({ searchParams }: SearchProps) {
                       </td>
                       <td className="px-4 py-3">
                         <RoleBadge role={u.role} />
+                        {roleViewById.has(u.id) ? (
+                          <ViewingAsChip role={roleViewById.get(u.id)!.role} />
+                        ) : null}
                       </td>
                       <td className="px-4 py-3">
                         <StatusBadge isActive={u.is_active} />
