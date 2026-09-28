@@ -356,4 +356,30 @@ begin
 end
 $s1$;
 
+-- --- s2: delete/restore row-lock strength --------------------------------------
+do $s2$
+declare
+  p uuid := pg_temp.mk_patient('S2A');
+begin
+  perform pg_temp.expect('s2.1 delete_patient uses FOR NO KEY UPDATE',
+    (pg_get_functiondef('public.delete_patient(uuid,text,text,uuid,jsonb)'::regprocedure) ~* 'for\s+no\s+key\s+update')::text, 'true');
+  perform pg_temp.expect('s2.2 restore_patient uses FOR NO KEY UPDATE',
+    (pg_get_functiondef('public.restore_patient(uuid,uuid,jsonb)'::regprocedure) ~* 'for\s+no\s+key\s+update')::text, 'true');
+  perform pg_temp.expect('s2.3 owners unchanged',
+    (select string_agg(r.rolname, ',' order by p2.proname) from pg_proc p2 join pg_roles r on r.oid = p2.proowner
+      where p2.proname in ('delete_patient', 'restore_patient')),
+    'patient_lifecycle_writer,patient_lifecycle_writer');
+  perform pg_temp.expect('s2.4 EXECUTE still service_role only',
+    (has_function_privilege('service_role', 'public.delete_patient(uuid,text,text,uuid,jsonb)', 'execute')
+     and not has_function_privilege('authenticated', 'public.delete_patient(uuid,text,text,uuid,jsonb)', 'execute')
+     and has_function_privilege('service_role', 'public.restore_patient(uuid,uuid,jsonb)', 'execute')
+     and not has_function_privilege('anon', 'public.restore_patient(uuid,uuid,jsonb)', 'execute'))::text, 'true');
+  -- Round trip still works.
+  perform public.delete_patient(p, 'test_record', '', 'a0000000-0000-4000-8000-000000000184', '{}'::jsonb);
+  perform pg_temp.expect('s2.5 delete works', (select (deleted_at is not null)::text from public.patients where id = p), 'true');
+  perform public.restore_patient(p, 'a0000000-0000-4000-8000-000000000184', '{}'::jsonb);
+  perform pg_temp.expect('s2.6 restore works', (select (deleted_at is null)::text from public.patients where id = p), 'true');
+end
+$s2$;
+
 rollback;

@@ -394,3 +394,162 @@ revoke all on function public.lifecycle_patients_of_allocations(uuid[]) from pub
 revoke all on function public.lifecycle_via(text, text) from public, anon, authenticated, service_role;
 revoke all on function public.lifecycle_result_ids_of_row(text, jsonb) from public, anon, authenticated, service_role;
 revoke all on function public.lifecycle_patients_of_row(text, jsonb, boolean) from public, anon, authenticated, service_role;
+
+-- ---------------------------------------------------------------------------
+-- (2) delete_patient / restore_patient — bodies copied from 0167 (lines
+-- 529-669); the ONLY change is FOR UPDATE -> FOR NO KEY UPDATE on the patient
+-- row. FOR UPDATE conflicts with the KEY SHARE a child insert's FK check
+-- takes; these functions change no key column, and every writer takes its
+-- advisory lock before its first FK check (BEFORE triggers run before RI
+-- triggers; RPCs lock at entry), so the weaker lock cannot let a write slip
+-- past a delete. postgres replaces them in place (INHERIT on
+-- patient_lifecycle_writer, 0167); ownership and grants are unchanged --
+-- restated below anyway.
+-- ---------------------------------------------------------------------------
+
+create or replace function public.delete_patient(
+  p_patient_id uuid, p_reason text, p_note text, p_actor uuid, p_context jsonb
+)
+returns jsonb
+language plpgsql
+volatile
+security definer
+set search_path = pg_catalog, public, pg_temp
+as $$
+declare
+  v_note     text := nullif(btrim(coalesce(p_note, '')), '');
+  v_ip       inet;
+  v_patient  record;
+  v_blockers jsonb;
+  v_kept     jsonb;
+begin
+  if p_actor is null or not exists (
+    select 1 from public.staff_profiles s
+     where s.id = p_actor and s.role = 'admin' and s.is_active and s.deleted_at is null
+  ) then
+    raise exception 'only an active admin can delete a patient record' using errcode = 'P0057';
+  end if;
+
+  if p_reason is null or p_reason not in ('duplicate', 'test_record', 'patient_request', 'other') then
+    raise exception 'choose a reason: duplicate, test record, requested by patient, or other'
+      using errcode = 'P0060';
+  end if;
+  if p_reason = 'other' and v_note is null then
+    raise exception 'add a note when the reason is Other' using errcode = 'P0060';
+  end if;
+  if v_note is not null and length(v_note) > 500 then
+    raise exception 'the note can be at most 500 characters' using errcode = 'P0060';
+  end if;
+  if p_context is not null and (
+       jsonb_typeof(p_context) <> 'object'
+       or exists (select 1 from jsonb_object_keys(p_context) k where k not in ('ip', 'user_agent'))
+     ) then
+    raise exception 'unexpected audit context' using errcode = 'P0060';
+  end if;
+  begin
+    v_ip := nullif(p_context->>'ip', '')::inet;
+  exception when invalid_text_representation then
+    v_ip := null;
+  end;
+
+  -- Exclusive advisory lock on this patient. PR 3's writers take this SAME
+  -- key SHARED, first (see the lock contract above), before touching the row.
+  perform pg_advisory_xact_lock(hashtext('patient_lifecycle'), hashtext(p_patient_id::text));
+  select p.id, p.drm_id, p.deleted_at, p.merged_into_id into v_patient
+    from public.patients p where p.id = p_patient_id
+     for no key update;
+  if not found or v_patient.deleted_at is not null or v_patient.merged_into_id is not null then
+    raise exception 'this patient record is not active (already deleted, merged or missing)'
+      using errcode = 'P0058';
+  end if;
+
+  v_blockers := public.patient_delete_blockers(p_patient_id);
+  if jsonb_array_length(v_blockers) > 0 then
+    raise exception 'this patient still has open items' using
+      errcode = 'P0059', detail = v_blockers::text;
+  end if;
+
+  select to_jsonb(k) - 'patient_id' into v_kept
+    from public.patient_kept_counts(array[p_patient_id]) k;
+
+  update public.patients
+     set deleted_at = now(), deleted_by = p_actor, delete_reason = p_reason, delete_note = v_note
+   where id = p_patient_id;
+
+  insert into public.audit_log (actor_id, actor_type, patient_id, action, resource_type, resource_id,
+                                metadata, ip_address, user_agent)
+  values (p_actor, 'staff', p_patient_id, 'patient.deleted', 'patient', p_patient_id,
+          jsonb_build_object('drm_id', v_patient.drm_id, 'reason', p_reason, 'note', v_note, 'kept', v_kept),
+          v_ip, left(nullif(p_context->>'user_agent', ''), 512));
+
+  return jsonb_build_object('patient_id', p_patient_id, 'drm_id', v_patient.drm_id, 'kept', v_kept);
+end;
+$$;
+
+create or replace function public.restore_patient(p_patient_id uuid, p_actor uuid, p_context jsonb)
+returns jsonb
+language plpgsql
+volatile
+security definer
+set search_path = pg_catalog, public, pg_temp
+as $$
+declare
+  v_ip      inet;
+  v_patient record;
+  v_kept    jsonb;
+begin
+  if p_actor is null or not exists (
+    select 1 from public.staff_profiles s
+     where s.id = p_actor and s.role = 'admin' and s.is_active and s.deleted_at is null
+  ) then
+    raise exception 'only an active admin can restore a patient record' using errcode = 'P0057';
+  end if;
+  if p_context is not null and (
+       jsonb_typeof(p_context) <> 'object'
+       or exists (select 1 from jsonb_object_keys(p_context) k where k not in ('ip', 'user_agent'))
+     ) then
+    raise exception 'unexpected audit context' using errcode = 'P0060';
+  end if;
+  begin
+    v_ip := nullif(p_context->>'ip', '')::inet;
+  exception when invalid_text_representation then
+    v_ip := null;
+  end;
+
+  perform pg_advisory_xact_lock(hashtext('patient_lifecycle'), hashtext(p_patient_id::text));
+  select p.id, p.drm_id, p.deleted_at, p.delete_reason, p.delete_note, p.merged_into_id into v_patient
+    from public.patients p where p.id = p_patient_id
+     for no key update;
+  if not found then
+    raise exception 'patient record not found' using errcode = 'P0058';
+  end if;
+  if v_patient.deleted_at is null or v_patient.merged_into_id is not null then
+    raise exception 'this patient record is not deleted, so there is nothing to restore'
+      using errcode = 'P0061';
+  end if;
+
+  select to_jsonb(k) - 'patient_id' into v_kept
+    from public.patient_kept_counts(array[p_patient_id]) k;
+
+  update public.patients
+     set deleted_at = null, deleted_by = null, delete_reason = null, delete_note = null
+   where id = p_patient_id;
+
+  insert into public.audit_log (actor_id, actor_type, patient_id, action, resource_type, resource_id,
+                                metadata, ip_address, user_agent)
+  values (p_actor, 'staff', p_patient_id, 'patient.restored', 'patient', p_patient_id,
+          jsonb_build_object('drm_id', v_patient.drm_id,
+                             'previous_reason', v_patient.delete_reason,
+                             'previous_note', v_patient.delete_note,
+                             'deleted_at', v_patient.deleted_at,
+                             'kept', v_kept),
+          v_ip, left(nullif(p_context->>'user_agent', ''), 512));
+
+  return jsonb_build_object('patient_id', p_patient_id, 'drm_id', v_patient.drm_id, 'kept', v_kept);
+end;
+$$;
+
+revoke all on function public.delete_patient(uuid, text, text, uuid, jsonb) from public, anon, authenticated;
+revoke all on function public.restore_patient(uuid, uuid, jsonb) from public, anon, authenticated;
+grant execute on function public.delete_patient(uuid, text, text, uuid, jsonb) to service_role;
+grant execute on function public.restore_patient(uuid, uuid, jsonb) to service_role;
