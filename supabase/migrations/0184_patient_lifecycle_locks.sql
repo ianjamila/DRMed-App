@@ -2809,3 +2809,45 @@ $$;
 
 revoke all on function public.notification_skip_summary() from public, anon;
 grant execute on function public.notification_skip_summary() to authenticated, service_role;
+
+-- ---------------------------------------------------------------------------
+-- (11) Post-conditions. Abort the migration if any guarded table lacks its
+-- enabled a_lifecycle_guard, if set_patient_context survived, if delete /
+-- restore / the HMO batch rollup still take a plain row lock instead of
+-- FOR NO KEY UPDATE, or if anon/authenticated can execute a writer RPC.
+-- ---------------------------------------------------------------------------
+do $post$
+declare
+  t text;
+  f text;
+begin
+  foreach t in array array['visits', 'appointments', 'patient_consents', 'appointment_attachments',
+    'test_requests', 'payments', 'visit_pins', 'results', 'result_test_requests', 'result_values',
+    'result_amendments', 'critical_alerts', 'hmo_claim_items', 'hmo_payment_allocations',
+    'hmo_claim_resolutions', 'doctor_pf_entries'] loop
+    if not exists (select 1 from pg_trigger where tgrelid = ('public.' || t)::regclass
+                    and tgname = 'a_lifecycle_guard' and tgenabled = 'O') then
+      raise exception '0184 post-condition: public.% has no enabled a_lifecycle_guard', t;
+    end if;
+  end loop;
+  if to_regprocedure('public.set_patient_context(uuid)') is not null then
+    raise exception '0184 post-condition: set_patient_context still exists';
+  end if;
+  foreach f in array array['public.delete_patient(uuid,text,text,uuid,jsonb)', 'public.restore_patient(uuid,uuid,jsonb)',
+                          'public.recompute_hmo_batch_status(uuid)'] loop
+    if pg_get_functiondef(f::regprocedure) !~* 'for\s+no\s+key\s+update' then
+      raise exception '0184 post-condition: % does not take FOR NO KEY UPDATE', f;
+    end if;
+  end loop;
+  foreach f in array array['public.create_visit_encounter(uuid,uuid,text,jsonb,uuid,jsonb)',
+    'public.result_create_linked(uuid,uuid[],text,uuid,text,integer,text)',
+    'public.record_hmo_settlement(uuid,uuid,numeric,timestamp with time zone,jsonb,text,jsonb)',
+    'public.reschedule_closure_appointments(date,uuid,boolean,jsonb)',
+    'public.lifecycle_lock_and_assert(uuid[],boolean)',
+    'public.lifecycle_lock_results(uuid[],boolean)'] loop
+    if has_function_privilege('anon', f, 'execute') or has_function_privilege('authenticated', f, 'execute') then
+      raise exception '0184 post-condition: % is executable by a client role', f;
+    end if;
+  end loop;
+end
+$post$;

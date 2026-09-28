@@ -1908,4 +1908,83 @@ begin
 end
 $s13$;
 
+-- --- s14: catalog sweep --------------------------------------------------------------------
+do $s14$
+declare
+  k_tables constant text[] := array['visits', 'appointments', 'patient_consents', 'appointment_attachments',
+    'test_requests', 'payments', 'visit_pins', 'results', 'result_test_requests', 'result_values',
+    'result_amendments', 'critical_alerts', 'hmo_claim_items', 'hmo_payment_allocations',
+    'hmo_claim_resolutions', 'doctor_pf_entries'];
+  t text;
+begin
+  foreach t in array k_tables loop
+    perform pg_temp.expect('s14.1 guard present, enabled, first: ' || t,
+      (select string_agg(tgname || ':' || tgenabled::text, ',') from (
+         select tg.tgname, tg.tgenabled from pg_trigger tg
+          where tg.tgrelid = ('public.' || t)::regclass and not tg.tgisinternal
+            and (tg.tgtype & 2) = 2 and (tg.tgtype & 1) = 1
+          order by tg.tgname collate "C" limit 1) f),
+      'a_lifecycle_guard:O');
+  end loop;
+  perform pg_temp.expect('s14.2 no guard on patients-independent tables',
+    (select count(*)::text from pg_trigger where tgname = 'a_lifecycle_guard'
+       and tgrelid::regclass::text not in (select 'public.' || x from unnest(k_tables) x)
+       and tgrelid::regclass::text not in (select x from unnest(k_tables) x)), '0');
+  perform pg_temp.expect('s14.3 every 0184 definer function is owned by postgres and search_path-pinned',
+    (select coalesce(string_agg(p.proname, ','), 'none') from pg_proc p join pg_roles r on r.oid = p.proowner
+      where p.pronamespace = 'public'::regnamespace
+        and p.proname in ('lifecycle_lock', 'lifecycle_lock_and_assert', 'lifecycle_lock_results', 'lifecycle_patients_of_visits',
+          'lifecycle_patients_of_test_requests', 'lifecycle_patients_of_result', 'lifecycle_patients_of_hmo_items',
+          'lifecycle_patients_of_payments', 'lifecycle_patients_of_amendments', 'lifecycle_patients_of_allocations',
+          'lifecycle_via', 'lifecycle_result_ids_of_row', 'recompute_hmo_batch_status', 'lock_hmo_batch_before_items',
+          'lifecycle_patients_of_row', 'enforce_patient_activity',
+          'create_visit_encounter', 'result_create_linked', 'record_hmo_settlement',
+          'reschedule_closure_appointments', 'current_patient_id')
+        and (r.rolname <> 'postgres' or not p.prosecdef
+             or not (p.proconfig::text like '%search_path=pg_catalog, public, pg_temp%'))), 'none');
+  -- recompute_clinic_fee_for_unreleased is NOT in the list above: it is a
+  -- VERBATIM copy of 0136's body (section (4f)) and keeps 0136's own
+  -- `set search_path to 'public'` rather than the 0184 convention — the same
+  -- kind of documented exception as resolve_patient_guarded's `''` (Task 15
+  -- controller correction). It still must be postgres-owned, SECURITY
+  -- DEFINER, and service_role-only, so that much is checked on its own.
+  perform pg_temp.expect('s14.3b recompute_clinic_fee_for_unreleased is postgres-owned, DEFINER, service_role-only',
+    (select (r.rolname = 'postgres' and p.prosecdef
+             and not has_function_privilege('anon', p.oid, 'execute')
+             and not has_function_privilege('authenticated', p.oid, 'execute')
+             and has_function_privilege('service_role', p.oid, 'execute'))::text
+       from pg_proc p join pg_roles r on r.oid = p.proowner
+      where p.pronamespace = 'public'::regnamespace and p.proname = 'recompute_clinic_fee_for_unreleased'),
+    'true');
+  perform pg_temp.expect('s14.4 nothing new is callable by anon',
+    (select coalesce(string_agg(p.proname, ','), 'none') from pg_proc p
+      where p.pronamespace = 'public'::regnamespace
+        and p.proname in ('lifecycle_lock', 'lifecycle_lock_and_assert', 'lifecycle_norm', 'enforce_patient_activity',
+          'lifecycle_lock_results', 'lock_hmo_batch_before_items', 'recompute_hmo_batch_status',
+          'create_visit_encounter', 'result_create_linked', 'record_hmo_settlement',
+          'reschedule_closure_appointments', 'notification_skip_summary', 'resolve_patient_guarded',
+          'result_save_draft', 'result_finalise_commit', 'result_edit_commit', 'correct_payment',
+          'appointments_insert_slot_guarded', 'recompute_clinic_fee_for_unreleased')
+        and has_function_privilege('anon', p.oid, 'execute')), 'none');
+  -- Every FK from a guarded table into a patient-bearing table is one the row
+  -- resolver follows (Facts table). A new such column fails here until
+  -- lifecycle_patients_of_row learns it (Codex plan review P1-1).
+  perform pg_temp.expect('s14.5 the resolver knows every patient-bearing FK',
+    (select string_agg(c.conrelid::regclass::text || '.' || a.attname, ','
+                       order by (c.conrelid::regclass::text || '.' || a.attname) collate "C")
+       from pg_constraint c join pg_attribute a on a.attrelid = c.conrelid and a.attnum = c.conkey[1]
+      where c.contype = 'f' and cardinality(c.conkey) = 1
+        and c.conrelid::regclass::text = any(k_tables)
+        and c.confrelid::regclass::text in ('patients', 'visits', 'test_requests', 'payments', 'results',
+              'result_amendments', 'hmo_claim_items', 'hmo_payment_allocations')),
+    'appointment_attachments.patient_id,appointments.patient_id,critical_alerts.patient_id,critical_alerts.result_id,'
+    || 'critical_alerts.test_request_id,critical_alerts.withdrawn_by_amendment,doctor_pf_entries.hmo_allocation_id,'
+    || 'doctor_pf_entries.test_request_id,hmo_claim_items.test_request_id,hmo_claim_resolutions.item_id,'
+    || 'hmo_payment_allocations.item_id,hmo_payment_allocations.payment_id,patient_consents.patient_id,'
+    || 'payments.corrects_payment_id,payments.visit_id,result_amendments.result_id,result_amendments.test_request_id,'
+    || 'result_test_requests.result_id,result_test_requests.test_request_id,result_values.result_id,'
+    || 'test_requests.parent_id,test_requests.visit_id,visit_pins.visit_id,visits.patient_id');
+end
+$s14$;
+
 rollback;
