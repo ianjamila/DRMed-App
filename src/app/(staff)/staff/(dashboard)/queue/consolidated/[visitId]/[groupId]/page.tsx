@@ -376,7 +376,10 @@ export default async function ConsolidatedQueuePage({
       ) : loadState === "ready" ? (
         <ReportEditForm
           // By report only: ReportEditForm keys its own fields by version
-          // and must itself survive the save's revalidation (X2).
+          // and must itself survive the save's revalidation (X2). If that
+          // re-render's reads fail (the alert branches here), this slot
+          // changes type and the Saved panel goes with it — the edit itself
+          // is committed and shows in History.
           key={editing.resultId}
           resultId={editing.resultId}
           expectedAmendmentCount={res.amendment_count}
