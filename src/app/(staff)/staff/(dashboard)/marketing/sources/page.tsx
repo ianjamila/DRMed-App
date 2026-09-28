@@ -74,10 +74,16 @@ export default async function BookingSourcesReportPage({ searchParams }: SearchP
     ),
     // New patients created in the period. A merged duplicate (dedup tool) or a
     // deleted record is not counted — the same active-record rule as the rest
-    // of the app.
+    // of the app. Imported records are left out too: the May import and the
+    // reception-sheet sync (0170) stamp legacy_import_run_id and create their
+    // patients in bulk on the night they run, so created_at is the import
+    // night, not the day the patient registered — the sync's first run alone
+    // would read as one day with ~549 "new patients". No app registration
+    // path (counter, website, portal) ever sets legacy_import_run_id.
     fetchAllRows<NewPatientSourceRow>(
       (rFrom, rTo) => {
-        let q = activePatients(supabase.from("patients").select("id, referral_source, created_at"));
+        let q = activePatients(supabase.from("patients").select("id, referral_source, created_at"))
+          .is("legacy_import_run_id", null);
         if (fromIso) q = q.gte("created_at", fromIso);
         if (toIso) q = q.lt("created_at", toIso);
         return q
@@ -101,7 +107,7 @@ export default async function BookingSourcesReportPage({ searchParams }: SearchP
       <PageHeader
         eyebrow={SECTION_NAME["/staff/marketing"]}
         title={ROUTE_NAME["/staff/marketing/sources"]}
-        subtitle="Where appointments, website messages and new patients came from, for a chosen period. Online
+        subtitle="Where appointments, website messages and new app registrations came from, for a chosen period. Online
           bookings and messages tag themselves automatically; a booking made by phone or in
           person is only countable here from the day reception started picking “How did they
           reach us?” in the New appointment form."
@@ -137,9 +143,9 @@ export default async function BookingSourcesReportPage({ searchParams }: SearchP
           hint="Website messages whose status is Booked, over all messages in the period."
         />
         <StatCard
-          label="New patients"
+          label="New app registrations"
           value={newPatients.total.toLocaleString("en-PH")}
-          hint={`${newPatients.recorded.toLocaleString("en-PH")} said how they heard about us`}
+          hint={`${newPatients.recorded.toLocaleString("en-PH")} said how they heard about us · imports excluded`}
         />
       </div>
 
@@ -168,10 +174,13 @@ export default async function BookingSourcesReportPage({ searchParams }: SearchP
       />
 
       <ProportionTable
-        title="New patients by how they heard about us"
+        title="New app registrations by how they heard about us"
         columnLabel="Heard about us from"
         rows={newPatients.bySource.map((s) => ({ label: s.label, count: s.count }))}
-        note="Every patient record created in the period, whoever made it. Reception answers
+        note="Every patient record created in the app in the period, whoever made it. Records brought
+          in by an import — the original May 2026 import and the reception Google Sheet sync (Admin
+          Tools › Sheet Sync) — are not counted: they are created in bulk on the night the import
+          runs, not on the day the patient registered. Reception answers
           “Referral source” on the New Patient form (required since 11 September 2026), and
           patients answer “How did you hear about us?” when they book or register on the website
           (from 24 September 2026). Patients added from the New appointment form are not asked
