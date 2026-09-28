@@ -412,16 +412,28 @@ export async function claimTestsAction(input: unknown): Promise<BulkQueueResult>
       // Lost a race on part of the panel: hand back what THIS call just took
       // (matched on our own started_at), so a panel is never left half-claimed.
       if (got.length > 0) {
-        await supabase
+        const compensateIds = got.map((r) => r.id);
+        const { data: compensated, error: compensateError } = await supabase
           .from("test_requests")
           .update({ status: "requested", assigned_to: null, started_at: null })
-          .in(
-            "id",
-            got.map((r) => r.id),
-          )
+          .in("id", compensateIds)
           .eq("status", "in_progress")
           .eq("assigned_to", session.user_id)
-          .eq("started_at", startedAt);
+          .eq("started_at", startedAt)
+          .select("id");
+        if (compensateError) {
+          console.error("bulk claim panel compensation failed", {
+            panelKey: panel.key,
+            ids: compensateIds,
+            error: compensateError,
+          });
+        } else if ((compensated ?? []).length !== compensateIds.length) {
+          console.error("bulk claim panel compensation failed", {
+            panelKey: panel.key,
+            ids: compensateIds,
+            error: `expected to restore ${compensateIds.length} rows, restored ${(compensated ?? []).length}`,
+          });
+        }
       }
       skipped.push({
         id: panel.key,
@@ -533,14 +545,19 @@ export async function unclaimTestsAction(input: unknown): Promise<BulkQueueResul
 
   const { data: before, error: readError } = await supabase
     .from("test_requests")
-    .select("id, assigned_to, status, visits!inner ( id )")
+    .select("id, assigned_to, status, started_at, visits!inner ( id )")
     .in("id", ids)
     .is("deleted_at", null)
     .is("visits.deleted_at", null);
   if (readError) return { ok: false, error: translatePgError(readError) };
   const byId = new Map((before ?? []).map((r) => [r.id, r]));
 
-  const changed: Array<{ id: string; visit_id: string; previous: string }> = [];
+  const changed: Array<{
+    id: string;
+    visit_id: string;
+    previous: string;
+    previousStartedAt: string | null;
+  }> = [];
   const changedPanels: Array<{
     key: string;
     visitId: string;
@@ -578,7 +595,12 @@ export async function unclaimTestsAction(input: unknown): Promise<BulkQueueResul
     } else if (!data) {
       skipped.push({ id, reason: "Changed just now — refresh the queue." });
     } else {
-      changed.push({ id: data.id, visit_id: data.visit_id, previous: saw });
+      changed.push({
+        id: data.id,
+        visit_id: data.visit_id,
+        previous: saw,
+        previousStartedAt: row.started_at,
+      });
     }
   }
 
@@ -623,8 +645,11 @@ export async function unclaimTestsAction(input: unknown): Promise<BulkQueueResul
     if (got.length !== memberIds.length) {
       // Lost a race on part of the panel: put back what THIS call just
       // released, so a panel is never left half-unclaimed.
+      const compensateIds = got.map((r) => r.id);
+      let compensatedCount = 0;
+      let compensateError: unknown = null;
       for (const row of got) {
-        await supabase
+        const { data: restored, error } = await supabase
           .from("test_requests")
           .update({
             status: "in_progress",
@@ -633,7 +658,22 @@ export async function unclaimTestsAction(input: unknown): Promise<BulkQueueResul
           })
           .eq("id", row.id)
           .eq("status", "requested")
-          .is("assigned_to", null);
+          .is("assigned_to", null)
+          .select("id");
+        if (error) {
+          compensateError ??= error;
+        } else if ((restored ?? []).length > 0) {
+          compensatedCount += 1;
+        }
+      }
+      if (compensateError || compensatedCount !== compensateIds.length) {
+        console.error("bulk unclaim panel compensation failed", {
+          panelKey: panel.key,
+          ids: compensateIds,
+          error:
+            compensateError ??
+            `expected to restore ${compensateIds.length} rows, restored ${compensatedCount}`,
+        });
       }
       skipped.push({ id: panel.key, reason: "Part of this panel changed just now — refresh the queue." });
       continue;
@@ -664,6 +704,7 @@ export async function unclaimTestsAction(input: unknown): Promise<BulkQueueResul
       metadata: {
         visit_id: row.visit_id,
         previous_assignee: row.previous,
+        previous_started_at: row.previousStartedAt,
         reason,
         self_service: ownerId !== null,
         bulk_batch_size: ids.length,

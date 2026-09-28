@@ -381,6 +381,7 @@ export async function deleteTestRequestsManyAction(input: unknown): Promise<Bulk
   const keyOf = new Map<string, string>();
   const panelKeyOf = new Map<string, string>();
   const panelMembersOf = new Map<string, string[]>();
+  const panelRefByKey = new Map<string, PanelRef>();
   const panelKeysByVisit = new Map<string, Set<string>>();
   const byVisit = new Map<string, string[]>();
   const skipped: SkippedRow[] = [];
@@ -411,6 +412,7 @@ export async function deleteTestRequestsManyAction(input: unknown): Promise<Bulk
       keyOf.set(mid, panel.key);
       panelKeyOf.set(mid, panel.key);
     }
+    panelRefByKey.set(panel.key, panel);
     const set = panelKeysByVisit.get(panel.visitId) ?? new Set<string>();
     set.add(panel.key);
     panelKeysByVisit.set(panel.visitId, set);
@@ -435,6 +437,7 @@ export async function deleteTestRequestsManyAction(input: unknown): Promise<Bulk
     }
     for (const panelKeyHere of panelKeysByVisit.get(visitId) ?? []) {
       const memberIds = panelMembersOf.get(panelKeyHere)!;
+      const anyDeleted = memberIds.some((mid) => done.has(mid));
       if (memberIds.every((mid) => done.has(mid))) {
         changedIds.push(panelKeyHere);
       } else {
@@ -442,6 +445,12 @@ export async function deleteTestRequestsManyAction(input: unknown): Promise<Bulk
           id: panelKeyHere,
           reason: "Part of this panel could not be deleted — open it to check.",
         });
+      }
+      // Claim/unclaim already revalidate the panel's own page (Task 6); a
+      // fully- or partly-deleted panel changed what it shows too.
+      if (anyDeleted) {
+        const ref = panelRefByKey.get(panelKeyHere)!;
+        revalidatePath(`/staff/queue/consolidated/${ref.visitId}/${ref.groupId}`);
       }
     }
   }
