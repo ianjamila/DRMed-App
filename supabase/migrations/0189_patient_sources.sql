@@ -364,3 +364,324 @@ begin
   select * from sheet;
 end;
 $$;
+
+-- (8) The ONE definition every surface reads (spec §1.7; plan P8).
+create or replace function public.patient_sources_summary(p_from date, p_to date)
+returns table (
+  new_confirmed            int,
+  new_unconfirmed          int,
+  returning_first_recorded int,
+  served_confirmed         int,
+  served_unconfirmed       int,
+  undated_registrations    int,
+  source_recorded          int,
+  source_total             int,
+  sheet_last_dates         jsonb,
+  sync_paused              boolean,
+  last_synced_at           timestamptz,
+  sheet_rows_present       boolean,
+  last_run_status          text
+)
+language plpgsql
+stable
+security definer
+set search_path = ''
+as $$
+#variable_conflict use_column
+begin
+  if not public.has_role(array['admin']) then
+    raise exception 'Patient Sources is for admins only' using errcode = '42501';
+  end if;
+  perform public._ps_assert_mirror_mode();
+  perform public._ps_check_period(p_from, p_to);
+
+  return query
+  with ids as (
+    select * from public._patient_sources_identities()
+  ),
+  newish as (
+    select * from ids i
+    where i.basis in ('encounter', 'registration') and i.first_date between p_from and p_to
+  ),
+  served as (
+    select distinct e.identity from public._patient_sources_encounters() e
+    where e.service_date between p_from and p_to
+  )
+  select
+    (select count(*) from newish n where n.confirmed and not n.is_returning)::int,
+    (select count(*) from newish n where not n.confirmed)::int,
+    (select count(*) from newish n where n.confirmed and n.is_returning)::int,
+    (select count(*) from served s where s.identity like 'patient:%')::int,
+    (select count(*) from served s where s.identity like 'name:%')::int,
+    (select count(*) from ids i where i.basis = 'undated')::int,
+    (select count(*) from newish n where not n.is_returning and n.channel <> 'not_recorded')::int,
+    (select count(*) from newish n where not n.is_returning)::int,
+    (select coalesce(jsonb_object_agg(t.tab, t.last_date), '{}'::jsonb)
+       from (select l.tab, max(l.service_date) as last_date
+               from public.sheet_encounter_lines l group by l.tab
+             union all
+             select 'customers', max(c.registered_on)
+               from public.sheet_customer_rows c having count(*) > 0) t),
+    (select s.paused from public.sheet_sync_settings s where s.id),
+    (select max(r.ended_at) from public.sheet_sync_runs r
+      where r.status in ('succeeded', 'partial') and not r.dry_run and r.trigger in ('cron', 'manual', 'cli')),
+    (exists (select 1 from public.sheet_encounter_lines) or exists (select 1 from public.sheet_customer_rows)),
+    (select r.status from public.sheet_sync_runs r
+      where not r.dry_run and r.trigger in ('cron', 'manual', 'cli')
+        and r.status in ('succeeded', 'partial', 'failed')
+      order by r.started_at desc, r.id desc
+      limit 1);
+end;
+$$;
+
+-- (9) Channel × bucket counts, only non-empty cells (spec §1.7; plan P7).
+create or replace function public.patient_sources_series(p_from date, p_to date, p_grain text, p_mode text)
+returns table (bucket_start date, channel text, confirmed int, unconfirmed int)
+language plpgsql
+stable
+security definer
+set search_path = ''
+as $$
+#variable_conflict use_column
+begin
+  if not public.has_role(array['admin']) then
+    raise exception 'Patient Sources is for admins only' using errcode = '42501';
+  end if;
+  perform public._ps_assert_mirror_mode();
+  perform public._ps_check_period(p_from, p_to);
+  if p_grain is null or p_grain not in ('day', 'week', 'month', 'period') then
+    raise exception 'Unknown grouping %', coalesce(p_grain, '(none)') using errcode = '22023';
+  end if;
+  if p_mode is null or p_mode not in ('new', 'served') then
+    raise exception 'Unknown count %', coalesce(p_mode, '(none)') using errcode = '22023';
+  end if;
+
+  if p_mode = 'new' then
+    return query
+    select public._ps_bucket(i.first_date, p_grain, p_from), i.channel,
+           (count(*) filter (where i.confirmed))::int,
+           (count(*) filter (where not i.confirmed))::int
+    from public._patient_sources_identities() i
+    where i.basis in ('encounter', 'registration')
+      and not i.is_returning
+      and i.first_date between p_from and p_to
+    group by 1, 2
+    order by 1, 2;
+  else
+    return query
+    with served as (
+      select distinct public._ps_bucket(e.service_date, p_grain, p_from) as b, e.identity
+      from public._patient_sources_encounters() e
+      where e.service_date between p_from and p_to
+    )
+    select s.b, i.channel,
+           (count(*) filter (where i.confirmed))::int,
+           (count(*) filter (where not i.confirmed))::int
+    from served s
+    join public._patient_sources_identities() i on i.identity = s.identity
+    group by 1, 2
+    order by 1, 2;
+  end if;
+end;
+$$;
+
+-- (10) Channel revenue, billed (clinic share) — spec §1.6.
+create or replace function public.patient_sources_revenue(p_from date, p_to date)
+returns table (channel text, confirmed_php numeric, unconfirmed_php numeric)
+language plpgsql
+stable
+security definer
+set search_path = ''
+as $$
+#variable_conflict use_column
+begin
+  if not public.has_role(array['admin']) then
+    raise exception 'Patient Sources is for admins only' using errcode = '42501';
+  end if;
+  perform public._ps_assert_mirror_mode();
+  perform public._ps_check_period(p_from, p_to);
+
+  return query
+  select i.channel,
+         coalesce(sum(l.php) filter (where i.confirmed), 0)::numeric(14,2),
+         coalesce(sum(l.php) filter (where not i.confirmed), 0)::numeric(14,2)
+  from public._ps_revenue_lines(p_from, p_to) l
+  join public._patient_sources_identities() i on i.identity = l.identity
+  where not l.overlap
+  group by i.channel
+  order by i.channel;
+end;
+$$;
+
+-- (11) "Possible double entry": same survivor, same day, app visit AND sheet lines.
+create or replace function public.patient_sources_overlaps(p_from date, p_to date)
+returns table (patient_id uuid, drm_id text, service_date date, app_php numeric, sheet_php numeric)
+language plpgsql
+stable
+security definer
+set search_path = ''
+as $$
+#variable_conflict use_column
+begin
+  if not public.has_role(array['admin']) then
+    raise exception 'Patient Sources is for admins only' using errcode = '42501';
+  end if;
+  perform public._ps_assert_mirror_mode();
+  perform public._ps_check_period(p_from, p_to);
+
+  return query
+  with lines as (
+    select * from public._ps_revenue_lines(p_from, p_to)
+  )
+  select s.survivor_id, p.drm_id, s.service_date,
+         coalesce((select sum(a.php) from lines a
+                    where a.source = 'app' and a.survivor_id = s.survivor_id
+                      and a.service_date = s.service_date), 0)::numeric(14,2),
+         sum(s.php)::numeric(14,2)
+  from lines s
+  join public.patients p on p.id = s.survivor_id
+  where s.source = 'sheet' and s.overlap
+  group by s.survivor_id, p.drm_id, s.service_date
+  order by s.service_date, p.drm_id;
+end;
+$$;
+
+-- (12) Top referring doctors among the period's New customers (spec §1.7; P11).
+create or replace function public.patient_sources_referrers(p_from date, p_to date, p_limit int default 20)
+returns table (doctor_label text, new_confirmed int, new_unconfirmed int)
+language plpgsql
+stable
+security definer
+set search_path = ''
+as $$
+#variable_conflict use_column
+begin
+  if not public.has_role(array['admin']) then
+    raise exception 'Patient Sources is for admins only' using errcode = '42501';
+  end if;
+  perform public._ps_assert_mirror_mode();
+  perform public._ps_check_period(p_from, p_to);
+
+  return query
+  with ids as (
+    select * from public._patient_sources_identities() i
+    where i.basis in ('encounter', 'registration') and not i.is_returning
+      and i.first_date between p_from and p_to
+  ),
+  surv as (
+    select s.patient_id, s.survivor_id from public._ps_survivors() s
+  ),
+  raw as (
+    select i.identity, true as confirmed,
+           coalesce(
+             nullif(btrim(sp.referred_by_doctor), ''),
+             (select c.referred_by_raw
+                from public.sheet_customer_rows c
+                join surv s on s.patient_id = c.patient_id
+               where s.survivor_id = i.survivor_id and nullif(btrim(c.referred_by_raw), '') is not null
+               order by c.sheet_row desc
+               limit 1)
+           ) as raw_label
+    from ids i
+    join public.patients sp on sp.id = i.survivor_id
+    where i.confirmed
+    union all
+    select i.identity, false,
+           (select min(c.referred_by_raw) from public.sheet_customer_rows c
+             where c.loose_key = i.loose_key having count(*) = 1)
+    from ids i
+    where not i.confirmed
+  ),
+  normed as (
+    select r.confirmed, btrim(r.raw_label) as spelling, public._ps_doctor_norm(r.raw_label) as k
+    from raw r where r.raw_label is not null
+  ),
+  spellings as (
+    select n.k, n.spelling, count(*) as c from normed n where n.k is not null group by n.k, n.spelling
+  ),
+  labels as (
+    select distinct on (s.k) s.k, s.spelling from spellings s order by s.k, s.c desc, s.spelling
+  )
+  select l.spelling,
+         (count(*) filter (where n.confirmed))::int,
+         (count(*) filter (where not n.confirmed))::int
+  from normed n
+  join labels l on l.k = n.k
+  group by l.k, l.spelling
+  order by count(*) desc, l.spelling
+  limit greatest(1, least(coalesce(p_limit, 20), 100));
+end;
+$$;
+
+-- (13) The people behind a count (spec §3.3; P9). Total order (first_date, identity).
+create or replace function public.patient_sources_people(
+  p_from date, p_to date, p_mode text, p_channel text, p_limit int, p_offset int)
+returns table (
+  identity_kind text,
+  identity      text,
+  patient_id    uuid,
+  drm_id        text,
+  display_name  text,
+  first_date    date,
+  total_count   bigint
+)
+language plpgsql
+stable
+security definer
+set search_path = ''
+as $$
+#variable_conflict use_column
+begin
+  if not public.has_role(array['admin']) then
+    raise exception 'Patient Sources is for admins only' using errcode = '42501';
+  end if;
+  perform public._ps_assert_mirror_mode();
+  perform public._ps_check_period(p_from, p_to);
+  if p_mode is null or p_mode not in ('new', 'returning', 'served') then
+    raise exception 'Unknown list %', coalesce(p_mode, '(none)') using errcode = '22023';
+  end if;
+
+  return query
+  with ids as (
+    select * from public._patient_sources_identities()
+  ),
+  picked as (
+    select i.identity, i.confirmed, i.survivor_id, i.loose_key, i.first_date as d
+    from ids i
+    where p_mode in ('new', 'returning')
+      and i.basis in ('encounter', 'registration')
+      and i.first_date between p_from and p_to
+      and i.is_returning = (p_mode = 'returning')
+      and (p_channel is null or i.channel = p_channel)
+    union all
+    select i.identity, i.confirmed, i.survivor_id, i.loose_key, min(e.service_date)
+    from public._patient_sources_encounters() e
+    join ids i on i.identity = e.identity
+    where p_mode = 'served'
+      and e.service_date between p_from and p_to
+      and (p_channel is null or i.channel = p_channel)
+    group by i.identity, i.confirmed, i.survivor_id, i.loose_key
+  )
+  select case when k.confirmed then 'confirmed' else 'unconfirmed' end,
+         k.identity,
+         k.survivor_id,
+         p.drm_id,
+         case when k.confirmed
+              then concat_ws(', ', p.last_name, concat_ws(' ', p.first_name, p.middle_name))
+              else coalesce(
+                (select l.name_raw from public.sheet_encounter_lines l
+                  where l.patient_id is null and l.loose_key = k.loose_key
+                  order by l.service_date, l.id limit 1),
+                (select c.full_name_raw from public.sheet_customer_rows c
+                  where c.patient_id is null and c.loose_key = k.loose_key
+                  order by c.sheet_row limit 1))
+         end,
+         k.d,
+         count(*) over ()
+  from picked k
+  left join public.patients p on p.id = k.survivor_id
+  order by k.d, k.identity
+  limit greatest(1, least(coalesce(p_limit, 50), 1000))
+  offset greatest(0, coalesce(p_offset, 0));
+end;
+$$;
