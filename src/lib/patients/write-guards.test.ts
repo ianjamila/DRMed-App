@@ -61,6 +61,8 @@ const KNOWN_WRITER_RPCS = new Set<string>([
   "unclaim_panel_members", // panel-writes.ts unclaimPanelMembers — all-or-nothing panel hand-back (0191).
   "create_visit_encounter", // visits/new/actions.ts createVisitAction — visit, lines, PIN in one transaction (0184).
   "result_create_linked", // create-linked.ts — a result row and its links (0184).
+  "record_hmo_settlement", // hmo-claims/actions.ts recordHmoSettlementAction (0184).
+  "reschedule_closure_appointments", // admin/closures/actions.ts (0184) — skips inactive patients inside the RPC.
 ]);
 
 // Names that count as "this write is guarded" WHEN CALLED DIRECTLY from the

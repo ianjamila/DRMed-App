@@ -33,6 +33,7 @@ import {
   assertResolutionPatientActive,
   assertPaymentPatientActive,
 } from "@/lib/patients/require-active";
+import { withLifecycleRetry } from "@/lib/patients/lifecycle-retry";
 
 export type ActionResult<T = void> = { ok: true; data?: T } | { ok: false; error: string };
 
@@ -640,13 +641,9 @@ export async function voidResolutionAction(input: unknown): Promise<ActionResult
 // Settlement + allocation
 // ============================================================
 
-// NOTE: Settlement is N+1 INSERTs (one payment per visit + N allocations) without a
-// true transaction. Best-effort rollback below deletes any payments inserted before a
-// later failure (the bridge's bridge_payment_delete trigger reverses their JEs). If
-// rollback itself fails (network partition mid-cleanup), orphan payments may persist
-// — they'd remain visible in the audit log and on the visit. For full atomicity,
-// future work can move this into a Postgres function (see 12.3 spec §17 "Estimated
-// effort" notes and the plan's Task 18 NOTE).
+// Settlement (0184): record_hmo_settlement writes one hmo payment per visit
+// and every allocation in one transaction, audited inside it
+// (hmo_settlement.recorded).
 export async function recordHmoSettlementAction(
   input: unknown,
 ): Promise<ActionResult<{ payment_ids: string[]; allocation_count: number }>> {
@@ -664,106 +661,27 @@ export async function recordHmoSettlementAction(
   );
   if (!active.ok) return { ok: false, error: active.error };
 
-  // Load items + their visit_ids.
-  const itemIds = parsed.data.items.map((it) => it.item_id);
-  const { data: items, error: iErr } = await fetchCompleteRowsByIds(itemIds, (ids, from, to) =>
-    admin
-      .from("hmo_claim_items")
-      .select(
-        "id, batch_id, billed_amount_php, paid_amount_php, test_request_id, test_requests!inner(visit_id)",
-      )
-      .in("id", ids)
-      .order("id", { ascending: true })
-      .range(from, to)
+  // 0184: payments (one per visit) and allocations in ONE transaction, under
+  // the claim patients' lifecycle locks and the items' row locks — no
+  // compensating delete loop, no orphan payment if an allocation is refused.
+  const { ip, ua } = await ipAndAgent();
+  const { data, error } = await withLifecycleRetry(() =>
+    admin.rpc("record_hmo_settlement", {
+      p_actor: session.user_id,
+      p_batch_id: parsed.data.batch_id,
+      p_total_amount_php: parsed.data.total_amount_php,
+      // The same value the action used to write to payments.received_at.
+      p_received_at: parsed.data.payment_date,
+      p_items: parsed.data.items,
+      p_bank_reference: parsed.data.bank_reference ?? undefined,
+      p_context: { ip, user_agent: ua },
+    }),
   );
-  if (iErr) return { ok: false, error: translatePgError(iErr) };
-  if (!items || items.length !== itemIds.length) {
-    return { ok: false, error: "Some items not found." };
-  }
-  // Verify all items belong to the input batch_id (single-batch settlement rule).
-  for (const it of items) {
-    if (it.batch_id !== parsed.data.batch_id) {
-      return { ok: false, error: "All items must belong to batch_id." };
-    }
-  }
-
-  // Group amounts by visit_id.
-  const visitTotals = new Map<string, number>();
-  const itemAmount = new Map<string, number>(
-    parsed.data.items.map((i) => [i.item_id, i.amount_php]),
-  );
-  const itemVisit = new Map<string, string>();
-  for (const it of items) {
-    const visitId = (it as unknown as { test_requests: { visit_id: string } }).test_requests
-      .visit_id;
-    itemVisit.set(it.id, visitId);
-    visitTotals.set(visitId, (visitTotals.get(visitId) ?? 0) + (itemAmount.get(it.id) ?? 0));
-  }
-
-  // Insert one payments row per visit.
-  // NOTE: payments table uses `reference_number` and `received_by` (not `reference` / `recorded_by`).
-  const paymentIds: string[] = [];
-  const visitPaymentIds = new Map<string, string>();
-  for (const [visitId, amount] of visitTotals.entries()) {
-    const { data: p, error: pErr } = await admin
-      .from("payments")
-      .insert({
-        visit_id: visitId,
-        amount_php: amount,
-        method: "hmo",
-        reference_number: parsed.data.bank_reference ?? null,
-        received_at: parsed.data.payment_date,
-        received_by: session.user_id,
-      })
-      .select("id")
-      .single();
-    if (pErr || !p) {
-      // Best-effort rollback of payments already inserted.
-      for (const id of paymentIds) {
-        await admin.from("payments").delete().eq("id", id);
-      }
-      return {
-        ok: false,
-        error: translatePgError(pErr ?? { message: "payment insert failed" }),
-      };
-    }
-    paymentIds.push(p.id);
-    visitPaymentIds.set(visitId, p.id);
-  }
-
-  // Insert allocations.
-  const allocRows = parsed.data.items.map((it) => ({
-    payment_id: visitPaymentIds.get(itemVisit.get(it.item_id)!)!,
-    item_id: it.item_id,
-    amount_php: it.amount_php,
-  }));
-  const { error: aErr } = await admin.from("hmo_payment_allocations").insert(allocRows);
-  if (aErr) {
-    for (const id of paymentIds) {
-      await admin.from("payments").delete().eq("id", id);
-    }
-    return { ok: false, error: translatePgError(aErr) };
-  }
-
-  const meta = await auditMeta();
-  await audit({
-    actor_id: session.user_id,
-    actor_type: "staff",
-    action: "hmo_settlement.recorded",
-    resource_type: "hmo_claim_batch",
-    resource_id: parsed.data.batch_id,
-    metadata: {
-      total_amount_php: parsed.data.total_amount_php,
-      payment_count: paymentIds.length,
-      allocation_count: allocRows.length,
-      payment_ids: paymentIds,
-      bank_reference: parsed.data.bank_reference ?? null,
-    },
-    ...meta,
-  });
+  if (error || !data) return { ok: false, error: translatePgError(error ?? { message: "Could not record the settlement." }) };
+  const out = data as { payment_ids: string[]; allocation_count: number };
 
   revalidatePath(`${BASE_PATH}/batches/${parsed.data.batch_id}`);
-  return { ok: true, data: { payment_ids: paymentIds, allocation_count: allocRows.length } };
+  return { ok: true, data: { payment_ids: out.payment_ids, allocation_count: out.allocation_count } };
 }
 
 export async function allocateExistingPaymentAction(input: unknown): Promise<ActionResult> {
