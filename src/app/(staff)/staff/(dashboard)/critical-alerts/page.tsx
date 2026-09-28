@@ -59,6 +59,8 @@ type AlertRow = {
   patient_drm_id: string | null;
   acknowledged_at: string | null;
   acknowledged_by: string | null;
+  withdrawn_at: string | null;
+  withdrawn_by: string | null;
   patients: { first_name: string; last_name: string } | { first_name: string; last_name: string }[] | null;
 };
 
@@ -134,7 +136,7 @@ export default async function CriticalAlertsPage({ searchParams }: SearchProps) 
   const alertSelect = `
     id, created_at, parameter_name, direction, observed_value_si,
     threshold_si, test_request_id, patient_drm_id, acknowledged_at,
-    acknowledged_by,
+    acknowledged_by, withdrawn_at, withdrawn_by,
     patients ( first_name, last_name ),
     test_requests!inner ( assigned_to )
   `;
@@ -151,12 +153,26 @@ export default async function CriticalAlertsPage({ searchParams }: SearchProps) 
   // small in practice (each row needs a phone call to close out) — if it
   // ever isn't, all alerts must still remain visible. Page the transport,
   // then render one complete worklist.
-  const [{ data: unackedRaw, error: unackedError }, { data: recentRaw, count }] = await Promise.all([
+  // The withdrawn history shows only the newest 50 — same "never a silent
+  // cap" rule as the acknowledged history, but shown as an in-band line
+  // instead of a full pager (CLAUDE.md: a bare cap with no indication is the
+  // bug; this one says so).
+  const WITHDRAWN_SHOWN = 50;
+
+  const [
+    { data: unackedRaw, error: unackedError },
+    { data: recentRaw, count },
+    { data: withdrawnRaw, count: withdrawnTotal, error: withdrawnError },
+  ] = await Promise.all([
     fetchCompleteRows((from, to) => scopeToOwn(
       supabase
         .from("critical_alerts")
         .select(alertSelect)
         .is("acknowledged_at", null)
+        // A correction that removed the value withdraws its alert instead of
+        // deleting it (0179) — it is no longer active and must not sit in
+        // the unacknowledged worklist.
+        .is("withdrawn_at", null)
         .order("created_at", { ascending: false })
         .order("id", { ascending: true })
         .range(from, to),
@@ -166,34 +182,59 @@ export default async function CriticalAlertsPage({ searchParams }: SearchProps) 
         .from("critical_alerts")
         .select(alertSelect, { count: "exact" })
         .not("acknowledged_at", "is", null)
+        // Withdrawn rows are never acknowledged, so this is a no-op in
+        // practice — kept for clarity/defence-in-depth (task 15, step 1).
+        .is("withdrawn_at", null)
         .order(sort.key, { ascending: sort.dir === "asc" })
         // Tie-break on id — without a total order, `.range()` below can
         // silently drop or repeat rows between pages.
         .order("id", { ascending: true })
         .range(from, to),
     ),
+    scopeToOwn(
+      supabase
+        .from("critical_alerts")
+        .select(alertSelect, { count: "exact" })
+        .not("withdrawn_at", "is", null)
+        .order("withdrawn_at", { ascending: false })
+        .order("id", { ascending: true })
+        .range(0, WITHDRAWN_SHOWN - 1),
+    ),
   ]);
 
   if (unackedError) throw new Error(unackedError.message);
+  if (withdrawnError) throw new Error(withdrawnError.message);
 
   const unacked = (unackedRaw ?? []) as AlertRow[];
   const recent = (recentRaw ?? []) as AlertRow[];
   const recentTotal = count ?? 0;
   const recentTotalPages = pageCount(recentTotal, size);
+  const withdrawn = (withdrawnRaw ?? []) as AlertRow[];
+  const withdrawnCount = withdrawnTotal ?? 0;
 
-  // Resolve acknowledger names for the recent list.
+  // Resolve acknowledger + withdrawer names — same lookup, one round trip.
   const ackerIds = Array.from(
     new Set(
       recent.map((r) => r.acknowledged_by).filter((v): v is string => !!v),
     ),
   );
+  const withdrawerIds = Array.from(
+    new Set(
+      withdrawn.map((r) => r.withdrawn_by).filter((v): v is string => !!v),
+    ),
+  );
   const ackerNames = new Map<string, string>();
-  if (ackerIds.length > 0) {
+  const withdrawerNames = new Map<string, string>();
+  const nameIds = Array.from(new Set([...ackerIds, ...withdrawerIds]));
+  if (nameIds.length > 0) {
     const { data: profs } = await supabase
       .from("staff_profiles")
       .select("id, full_name")
-      .in("id", ackerIds);
-    for (const p of profs ?? []) ackerNames.set(p.id, p.full_name);
+      .in("id", nameIds);
+    for (const p of profs ?? []) {
+      if (p.id && ackerIds.includes(p.id)) ackerNames.set(p.id, p.full_name);
+      if (p.id && withdrawerIds.includes(p.id)) withdrawerNames.set(p.id, p.full_name);
+    }
   }
 
   // Params at their default are omitted so the plain sort state stays the
@@ -395,6 +436,80 @@ export default async function CriticalAlertsPage({ searchParams }: SearchProps) 
             noun="acknowledged alert"
           />
         </div>
+      </details>
+
+      <details className="mt-6 rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white">
+        {/* A correction that removed the value withdraws its alert instead
+            of deleting it (0179) — this is that history, kept for the
+            record. It was never active and can never be acknowledged, so it
+            gets no Acknowledge column and no page 2: the newest 50 are shown
+            with an in-band note when there are more (CLAUDE.md: never a
+            silent cap). */}
+        <summary className="cursor-pointer px-5 py-4 text-sm font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
+          Withdrawn by a correction ({withdrawnCount})
+        </summary>
+        <div className="overflow-x-auto border-t border-[color:var(--color-brand-bg-mid)]">
+          <table className="w-full text-sm">
+            <thead className="bg-[color:var(--color-brand-bg)] text-left text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
+              <tr>
+                <PlainTh label="Patient" />
+                <PlainTh label="Parameter" />
+                <PlainTh label="Observed vs threshold" />
+                <PlainTh label="Withdrawn" />
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-[color:var(--color-brand-bg-mid)]">
+              {withdrawn.length === 0 ? (
+                <tr>
+                  <td
+                    colSpan={4}
+                    className="px-4 py-6 text-center text-sm text-[color:var(--color-brand-text-soft)]"
+                  >
+                    No alerts have been withdrawn by a correction.
+                  </td>
+                </tr>
+              ) : (
+                withdrawn.map((a) => (
+                  <tr key={a.id}>
+                    <td className="px-4 py-3">
+                      <p className="font-semibold text-[color:var(--color-brand-navy)]">
+                        {patientName(a)}
+                      </p>
+                      <p className="font-mono text-xs text-[color:var(--color-brand-text-soft)]">
+                        {a.patient_drm_id ?? "—"}
+                      </p>
+                    </td>
+                    <td className="px-4 py-3">
+                      <p className="font-semibold text-[color:var(--color-brand-navy)]">
+                        {a.parameter_name}
+                      </p>
+                      <DirectionBadge direction={a.direction} />
+                    </td>
+                    <td className="px-4 py-3 font-mono text-xs text-[color:var(--color-brand-text-mid)]">
+                      {a.observed_value_si ?? "?"} (threshold{" "}
+                      {a.threshold_si ?? "?"})
+                    </td>
+                    <td className="px-4 py-3 text-xs text-[color:var(--color-brand-text-mid)]">
+                      {a.withdrawn_at ? manilaDateTime(a.withdrawn_at) : "—"}
+                      <span className="block text-[color:var(--color-brand-text-soft)]">
+                        by{" "}
+                        {a.withdrawn_by
+                          ? (withdrawerNames.get(a.withdrawn_by) ?? "—")
+                          : "—"}
+                      </span>
+                    </td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
+
+        {withdrawnCount > WITHDRAWN_SHOWN && (
+          <p className="border-t border-[color:var(--color-brand-bg-mid)] px-5 py-3 text-xs text-[color:var(--color-brand-text-soft)]">
+            Showing the latest {WITHDRAWN_SHOWN} of {withdrawnCount}.
+          </p>
+        )}
       </details>
     </div>
   );

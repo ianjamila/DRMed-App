@@ -31,7 +31,10 @@ export async function acknowledgeCriticalAlertAction(
     return { ok: false, error: "Alert not found." };
   }
 
-  // Only an unacknowledged alert can be acknowledged — concurrency-safe.
+  // Only an unacknowledged, non-withdrawn alert can be acknowledged —
+  // concurrency-safe. A correction can withdraw an alert (0179) between the
+  // page render and this click, so the update itself must re-check it, not
+  // just the pre-read above.
   const { data, error } = await supabase
     .from("critical_alerts")
     .update({
@@ -40,11 +43,23 @@ export async function acknowledgeCriticalAlertAction(
     })
     .eq("id", alertId)
     .is("acknowledged_at", null)
+    .is("withdrawn_at", null)
     .select("id")
     .maybeSingle();
 
   if (error) return { ok: false, error: translatePgError(error) };
   if (!data) {
+    const { data: current } = await supabase
+      .from("critical_alerts")
+      .select("withdrawn_at")
+      .eq("id", alertId)
+      .maybeSingle();
+    if (current?.withdrawn_at) {
+      return {
+        ok: false,
+        error: "This alert was withdrawn by a correction to the result.",
+      };
+    }
     return {
       ok: false,
       error: "This alert was already acknowledged by someone else.",

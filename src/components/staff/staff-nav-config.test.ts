@@ -162,6 +162,7 @@ describe("Front Desk is ordered by the daily flow", () => {
       "/staff/visits/queue",
       "/staff/visits",
       "/staff/payments/cash-drawer",
+      "/staff/result-follow-ups",
     ]);
     expect(front?.subgroups).toBeUndefined();
   });
@@ -359,6 +360,7 @@ describe("visible hrefs per role", () => {
       "/staff/visits/queue",
       "/staff/visits",
       "/staff/payments/cash-drawer",
+      "/staff/result-follow-ups",
       // Lab & Imaging › Queue, which for reception is only "Released today"
       // — where it prints the patient's copy (owner decision 2026-09-24).
       "/staff/queue",
@@ -764,6 +766,33 @@ describe("Cron Health navigation", () => {
     expect(existsSync(`${DASHBOARD_DIR}/admin/operations/layout.tsx`)).toBe(false);
     expect(existsSync(`${DASHBOARD_DIR}/admin/operations/(daily-monitoring)/layout.tsx`)).toBe(true);
     expect(existsSync(`${DASHBOARD_DIR}/admin/operations/cron-health/page.tsx`)).toBe(true);
+  });
+});
+
+describe("Sheet Sync is admin-only", () => {
+  const href = "/staff/admin/sheet-sync";
+
+  it("sits in Admin Tools right after Merge Duplicate Patients", () => {
+    const item = itemByHref(href);
+    expect(item.label).toBe("Sheet Sync");
+    expect(item.roles).toEqual(["admin"]);
+  });
+
+  it.each(ALL_ROLES.filter((r) => r !== "admin"))(
+    "%s does not see Sheet Sync",
+    (role) => {
+      expect(allHrefs(visibleNavFor(role))).not.toContain(href);
+    },
+  );
+
+  it("admin sees Sheet Sync", () => {
+    expect(allHrefs(visibleNavFor("admin"))).toContain(href);
+  });
+
+  it("lights exactly this item, whichever ?view= the page is on", () => {
+    // usePathname() never carries the query string, so every ?view= of this
+    // one-page admin tool resolves to the same pathname and the same item.
+    expect(activeHrefs(href)).toEqual([href]);
   });
 });
 

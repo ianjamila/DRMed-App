@@ -1,89 +1,14 @@
 import "server-only";
 
-import { SignJWT, importPKCS8 } from "jose";
+import { getServiceAccountToken } from "../google/service-account-token";
 import type { SheetRow } from "./types";
 
 // Minimal Google Sheets client. Avoids the `googleapis` dependency:
-// - Sign a JWT with the service account private key (RS256)
-// - Trade it for a short-lived OAuth access token
+// - Trade the service account key for a short-lived OAuth access token
+//   (shared helper in src/lib/google/service-account-token.ts)
 // - Call sheets.googleapis.com directly with fetch
-// Token is cached in module scope until ~1 minute before expiry.
 
-interface ServiceAccountKey {
-  client_email: string;
-  private_key: string;
-  token_uri?: string;
-}
-
-interface CachedToken {
-  accessToken: string;
-  expiresAt: number; // epoch seconds
-}
-
-let cached: CachedToken | null = null;
-
-function parseServiceAccount(raw: string): ServiceAccountKey {
-  const trimmed = raw.trim();
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(trimmed);
-  } catch {
-    throw new Error("GOOGLE_SERVICE_ACCOUNT_JSON is not valid JSON");
-  }
-  if (
-    typeof parsed !== "object" ||
-    parsed === null ||
-    typeof (parsed as ServiceAccountKey).client_email !== "string" ||
-    typeof (parsed as ServiceAccountKey).private_key !== "string"
-  ) {
-    throw new Error(
-      "GOOGLE_SERVICE_ACCOUNT_JSON is missing client_email or private_key",
-    );
-  }
-  return parsed as ServiceAccountKey;
-}
-
-async function fetchAccessToken(serviceAccountJson: string): Promise<string> {
-  const now = Math.floor(Date.now() / 1000);
-  if (cached && cached.expiresAt - 60 > now) {
-    return cached.accessToken;
-  }
-
-  const sa = parseServiceAccount(serviceAccountJson);
-  const tokenUri = sa.token_uri ?? "https://oauth2.googleapis.com/token";
-  const privateKey = await importPKCS8(sa.private_key, "RS256");
-
-  const assertion = await new SignJWT({
-    scope: "https://www.googleapis.com/auth/spreadsheets",
-  })
-    .setProtectedHeader({ alg: "RS256", typ: "JWT" })
-    .setIssuer(sa.client_email)
-    .setAudience(tokenUri)
-    .setIssuedAt(now)
-    .setExpirationTime(now + 3600)
-    .sign(privateKey);
-
-  const body = new URLSearchParams({
-    grant_type: "urn:ietf:params:oauth:grant-type:jwt-bearer",
-    assertion,
-  });
-
-  const res = await fetch(tokenUri, {
-    method: "POST",
-    headers: { "content-type": "application/x-www-form-urlencoded" },
-    body,
-  });
-  if (!res.ok) {
-    const text = await res.text().catch(() => "");
-    throw new Error(`Google token exchange failed (${res.status}): ${text}`);
-  }
-  const data = (await res.json()) as { access_token: string; expires_in: number };
-  cached = {
-    accessToken: data.access_token,
-    expiresAt: now + data.expires_in,
-  };
-  return data.access_token;
-}
+const SPREADSHEETS_SCOPE = "https://www.googleapis.com/auth/spreadsheets";
 
 export interface AppendRowsArgs {
   serviceAccountJson: string;
@@ -115,7 +40,7 @@ export async function appendRowsToTab({
     return { updatedRange: null, appendedRows: 0 };
   }
 
-  const accessToken = await fetchAccessToken(serviceAccountJson);
+  const accessToken = await getServiceAccountToken(serviceAccountJson, SPREADSHEETS_SCOPE);
   const range = encodeURIComponent(tabName);
   const url =
     `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(sheetId)}` +

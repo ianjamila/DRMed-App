@@ -38,11 +38,12 @@ describe("PatientCreateSchema referral_source", () => {
     if (r.success) expect(r.data.referral_source).toBe("online_facebook");
   });
 
-  // The New Patient form offers every active referral_sources row (12), but
-  // validation used to accept only the 8 ids from 0011 — Instagram, TikTok,
-  // Returning patient and Gift code were offered and then refused.
+  // The New Patient form offers every active referral_sources row (18, since
+  // 0170 added the six sheet-sync channels), but validation used to accept
+  // only the 8 ids from 0011 — Instagram, TikTok, Returning patient and Gift
+  // code were offered and then refused.
   it("accepts every source the staff form offers", () => {
-    expect(REFERRAL_SOURCE_IDS.length).toBe(12);
+    expect(REFERRAL_SOURCE_IDS.length).toBe(18);
     for (const id of REFERRAL_SOURCE_IDS) {
       const r = PatientCreateSchema.safeParse({ ...base, referral_source: id });
       expect(r.success, id).toBe(true);

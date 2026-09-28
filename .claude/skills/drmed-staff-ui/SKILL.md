@@ -27,12 +27,15 @@ The three "chrome" systems every staff page hangs off of: the **sidebar nav conf
 | Card component | `…/(dashboard)/_dashboards/_components/stat-card.tsx` (`StatCard`) |
 | Brand theme tokens | `src/app/globals.css` (`--color-brand-*`) |
 | Cron Health (admin-only, Operations nav subgroup) | `src/app/(staff)/staff/(dashboard)/admin/operations/cron-health/page.tsx` — beside the `(daily-monitoring)` route group, so no tab bar; canonical legs (with the plain `label` + `description` the page shows) + status rule in `src/lib/ops/cron-heartbeats.ts`, drift guards in `cron-heartbeats.test.ts` |
+| Sheet Sync (admin-only, Admin Tools nav item, last after Patient Merge) | `src/app/(staff)/staff/(dashboard)/admin/sheet-sync/page.tsx` — 4 in-page views (`?view=overview\|review\|resort\|history`) via `sectionTabClass`/`sectionTabsNavClass` (a param-driven bar, not `<SectionTabs/>`); nav entry + description in `staff-nav-config.ts` |
 
 Roles everywhere: `reception`, `medtech`, `xray_technician`, `pathologist`, `admin`.
 
 ## 1 · Sidebar navigation — `staff-nav-config.ts`
 
 `STAFF_NAV: StaffNavSection[]` drives the whole sidebar. A **section** has a `heading` and either flat `items`, collapsible `subgroups` (`{heading, items}`), or both, plus two optional flags: `adminOnly` (the whole section is dropped for non-admins regardless of item roles) and `collapsible` (rendered as a collapsed-by-default `<details>`; `isSectionActive()` opens it when a child is active). Current sections in order: Overview · Front Desk (Reception Queue, Patients, then subgroup Messages & Bookings = Appointments, Website Messages — Inquiries was retired by 0154, zero rows ever) · Billing (Visit Records, Quick Quote, Cash Drawer) · Lab & Imaging · Admin (subgroups Pay Doctors, Payroll, Books & Reports — first item **Send-out Labs** (0164) —, Operations, Catalog & Setup, Admin Tools) · Personal · **Hidden Tabs** (`adminOnly + collapsible` — parked pages the partner may want back; don't add live features there).
+
+**Result Follow-ups** (0179): a plain Front Desk item, `href: "/staff/result-follow-ups"`, `roles: ["reception", "admin"]` — the list of patients holding an out-of-date copy of a corrected result. It's just the nav wiring; the list itself, its RPC and the `StalePrintWarning` component it pairs with live in `drmed-result-templates`.
 
 **Labels are Title Case** (owner decision 2026-09-15): "Reception Queue", "Quick Quote", "HMO Claims", "Run Payroll" — every sidebar item, section/subgroup heading, in-page tab and dashboard quick-link. Acronyms and brand names stay as-is (HMO, SSS, IndexNow). `staff-nav-config.test.ts` fails on a sentence-case label. A page's `<h1>` and `metadata.title` follow the label whenever the two differ ONLY by letter case ("Cash Drawer" opens a page headed "Cash Drawer"); a heading that is a genuinely different phrase ("Pay runs" under Run Payroll) is a naming decision, not a casing one, and stays until it is deliberately renamed. Buttons stay sentence case ("+ New visit", "+ New patient") — they are actions, not page names.
 
@@ -103,6 +106,8 @@ The home dashboard at `/staff` routes by role to a `_dashboards/*-dashboard.tsx`
 3. Render `{show("your.id") && <StatCard label=… value=… hint=… href=… accent=… />}` next to a sibling card.
 
 No migration is required — absence of a prefs row means visible.
+
+**0179 cards:** `reception.result_followups` and `admin.result_followups` (group `attention`) both link to `/staff/result-follow-ups` and count its open rows; `lab.updated_7d` (group `snapshot`, roles `medtech`/`pathologist`/`xray_technician`, label "Updated (last 7 days)") counts results corrected in the last 7 days. The list logic and `StalePrintWarning` (`src/components/staff/stale-print-warning.tsx`) — the small print-chrome piece flagging a printed copy behind the current version — are documented in `drmed-result-templates`.
 
 ## 4 · List pages — header, filter chips, paging
 

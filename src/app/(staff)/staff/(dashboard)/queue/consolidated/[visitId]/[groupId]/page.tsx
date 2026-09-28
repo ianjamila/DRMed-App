@@ -26,6 +26,11 @@ import { claimRemarks, type ClaimEvent } from "@/lib/queue/claim-remarks";
 import { fetchClaimEvents } from "@/lib/queue/fetch-claim-events";
 import { ClaimHistory } from "@/components/staff/claim-remarks-list";
 import { QueueUnclaimButton } from "../../../queue-unclaim-button";
+import { resultsMemberSections, membersWithinSections } from "@/lib/results/report-section-gate";
+import { shouldOfferNotify } from "@/lib/results/copy-followups";
+import { fetchCopyStates } from "@/lib/results/copy-followups.server";
+import { fetchVersionDiff } from "@/lib/results/version-diff.server";
+import type { AmendmentChanges } from "@/lib/results/version-diff";
 
 type One<T> = T | T[] | null;
 const one = <T,>(v: One<T>): T | null => (Array.isArray(v) ? (v[0] ?? null) : v);
@@ -165,9 +170,22 @@ export default async function ConsolidatedQueuePage({
     groupId,
   );
   const byId = new Map(rows.map((r) => [r.id, r]));
+  const admin = createAdminClient();
 
   // ---- Finished reports -------------------------------------------------
   const resultIds = partition.reports.map((r) => r.resultId);
+
+  // Every-member section check on "View PDF →" (0179): the page-level gate
+  // above (loadConsolidatedDetail's sectionOk) only sees LIVE members, but a
+  // shared report PDF still carries a deleted member's values — so a lab
+  // role must cover every linked test, deleted ones included, the same rule
+  // the archive's "PDF →" link uses.
+  const allowedSections = sectionsForRole(session.role);
+  const memberSectionsByResultId =
+    resultIds.length > 0 ? await resultsMemberSections(admin, resultIds) : new Map<string, (string | null)[]>();
+  const canViewPdf = (resultId: string): boolean =>
+    memberSectionsByResultId !== null &&
+    membersWithinSections(allowedSections, memberSectionsByResultId.get(resultId) ?? []);
   const reportResults = new Map(
     partition.reports.map((rep) => {
       const res = one(one(byId.get(rep.memberIds[0])!.result_test_requests)!.results)!;
@@ -228,6 +246,14 @@ export default async function ConsolidatedQueuePage({
   const reportEvents =
     reportMemberIds.length > 0 ? await fetchClaimEvents(supabase, reportMemberIds) : new Map<string, ClaimEvent[]>();
 
+  // 0179: "What changed" between corrected versions — one query per report,
+  // and only for reports that actually have an amendment to diff.
+  const changesByResult = new Map<string, AmendmentChanges[]>();
+  for (const id of resultIds) {
+    if ((reportResults.get(id)?.amendment_count ?? 0) === 0) continue;
+    changesByResult.set(id, (await fetchVersionDiff(supabase, id)) ?? []);
+  }
+
   const gate = labQueueGate(visit);
   const reports: ReportCardData[] = partition.reports.map((rep) => {
     const res = reportResults.get(rep.resultId)!;
@@ -266,6 +292,8 @@ export default async function ConsolidatedQueuePage({
         by: staffName.get(a.amended_by) ?? null,
       })),
       remarks: claimRemarks(rep.memberIds.flatMap((id) => reportEvents.get(id) ?? [])),
+      changes: changesByResult.get(rep.resultId) ?? [],
+      canViewPdf: canViewPdf(rep.resultId),
       editHref: canEdit.get(rep.resultId)
         ? `/staff/queue/consolidated/${visitId}/${groupId}?edit=${rep.resultId}#result-${rep.resultId}`
         : null,
@@ -323,6 +351,22 @@ export default async function ConsolidatedQueuePage({
         conv: v.numeric_value_conv == null ? "" : String(v.numeric_value_conv),
       };
     }
+    // 0179: the edit form's opt-in "let the patient know" checkbox. Read
+    // through the signed-in client; amendConsolidatedReport re-checks with
+    // the admin client before it ever sends.
+    const copyStates = await fetchCopyStates(supabase, [editing.resultId]);
+    let notifyOffer = shouldOfferNotify(copyStates?.get(editing.resultId));
+    // R1: the portal only serves released results. The Server Action
+    // re-checks with the admin client before it ever sends, but every
+    // member's status is already in `byId` from the load above, so the
+    // checkbox can hide/disable up front rather than offer and fail.
+    const allMembersReleased = editing.members.every((m) => byId.get(m.id)?.status === "released");
+    if (notifyOffer.offered && !allMembersReleased) {
+      notifyOffer = {
+        offered: false,
+        reason: "The result isn't released — the patient can't open an update yet.",
+      };
+    }
     editForm = {
       resultId: editing.resultId,
       node: loadState === "load_failed" ? (
@@ -337,6 +381,7 @@ export default async function ConsolidatedQueuePage({
           params={params}
           editableParamIds={[...editable]}
           initial={initial}
+          notifyOffer={notifyOffer}
           doneHref={`/staff/queue/consolidated/${visitId}/${groupId}#result-${editing.resultId}`}
         />
       ) : (
@@ -353,7 +398,6 @@ export default async function ConsolidatedQueuePage({
   // the same viewer re-rendering within 5 minutes (refresh, back button) is
   // not a new view. Never from generateMetadata — only a real render counts.
   if (resultIds.length > 0) {
-    const admin = createAdminClient();
     const { ip, ua } = await ipAndAgent();
     for (const resultId of resultIds) {
       const recent = await hasRecentAudit(

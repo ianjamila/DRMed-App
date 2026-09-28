@@ -61,6 +61,7 @@ const SURFACES: Record<string, Surface> = {
   "src/app/(patient)/portal/(authenticated)/data-export/route.ts": { meaning: "history", why: "RA 10173 export of the signed-in (already active-checked) patient's own record." },
   "src/components/staff/notification-bell.tsx": { meaning: "history", why: "Names the patient of a past staff event." },
   "src/lib/appointments/booking-alert.ts": { meaning: "history", why: "Names the patient of a booking that already happened." },
+  "src/lib/notifications/notify-corrected.ts": { meaning: "history", why: "Reads contact info of a patient already proven active by checkPatientRecipient above (0167)." },
   "src/lib/consent/gate.ts": { meaning: "history", why: "Resolves the actual visit's consent state, never a directory lookup." },
   "src/lib/emails-log/query.ts": { meaning: "history", why: "Email history must still find deleted and merged identities." },
 
@@ -70,6 +71,7 @@ const SURFACES: Record<string, Surface> = {
   "src/lib/patients/lifecycle-display.ts": { meaning: "lifecycle", why: "Banner data for deleted/merged records." },
   "src/lib/actions/patients/lifecycle.ts": { meaning: "lifecycle", why: "Delete dialog preview of the target record." },
   "src/lib/notifications/active-patient-recipient.ts": { meaning: "lifecycle", why: "Final recipient check before every patient email/SMS." },
+  "src/lib/sheet-sync/store.ts": { meaning: "lifecycle", why: "loadPatients excludes deleted rows (0167) but keeps merged tombstones so the identity index can still resolve a link to the survivor — selects both deleted_at and merged_into_id to make that call itself. loadDeletedPatients (review fix E) reads the opposite slice — deleted_at is not null — for the deleted-patient-match hold; it selects both columns too, even though only deleted_at is filtered." },
   "scripts/seed-test-users.ts": { meaning: "lifecycle", why: "Fixture lookup refuses a DRM-ID held by an inactive record." },
   "scripts/seed-sample-results.ts": { meaning: "lifecycle", why: "Fixture lookup refuses a DRM-ID held by an inactive record." },
   "scripts/seed-screenshot-data.ts": { meaning: "lifecycle", why: "Fixture lookup refuses a DRM-ID held by an inactive record." },

@@ -47,6 +47,14 @@ import {
 import { codeDuplicatesName } from "@/lib/results/consolidated-reports";
 import { ListPagination, PAGE_SIZES } from "@/components/staff/list-pagination";
 import { fetchCompleteRowsByIds } from "@/lib/reports/paging";
+import { fetchPrintState } from "@/lib/results/print-history";
+import {
+  parseUpdatedFilter,
+  updatedSinceIso,
+  UPDATED_FILTER_LABEL,
+  type UpdatedFilter,
+} from "@/lib/results/updated-filter";
+import { resultsMemberSections, membersWithinSections } from "@/lib/results/report-section-gate";
 import { InactivePatientBadge } from "@/components/staff/inactive-patient-badge";
 import { isActivePatient } from "@/lib/patients/active";
 
@@ -104,6 +112,50 @@ const STATUS_BADGE: Record<string, string> = {
   cancelled: "bg-red-50 text-red-700 border-red-200",
 };
 
+// The archive's main select, in three literal shapes rather than one
+// interpolated with `${…}`. query-surfaces.test.ts statically proves every
+// test_requests chain that filters visits.deleted_at also embeds
+// visits!inner, by reading the literal text passed to .select() in the same
+// call chain (CLAUDE.md: PostgREST silently ignores a filter on a
+// LEFT-joined embed) — it can resolve a plain string/template-literal
+// constant referenced by name, even from inside a ternary, but not a
+// template built with a substitution, so each shape below is spelled out in
+// full rather than composed from a shared fragment.
+const ARCHIVE_SELECT_BASE = `
+  id, status, released_at, completed_at, requested_at,
+  visits!inner ( id, visit_number, payment_status, hmo_provider_id,
+    patients!inner ( first_name, last_name, drm_id, deleted_at, merged_into_id ) ),
+  services!inner ( code, name, kind, section, report_group_id, report_groups ( name ) )
+`;
+
+// "Updated · last 7 days" (?updated=7d): adds an inner embed down to
+// results.amended_at, which every result_edit_commit stamps to now() — the
+// latest correction's own timestamp, so no result_amendments read is
+// needed. Only added while this filter is active: an unconditional !inner
+// here would turn the plain select into an inner join and silently drop
+// every test whose result was never corrected.
+const ARCHIVE_SELECT_UPDATED_7D = `
+  id, status, released_at, completed_at, requested_at,
+  visits!inner ( id, visit_number, payment_status, hmo_provider_id,
+    patients!inner ( first_name, last_name, drm_id, deleted_at, merged_into_id ) ),
+  services!inner ( code, name, kind, section, report_group_id, report_groups ( name ) ),
+  result_test_requests!inner ( results!inner ( amended_at ) )
+`;
+
+// "Updated by me" (?updated=mine): nested two levels under `results`, not
+// test_requests directly, because result_edit_commit only stamps
+// result_amendments.test_request_id with the ANCHOR member of a
+// consolidated report (p_anchor_test_request_id, 0172) — filtering via the
+// embedded result_id instead catches every sibling member of the report,
+// matching what the old id-list version did.
+const ARCHIVE_SELECT_UPDATED_MINE = `
+  id, status, released_at, completed_at, requested_at,
+  visits!inner ( id, visit_number, payment_status, hmo_provider_id,
+    patients!inner ( first_name, last_name, drm_id, deleted_at, merged_into_id ) ),
+  services!inner ( code, name, kind, section, report_group_id, report_groups ( name ) ),
+  result_test_requests!inner ( results!inner ( result_amendments!inner ( amended_by ) ) )
+`;
+
 interface SearchProps {
   searchParams: Promise<{
     status?: string;
@@ -114,6 +166,7 @@ interface SearchProps {
     dir?: string;
     page?: string;
     size?: string;
+    updated?: string;
   }>;
 }
 
@@ -171,16 +224,55 @@ export default async function AllResultsPage({ searchParams }: SearchProps) {
   const q = sp.q?.trim() ?? "";
 
   const admin = createAdminClient();
+  // The Updated column further down still reads result_amendments through
+  // the signed-in client (RLS-scoped reasons).
+  const staffDb = await createClient();
+
+  // "Updated" filter (?updated=7d|mine) — narrows the archive to tests whose
+  // result was corrected recently, or by the signed-in staff member. Applied
+  // as a database-side filter via a PostgREST embedded !inner join on the
+  // main query itself — never a post-fetch id list (CLAUDE.md: a filter
+  // applied after the fetch breaks count:"exact" + .range() paging) and
+  // never an inlined uuid array (the old shape read up to 1000
+  // result_amendments rows, then inlined their linked test ids into
+  // `.in("id", …)` — a URL up to ~37KB, and itself silently capped at 1000
+  // corrections).
+  //
+  // 7d: `results.amended_at` is stamped to now() by every result_edit_commit
+  // (0172, redefined by 0179) — it already IS the latest correction's
+  // timestamp, so no result_amendments read is needed at all. "Latest
+  // correction within 7 days" and "any correction within 7 days" are the
+  // same test, since the latest correction time is >= every earlier one.
+  //
+  // mine: nested two levels under `results`, not test_requests directly,
+  // because result_edit_commit only stamps result_amendments.test_request_id
+  // with the ANCHOR member of a consolidated report (p_anchor_test_request_id,
+  // 0172) — filtering via the embedded result_id instead catches every
+  // sibling member, matching what the old id-list version did. This runs on
+  // the service-role client, so `amended_by = me` isn't RLS-enforced here —
+  // the archive's own section gating (below) already scopes which rows this
+  // role can see at all.
+  //
+  // Both embeds are added to the select ONLY while their filter is active:
+  // CLAUDE.md — an unconditional !inner would turn the plain select into an
+  // inner join and silently drop every test whose result was never
+  // corrected.
+  const updated: UpdatedFilter | null = parseUpdatedFilter(sp.updated);
 
   let query = admin
     .from("test_requests")
     .select(
-      `
-        id, status, released_at, completed_at, requested_at,
-        visits!inner ( id, visit_number, payment_status, hmo_provider_id,
-          patients!inner ( first_name, last_name, drm_id, deleted_at, merged_into_id ) ),
-        services!inner ( code, name, kind, section, report_group_id, report_groups ( name ) )
-      `,
+      // Three literal select shapes, chosen by a plain ternary rather than
+      // `${…}` interpolation: query-surfaces.test.ts statically proves every
+      // test_requests chain that filters visits.deleted_at embeds
+      // visits!inner (CLAUDE.md — PostgREST silently ignores a filter on a
+      // LEFT-joined embed), and it can only read a literal/no-substitution
+      // template argument, not a computed string.
+      updated === "7d"
+        ? ARCHIVE_SELECT_UPDATED_7D
+        : updated === "mine"
+          ? ARCHIVE_SELECT_UPDATED_MINE
+          : ARCHIVE_SELECT_BASE,
       { count: "exact" },
     )
     .is("deleted_at", null)
@@ -246,7 +338,13 @@ export default async function AllResultsPage({ searchParams }: SearchProps) {
     }
   }
 
-  const { data, count } = await query.returns<ResultRow[]>();
+  if (updated === "7d") {
+    query = query.gte("result_test_requests.results.amended_at", updatedSinceIso());
+  } else if (updated === "mine") {
+    query = query.eq("result_test_requests.results.result_amendments.amended_by", staff.user_id);
+  }
+
+  const { data, count, error: updatedFilterError } = await query.returns<ResultRow[]>();
   const rows = data ?? [];
 
   // Which result each test_request links to — junction → results. A
@@ -322,7 +420,6 @@ export default async function AllResultsPage({ searchParams }: SearchProps) {
   // SIGNED-IN client, not `admin`: RLS on result_amendments (0172,
   // staff_can_read_finished_result) keeps the reason from a medtech whose
   // sections cover only part of a combined report — the date still shows.
-  const staffDb = await createClient();
   const amendedIds = Array.from(
     new Set(
       Array.from(linkByTrId.values())
@@ -341,6 +438,21 @@ export default async function AllResultsPage({ searchParams }: SearchProps) {
       if (!lastEditReason.has(am.result_id)) lastEditReason.set(am.result_id, am.reason);
     }
   }
+
+  // Whether the latest print of a corrected result's file is an older
+  // version than the one on file now — "Printed copy out of date" in the
+  // Updated column. This archive has no Print button of its own, but the
+  // counter may have printed the earlier version from the visit page.
+  const printableFiles = Array.from(
+    new Map(
+      Array.from(linkByTrId.values())
+        .filter((l) => l.hasPdf)
+        .map((l) => [l.resultId, l]),
+    ).values(),
+  );
+  const { stale: staleByResultId } = await fetchPrintState(
+    printableFiles.map((l) => ({ resultId: l.resultId, version: l.amendmentCount })),
+  );
 
   // Remarks column: each test's claim history, same reader and wording as the
   // lab queue. Called through the signed-in staff client, NOT `admin` above —
@@ -389,6 +501,30 @@ export default async function AllResultsPage({ searchParams }: SearchProps) {
     awaitingPayment: awaitingByVisit.get(r.visit.id) ?? false,
   }));
 
+  // Every-member section check on the "PDF →" link (0179): a shared report
+  // PDF still carries a deleted member's values, so the gate has to read
+  // sections for EVERY linked test — deleted ones included — not just the
+  // live members this page's query already returned. One batched read keyed
+  // by every result on the page that has a PDF.
+  const pdfResultIds = Array.from(
+    new Set(
+      foldedRows.flatMap((v) =>
+        v.items
+          .filter((item) => item.pdfTestRequestId !== null && item.resultId !== null)
+          .map((item) => item.resultId!),
+      ),
+    ),
+  );
+  const memberSectionsByResultId =
+    pdfResultIds.length > 0 ? await resultsMemberSections(admin, pdfResultIds) : new Map<string, (string | null)[]>();
+  const canViewItemPdf = (item: ArchiveItem): boolean => {
+    if (!item.pdfTestRequestId || !item.resultId) return false;
+    return (
+      memberSectionsByResultId !== null &&
+      membersWithinSections(allowedSections, memberSectionsByResultId.get(item.resultId) ?? [])
+    );
+  };
+
   // One membership lookup per report item, shared by the label and the
   // caveat line below the table.
   const membershipFor = (item: ArchiveItem): MembershipDisplay =>
@@ -415,6 +551,7 @@ export default async function AllResultsPage({ searchParams }: SearchProps) {
     sort: isDefaultSort ? null : sort.key,
     dir: isDefaultSort ? null : sort.dir,
     size: size === DEFAULT_SIZE ? null : String(size),
+    updated,
   };
 
   function buildHref(overrides: Record<string, string | null>): string {
@@ -443,7 +580,7 @@ export default async function AllResultsPage({ searchParams }: SearchProps) {
     />
   );
 
-  const hasFilters = Boolean(start || end || q || status !== "all");
+  const hasFilters = Boolean(start || end || q || status !== "all" || updated);
 
   return (
     <div className="px-4 py-8 sm:px-6 lg:px-8">
@@ -492,6 +629,37 @@ export default async function AllResultsPage({ searchParams }: SearchProps) {
         })}
       </nav>
 
+      <nav className="mb-4 flex flex-wrap gap-2" aria-label="Updated filter">
+        {(Object.keys(UPDATED_FILTER_LABEL) as UpdatedFilter[]).map((key) => {
+          const active = updated === key;
+          return (
+            <Link
+              key={key}
+              // Toggling an Updated chip keeps the sort, page size and status
+              // tab — only the Updated filter and the page change.
+              href={buildHref({ updated: active ? null : key, page: null })}
+              aria-pressed={active}
+              className={`min-h-11 rounded-full border px-4 py-2 text-sm font-medium transition-colors ${
+                active
+                  ? "border-violet-600 bg-violet-600 text-white"
+                  : "border-[color:var(--color-brand-bg-mid)] bg-white text-[color:var(--color-brand-navy)] hover:border-violet-600"
+              }`}
+            >
+              {UPDATED_FILTER_LABEL[key]}
+            </Link>
+          );
+        })}
+      </nav>
+
+      {updated && updatedFilterError ? (
+        <p
+          role="alert"
+          className="mb-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-900"
+        >
+          Couldn&apos;t apply the Updated filter — try again in a moment.
+        </p>
+      ) : null}
+
       <form
         className="mb-6 grid grid-cols-1 gap-3 rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white p-4 sm:grid-cols-2 lg:grid-cols-4"
         action="/staff/results"
@@ -508,6 +676,8 @@ export default async function AllResultsPage({ searchParams }: SearchProps) {
         {size === DEFAULT_SIZE ? null : (
           <input type="hidden" name="size" value={String(size)} />
         )}
+        {/* Submitting Apply must not silently drop an active Updated chip. */}
+        {updated ? <input type="hidden" name="updated" value={updated} /> : null}
         <div className="flex flex-col">
           <label htmlFor="start" className="text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
             Requested from
@@ -562,6 +732,7 @@ export default async function AllResultsPage({ searchParams }: SearchProps) {
                 start: null,
                 end: null,
                 q: null,
+                updated: null,
                 page: null,
               })}
               className="min-h-11 rounded-md border border-[color:var(--color-brand-bg-mid)] px-4 py-1.5 text-sm text-[color:var(--color-brand-text-soft)] transition-colors hover:border-[color:var(--color-brand-cyan)]"
@@ -705,6 +876,11 @@ export default async function AllResultsPage({ searchParams }: SearchProps) {
                                     {" "}— {lastEditReason.get(item.resultId!)}
                                   </span>
                                 ) : null}
+                                {staleByResultId.has(item.resultId!) ? (
+                                  <span className="block text-amber-800" role="note">
+                                    Printed copy out of date
+                                  </span>
+                                ) : null}
                               </div>
                             ))}
                         </div>
@@ -716,6 +892,7 @@ export default async function AllResultsPage({ searchParams }: SearchProps) {
                               key={item.key}
                               item={item}
                               visitId={g.visitId}
+                              pdfAllowed={canViewItemPdf(item)}
                               patientActive={pat === null || isActivePatient(pat)}
                             />
                           ))}
@@ -866,10 +1043,15 @@ function ArchiveItemLabel({
 function ArchiveItemActions({
   item,
   visitId,
+  pdfAllowed,
   patientActive,
 }: {
   item: ArchiveItem;
   visitId: string;
+  /** Every-member section check (0179) — a shared report PDF still carries a
+   *  deleted member's values, so a lab role must cover every linked test,
+   *  not just the live ones this row shows. */
+  pdfAllowed: boolean;
   /** 0167: a deleted/merged patient's result stays viewable but not editable. */
   patientActive: boolean;
 }) {
@@ -880,7 +1062,7 @@ function ArchiveItemActions({
     EDITABLE_STATUSES.has(item.tests[0].status);
   return (
     <div className="flex flex-wrap items-baseline gap-x-2">
-      {item.pdfTestRequestId ? (
+      {item.pdfTestRequestId && pdfAllowed ? (
         <a
           href={`/staff/results/${item.pdfTestRequestId}/pdf`}
           target="_blank"

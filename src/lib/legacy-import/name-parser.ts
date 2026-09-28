@@ -21,7 +21,26 @@ export function parseName(
   if (full && full.includes(",")) {
     const [rawLast, ...restParts] = full.split(",");
     const rest = restParts.join(",").trim();
-    const last = titleCase(rawLast.trim());
+    const rawLastTrim = rawLast.trim();
+
+    if (!rawLastTrim && !rest) {
+      // Both sides of the comma are blank (e.g. a bare ","). Fall back to the
+      // dedicated columns exactly like the no-comma branch does below.
+      const first = titleCase((firstFallback ?? "").trim());
+      const last = titleCase((lastFallback ?? "").trim());
+      const middle = titleCase((middleFallback ?? "").trim());
+      if (first || last) {
+        return { first_name: first || null, last_name: last || null, middle_name: middle || null, unparseable: false };
+      }
+      return { first_name: null, last_name: null, middle_name: null, unparseable: true };
+    }
+
+    // A blank surname before the comma (", First Middle") deliberately does NOT
+    // fall back to the Last Name column. The May importer stored such rows with
+    // last_name "", so a fallback here would re-key them and the sheet sync
+    // would create a second patient (plan D6: a re-read row must yield the
+    // exact name May created). These rows stay review items for a human.
+    const last = titleCase(rawLastTrim);
     if (!rest) {
       return { first_name: null, last_name: last || null, middle_name: null, unparseable: !last };
     }

@@ -207,6 +207,17 @@ export function translatePgError(err: PgError): string {
         : "This result can't be edited right now. Reload the page and try again.";
     case "P0067":
       return "This test is part of a finished combined report (such as Chemistry), so it can't be deleted on its own.";
+    // Sheet Sync (0170): the lease-fenced sync RPCs.
+    case "P0062":
+      return "Another sheet sync is running. Try again in a few minutes.";
+    case "P0063":
+      return "This sheet sync stopped because a newer run took over. Check the run history.";
+    case "P0064":
+      return "Someone already handled this review item. Refresh the page.";
+    // 0179: result_mark_copy_contacted — either the amendment id no longer
+    // exists, or it is not the result's latest correction any more.
+    case "P0068":
+      return "This correction is no longer the latest one (the result was corrected again, or the entry is gone). Refresh the list and follow up the newest correction.";
     default:
       return err.message ?? "Database error. Please try again.";
   }
