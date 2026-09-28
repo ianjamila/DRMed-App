@@ -1899,7 +1899,8 @@ revoke all on function public.recompute_clinic_fee_for_unreleased() from public,
 grant execute on function public.recompute_clinic_fee_for_unreleased() to service_role;
 
 -- ---------------------------------------------------------------------------
--- (5) resolve_patient_guarded — 0167's body (lines 901-944) plus:
+-- (5) resolve_patient_guarded — 0170's body (supabase/migrations/0170_sheet_sync_foundation.sql
+-- lines 184-227: 0167's body + search_path '' + app.referral_origin) plus:
 --   * last name matched case-insensitively (owner, 2026-09-25; prod had zero
 --     active case-variant groups). The identity lock key already lowercased.
 --   * the OLDEST active candidate (created_at, id), deterministic.
@@ -1984,8 +1985,12 @@ grant execute on function public.resolve_patient_guarded(text, text, date, jsonb
 -- package.decomposed) — so a crash can no longer leave a visit without its
 -- lines, PIN or audit trail. Prices come from the app (pure reads + TS
 -- arithmetic, src/lib/visits/encounter-payload.ts); this re-checks the actor,
--- the shape and that each visit's total equals its lines. P0073 = refused
--- here (message passes through); P0058 = inactive patient.
+-- the shape and that each visit's total equals its lines. The package
+-- header/component STRUCTURE itself (which service ids belong under which
+-- header) is taken on trust from the app and not re-derived from
+-- package_components here — only that every component is priced at ₱0 is
+-- re-checked, the same way createOneVisit built it. P0073 = refused here
+-- (message passes through); P0058 = inactive patient.
 -- ---------------------------------------------------------------------------
 create or replace function public.create_visit_encounter(
   p_actor          uuid,
@@ -2029,6 +2034,14 @@ begin
   if (jsonb_array_length(p_visits) = 2) <> (p_visit_group_id is not null) then
     raise exception 'a split encounter needs a group id, and only a split one has one' using errcode = 'P0073';
   end if;
+  -- 0184 review: a group id must belong to exactly one encounter/patient — an
+  -- id already in use on another visit would make its group PIN flash and
+  -- group receipt span two encounters (possibly two different patients).
+  if p_visit_group_id is not null and exists (
+    select 1 from public.visits where visit_group_id = p_visit_group_id
+  ) then
+    raise exception 'this visit group id is already in use by another encounter' using errcode = 'P0073';
+  end if;
   if p_pin_hash is null or p_pin_hash !~ '^\$2[aby]\$[0-9]{2}\$.{53}$' then
     raise exception 'the portal PIN was not hashed' using errcode = 'P0073';
   end if;
@@ -2060,6 +2073,19 @@ begin
     ) then
       raise exception 'a bill line is malformed (missing id, bad status, or a component without its package)'
         using errcode = 'P0073';
+    end if;
+    -- The package header/component STRUCTURE is not re-derived from
+    -- package_components (the app builds it — see the header comment above),
+    -- but every component (a line with a parent_id) is a ₱0 row per
+    -- createOneVisit, so that much is cheap to re-check in centavos.
+    if exists (
+      select 1 from jsonb_array_elements(v_lines) l
+       where nullif(l ->> 'parent_id', '') is not null
+         and (round(coalesce((l ->> 'base_price_php')::numeric, 0) * 100)::bigint <> 0
+           or round(coalesce((l ->> 'discount_amount_php')::numeric, 0) * 100)::bigint <> 0
+           or round(coalesce((l ->> 'final_price_php')::numeric, 0) * 100)::bigint <> 0)
+    ) then
+      raise exception 'a package component must be priced at ₱0' using errcode = 'P0073';
     end if;
     -- Compared in integer CENTAVOS: the app sums JS numbers (100.10 + 200.20
     -- arrives as 300.29999999999995) and every money column is numeric(10,2).

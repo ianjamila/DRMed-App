@@ -1412,8 +1412,9 @@ $grant9$;
 
 do $s9$
 declare
-  k_rec  constant uuid := 'a1000000-0000-4000-8000-000000000184';
-  k_med  constant uuid := 'a2000000-0000-4000-8000-000000000184';
+  k_rec     constant uuid := 'a1000000-0000-4000-8000-000000000184';
+  k_med     constant uuid := 'a2000000-0000-4000-8000-000000000184';
+  k_rec_off constant uuid := 'a3000000-0000-4000-8000-000000000184';   -- inactive reception (s9.30)
   k_pkg  constant uuid := 'c2000000-0000-4000-8000-000000000184';
   k_lab  constant uuid := 'c0000000-0000-4000-8000-000000000184';
   k_lab2 constant uuid := 'c1000000-0000-4000-8000-000000000184';
@@ -1423,9 +1424,19 @@ declare
   pr uuid := pg_temp.mk_patient('S9P');
   d uuid := pg_temp.mk_patient('S9D');
   h uuid := gen_random_uuid();
+  h2 uuid := gen_random_uuid();     -- s9.28 priced-component fixture
+  h3 uuid := gen_random_uuid();     -- s9.29 component-before-header fixture
+  comp3 uuid := gen_random_uuid();
   g uuid := gen_random_uuid();
-  one jsonb; res jsonb; vid uuid; n int;
+  one jsonb; res jsonb; vid uuid; n int; ctx text;
 begin
+  -- An inactive reception actor (0184 review, s9.30).
+  insert into auth.users (id, instance_id, aud, role, email, encrypted_password,
+                          email_confirmed_at, created_at, updated_at)
+  values (k_rec_off, '00000000-0000-0000-0000-000000000000',
+          'authenticated', 'authenticated', 'lk-reception-off@example.test', '', now(), now(), now());
+  insert into public.staff_profiles (id, full_name, role, is_active)
+  values (k_rec_off, 'LK Reception Off', 'reception', false);
   one := pg_temp.enc_visit(1900, jsonb_build_array(
     pg_temp.enc_line(h, k_pkg, 1500, null, true, 'in_progress'),
     pg_temp.enc_line(gen_random_uuid(), k_lab, 400, null, false, 'requested'),
@@ -1470,6 +1481,13 @@ begin
   n := (select count(*) from public.visits where patient_id = d);
   perform pg_temp.expect('s9.11 deleted patient refused',
     pg_temp.state_of(format($q$select public.create_visit_encounter(%L, %L, %L, jsonb_build_array(%L::jsonb))$q$, k_rec, d, hash, one)), 'P0058');
+  -- 0184 review: s9.11's P0058 alone is vacuous — visits/test_requests/
+  -- visit_pins are ALSO independently guarded (section 3), so it would pass
+  -- identically even with create_visit_encounter's own pre-lock deleted
+  -- entirely. Assert the raise came from the RPC's OWN pre-lock.
+  ctx := pg_temp.context_of(format($q$select public.create_visit_encounter(%L, %L, %L, jsonb_build_array(%L::jsonb))$q$, k_rec, d, hash, one));
+  perform pg_temp.expect('s9.11c …and it was create_visit_encounter''s OWN pre-lock, not the downstream guard',
+    (ctx not like '%enforce_patient_activity%')::text, 'true');
   perform pg_temp.expect('s9.12 …and nothing was written', (select count(*) from public.visits where patient_id = d)::text, n::text);
   perform pg_temp.expect('s9.13 total that does not match the lines',
     pg_temp.state_of(format($q$select public.create_visit_encounter(%L, %L, %L, jsonb_build_array(%L::jsonb))$q$,
@@ -1524,6 +1542,38 @@ begin
         pg_temp.enc_line(gen_random_uuid(), k_lab2, 200.20, null, false, 'requested'))))), 'P0073');
   perform pg_temp.expect('s9.25 …three encounters, four visits written',
     ((select count(*) from public.visits where patient_id = a) - n)::text, '4');
+
+  -- 0184 review: a group id must belong to exactly one encounter. `g` already
+  -- covers pr's two split visits from s9.8/9.9.
+  perform pg_temp.expect('s9.26 a visit_group_id already used by another encounter is refused',
+    pg_temp.state_of(format($q$select public.create_visit_encounter(%L, %L, %L, jsonb_build_array(%L::jsonb, %L::jsonb), %L)$q$,
+      k_rec, a, hash, one, one, g)), 'P0073');
+  perform pg_temp.expect('s9.27 …and nothing new was added to that group',
+    (select count(*)::text from public.visits where visit_group_id = g), '2');
+
+  -- 0184 review: package decomposition is taken on trust from the app, but a
+  -- priced component (header 0, component 100, total still matches the sum —
+  -- isolating this from the total-mismatch check above) must still be refused.
+  perform pg_temp.expect('s9.28 a priced package component is refused',
+    pg_temp.state_of(format($q$select public.create_visit_encounter(%L, %L, %L, jsonb_build_array(%L::jsonb))$q$,
+      k_rec, a, hash, pg_temp.enc_visit(100, jsonb_build_array(
+        pg_temp.enc_line(h2, k_pkg, 0, null, true, 'in_progress'),
+        pg_temp.enc_line(gen_random_uuid(), k_lab, 100, h2, false, 'requested'))))), 'P0073');
+
+  -- 0184 review: the shape check resolves a component's header by scanning
+  -- the whole `v_lines` array (not by payload order), and the two INSERT …
+  -- SELECT statements split on parent_id, not on array position — so a
+  -- component listed BEFORE its header in the payload must still be accepted
+  -- and linked to the right parent.
+  res := public.create_visit_encounter(k_rec, a, hash, jsonb_build_array(
+    pg_temp.enc_visit(1500, jsonb_build_array(
+      pg_temp.enc_line(comp3, k_lab, 0, h3, false, 'requested'),
+      pg_temp.enc_line(h3, k_pkg, 1500, null, true, 'in_progress')))), null, null);
+  perform pg_temp.expect('s9.29 a component listed before its header in the payload is accepted and linked',
+    (select parent_id::text from public.test_requests where id = comp3), h3::text);
+
+  perform pg_temp.expect('s9.30 an inactive reception actor cannot start a visit',
+    pg_temp.state_of(format($q$select public.create_visit_encounter(%L, %L, %L, jsonb_build_array(%L::jsonb))$q$, k_rec_off, a, hash, one)), 'P0073');
 
   perform pg_temp.expect('s9.20 EXECUTE service_role only',
     (has_function_privilege('service_role', 'public.create_visit_encounter(uuid,uuid,text,jsonb,uuid,jsonb)', 'execute')
