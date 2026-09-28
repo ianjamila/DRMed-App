@@ -12,6 +12,7 @@ import {
   formatProdWarning,
   hostOf,
   isLocalHost,
+  localOnlyProblems,
   parseConfirmFlag,
   planEnvFiles,
   readProdOptIn,
@@ -602,5 +603,31 @@ describe("formatLoadSummary", () => {
       io: io({ [dev]: "", [prod]: "" }),
     });
     expect(formatLoadSummary(production)).toContain("PROD opt-in");
+  });
+});
+
+describe("localOnlyProblems", () => {
+  it("passes a fully local configuration", () => {
+    expect(
+      localOnlyProblems(
+        { NEXT_PUBLIC_SUPABASE_URL: "http://127.0.0.1:54321", SUPABASE_DB_URL: "postgresql://postgres:postgres@127.0.0.1:54322/postgres" },
+        { APP_BASE: "http://localhost:3007" },
+      ),
+    ).toEqual([]);
+  });
+  it("refuses a remote target even when --prod / SEED_ALLOW_PROD would allow it elsewhere", () => {
+    const problems = localOnlyProblems(
+      { NEXT_PUBLIC_SUPABASE_URL: "https://abcdefghijklmnopqrst.supabase.co", SEED_ALLOW_PROD: "1" },
+      {},
+    );
+    expect(problems.join("\n")).toContain("abcdefghijklmnopqrst.supabase.co");
+  });
+  it("refuses a remote app URL", () => {
+    expect(
+      localOnlyProblems({ NEXT_PUBLIC_SUPABASE_URL: "http://127.0.0.1:54321" }, { APP_BASE: "https://drmed.ph" }).join("\n"),
+    ).toContain("drmed.ph");
+  });
+  it("refuses when nothing is configured", () => {
+    expect(localOnlyProblems({}, {})).toEqual(["no database is configured"]);
   });
 });
