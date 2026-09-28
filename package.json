@@ -44,6 +44,7 @@
     "dedup:patients": "tsx scripts/patient-dedup/index.ts",
     "smoke:dashboards": "tsx scripts/smoke-dashboards.mjs",
     "smoke:print": "tsx scripts/smoke-print.ts",
+    "smoke:locks": "tsx scripts/smoke-lifecycle-locks.ts",
     "perf:rls-probe": "tsx scripts/perf/rls-equivalence-probe.ts",
     "perf:rls-check": "tsx scripts/perf/rls-equivalence-check.ts",
     "perf:rls-prove": "tsx scripts/perf/rls-equivalence-prove.ts",
