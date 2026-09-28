@@ -966,6 +966,7 @@ export async function undoBulkAppointmentsAction(input: unknown): Promise<BulkUn
   const supabase = await createClient();
   const undoBatchId = crypto.randomUUID();
   const moved: Array<{ id: string; patient_id: string | null; current: string; restoreTo: string }> = [];
+  const erroredIds = new Set<string>();
   let failed = false;
   for (const bucket of bucketAppointmentUndo(toWrite)) {
     for (const part of chunk(bucket.ids, BULK_ID_CHUNK)) {
@@ -977,6 +978,8 @@ export async function undoBulkAppointmentsAction(input: unknown): Promise<BulkUn
         .select("id, patient_id");
       if (error) {
         failed = true;
+        for (const id of part) erroredIds.add(id);
+        console.error("bulk appointment undo write failed", { current: bucket.current, restoreTo: bucket.restoreTo, ids: part, error });
         continue;
       }
       for (const row of data ?? []) moved.push({ ...row, current: bucket.current, restoreTo: bucket.restoreTo });
@@ -984,7 +987,13 @@ export async function undoBulkAppointmentsAction(input: unknown): Promise<BulkUn
   }
   const movedIds = new Set(moved.map((m) => m.id));
   for (const e of toWrite) {
-    if (!movedIds.has(e.id)) notRestored.push({ id: e.id, reason: "changed again since — refresh to see its status" });
+    if (movedIds.has(e.id)) continue;
+    notRestored.push({
+      id: e.id,
+      reason: erroredIds.has(e.id)
+        ? "could not be undone just now — try again"
+        : "changed again since — refresh to see its status",
+    });
   }
 
   if (moved.length > 0) {

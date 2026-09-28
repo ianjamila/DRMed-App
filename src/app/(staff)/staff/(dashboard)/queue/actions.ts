@@ -1186,11 +1186,15 @@ export async function undoBulkQueueAction(input: unknown): Promise<BulkUndoResul
           for (const id of outcome.restoredIds) restoredTestIds.add(id);
         }
       }
+      // The core never compensates a partial panel restore (restoring is
+      // always safe to keep), so a panel's consolidated page can have
+      // changed even when the group below doesn't fully succeed.
+      if (restoredTestIds.size > 0) anyChanged = true;
       for (const group of groups) {
         const ids = group.steps.map((s) => s.id);
+        if (ids.some((id) => restoredTestIds.has(id))) trackPanel(group.key);
         if (ids.length > 0 && ids.every((id) => restoredTestIds.has(id))) {
           restoredIds.push(group.key);
-          anyChanged = true;
         } else {
           notRestored.push({ id: group.key, reason: RESTORE_PANEL_CHANGED });
         }
