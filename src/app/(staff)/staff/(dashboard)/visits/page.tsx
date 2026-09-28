@@ -333,6 +333,7 @@ export default async function VisitsIndexPage({ searchParams }: SearchProps) {
               rev: "1",
             })
           }
+          trendView={view}
           prior={
             priorSummary ? { rows: priorSummary, totals: summaryTotals(priorSummary) } : null
           }

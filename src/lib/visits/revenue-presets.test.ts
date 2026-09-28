@@ -4,6 +4,7 @@ import {
   isRevenuePresetKey,
   matchRevenuePreset,
   REVENUE_PRESET_KEYS,
+  trendMonths,
   yearOnYearChange,
 } from "./revenue-presets";
 
@@ -63,5 +64,28 @@ describe("yearOnYearChange", () => {
   it("has no percentage when last year was zero", () => {
     expect(yearOnYearChange(500, 0)).toBeNull();
     expect(yearOnYearChange(0, 0)).toBeNull();
+  });
+});
+
+describe("trendMonths", () => {
+  it("returns the 12 months ending with the current, partial one", () => {
+    const m = trendMonths("2026-09-28");
+    expect(m).toHaveLength(12);
+    expect(m[0]).toEqual({ key: "2025-10", label: "Oct", year: 2025, start: "2025-10-01", end: "2025-10-31", partial: false });
+    expect(m[11]).toEqual({ key: "2026-09", label: "Sep", year: 2026, start: "2026-09-01", end: "2026-09-28", partial: true });
+    expect(m.map((x) => x.key)).toEqual([
+      "2025-10", "2025-11", "2025-12", "2026-01", "2026-02", "2026-03",
+      "2026-04", "2026-05", "2026-06", "2026-07", "2026-08", "2026-09",
+    ]);
+  });
+
+  it("handles February and the 1st of January", () => {
+    const m = trendMonths("2027-01-01", 3);
+    expect(m.map((x) => [x.start, x.end])).toEqual([
+      ["2026-11-01", "2026-11-30"],
+      ["2026-12-01", "2026-12-31"],
+      ["2027-01-01", "2027-01-01"],
+    ]);
+    expect(trendMonths("2028-03-05", 2)[0]).toMatchObject({ start: "2028-02-01", end: "2028-02-29" });
   });
 });
