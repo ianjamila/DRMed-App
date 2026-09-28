@@ -21,6 +21,11 @@ import {
 } from "@/components/forms/stable-fields";
 import { formatPhp } from "@/lib/marketing/format";
 import {
+  PUBLIC_REFERRAL_QUESTION,
+  REFERRAL_SOURCE_IDS,
+  REFERRAL_SOURCE_LABEL,
+} from "@/lib/patients/referral-sources";
+import {
   defaultClinicFee,
   doctorLineBase,
   zeroClinicFeeReason,
@@ -54,6 +59,7 @@ interface PatientLite {
   drm_id: string;
   first_name: string;
   last_name: string;
+  referral_source: string | null;
 }
 
 interface HmoProviderLite {
@@ -1010,6 +1016,19 @@ export function VisitForm({
             })}
           </div>
         </fieldset>
+      ) : null}
+
+      {patient.referral_source === null ? (
+        <label className="block text-sm">
+          <span className="font-bold">{PUBLIC_REFERRAL_QUESTION}</span>{" "}
+          <span className="text-[color:var(--color-brand-text-soft)]">(optional — ask the patient; skip if they don&apos;t say)</span>
+          <select name="referral_source" defaultValue="" className="mt-1 block w-full rounded border px-2 py-2">
+            <option value="">— Skip —</option>
+            {REFERRAL_SOURCE_IDS.map((id) => (
+              <option key={id} value={id}>{REFERRAL_SOURCE_LABEL[id]}</option>
+            ))}
+          </select>
+        </label>
       ) : null}
 
       <div className="grid gap-3 sm:grid-cols-2">
