@@ -768,10 +768,11 @@ export async function AdminDashboard({ session }: { session: StaffSession }) {
   const showPeople =
     show("admin.active_employees") || showPayrollRunsCard || show("admin.new_patients_today");
 
-  // P17: an admin viewing as reception is refused by the report functions
-  // (has_role follows View-as) — `newToday` is then `{ ok: false }`, not a
+  // A refused or failed report call comes back as `{ ok: false }`, never a
   // thrown error, so this tile degrades to "Couldn't load" like any other
-  // failed widget rather than breaking the rest of the dashboard.
+  // failed widget rather than breaking the rest of the dashboard. (An admin
+  // viewing as another role never reaches this component — the dashboard
+  // switches on the effective role.)
   const newTodayFormatted = stats.newToday?.ok ? formatNewToday(stats.newToday.data) : null;
   const newTodayError = !stats.newToday?.ok;
 
