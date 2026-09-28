@@ -1843,3 +1843,78 @@ $function$;
 -- service_role=X/postgres} — no anon/authenticated). service_role only.
 revoke all on function public.recompute_clinic_fee_for_unreleased() from public, anon, authenticated;
 grant execute on function public.recompute_clinic_fee_for_unreleased() to service_role;
+
+-- ---------------------------------------------------------------------------
+-- (5) resolve_patient_guarded — 0167's body (lines 901-944) plus:
+--   * last name matched case-insensitively (owner, 2026-09-25; prod had zero
+--     active case-variant groups). The identity lock key already lowercased.
+--   * the OLDEST active candidate (created_at, id), deterministic.
+--   * the candidate's lifecycle lock (shared) and a fresh re-read of activity
+--     AND the triple; if either changed while we waited → P0072, and the app
+--     retries once in a fresh transaction (never a second lifecycle lock here:
+--     a new candidate's key may sort below one already held).
+--   * search_path '' and app.referral_origin = 'patient' around the insert —
+--     a superset of 0170 (sheet-sync), so either may land first.
+-- The identity advisory lock stays FIRST with the key unchanged since 0158.
+-- Delete/restore never take identity locks, so this order cannot invert.
+-- ---------------------------------------------------------------------------
+create or replace function public.resolve_patient_guarded(
+  p_email text, p_last_name text, p_birthdate date, p_fields jsonb
+)
+returns table (id uuid, drm_id text, reused boolean)
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v record;
+begin
+  perform pg_advisory_xact_lock(
+    hashtext('patient_resolve:' || lower(p_email) || ':' || lower(p_last_name) || ':' || p_birthdate::text)
+  );
+  select p.id, p.drm_id into v
+    from public.patients p
+   where p.email = lower(p_email)
+     and lower(p.last_name) = lower(p_last_name)
+     and p.birthdate = p_birthdate
+     and p.deleted_at is null
+     and p.merged_into_id is null
+   order by p.created_at, p.id
+   limit 1;
+  if found then
+    perform public.lifecycle_lock(array[v.id], false);
+    perform 1
+      from public.patients p
+     where p.id = v.id
+       and p.email = lower(p_email)
+       and lower(p.last_name) = lower(p_last_name)
+       and p.birthdate = p_birthdate
+       and p.deleted_at is null
+       and p.merged_into_id is null;
+    if not found then
+      raise exception 'this patient record changed while the booking was being saved — try again'
+        using errcode = 'P0072';
+    end if;
+    return query select v.id, v.drm_id, true;
+    return;
+  end if;
+  perform pg_catalog.set_config('app.referral_origin', 'patient', true);
+  return query
+  insert into public.patients (
+    first_name, last_name, middle_name, birthdate, sex, phone, email, address, pre_registered,
+    referral_source
+  ) values (
+    p_fields->>'first_name', p_fields->>'last_name', nullif(p_fields->>'middle_name',''),
+    (p_fields->>'birthdate')::date,
+    nullif(p_fields->>'sex',''),
+    nullif(p_fields->>'phone',''), lower(p_email), nullif(p_fields->>'address',''),
+    true,
+    (select rs.id from public.referral_sources rs where rs.id = nullif(p_fields->>'referral_source',''))
+  ) returning patients.id, patients.drm_id, false;
+  perform pg_catalog.set_config('app.referral_origin', '', true);
+end;
+$$;
+
+revoke all on function public.resolve_patient_guarded(text, text, date, jsonb) from public;
+revoke execute on function public.resolve_patient_guarded(text, text, date, jsonb) from anon, authenticated;
+grant execute on function public.resolve_patient_guarded(text, text, date, jsonb) to service_role;

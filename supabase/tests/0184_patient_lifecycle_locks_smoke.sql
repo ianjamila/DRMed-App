@@ -1203,4 +1203,48 @@ begin
 end
 $s7$;
 
+-- --- s8: resolve_patient_guarded ---------------------------------------------------
+do $s8$
+declare
+  old_p uuid; new_p uuid; d uuid;
+  r record;
+  s0 int;
+  fields jsonb := jsonb_build_object('first_name', 'Smoke', 'last_name', 'Lks8', 'birthdate', '1990-01-01',
+                                     'email', 'lks8@example.test', 'referral_source', 'family_friends');
+begin
+  insert into public.patients (drm_id, first_name, last_name, birthdate, email, created_at)
+    values ('DRM-LKS8OLD', 'Smoke', 'Lks8', '1990-01-01', 'lks8@example.test', now() - interval '2 days')
+    returning id into old_p;
+  insert into public.patients (drm_id, first_name, last_name, birthdate, email, created_at)
+    values ('DRM-LKS8NEW', 'Smoke', 'Lks8', '1990-01-01', 'lks8@example.test', now() - interval '1 day')
+    returning id into new_p;
+
+  s0 := pg_temp.held('ShareLock');
+  select * into r from public.resolve_patient_guarded('LKS8@example.test', 'Lks8', '1990-01-01', fields);
+  perform pg_temp.expect('s8.1 reuses the OLDEST active candidate', (r.id = old_p and r.reused)::text, 'true');
+  perform pg_temp.expect('s8.2 …holding its lifecycle lock (shared)', (pg_temp.held('ShareLock') - s0 >= 1)::text, 'true');
+  select * into r from public.resolve_patient_guarded('lks8@example.test', 'LKS8', '1990-01-01', fields);
+  perform pg_temp.expect('s8.3 last name matches case-insensitively', (r.id = old_p)::text, 'true');
+
+  perform pg_temp.kill(old_p);
+  select * into r from public.resolve_patient_guarded('lks8@example.test', 'Lks8', '1990-01-01', fields);
+  perform pg_temp.expect('s8.4 a deleted candidate is skipped', (r.id = new_p)::text, 'true');
+  perform pg_temp.kill(new_p);
+  select * into r from public.resolve_patient_guarded('lks8@example.test', 'Lks8', '1990-01-01', fields);
+  perform pg_temp.expect('s8.5 no active candidate → a FRESH record', (not r.reused and r.id not in (old_p, new_p))::text, 'true');
+  perform pg_temp.expect('s8.5b …stamped app.referral_origin = ''patient'' (0170''s trg_patients_referral_origin sees it)',
+    (select p.referral_source_origin from public.patients p where p.id = r.id), 'patient');
+
+  perform pg_temp.expect('s8.6 search_path is empty (superset of 0170)',
+    (select proconfig::text from pg_proc where oid = 'public.resolve_patient_guarded(text,text,date,jsonb)'::regprocedure),
+    '{"search_path=\"\""}');
+  perform pg_temp.expect('s8.7 still stamps app.referral_origin (0170 compatibility)',
+    (pg_get_functiondef('public.resolve_patient_guarded(text,text,date,jsonb)'::regprocedure) like '%app.referral_origin%')::text, 'true');
+  perform pg_temp.expect('s8.8 EXECUTE service_role only',
+    (has_function_privilege('service_role', 'public.resolve_patient_guarded(text,text,date,jsonb)', 'execute')
+     and not has_function_privilege('anon', 'public.resolve_patient_guarded(text,text,date,jsonb)', 'execute')
+     and not has_function_privilege('authenticated', 'public.resolve_patient_guarded(text,text,date,jsonb)', 'execute'))::text, 'true');
+end
+$s8$;
+
 rollback;
