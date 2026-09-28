@@ -271,3 +271,25 @@ width; banner shows "until …" and ticks; Staff Users readout.
 - "End now" on the Active role views panel (one admin ends another's view,
   reason `ended_by_admin`).
 - An `acting_as` filter/column in the audit log viewer.
+
+## Addendum (owner request 2026-09-28): the four "worth considering" items
+
+Built in the same PR (#247), migration **0190** (`0190_claim_holder_guard_and_view_as_end_for.sql`), P-codes **P0075**, **P0076**.
+
+### A1. Claim rule enforced in the database (P0075)
+Today RLS lets every active staff role UPDATE `test_requests` (0151 "reception/admin write" FOR ALL + the lab-role update policy); who may *hold* a line is decided only in TypeScript (`canClaimSection` in `src/lib/auth/role-sections.ts`: the role's section scope, where `[]` denies and `null` is unrestricted, plus the single-owner map `imaging_xray → xray_technician`). Every holder write goes through three app paths (claim, bulk claim, consolidated-panel claim) and one hand-over (reassign).
+
+New `BEFORE INSERT OR UPDATE OF assigned_to ON test_requests` trigger `test_requests_claim_holder_guard`: when `new.assigned_to is not null` and (`TG_OP = 'INSERT'` or `new.assigned_to is distinct from old.assigned_to`), look up the line's `services.section` and the holder's **effective** role (the 0182 CASE on the holder's own `staff_profiles` row, active and not deleted) and raise **P0075** unless:
+- the holder exists and is active, and
+- `lab_sections_for_role(role)` is null (unrestricted) or contains the section (a null section passes only for unrestricted roles), and
+- the section's owner (SQL mirror of `CLAIM_OWNER_BY_SECTION`, currently only `imaging_xray → xray_technician`) is null or equals the role.
+Unclaiming (`assigned_to → null`) and every other column change are untouched; rows are only checked when the holder changes, so historical data is never re-judged. The rule applies to every caller, service role included (it is about the holder, not the writer). A text-pin test keeps the SQL owner map equal to `CLAIM_OWNER_BY_SECTION`. `pg-errors.ts` translates P0075 to "This staff member can't hold this test — only someone who works its section (an X-ray Technician for x-rays) can."
+
+### A2. Open-redirect hardening for post-login `safeRedirectPath`
+`safeRedirectPath` (`src/lib/auth/safe-redirect.ts`) checks `..` segments on the raw string, so `/staff/%2e%2e/patients` passes and the browser resolves it to `/patients` (same origin, never off-site). After its existing checks, parse with `new URL(next, "https://x.invalid")`: require the same origin and a resolved pathname of `/staff` or `/staff/…`; otherwise return `/staff`. Tests for `%2e%2e`, `%2E%2e`, `.%2e`, `%2e.` variants and that ordinary paths with queries still pass unchanged.
+
+### A3. "End now" on Active role views (P0076)
+`view_as_end_for(p_actor uuid, p_target uuid, p_ip inet default null, p_ua text default null) returns boolean`, service_role only: the actor must be an active, non-deleted admin **not currently viewing as another role** (else **P0076**); lock the target row `for update`; if the target is an admin with an active override, clear it and insert `staff.view_as.ended` with `actor_id = p_actor`, `resource_type = 'staff_profile'`, `resource_id = p_target`, metadata `{role, reason: 'ended_by_admin', target_id}` and return true; otherwise (already ended/expired/none) return false and write nothing. The UI: an "End now" button on each panel line (Server Action `endViewAsForAction`, `requireAdminStaff`, pending + inline error, `revalidatePath('/staff/users')`); a false result shows "That role view had already ended." The target's own tab notices on its next navigation/focus (shell sync). An admin cannot end their own view from here (they cannot open the page while simulating); the button is hidden on their own line anyway.
+
+### A4. "Viewing as" on the Audit log
+`/staff/audit` gains a "Viewing as" column (role label from `metadata.acting_as`, blank when absent) and a `viewing_as` filter (`any` = rows that carry `acting_as`, or one of the four roles) applied in the query (`metadata->>acting_as`), carried through sort/paging like the existing filters, and included in any CSV export the page offers.
