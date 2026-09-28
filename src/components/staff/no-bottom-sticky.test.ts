@@ -35,7 +35,9 @@ describe("staff shell bottom bars", () => {
         readFileSync(file, "utf8")
           .split("\n")
           .forEach((line, i) => {
-            if (/\bsticky\b[^"'`]*\bbottom-/.test(line)) offenders.push(`${rel}:${i + 1}`);
+            const hasStickyThenBottom = /\bsticky\b[^"'`]*\bbottom-/.test(line);
+            const hasBottomThenSticky = /\bbottom-[^"'`]*\bsticky\b/.test(line);
+            if (hasStickyThenBottom || hasBottomThenSticky) offenders.push(`${rel}:${i + 1}`);
           });
       }
     }
