@@ -1,12 +1,10 @@
 "use server";
 
-import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { z } from "zod";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { audit } from "@/lib/audit/log";
 import { requireActiveStaff } from "@/lib/auth/require-staff";
 import { generatePin, hashPin } from "@/lib/auth/pin";
 import { setVisitPinFlash } from "@/lib/auth/visit-pin-flash";
@@ -21,7 +19,11 @@ import {
   completeAppointmentFromVisitAction,
   completeArrivedAppointmentsForPatientAction,
 } from "../../appointments/actions";
-import type { Database } from "@/types/database";
+import { buildEncounterVisit, type EncounterDecomposition, type EncounterVisitPayload } from "@/lib/visits/encounter-payload";
+import { withLifecycleRetry } from "@/lib/patients/lifecycle-retry";
+import { translatePgError } from "@/lib/accounting/pg-errors";
+import { ipAndAgent } from "@/lib/server/action-helpers";
+import type { Database, Json } from "@/types/database";
 
 const optionalUuid = z
   .union([z.string(), z.null(), z.undefined()])
@@ -115,10 +117,8 @@ export async function createVisitAction(
 
   const supabase = await createClient();
 
-  // 0167 / PR 3 note: the DB guard only fires when maintain_repeat_patient_flag
-  // flips is_repeat_patient (a patient's SECOND visit), so a deleted patient's
-  // first new visit is otherwise accepted — this app guard is the enforcement
-  // until PR 3's transactional visit-creation RPC.
+  // 0167/0184: friendly refusal before any pricing work; create_visit_encounter
+  // re-checks under the lifecycle lock.
   const active = await assertPatientActive(createAdminClient(), parsed.data.patient_id);
   if (!active.ok) return { ok: false, error: active.error };
 
@@ -346,102 +346,68 @@ export async function createVisitAction(
   // crypto.randomUUID is available in the Node runtime.
   const groupId = split ? crypto.randomUUID() : null;
 
-  const created: OneVisitResult[] = [];
-  try {
-    if (split) {
-      created.push(
-        await createOneVisit(supabase, {
-          patientId: parsed.data.patient_id,
-          createdBy: session.user_id,
-          lines: doctorLines,
-          services: servicesForDecomp,
-          hmo: doctorHmo,
-          attendingPhysicianId: parsed.data.attending_physician_id ?? null,
-          receptionistRemarks: parsed.data.receptionist_remarks,
-          notes: parsed.data.notes ?? null,
-          visitGroupId: groupId,
-          isSample: parsed.data.is_sample,
-        }),
-      );
-      created.push(
-        await createOneVisit(supabase, {
-          patientId: parsed.data.patient_id,
-          createdBy: session.user_id,
-          lines: labLines,
-          services: servicesForDecomp,
-          hmo: labHmo,
-          attendingPhysicianId: null,
-          receptionistRemarks: parsed.data.receptionist_remarks,
-          notes: parsed.data.notes ?? null,
-          visitGroupId: groupId,
-          isSample: parsed.data.is_sample,
-        }),
-      );
-    } else {
-      const onlyDoctor = doctorLines.length > 0;
-      created.push(
-        await createOneVisit(supabase, {
-          patientId: parsed.data.patient_id,
-          createdBy: session.user_id,
-          lines: lines,
-          services: servicesForDecomp,
-          hmo: onlyDoctor ? doctorHmo : labHmo,
-          attendingPhysicianId: onlyDoctor
-            ? parsed.data.attending_physician_id ?? null
-            : null,
-          receptionistRemarks: parsed.data.receptionist_remarks,
-          notes: parsed.data.notes ?? null,
-          visitGroupId: null,
-          isSample: parsed.data.is_sample,
-        }),
-      );
-    }
-  } catch (err) {
-    for (const c of created) await deleteVisitCascade(supabase, c.visitId);
-    return {
-      ok: false,
-      error: err instanceof Error ? err.message : "Could not create visit.",
-    };
+  // One visit, or two sharing groupId (doctor half first, then lab half).
+  const visitSpecs = split
+    ? [
+        { lines: doctorLines, hmo: doctorHmo, attendingPhysicianId: parsed.data.attending_physician_id ?? null },
+        { lines: labLines, hmo: labHmo, attendingPhysicianId: null },
+      ]
+    : [
+        {
+          lines,
+          hmo: doctorLines.length > 0 ? doctorHmo : labHmo,
+          attendingPhysicianId: doctorLines.length > 0 ? parsed.data.attending_physician_id ?? null : null,
+        },
+      ];
+
+  // Pure reads first — a misconfigured package aborts with nothing written.
+  const payloads: EncounterVisitPayload[] = [];
+  for (const spec of visitSpecs) {
+    const decomp = await loadPackageDecompositionsForLines(supabase, spec.lines, servicesForDecomp);
+    if (!decomp.ok) return { ok: false, error: decomp.error };
+    const built = buildEncounterVisit(
+      {
+        lines: spec.lines,
+        decompositions: decomp.decompositions,
+        hmo: spec.hmo,
+        attendingPhysicianId: spec.attendingPhysicianId,
+        receptionistRemarks: parsed.data.receptionist_remarks,
+        notes: parsed.data.notes ?? null,
+        isSample: parsed.data.is_sample,
+      },
+      () => crypto.randomUUID(),
+    );
+    if (!built.ok) return { ok: false, error: built.error };
+    payloads.push(built.payload);
   }
 
-  // One shared PIN across all created visits (portal is per-patient; login
-  // matches the latest pin row). Same hash + expiry on every visit_pins row.
+  // One PIN for the whole encounter (portal login is per patient); only its
+  // bcrypt hash leaves this function. The plain PIN is shown once below.
   const plainPin = generatePin();
   const pinHash = await hashPin(plainPin);
+  const { ip, ua } = await ipAndAgent();
   const admin = createAdminClient();
-  const { error: pinErr } = await admin
-    .from("visit_pins")
-    .insert(created.map((c) => ({ visit_id: c.visitId, pin_hash: pinHash })));
-  if (pinErr) {
-    for (const c of created) await deleteVisitCascade(supabase, c.visitId);
-    return { ok: false, error: `Visit created but PIN failed: ${pinErr.message}` };
-  }
 
-  const h = await headers();
-  const ip = h.get("x-forwarded-for")?.split(",")[0]?.trim() ?? null;
-  const ua = h.get("user-agent");
-
-  // M5: a visit means the patient is physically at the counter — reception has
-  // verified identity, so the pre-registration flag clears automatically.
-  const { data: verifiedRows } = await admin
-    .from("patients")
-    .update({ pre_registered: false })
-    .eq("id", parsed.data.patient_id)
-    .eq("pre_registered", true)
-    .select("id");
-  if (verifiedRows && verifiedRows.length > 0) {
-    await audit({
-      actor_id: session.user_id,
-      actor_type: "staff",
-      patient_id: parsed.data.patient_id,
-      action: "patient.identity_verified",
-      resource_type: "patient",
-      resource_id: parsed.data.patient_id,
-      metadata: { via: "visit_created" },
-      ip_address: ip,
-      user_agent: ua,
-    });
+  // 0184: visit(s), every line, the PIN rows, the pre-registration clear and
+  // the audit rows in ONE transaction under the patient's lifecycle lock —
+  // no half-created visit to clean up any more.
+  const { data: encounter, error: encErr } = await withLifecycleRetry(() =>
+    admin.rpc("create_visit_encounter", {
+      p_actor: session.user_id,
+      p_patient_id: parsed.data.patient_id,
+      p_pin_hash: pinHash,
+      p_visits: payloads as unknown as Json,
+      p_visit_group_id: groupId ?? undefined,
+      p_context: { ip, user_agent: ua },
+    }),
+  );
+  if (encErr || !encounter) {
+    return { ok: false, error: translatePgError(encErr ?? { message: "Could not create the visit." }) };
   }
+  const created = (encounter as { visits: { id: string; visit_number: string }[] }).visits.map((v) => ({
+    visitId: v.id,
+    visitNumber: v.visit_number,
+  }));
 
   // Patient Sources (spec §3.7): reception answered "How did you hear about
   // us?" for a patient with no source yet. Conditional on it still being empty,
@@ -467,74 +433,6 @@ export async function createVisitAction(
         resource_type: "patient",
         resource_id: parsed.data.patient_id,
         metadata: { referral_source: referralAnswer, via: "new_visit" },
-        ip_address: ip,
-        user_agent: ua,
-      });
-    }
-  }
-
-  for (const c of created) {
-    const visitLines = split
-      ? c.visitId === created[0]!.visitId
-        ? doctorLines
-        : labLines
-      : lines;
-    await audit({
-      actor_id: session.user_id,
-      actor_type: "staff",
-      patient_id: parsed.data.patient_id,
-      action: "visit.created",
-      resource_type: "visit",
-      resource_id: c.visitId,
-      metadata: {
-        visit_number: c.visitNumber,
-        total_php: visitLines.reduce((s, l) => s + l.final_price_php, 0),
-        service_count: visitLines.length,
-        visit_group_id: groupId,
-        hmo_provider_id: c.hmo.hmo_provider_id,
-        discounted_lines: visitLines.filter((l) => l.discount_amount_php > 0).length,
-        is_sample: parsed.data.is_sample,
-      },
-      ip_address: ip,
-      user_agent: ua,
-    });
-
-    // M10: a fresh Secure PIN is minted with every new visit (like the manual
-    // visit_pin.reissued audit). Record the issuance for RA-10173 traceability
-    // — NEVER the PIN or its hash, only that one was issued.
-    await audit({
-      actor_id: session.user_id,
-      actor_type: "staff",
-      patient_id: parsed.data.patient_id,
-      action: "visit_pin.issued",
-      resource_type: "visit",
-      resource_id: c.visitId,
-      metadata: {
-        visit_number: c.visitNumber,
-        reason: "visit_created",
-      },
-      ip_address: ip,
-      user_agent: ua,
-    });
-
-    for (let i = 0; i < c.decompositions.length; i++) {
-      const d = c.decompositions[i]!;
-      const pkgService = services.find((s) => s.id === d.headerLine.service_id);
-      await audit({
-        actor_id: session.user_id,
-        actor_type: "staff",
-        patient_id: parsed.data.patient_id,
-        action: "package.decomposed",
-        resource_type: "test_request",
-        resource_id: c.headerIdsForAudit[i]!,
-        metadata: {
-          visit_id: c.visitId,
-          package_service_id: d.headerLine.service_id,
-          package_code: pkgService?.code ?? null,
-          package_name: pkgService?.name ?? null,
-          component_count: d.componentServiceIds.length,
-          component_service_ids: d.componentServiceIds,
-        },
         ip_address: ip,
         user_agent: ua,
       });
@@ -625,237 +523,12 @@ interface VisitHmo {
   hmo_authorization_no: string | null;
 }
 
-interface OneVisitInput {
-  patientId: string;
-  createdBy: string;
-  lines: Array<{
-    service_id: string;
-    kind: string;
-    base_price_php: number;
-    discount_kind: string | null;
-    discount_amount_php: number;
-    final_price_php: number;
-    clinic_fee_php: number | null;
-    doctor_pf_php: number | null;
-    procedure_description: string | null;
-    hmo_approved_amount_php: number | null;
-  }>;
-  services: Array<{ id: string; kind: string; code: string; name: string }>;
-  hmo: VisitHmo;
-  attendingPhysicianId: string | null;
-  receptionistRemarks: string | null;
-  notes: string | null;
-  visitGroupId: string | null;
-  isSample: boolean;
-}
-
-interface OneVisitResult {
-  visitId: string;
-  visitNumber: string;
-  hmo: VisitHmo;
-  decompositions: PackageDecomposition[];
-  headerIdsForAudit: string[];
-}
-
-// Every row in the single bulk insert must carry this exact key set:
-// PostgREST fills keys missing from *some* rows of a batch with NULL (not the
-// column default), so a row omitting e.g. `id` or `status` would insert NULL
-// and violate NOT NULL — uniformity is mandatory, not stylistic.
-type TestRequestInsertRow = Required<
-  Pick<
-    Database["public"]["Tables"]["test_requests"]["Insert"],
-    | "id"
-    | "visit_id"
-    | "service_id"
-    | "requested_by"
-    | "base_price_php"
-    | "discount_kind"
-    | "discount_amount_php"
-    | "final_price_php"
-    | "hmo_provider_id"
-    | "hmo_approval_date"
-    | "hmo_authorization_no"
-    | "receptionist_remarks"
-    | "clinic_fee_php"
-    | "doctor_pf_php"
-    | "procedure_description"
-    | "hmo_approved_amount_php"
-    | "parent_id"
-    | "is_package_header"
-    | "status"
-  >
->;
-
-// Creates a single visit and all its test_requests (incl. package
-// decomposition). Throws Error on any failure; the caller rolls back.
-//
-// All test_request rows — package headers, standalone lines, and package
-// components — go in as ONE multi-row insert with client-generated UUIDs, so
-// a crash can never leave a header committed without its components (the
-// orphaned-header window 0130 had to repair). Headers are ordered before
-// components in the array: tg_test_request_parent_is_header (0040) validates
-// each child against rows already inserted earlier in the same statement, so
-// array order is load-bearing (verified on the local stack — child-before-
-// header raises "parent_id does not exist").
-async function createOneVisit(
-  supabase: SupabaseClient<Database>,
-  input: OneVisitInput,
-): Promise<OneVisitResult> {
-  const totalPhp = input.lines.reduce((sum, l) => sum + l.final_price_php, 0);
-
-  // Pure read — resolve package compositions before writing anything, so a
-  // misconfigured package aborts with zero rows to clean up.
-  const decompositionResult = await loadPackageDecompositionsForLines(
-    supabase,
-    input.lines,
-    input.services,
-  );
-  if (!decompositionResult.ok) {
-    throw new Error(decompositionResult.error);
-  }
-  const decompositions = decompositionResult.decompositions;
-  const packageServiceIds = new Set(decompositions.map((d) => d.headerLine.service_id));
-
-  const { data: visit, error: visitErr } = await supabase
-    .from("visits")
-    .insert({
-      patient_id: input.patientId,
-      total_php: totalPhp,
-      notes: input.notes,
-      created_by: input.createdBy,
-      hmo_provider_id: input.hmo.hmo_provider_id,
-      hmo_approval_date: input.hmo.hmo_approval_date,
-      hmo_authorization_no: input.hmo.hmo_authorization_no,
-      attending_physician_id: input.attendingPhysicianId,
-      visit_group_id: input.visitGroupId,
-      is_sample: input.isSample,
-    })
-    .select("id, visit_number")
-    .single();
-  if (visitErr || !visit) {
-    throw new Error(visitErr?.message ?? "Could not create visit.");
-  }
-
-  const lineRow = (
-    l: OneVisitInput["lines"][number],
-  ): Omit<TestRequestInsertRow, "id" | "parent_id" | "is_package_header" | "status"> => ({
-    visit_id: visit.id,
-    service_id: l.service_id,
-    requested_by: input.createdBy,
-    base_price_php: l.base_price_php,
-    discount_kind: l.discount_kind,
-    discount_amount_php: l.discount_amount_php,
-    final_price_php: l.final_price_php,
-    hmo_provider_id: input.hmo.hmo_provider_id,
-    hmo_approval_date: input.hmo.hmo_approval_date,
-    hmo_authorization_no: input.hmo.hmo_authorization_no,
-    receptionist_remarks: input.receptionistRemarks,
-    clinic_fee_php: l.clinic_fee_php,
-    doctor_pf_php: l.doctor_pf_php,
-    procedure_description: l.procedure_description,
-    hmo_approved_amount_php: l.hmo_approved_amount_php,
-  });
-
-  // Pair each decomposition with its package line (queued per service so
-  // duplicate package lines pair up in order) and mint the header UUID here,
-  // client-side — components reference it before anything is inserted.
-  const packageLinesBySvc = new Map<string, OneVisitInput["lines"]>();
-  for (const l of input.lines) {
-    if (!packageServiceIds.has(l.service_id)) continue;
-    const queue = packageLinesBySvc.get(l.service_id) ?? [];
-    queue.push(l);
-    packageLinesBySvc.set(l.service_id, queue);
-  }
-
-  const headerRows: TestRequestInsertRow[] = [];
-  const componentRows: TestRequestInsertRow[] = [];
-  const headerIdsForAudit: string[] = [];
-  for (const d of decompositions) {
-    const line = packageLinesBySvc.get(d.headerLine.service_id)?.shift();
-    if (!line) {
-      throw new Error(
-        `Internal error: missing package line for service ${d.headerLine.service_id}`,
-      );
-    }
-    const headerId = crypto.randomUUID();
-    headerIdsForAudit.push(headerId);
-    headerRows.push({
-      ...lineRow(line),
-      id: headerId,
-      parent_id: null,
-      is_package_header: true,
-      // tg_header_auto_promote (0040) flips this to ready_for_release on insert.
-      status: "in_progress",
-    });
-    for (const componentServiceId of d.componentServiceIds) {
-      componentRows.push({
-        ...lineRow(line),
-        id: crypto.randomUUID(),
-        service_id: componentServiceId,
-        // Components are ₱0 rows — the header carries the package price.
-        base_price_php: 0,
-        discount_kind: null,
-        discount_amount_php: 0,
-        final_price_php: 0,
-        receptionist_remarks: null,
-        clinic_fee_php: null,
-        doctor_pf_php: null,
-        procedure_description: null,
-        hmo_approved_amount_php: null,
-        parent_id: headerId,
-        is_package_header: false,
-        status: "requested",
-      });
-    }
-  }
-
-  const standaloneRows: TestRequestInsertRow[] = input.lines
-    .filter((l) => !packageServiceIds.has(l.service_id))
-    .map((l) => ({
-      ...lineRow(l),
-      id: crypto.randomUUID(),
-      parent_id: null,
-      is_package_header: false,
-      status: "requested",
-    }));
-
-  // ONE statement for every test_request row. Headers MUST precede the
-  // component rows that reference them (see function comment).
-  const allRows = [...headerRows, ...standaloneRows, ...componentRows];
-  const { error: insertErr } = await supabase.from("test_requests").insert(allRows);
-  if (insertErr) {
-    await deleteVisitCascade(supabase, visit.id);
-    throw new Error(`Visit created but tests failed: ${insertErr.message}`);
-  }
-
-  return {
-    visitId: visit.id,
-    visitNumber: visit.visit_number,
-    hmo: input.hmo,
-    decompositions,
-    headerIdsForAudit,
-  };
-}
-
-// Best-effort cleanup. test_requests.visit_id has NO on-delete-cascade, so
-// delete the lines first; visit_pins DOES cascade with the visit.
-async function deleteVisitCascade(
-  supabase: SupabaseClient<Database>,
-  visitId: string,
-): Promise<void> {
-  await supabase.from("test_requests").delete().eq("visit_id", visitId);
-  await supabase.from("visits").delete().eq("id", visitId);
-}
-
 // ---------------------------------------------------------------------------
 // Phase 14: package decomposition helpers + Server Action.
 
-interface PackageDecomposition {
-  // The original line (used to identify which header to attach components to)
-  headerLine: { service_id: string };
-  // Component service IDs in sort order
-  componentServiceIds: string[];
-}
+// Same shape create_visit_encounter's payload wants (0184) — reuse the
+// builder's type rather than a parallel local one.
+type PackageDecomposition = EncounterDecomposition;
 
 async function loadPackageDecompositionsForLines(
   supabase: SupabaseClient<Database>,

@@ -59,6 +59,7 @@ const KNOWN_WRITER_RPCS = new Set<string>([
   "restore_patient",
   "claim_panel_members", // panel-writes.ts claimPanelMembers — all-or-nothing panel claim (0191).
   "unclaim_panel_members", // panel-writes.ts unclaimPanelMembers — all-or-nothing panel hand-back (0191).
+  "create_visit_encounter", // visits/new/actions.ts createVisitAction — visit, lines, PIN in one transaction (0184).
 ]);
 
 // Names that count as "this write is guarded" WHEN CALLED DIRECTLY from the
@@ -143,10 +144,6 @@ const EXEMPT: Record<string, string> = {
     "Deletes reduce work and stay unguarded, same reasoning as cancelAppointmentAction (Task 22 note); shared by deleteAppointmentAction and bulkDeleteAction.",
   [`src/app/(staff)/staff/(dashboard)/appointments/actions.ts:markLikelyNoShowsAction`]:
     "Bulk confirmed → no_show only — takes work off the record, the same transition transitionGroup leaves unguarded for the single No-show button. Its Undo (undoLikelyNoShowsAction) puts work back and does call assertAppointmentsPatientsActive.",
-  [`src/app/(staff)/staff/(dashboard)/visits/new/actions.ts:createOneVisit`]:
-    "Private helper invoked by createVisitAction only after that function's own assertPatientActive guard already passed.",
-  [`src/app/(staff)/staff/(dashboard)/visits/new/actions.ts:deleteVisitCascade`]:
-    "Rollback-only cleanup of a visit/tests just created in this same guarded call; a delete, not new work.",
   [`src/app/(staff)/staff/(dashboard)/payments/new/actions.ts:voidRedemptionPayment`]:
     "Rollback helper invoked by redeemGiftCode only after that function's own assertVisitPatientActive guard already passed, to void the payment it just inserted.",
   [`src/app/(staff)/staff/(dashboard)/queue/[id]/actions.ts:saveDraftValues`]:
