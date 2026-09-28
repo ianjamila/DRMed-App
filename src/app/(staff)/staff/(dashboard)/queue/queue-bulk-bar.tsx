@@ -10,16 +10,17 @@ import { deleteTestRequestsManyAction } from "@/lib/actions/visits/queue-deletio
 import {
   QUEUE_KIND,
   bulkQueueMessage,
+  parsePanelKey,
+  splitQueueKeys,
   type BulkQueueResult,
   type QueueRowInfo,
 } from "@/lib/queue/bulk-queue";
 import { claimTestsAction, unclaimTestsAction } from "./actions";
 
 interface Props {
-  // Every selectable single-test row the page rendered, keyed by test id.
+  // Every selectable row the page rendered, keyed by test id OR panel key
+  // (owner 2026-09-28: chemistry panel cards are selectable as whole panels).
   rowsByKey: Record<string, QueueRowInfo>;
-  // The page shows at least one chemistry panel card (no checkbox, spec §6).
-  hasPanels: boolean;
 }
 
 type Panel = null | "unclaim" | "delete";
@@ -35,7 +36,7 @@ interface Outcome {
 // (required reason, red confirm — QueueDeleteDialog's wording). Each button
 // acts on the selected rows that carry its kind; the server re-proves every
 // row and reports the ones it skipped by name.
-export function QueueBulkBar({ rowsByKey, hasPanels }: Props) {
+export function QueueBulkBar({ rowsByKey }: Props) {
   const { keysByKind, clearKeys, count, selectionEdits } = useRowSelection();
   const router = useRouter();
   const [pending, start] = useTransition();
@@ -84,16 +85,26 @@ export function QueueBulkBar({ rowsByKey, hasPanels }: Props) {
   function claim() {
     if (pending || claimKeys.length === 0) return;
     const keys = claimKeys;
+    const { testIds, panels } = splitQueueKeys(keys);
     setRunning("claim");
     start(async () =>
-      done("Claimed", keys, await claimTestsAction({ testIds: keys, panels: [] }), false),
+      done(
+        "Claimed",
+        keys,
+        await claimTestsAction({
+          testIds,
+          panels: panels.map(({ visitId, groupId }) => ({ visitId, groupId })),
+        }),
+        false,
+      ),
     );
   }
 
   function unclaim() {
     if (pending || unclaimKeys.length === 0) return;
     const keys = unclaimKeys;
-    const items = keys.map((key) => ({
+    const { testIds, panels } = splitQueueKeys(keys);
+    const items = testIds.map((key) => ({
       testRequestId: key,
       assignedTo: rowsByKey[key]!.assignedTo!,
     }));
@@ -102,7 +113,15 @@ export function QueueBulkBar({ rowsByKey, hasPanels }: Props) {
       done(
         "Unclaimed",
         keys,
-        await unclaimTestsAction({ items, panels: [], reason: reason.trim() || undefined }),
+        await unclaimTestsAction({
+          items,
+          panels: panels.map((p) => ({
+            visitId: p.visitId,
+            groupId: p.groupId,
+            assignedTo: rowsByKey[p.key]!.assignedTo!,
+          })),
+          reason: reason.trim() || undefined,
+        }),
         true,
       ),
     );
@@ -115,12 +134,17 @@ export function QueueBulkBar({ rowsByKey, hasPanels }: Props) {
       return;
     }
     const keys = deleteKeys;
+    const { testIds, panels } = splitQueueKeys(keys);
     setRunning("delete");
     start(async () =>
       done(
         "Deleted",
         keys,
-        await deleteTestRequestsManyAction({ testRequestIds: keys, panels: [], reason: reason.trim() }),
+        await deleteTestRequestsManyAction({
+          testRequestIds: testIds,
+          panels: panels.map(({ visitId, groupId }) => ({ visitId, groupId })),
+          reason: reason.trim(),
+        }),
         true,
       ),
     );
@@ -142,6 +166,13 @@ export function QueueBulkBar({ rowsByKey, hasPanels }: Props) {
     setErr(null);
   }
   const n = (count: number) => `${count} test${count === 1 ? "" : "s"}`;
+  // A selected panel key stands for every bench member it resolves to on the
+  // server (weight, not 1), so "N tests" would undercount — say "N selected
+  // rows" instead whenever the open panel's selection includes one.
+  const panelSelection = panel === "unclaim" ? unclaimKeys : deleteKeys;
+  const panelCountLabel = panelSelection.some((key) => parsePanelKey(key) !== null)
+    ? `${panelCount} selected row${panelCount === 1 ? "" : "s"}`
+    : n(panelCount);
 
   if (count === 0) {
     if (!outcome) return null;
@@ -152,11 +183,6 @@ export function QueueBulkBar({ rowsByKey, hasPanels }: Props) {
     <BulkBar noun="test">
       {outcome ? (
         <BulkOutcomePanel inline message={outcome.message} onDismiss={() => setOutcome(null)} />
-      ) : null}
-      {hasPanels ? (
-        <span className="text-[11px] text-[color:var(--color-brand-text-soft)]">
-          Chemistry panels are claimed from their own page.
-        </span>
       ) : null}
       {claimKeys.length > 0 ? (
         <Button type="button" size="sm" variant="brand" disabled={pending} onClick={claim}>
@@ -198,12 +224,12 @@ export function QueueBulkBar({ rowsByKey, hasPanels }: Props) {
           <p className="text-[color:var(--color-brand-text-mid)]">
             {panel === "unclaim" ? (
               <>
-                Put {n(panelCount)} back in the queue for anyone in the section to claim.
+                Put {panelCountLabel} back in the queue for anyone in the section to claim.
                 Only possible while no result has been uploaded.
               </>
             ) : (
               <>
-                Remove {n(panelCount)} from the queue. Nothing is billed for a deleted
+                Remove {panelCountLabel} from the queue. Nothing is billed for a deleted
                 entry, each can be restored later, and the reason is audit-logged.
               </>
             )}
