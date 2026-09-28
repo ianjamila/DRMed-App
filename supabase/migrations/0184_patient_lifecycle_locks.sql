@@ -2330,11 +2330,24 @@ grant execute on function public.result_create_linked(uuid, uuid[], text, uuid, 
 -- is what serialises competing allocations on one item; patient locks do not
 -- serialise settlements of different patients in one batch. A deleted
 -- patient's item refuses the whole call (restore first); a mixed batch whose
--- OTHER items belong to deleted patients is fine. p_received_at receives the
--- same value the action used to write to payments.received_at. Lock order:
--- patient locks → the BATCH row (two settlements of one batch serialise, so
--- the rollup never misses the other one's items) → the items in id order.
--- All money is normalised to integer centavos before any comparison.
+-- OTHER items belong to deleted patients is fine. A voided or still-draft
+-- batch refuses the whole call too (nothing to settle). p_received_at
+-- receives the same value the action used to write to payments.received_at.
+-- Lock order (0184 review I1): patient locks → the affected VISIT rows
+-- (sorted) → the BATCH row (two settlements of one batch serialise, so the
+-- rollup never misses the other one's items) → the items in id order →
+-- payment/allocation writes. The visit lock moved ahead of the batch lock
+-- because inserting the payment fires guard_payment_on_waived_visit, which
+-- locks the visit FOR UPDATE (0183) — without this, the settlement's own
+-- order was batch → items → visit (via the payment insert), while a plain
+-- payment void goes visit → allocation rows → batch (its BEFORE guard locks
+-- the visit first, then the AFTER cascade updates hmo_payment_allocations,
+-- which a_lifecycle_hmo_batch_lock (8c) locks the batch for) — the reverse
+-- order was a 40P01 deadlock waiting to happen, and the void path is not
+-- retried. Locking the visits first here makes both paths agree: visit
+-- always precedes batch, so the batch → items → allocation-insert sequence
+-- that follows is never the reverse of what the void path does. All money
+-- is normalised to integer centavos before any comparison.
 -- ---------------------------------------------------------------------------
 create or replace function public.record_hmo_settlement(
   p_actor            uuid,
@@ -2352,16 +2365,18 @@ security definer
 set search_path = pg_catalog, public, pg_temp
 as $$
 declare
-  v_ip          inet;
-  v_items       uuid[];
-  v_sum_c       bigint;   -- centavos
-  v_patients    uuid[];
-  v_payment     uuid;
-  v_payment_ids uuid[] := '{}';
-  v_alloc       int := 0;
-  v_n           int;
-  v_ref         text := nullif(btrim(coalesce(p_bank_reference, '')), '');
-  r             record;
+  v_ip            inet;
+  v_items         uuid[];
+  v_sum_c         bigint;   -- centavos
+  v_patients      uuid[];
+  v_visits        uuid[];
+  v_batch_status  text;
+  v_payment       uuid;
+  v_payment_ids   uuid[] := '{}';
+  v_alloc         int := 0;
+  v_n             int;
+  v_ref           text := nullif(btrim(coalesce(p_bank_reference, '')), '');
+  r               record;
 begin
   if p_actor is null or not exists (
     select 1 from public.staff_profiles s
@@ -2382,9 +2397,12 @@ begin
   if jsonb_typeof(p_items) is distinct from 'array' or jsonb_array_length(p_items) = 0 then
     raise exception 'choose at least one claim item' using errcode = '22023';
   end if;
+  -- 0184 review m3: test the CENTAVO amount, not the raw numeric — a
+  -- sub-centavo amount like 0.001 would otherwise pass this check and only
+  -- fail later on a table CHECK constraint (a generic, untranslatable error).
   if exists (select 1 from jsonb_array_elements(p_items) x
               where nullif(x ->> 'item_id', '') is null
-                 or coalesce((x ->> 'amount_php')::numeric, 0) <= 0) then
+                 or round(coalesce((x ->> 'amount_php')::numeric, 0) * 100) <= 0) then
     raise exception 'every claim item needs an amount above zero' using errcode = '22023';
   end if;
   -- Money in integer CENTAVOS (the app sends JS numbers).
@@ -2402,13 +2420,37 @@ begin
   v_patients := public.lifecycle_norm(array_remove(public.lifecycle_patients_of_hmo_items(v_items), null));
   perform public.lifecycle_lock_and_assert(v_patients, false);
 
+  -- 0184 review I1: the affected VISITS next, before the batch. Inserting
+  -- the payment below fires guard_payment_on_waived_visit (0183), which
+  -- locks the visit FOR UPDATE — so without this, the settlement's own
+  -- effective order was batch → items → visit, the exact reverse of a plain
+  -- payment void (visit → allocation rows → batch via 8c's trigger), and the
+  -- two could deadlock (40P01) on a settlement and a void racing the same
+  -- visit's payment. Locking the visits here, before the batch, makes every
+  -- path agree: visit always precedes batch.
+  select public.lifecycle_norm(array_remove(coalesce(array_agg(tr.visit_id), '{}'::uuid[]), null))
+    into v_visits
+    from unnest(v_items) x
+    left join public.hmo_claim_items i on i.id = x
+    left join public.test_requests tr on tr.id = i.test_request_id;
+  perform 1 from public.visits v where v.id = any(v_visits) order by v.id for update;
+
   -- The BATCH row next (Codex plan review P2-5): two settlements of one
   -- batch serialise here, so the second one's rollup sees the first one's
   -- items paid. Then the items, in id order (competing allocations on one
   -- item serialise on these).
-  perform 1 from public.hmo_claim_batches b where b.id = p_batch_id for no key update;
+  select b.status into v_batch_status
+    from public.hmo_claim_batches b
+   where b.id = p_batch_id
+     for no key update;
   if not found then
     raise exception 'this claim batch no longer exists — reload the page' using errcode = '22023';
+  end if;
+  -- 0184 review m2: nothing to settle on a batch that was never submitted or
+  -- has been voided (`hmo_claim_batches.status`, 0034's check constraint).
+  if v_batch_status in ('draft', 'voided') then
+    raise exception 'this batch is % — settlements can only be recorded on a submitted batch', v_batch_status
+      using errcode = '22023';
   end if;
   perform 1 from public.hmo_claim_items i where i.id = any(v_items) order by i.id for update;
   if (select count(*) from public.hmo_claim_items i where i.id = any(v_items)) <> cardinality(v_items) then
@@ -2536,10 +2578,19 @@ grant execute on function public.recompute_hmo_batch_status(p_batch_id uuid) to 
 -- item(s) (old and new, id order) first. It sorts after a_lifecycle_guard
 -- (advisory lock still first) and before every tg_*/trg_* trigger, and the
 -- item update happens in AFTER triggers, so batch → item holds on every
--- allocation/resolution path. Remaining item-first writers are direct
--- hmo_claim_items UPDATE/DELETE statements (the tuple is locked before any
--- trigger runs): admin batch-editing actions, which Task 24 retries once on
--- 40P01. SECURITY DEFINER (RLS must not hide the batch), EXECUTE revoked.
+-- allocation/resolution path. The residual risk this does NOT close is
+-- ITEM-vs-ITEM: a direct hmo_claim_items UPDATE/DELETE locks its tuple
+-- before any trigger runs, so this trigger cannot reorder it — it locks
+-- whatever rows its WHERE clause names, in whatever order the plan scans
+-- them. bulkSetHmoResponseAction's bulk UPDATE by batch_id is the concrete
+-- case: it can lock items in table order while record_hmo_settlement locks
+-- them in id order. The items' rollup trigger
+-- (tg_hmo_batch_status_rollup_from_item) does not protect against this
+-- either — its WHEN clause only fires on a paid_amount_php /
+-- patient_billed_amount_php / written_off_amount_php change, and an
+-- hmo_response update touches none of those columns. This item-vs-item case
+-- is left to Task 24's retry-once on 40P01, not to a lock-order fix here.
+-- SECURITY DEFINER (RLS must not hide the batch), EXECUTE revoked.
 -- ---------------------------------------------------------------------------
 create or replace function public.lock_hmo_batch_before_items()
 returns trigger

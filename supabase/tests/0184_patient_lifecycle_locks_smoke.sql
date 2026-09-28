@@ -1653,9 +1653,10 @@ declare
   d uuid := pg_temp.mk_patient('S11D');
   va uuid; vb uuid; vd uuid;
   ia1 uuid; ia2 uuid; ib uuid; id_ uuid; iother uuid; ic1 uuid; ic2 uuid;
-  bat uuid; bat_other uuid; bat_c uuid;
-  res jsonb; n int;
-  def text; lp int; bp int; ip int;
+  idr uuid; ivo uuid;
+  bat uuid; bat_other uuid; bat_c uuid; bat_draft uuid; bat_voided uuid;
+  res jsonb; n int; ctx text;
+  def text; lp int; vp int; bp int; ip int;
 begin
   va := pg_temp.mk_visit(a, true); vb := pg_temp.mk_visit(b, true); vd := pg_temp.mk_visit(d, true);
   insert into public.hmo_claim_batches (provider_id, status) values ('b0000000-0000-4000-8000-000000000184', 'submitted') returning id into bat;
@@ -1689,6 +1690,12 @@ begin
   n := (select count(*) from public.payments where method = 'hmo');
   perform pg_temp.expect('s11.5 an item of a deleted patient refuses the whole settlement',
     pg_temp.state_of(format($q$select public.record_hmo_settlement(%L, %L, 100, now(), jsonb_build_array(jsonb_build_object('item_id', %L, 'amount_php', 100)))$q$, k_admin, bat, id_)), 'P0058');
+  -- 0184 review m4: prove it's the RPC's OWN lifecycle_lock_and_assert that
+  -- refused it, not a downstream a_lifecycle_guard trigger on payments (which
+  -- would raise the SAME P0058 if the RPC's own lock call were ever removed).
+  ctx := pg_temp.context_of(format($q$select public.record_hmo_settlement(%L, %L, 100, now(), jsonb_build_array(jsonb_build_object('item_id', %L, 'amount_php', 100)))$q$, k_admin, bat, id_));
+  perform pg_temp.expect('s11.5c the RPC''s own lifecycle_lock_and_assert refused it, not enforce_patient_activity',
+    (ctx like '%lifecycle_lock_and_assert%' and ctx not like '%enforce_patient_activity%')::text, 'true');
   perform pg_temp.expect('s11.6 an item from another batch',
     pg_temp.state_of(format($q$select public.record_hmo_settlement(%L, %L, 50, now(), jsonb_build_array(jsonb_build_object('item_id', %L, 'amount_php', 50)))$q$, k_admin, bat, iother)), '22023');
   perform pg_temp.expect('s11.7 amounts that do not add up to the total',
@@ -1719,13 +1726,34 @@ begin
       || '|' || (select status from public.hmo_claim_batches where id = bat_c),
     '300.30|100.10,200.20|paid');
 
-  -- Batch-level serialisation (Codex plan review P2-5): text order, every position > 0.
+  -- 0184 review m2: a batch that is not settleable (draft, never submitted;
+  -- or voided) refuses the whole call with a plain message.
+  insert into public.hmo_claim_batches (provider_id, status) values ('b0000000-0000-4000-8000-000000000184', 'draft') returning id into bat_draft;
+  insert into public.hmo_claim_items (batch_id, test_request_id, billed_amount_php) values
+    (bat_draft, pg_temp.mk_line(va, 'released', 20), 20) returning id into idr;
+  perform pg_temp.expect('s11.13 a draft batch cannot be settled',
+    pg_temp.state_of(format($q$select public.record_hmo_settlement(%L, %L, 20, now(), jsonb_build_array(jsonb_build_object('item_id', %L, 'amount_php', 20)))$q$, k_admin, bat_draft, idr)), '22023');
+  insert into public.hmo_claim_batches (provider_id, status) values ('b0000000-0000-4000-8000-000000000184', 'submitted') returning id into bat_voided;
+  insert into public.hmo_claim_items (batch_id, test_request_id, billed_amount_php) values
+    (bat_voided, pg_temp.mk_line(va, 'released', 20), 20) returning id into ivo;
+  update public.hmo_claim_batches set status = 'voided', voided_at = now(), voided_by = k_admin, void_reason = 'smoke' where id = bat_voided;
+  perform pg_temp.expect('s11.14 a voided batch cannot be settled',
+    pg_temp.state_of(format($q$select public.record_hmo_settlement(%L, %L, 20, now(), jsonb_build_array(jsonb_build_object('item_id', %L, 'amount_php', 20)))$q$, k_admin, bat_voided, ivo)), '22023');
+
+  -- 0184 review m3: a sub-centavo amount is refused by the RPC's own check
+  -- (centavos, not the raw numeric), not by a generic table CHECK later.
+  perform pg_temp.expect('s11.15 a sub-centavo amount is refused by the RPC''s own check',
+    pg_temp.state_of(format($q$select public.record_hmo_settlement(%L, %L, 0.001, now(), jsonb_build_array(jsonb_build_object('item_id', %L, 'amount_php', 0.001)))$q$, k_admin, bat_other, iother)), '22023');
+
+  -- Batch-level serialisation (Codex plan review P2-5) and the visit lock
+  -- ahead of it (0184 review I1): text order, every position > 0.
   def := lower(pg_get_functiondef('public.record_hmo_settlement(uuid,uuid,numeric,timestamp with time zone,jsonb,text,jsonb)'::regprocedure));
   lp := position('lifecycle_lock_and_assert' in def);
-  bp := position('from public.hmo_claim_batches b where b.id = p_batch_id for no key update' in def);
+  vp := position('from public.visits v where v.id = any(v_visits) order by v.id for update' in def);
+  bp := position('from public.hmo_claim_batches b' in def);
   ip := position('order by i.id for update' in def);
-  perform pg_temp.expect('s11.12b settlement: patient locks → batch row → item rows',
-    (lp > 0 and bp > 0 and ip > 0 and lp < bp and bp < ip)::text, 'true');
+  perform pg_temp.expect('s11.12b settlement: patient locks → visit rows → batch row → item rows',
+    (lp > 0 and vp > 0 and bp > 0 and ip > 0 and lp < vp and vp < bp and bp < ip)::text, 'true');
   def := lower(pg_get_functiondef('public.recompute_hmo_batch_status(uuid)'::regprocedure));
   bp := position('for no key update' in def);
   ip := position('from public.hmo_claim_items' in def);
