@@ -232,10 +232,25 @@ export function translatePgError(err: PgError): string {
       // waive_visit_balance refusals (not admin, HMO, already waived/paid,
       // mixed provenance, total out of step, gift code in flight …).
       return err.message ?? "This visit's balance cannot be waived.";
+    // Patient lifecycle locks (0184). P0072: the record moved to another
+    // patient (or the patient was deleted/merged) while this save waited for
+    // the lock; the transaction rolled back whole, so trying again is safe —
+    // callers retry once automatically (src/lib/patients/lifecycle-retry.ts).
+    case "P0072":
+      return "This patient's records changed while you were saving. Please try again.";
+    // create_visit_encounter (0184): a refusal the SQL words for reception
+    // (bad total, malformed package, wrong role) — pass it through.
+    case "P0073":
+      return err.message
+        ? `${err.message.charAt(0).toUpperCase()}${err.message.slice(1)}.`
+        : "The visit could not be created. Please try again.";
+    // A deadlock victim / serialization failure: nothing was saved. Covers
+    // both 0183's waived-balance protocol and 0184's patient lifecycle locks
+    // — both accept a rare conflict and let Postgres abort one side, and the
+    // caller (or lifecycle-retry.ts) retries once, so the wording stays generic.
     case "40P01":
-      // deadlock_detected — the 0183 serialization protocol accepts one rare
-      // cycle (waiver vs. an undo cascade) and lets Postgres abort one side.
-      return "Something else changed this visit at the same moment. Try again.";
+    case "40001":
+      return "Another change to the same records was being saved at the same moment. Please try again.";
     // 0187: view_as_transition — the caller is not an active admin.
     case "P0074":
       return "Only an admin can view the app as another role.";
