@@ -25,6 +25,7 @@ export const DASHBOARD_CARDS: readonly CardDef[] = [
   { id: "reception.visits_today",      label: "Visits today",      roles: ["reception"], group: "snapshot" },
   { id: "reception.unpaid_balance",    label: "Unpaid balance",    roles: ["reception"], group: "snapshot", sensitive: true },
   { id: "reception.pending_release",   label: "Pending release",   roles: ["reception"], group: "snapshot" },
+  { id: "reception.released_today",   label: "Released today",    roles: ["reception"], group: "snapshot" },
   // Id kept from when the card was called "Walk-ins waiting"; renaming the id
   // would drop saved preferences.
   { id: "reception.walk_ins_waiting",  label: "Arrivals awaiting registration", roles: ["reception"], group: "snapshot" },
@@ -54,6 +55,7 @@ export const DASHBOARD_CARDS: readonly CardDef[] = [
   { id: "lab.critical_alerts",      label: "Critical alerts unacked",  roles: ["pathologist"], group: "snapshot" },
   { id: "lab.send_out_awaiting",    label: "Send-out awaiting result", roles: ["medtech"], group: "snapshot" },
   { id: "lab.released_today",       label: "Released today",           roles: ["medtech", "xray_technician", "pathologist"], group: "snapshot" },
+  { id: "lab.ready_for_release",   label: "Ready for release",        roles: ["medtech", "xray_technician", "pathologist"], group: "snapshot" },
   { id: "lab.strip_oldest_unclaimed", label: "Strip: oldest unclaimed", roles: ["medtech", "xray_technician"], group: "attention" },
   { id: "lab.strip_pending_signoff",  label: "Strip: pending sign-off", roles: ["pathologist"], group: "attention", defaultHidden: true },
   { id: "lab.strip_recent_criticals", label: "Strip: recent criticals", roles: ["medtech", "pathologist"], group: "attention" },
