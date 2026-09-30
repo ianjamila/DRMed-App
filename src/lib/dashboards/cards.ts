@@ -72,6 +72,7 @@ export const DASHBOARD_CARDS: readonly CardDef[] = [
   // so Dashboard settings can bring it back. Visits today and Queue stay ON —
   // the owner deferred those two to a later re-review.
   { id: "admin.released_today",    label: "Released today (plain count)",  roles: ["admin"], group: "operations", defaultHidden: true },
+  { id: "admin.ready_for_release", label: "Ready for release", roles: ["admin"], group: "operations" },
   { id: "admin.dup_candidates",    label: "Possible duplicates", roles: ["admin"], group: "operations" },
   { id: "admin.new_messages",      label: "Website messages",    roles: ["admin"], group: "operations" },
   { id: "admin.result_followups",  label: "Result follow-ups",   roles: ["admin"], group: "attention" },
