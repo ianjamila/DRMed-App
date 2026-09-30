@@ -18,7 +18,7 @@ Key reference artifacts:
 - `IMPLEMENTATION_PLAN.md` — original phase plan (historical; cross-check before relying on it)
 - `README.md` — operational setup
 - `.env.example` — env-var inventory
-- `docs/drmed-user-guide.html` — the staff + patient user guide (v2.54, 30 Sep 2026): every
+- `docs/drmed-user-guide.html` — the staff + patient user guide (v2.55, 30 Sep 2026): every
   screen, label and blocked-message the app shows, checked against the code. Update its
   **content** in the PR that changes a flow it describes, but bump the **version and date**
   (the header line and this bullet) only at merge time, after merging `main` into the branch —
