@@ -45,6 +45,16 @@ const SRC_DIR = join(process.cwd(), "src");
 /** Keyed `<path relative to src/>#<setterName>`; value is the required `why`. */
 const ALLOWED: Record<string, string> = {};
 
+/** `/^set[A-Z]/` also matches these browser globals; they are not state. */
+const NOT_SETTERS = new Set(["setTimeout", "setInterval", "setImmediate"]);
+const DEFERRED_CALLS = new Set([
+  "setTimeout",
+  "setInterval",
+  "setImmediate",
+  "requestAnimationFrame",
+  "queueMicrotask",
+]);
+
 const isCheckable = (p: string) =>
   /\.(ts|tsx)$/.test(p) && !/\.test\.tsx?$/.test(p) && !/\.d\.ts$/.test(p);
 
@@ -144,7 +154,19 @@ export function scanSource(text: string, full: string): Hit[] {
     );
   };
 
-  const isSetterName = (name: string) => setters.has(name) || /^set[A-Z]/.test(name);
+  const isSetterName = (name: string) =>
+    setters.has(name) || (!NOT_SETTERS.has(name) && /^set[A-Z]/.test(name));
+
+  /** A function passed to a timer / scheduler, or used as an event handler. */
+  const isDeferred = (fn: ts.Node): boolean => {
+    const p = fn.parent;
+    if (!p) return false;
+    if (ts.isCallExpression(p) && p.arguments.includes(fn as ts.Expression)) {
+      const name = calleeName(p.expression);
+      return !!name && (DEFERRED_CALLS.has(name) || name === "addEventListener");
+    }
+    return ts.isJsxExpression(p) && !!p.parent && ts.isJsxAttribute(p.parent);
+  };
 
   const hits = new Map<string, Hit>();
 
@@ -166,16 +188,27 @@ export function scanSource(text: string, full: string): Hit[] {
         isSetterName(n.expression.text) &&
         n.getEnd() > firstAwaitEnd
       ) {
-        // Exempt when re-wrapped in a nested synchronous starter call.
+        // Exempt only when the setter's NEAREST enclosing function is the
+        // synchronous starter callback itself (no other function boundary),
+        // or when it sits in a deferred callback (timer / event handler):
+        // that runs later, outside the post-await continuation, on purpose.
         let wrapped = false;
+        let first = true;
         for (let p: ts.Node | undefined = n.parent; p && p !== cb; p = p.parent) {
+          if (!isFunctionLike(p)) continue;
           if (
+            first &&
             isFn(p) &&
             !isAsync(p) &&
             p.parent &&
             isStarterCall(p.parent) &&
             p.parent.arguments[0] === p
           ) {
+            wrapped = true;
+            break;
+          }
+          first = false;
+          if (isDeferred(p)) {
             wrapped = true;
             break;
           }
@@ -267,6 +300,30 @@ describe("transition-state detector", () => {
   it("only counts awaits in the callback itself, not in nested functions", () => {
     expect(
       scan(`start(async () => { const f = async () => { await go(); }; setError("x"); });`),
+    ).toEqual([]);
+  });
+
+  it("ignores a setter in a setTimeout inside a sync wrap", () => {
+    expect(
+      scan(`start(async () => { await go(); start(() => { setTimeout(() => setError(""), 5); }); });`),
+    ).toEqual([]);
+  });
+
+  it("ignores a setter in a setTimeout in the post-await part", () => {
+    expect(
+      scan(`start(async () => { await go(); setTimeout(() => setError(""), 5); });`),
+    ).toEqual([]);
+  });
+
+  it("flags a .then setter nested inside a sync wrap (function boundary)", () => {
+    expect(
+      scan(`start(async () => { await go(); start(() => { p.then(() => setError("x")); }); });`),
+    ).toEqual(["setError"]);
+  });
+
+  it("does not treat setTimeout/setInterval/setImmediate as setters", () => {
+    expect(
+      scan(`start(async () => { await go(); setTimeout(fn, 1); setInterval(fn, 1); setImmediate(fn); });`),
     ).toEqual([]);
   });
 
