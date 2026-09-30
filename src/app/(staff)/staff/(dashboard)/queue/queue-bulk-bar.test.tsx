@@ -52,6 +52,10 @@ interface Row {
   label?: string;
   assignedTo?: string | null;
   visitId?: string;
+  /** Panel rows only: tests Delete acts on / tests Claim + Unclaim act on / bench members. */
+  testCount?: number;
+  benchCount?: number;
+  bench?: Array<{ id: string; holder: string | null }>;
 }
 
 function buildRowsByKey(rows: Row[]): Record<string, QueueRowInfo> {
@@ -61,6 +65,9 @@ function buildRowsByKey(rows: Row[]): Record<string, QueueRowInfo> {
       visitId: r.visitId ?? VISIT_1,
       label: r.label ?? r.key,
       assignedTo: r.assignedTo ?? null,
+      ...(r.testCount !== undefined ? { testCount: r.testCount } : {}),
+      ...(r.benchCount !== undefined ? { benchCount: r.benchCount } : {}),
+      ...(r.bench ? { bench: r.bench } : {}),
     };
   }
   return rowsByKey;
@@ -430,6 +437,133 @@ describe("Undo", () => {
     await user.click(undoButton);
 
     await screen.findByText(UNDO_EXPIRED, { exact: false });
+    expect(screen.queryByRole("button", { name: "↶ Undo" })).toBeNull();
+  });
+});
+
+describe("Undo after a chemistry-panel bulk action", () => {
+  const GROUP = "22222222-2222-2222-2222-222222222222";
+  const panelKey = panelRowKey(VISIT_1, GROUP);
+  const MEMBERS = ["m1", "m2", "m3"];
+  const panelRow = (kind: string, holder: string | null = null): Row => ({
+    key: panelKey,
+    kinds: [kind],
+    label: "Chemistry panel — Santos, Maria",
+    // The bar counts a panel row by its tests, so the buttons read (3), not (1).
+    weight: 3,
+    testCount: 3,
+    benchCount: 3,
+    bench: MEMBERS.map((id) => ({ id, holder })),
+  });
+
+  it("Claim of ONE panel row offers ↶ Undo that undoes the whole batch, counted in tests", async () => {
+    vi.mocked(claimQueueSelectionAction).mockResolvedValue({
+      ok: true,
+      changedIds: MEMBERS,
+      skipped: [],
+      batchId: "b-1",
+    });
+    vi.mocked(undoBulkQueueAction).mockResolvedValue({ ok: true, restoredIds: MEMBERS, notRestored: [] });
+    const user = userEvent.setup();
+    render(<Harness rows={[panelRow(QUEUE_KIND.claim)]} />);
+    await user.click(screen.getByRole("checkbox", { name: "Select Chemistry panel — Santos, Maria" }));
+    await user.click(screen.getByRole("button", { name: "Claim (3)" }));
+
+    expect(claimQueueSelectionAction).toHaveBeenCalledWith({
+      testRequestIds: [],
+      panels: [{ visitId: VISIT_1, groupId: GROUP }],
+    });
+    // One row was selected, three tests changed: the outcome counts tests.
+    expect((await screen.findByRole("status")).textContent).toContain("Claimed 3 tests.");
+    await user.click(await screen.findByRole("button", { name: "↶ Undo" }));
+    expect(undoBulkQueueAction).toHaveBeenCalledTimes(1);
+    expect(undoBulkQueueAction).toHaveBeenCalledWith({ batchId: "b-1" });
+  });
+
+  it("Unclaim of ONE panel row offers ↶ Undo that undoes the whole batch", async () => {
+    vi.mocked(unclaimQueueSelectionAction).mockResolvedValue({
+      ok: true,
+      changedIds: MEMBERS,
+      skipped: [],
+      batchId: "b-unclaim-panel",
+    });
+    vi.mocked(undoBulkQueueAction).mockResolvedValue({ ok: true, restoredIds: MEMBERS, notRestored: [] });
+    const user = userEvent.setup();
+    render(<Harness rows={[panelRow(QUEUE_KIND.unclaim, "holder-a")]} />);
+    await user.click(screen.getByRole("checkbox", { name: "Select Chemistry panel — Santos, Maria" }));
+    await user.click(screen.getByRole("button", { name: "Unclaim (3)" }));
+    await user.click(await screen.findByRole("button", { name: /Confirm unclaim/ }));
+
+    expect(unclaimQueueSelectionAction).toHaveBeenCalledWith({
+      items: [],
+      panels: [{ visitId: VISIT_1, groupId: GROUP, members: MEMBERS.map((id) => ({ id, holder: "holder-a" })) }],
+      reason: undefined,
+    });
+    expect((await screen.findByRole("status")).textContent).toContain("Unclaimed 3 tests.");
+    await user.click(await screen.findByRole("button", { name: "↶ Undo" }));
+    expect(undoBulkQueueAction).toHaveBeenCalledWith({ batchId: "b-unclaim-panel" });
+  });
+
+  it("Delete of ONE panel row offers ↶ Undo that undoes the whole batch", async () => {
+    vi.mocked(deleteQueueSelectionAction).mockResolvedValue({
+      ok: true,
+      changedIds: MEMBERS,
+      skipped: [],
+      batchId: "b-delete-panel",
+    });
+    vi.mocked(undoBulkQueueAction).mockResolvedValue({ ok: true, restoredIds: MEMBERS, notRestored: [] });
+    const user = userEvent.setup();
+    render(<Harness rows={[panelRow(QUEUE_KIND.delete)]} />);
+    await user.click(screen.getByRole("checkbox", { name: "Select Chemistry panel — Santos, Maria" }));
+    await user.click(screen.getByRole("button", { name: "Delete (3)" }));
+    await user.type(screen.getByLabelText("Reason for deleting"), "Duplicate entry");
+    await user.click(screen.getByRole("button", { name: "Confirm delete (3)" }));
+
+    expect(deleteQueueSelectionAction).toHaveBeenCalledWith({
+      testRequestIds: [],
+      panels: [{ visitId: VISIT_1, groupId: GROUP }],
+      reason: "Duplicate entry",
+    });
+    expect((await screen.findByRole("status")).textContent).toContain("Deleted 3 tests.");
+    await user.click(await screen.findByRole("button", { name: "↶ Undo" }));
+    expect(undoBulkQueueAction).toHaveBeenCalledWith({ batchId: "b-delete-panel" });
+  });
+
+  it("a panel Claim result with no batchId shows no ↶ Undo", async () => {
+    vi.mocked(claimQueueSelectionAction).mockResolvedValue({
+      ok: true,
+      changedIds: MEMBERS,
+      skipped: [],
+    });
+    const user = userEvent.setup();
+    render(<Harness rows={[panelRow(QUEUE_KIND.claim)]} />);
+    await user.click(screen.getByRole("checkbox", { name: "Select Chemistry panel — Santos, Maria" }));
+    await user.click(screen.getByRole("button", { name: "Claim (3)" }));
+
+    expect((await screen.findByRole("status")).textContent).toContain("Claimed 3 tests.");
+    expect(screen.queryByRole("button", { name: "↶ Undo" })).toBeNull();
+  });
+
+  it("a panel Claim that changed nothing shows no ↶ Undo even with a batchId", async () => {
+    vi.mocked(claimQueueSelectionAction).mockResolvedValue({
+      ok: true,
+      changedIds: [],
+      skipped: [{ id: panelKey, reason: "Claimed by someone else or changed just now." }],
+      batchId: "b-none",
+    });
+    const user = userEvent.setup();
+    render(<Harness rows={[panelRow(QUEUE_KIND.claim)]} />);
+    await user.click(screen.getByRole("checkbox", { name: "Select Chemistry panel — Santos, Maria" }));
+    await user.click(screen.getByRole("button", { name: "Claim (3)" }));
+
+    const expected = bulkQueueMessage(
+      "Claimed",
+      3,
+      { changedIds: [], skipped: [{ id: panelKey, reason: "Claimed by someone else or changed just now." }] },
+      buildRowsByKey([panelRow(QUEUE_KIND.claim)]),
+    );
+    expect((await screen.findByRole("status")).textContent).toContain(expected);
+    expect(expected).toContain("Nothing claimed.");
     expect(screen.queryByRole("button", { name: "↶ Undo" })).toBeNull();
   });
 });
