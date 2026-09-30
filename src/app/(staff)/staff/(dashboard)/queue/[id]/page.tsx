@@ -41,6 +41,13 @@ import { isActivePatient } from "@/lib/patients/active";
 import { loadPatientLifecycle, type PatientLifecycleDisplay } from "@/lib/patients/lifecycle-display";
 import { PatientLifecycleBanner } from "@/components/staff/patient-lifecycle-banner";
 import { ReleaseOutcomeProvider } from "@/components/staff/release/release-outcome";
+import { QueueReleaseButton } from "@/components/staff/release/queue-release-button";
+import { UndoReleaseDialog } from "@/components/staff/release/undo-release-dialog";
+import { loadRowUndoContext } from "@/lib/visits/undo-scope.server";
+import { evaluateRelease } from "@/lib/queue/release-eligibility";
+import { isConsentGateRequired, getPatientConsentState } from "@/lib/consent/gate";
+import { canActOnResult } from "@/lib/visits/line-visibility";
+import type { ReleaseMedium } from "@/lib/visits/release-media";
 
 const loadTestDetail = cache(async (id: string) => {
   const session = await requireActiveStaff();
@@ -59,7 +66,7 @@ const loadTestDetail = cache(async (id: string) => {
         services!inner ( id, code, name, kind, section, turnaround_hours, requires_signoff, is_send_out ),
         visits!inner (
           id, visit_number, deleted_at, payment_status, hmo_provider_id,
-          patients!inner ( id, drm_id, first_name, last_name, phone, sex, birthdate, deleted_at, merged_into_id )
+          patients!inner ( id, drm_id, first_name, last_name, phone, sex, birthdate, deleted_at, merged_into_id, preferred_release_medium )
         ),
         results ( id, uploaded_at, file_size_bytes, notes, generation_kind, finalised_at, control_no, amended_at, amendment_count, image_filename )
       `,
@@ -146,6 +153,9 @@ export async function generateMetadata({ params }: Props) {
 
 interface Props {
   params: Promise<{ id: string }>;
+  // Next 16 hands searchParams over as a Promise. `?undo=1` opens the Undo
+  // confirm panel (the Released-today queue tab links here).
+  searchParams: Promise<{ undo?: string }>;
 }
 
 const TEST_STATUS_STYLE: Record<string, string> = {
@@ -157,7 +167,7 @@ const TEST_STATUS_STYLE: Record<string, string> = {
   cancelled: "bg-red-100 text-red-900",
 };
 
-export default async function QueueTestDetailPage({ params }: Props) {
+export default async function QueueTestDetailPage({ params, searchParams }: Props) {
   const { id } = await params;
   const { session, supabase, user, test, svc, visit, patient, visiblePackageComponents } = await loadTestDetail(id);
 
@@ -412,6 +422,38 @@ export default async function QueueTestDetailPage({ params }: Props) {
     !canStructured &&
     (!result || result.generation_kind === "uploaded");
 
+  // Release / Undo (lab queue). Reception never gets either control:
+  // canActOnResult denies it (sectionsForRole === []). The DB still enforces
+  // payment (0133) and consent (0088) at UPDATE time; evaluateRelease mirrors
+  // them so the button says why it is disabled. Doctor lines never reach here
+  // (notFound above), and the deleted-row/visit case returned early.
+  const mayActOnResult = canActOnResult(session.role, svc.section);
+  const releaseMode =
+    mayActOnResult && (test.status === "ready_for_release" || test.status === "released");
+  const [gateRequired, consentState] = releaseMode
+    ? await Promise.all([isConsentGateRequired(), getPatientConsentState(patient.id)])
+    : [false, { current: true }];
+  const releaseVerdict = evaluateRelease(
+    {
+      status: test.status,
+      isPackageHeader: test.is_package_header,
+      isDoctorLine: isDoctorKind(svc.kind),
+      section: svc.section,
+      visitDeleted: visit.deleted_at !== null,
+      patientActive,
+      visit,
+      consentOnFile: consentState.current,
+      gateRequired,
+    },
+    session.role,
+  );
+  const showReleasePanel = test.status === "ready_for_release" && mayActOnResult;
+  const undoContext =
+    test.status === "released" && mayActOnResult && patientActive && visit.deleted_at === null
+      ? await loadRowUndoContext(supabase, test.id)
+      : null;
+  const openUndo = (await searchParams)?.undo === "1";
+
   return (
     <div className="px-4 py-8 sm:px-6 lg:px-8">
       <ReleaseOutcomeProvider>
@@ -528,7 +570,7 @@ export default async function QueueTestDetailPage({ params }: Props) {
             <p className="mt-1 text-sm text-[color:var(--color-brand-text-soft)]">
               {svc.requires_signoff
                 ? "After Finalise the test moves to result_uploaded — pathologist sign-off required before release."
-                : "After Finalise the test moves to ready_for_release — reception can release it once the visit is paid."}
+                : "After Finalise the test moves to ready_for_release — release it here once the visit is paid."}
             </p>
             <div className="mt-5">
               <StructuredResultForm
@@ -555,7 +597,7 @@ export default async function QueueTestDetailPage({ params }: Props) {
                 : "No structured template configured for this service yet — falling back to PDF upload."}
               {svc.requires_signoff
                 ? " After upload the test moves to result_uploaded — pathologist sign-off required before release."
-                : " After upload the test moves to ready_for_release — reception can release it once the visit is paid."}
+                : " After upload the test moves to ready_for_release — release it here once the visit is paid."}
             </p>
             <div className="mt-4">
               <UploadResultForm testRequestId={test.id} />
@@ -678,7 +720,48 @@ export default async function QueueTestDetailPage({ params }: Props) {
           </div>
         ) : null}
 
-        {!claimable && !canStructured && !canUpload && !result ? (
+        {showReleasePanel ? (
+          <div className="mt-6 rounded-lg border border-emerald-200 bg-emerald-50 p-4">
+            <h2 className="font-heading text-lg font-extrabold text-[color:var(--color-brand-navy)]">
+              Release to patient
+            </h2>
+            <p className="mt-1 text-sm text-[color:var(--color-brand-text-soft)]">
+              Releasing puts the result in the patient&apos;s portal. For Email, Viber, GCash or Other the patient also
+              gets a “your result is ready” text/email; Physical and Pickup send nothing.
+            </p>
+            {test.parent_id ? (
+              <p className="mt-1 text-xs text-[color:var(--color-brand-text-soft)]">
+                Part of a package — each test releases on its own; the package closes itself once every test is
+                released.
+              </p>
+            ) : null}
+            <div className="mt-3">
+              <QueueReleaseButton
+                testRequestIds={[test.id]}
+                preferredMedium={(patient.preferred_release_medium ?? null) as ReleaseMedium | null}
+                blockReason={releaseVerdict.ok ? null : releaseVerdict.error}
+                consentWarning={!consentState.current && !gateRequired}
+              />
+            </div>
+          </div>
+        ) : null}
+
+        {undoContext ? (
+          <div className="mt-6 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-[color:var(--color-brand-bg-mid)] p-4">
+            <p className="text-sm text-[color:var(--color-brand-text-mid)]">
+              Released. Made a mistake? Undo puts it back to ready for release.
+            </p>
+            <UndoReleaseDialog
+              testRequestId={test.id}
+              visitId={visit.id}
+              viewedCount={undoContext.viewedCount}
+              reportScope={undoContext.reportScope}
+              defaultOpen={openUndo}
+            />
+          </div>
+        ) : null}
+
+        {!claimable && !canStructured && !canUpload && !result && !showReleasePanel && !undoContext ? (
           <p className="text-sm text-[color:var(--color-brand-text-soft)]">
             No actions available for this test in its current state.
           </p>
