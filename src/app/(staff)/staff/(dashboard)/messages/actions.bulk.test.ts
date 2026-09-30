@@ -259,10 +259,14 @@ describe("undoMessageStatusManyAction", () => {
     ]);
   });
 
+  // Message 1 is refused up front (a newer audit row from someone else).
+  // Message 2 has no newer audit row, so only the Undo write's predicates can
+  // refuse it: its status, handler AND stamp all differ from what the bulk
+  // call left, so any of them does. The per-column cases below pin each one.
   it("refuses a message someone changed since (newer audit row) and one whose row no longer matches", async () => {
     db.seed("contact_messages", [
       msg(1, { status: "closed", handled_by: ME, handled_at: pg(STAMP) }),
-      msg(2, { status: "replied", handled_by: OTHER, handled_at: "2026-09-30T11:59:30+00:00" }), // moved on, no audit row seen
+      msg(2, { status: "replied", handled_by: OTHER, handled_at: "2026-09-30T11:59:30+00:00" }), // moved on since the bulk call, no audit row
     ]);
     db.seed("audit_log", [
       bulkAudit(1, { from: "new", to: "closed", previous_handled_by: null, previous_handled_at: null }),
@@ -298,6 +302,32 @@ describe("undoMessageStatusManyAction", () => {
     db.seed("audit_log", [{ id: "a-88888", actor_id: ME, resource_type: "contact_message", resource_id: id(1),
       action: "contact_message.status_changed", metadata: { undo_of_batch: BATCH }, created_at: new Date(NOW - 1_000).toISOString() }]);
     expect(await undoMessageStatusManyAction({ batchId: BATCH })).toEqual({ ok: false, error: UNDO_ALREADY });
+  });
+
+  it("an Undo cannot itself be undone, and the original batch now reads as already undone", async () => {
+    db.seed("contact_messages", [msg(1, { status: "closed", handled_by: ME, handled_at: pg(STAMP) })]);
+    db.seed("audit_log", [bulkAudit(1, { from: "new", to: "closed", previous_handled_by: null, previous_handled_at: null })]);
+    const first = await undoMessageStatusManyAction({ batchId: BATCH });
+    expect(first).toEqual({ ok: true, restoredIds: [id(1)], notRestored: [] });
+
+    // Persist what the mocked audit() received, as the real writer would.
+    const undoRows = audits().filter((a) => meta(a).via === BULK_UNDO_VIA);
+    expect(undoRows).toHaveLength(1);
+    const undoBatchId = meta(undoRows[0]!).bulk_batch_id as string;
+    expect(undoBatchId).not.toBe(BATCH);
+    db.seed(
+      "audit_log",
+      undoRows.map((a, i) => ({ id: `a-7000${i}`, ...a, created_at: new Date(NOW).toISOString() })),
+    );
+    const after = JSON.stringify(db.row("contact_messages", id(1)));
+    const auditCount = audits().length;
+    const updatesBefore = db.updates("contact_messages").length;
+
+    expect(await undoMessageStatusManyAction({ batchId: undoBatchId })).toEqual({ ok: false, error: UNDO_EXPIRED });
+    expect(await undoMessageStatusManyAction({ batchId: BATCH })).toEqual({ ok: false, error: UNDO_ALREADY });
+    expect(JSON.stringify(db.row("contact_messages", id(1)))).toBe(after);
+    expect(db.updates("contact_messages")).toHaveLength(updatesBefore);
+    expect(audits()).toHaveLength(auditCount);
   });
 
   it("refuses a non-inbox role before reading the batch", async () => {
