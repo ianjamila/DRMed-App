@@ -31,10 +31,14 @@
 --      undone:   visit_id, reason, prior_release_medium, prior_released_at,
 --                viewed_count, <caller extras — bulk, via, undo_of_batch,
 --                bulk_batch_id, sample_visit_delete>, report_result_id
---    The caller's extras (p_audit.metadata) may set bulk / selection (the
---    visit page's single release writes false) but can never overwrite a key
---    the function knows (visit_id, the medium, the stamps, the reason, the
---    view count, the report): those are applied last. viewed_count is the SQL
+--    The caller's extras (p_audit.metadata) are allow-listed per function —
+--    release: source, bulk, selection, bulk_batch_id, package_header_id,
+--    result_id; undo: bulk, bulk_batch_id, sample_visit_delete, plus via /
+--    undo_of_batch only with a batch map — scalars only, anything else P0081
+--    (a direct call must not plant e.g. acting_as). They may set bulk /
+--    selection (the visit page's single release writes false) but can never
+--    overwrite a key the function knows (visit_id, the medium, the stamps,
+--    the reason, the view count, the report): those are applied last. viewed_count (result_view_counts) is the SQL
 --    twin of countResultViews (src/lib/results/viewed-count.ts), read under
 --    the row locks — how often the patient had opened the result at the
 --    moment of undo (RA 10173). ip / user agent come from p_audit; an
@@ -57,9 +61,13 @@ set lock_timeout = '5s';
 
 -- ---------------------------------------------------------------------------
 -- release_audit_context: the ip / user agent / caller metadata of p_audit.
--- Private helper.
+-- Private helper. The caller's extras are ALLOW-LISTED per function (p_allowed)
+-- and must be scalars: both RPCs are executable by `authenticated`, so a
+-- staff member calling one directly must not be able to plant other keys —
+-- e.g. `acting_as` (0187's View-as stamp) — in an audit row. ip / user agent
+-- are what the caller reports (advisory, as they always were).
 -- ---------------------------------------------------------------------------
-create or replace function public.release_audit_context(p_audit jsonb)
+create or replace function public.release_audit_context(p_audit jsonb, p_allowed text[])
 returns table (extras jsonb, ip inet, user_agent text)
 language plpgsql
 stable
@@ -67,56 +75,67 @@ security definer
 set search_path = pg_catalog, public, pg_temp
 as $$
 declare
-  v_meta jsonb := coalesce(p_audit -> 'metadata', '{}'::jsonb);
-  v_ip   inet;
+  v_audit jsonb := case when jsonb_typeof(p_audit) = 'null' then null else p_audit end;
+  v_meta  jsonb;
+  v_ip    inet;
 begin
-  if (p_audit is not null and jsonb_typeof(p_audit) <> 'object')
-     or jsonb_typeof(v_meta) <> 'object'
-     or length(v_meta::text) > 4000 then
-    raise exception 'Couldn''t record who released these results — try again.' using errcode = 'P0081';
+  if v_audit is not null and jsonb_typeof(v_audit) <> 'object' then
+    raise exception 'Couldn''t record this change in the audit log — try again.' using errcode = 'P0081';
+  end if;
+  v_meta := case when jsonb_typeof(v_audit -> 'metadata') is null or jsonb_typeof(v_audit -> 'metadata') = 'null'
+                 then '{}'::jsonb else v_audit -> 'metadata' end;
+  if jsonb_typeof(v_meta) <> 'object'
+     or length(v_meta::text) > 4000
+     or exists (select 1 from jsonb_each(v_meta) e
+                 where not (e.key = any (p_allowed))
+                    or jsonb_typeof(e.value) not in ('string', 'boolean', 'number')) then
+    raise exception 'Couldn''t record this change in the audit log — try again.' using errcode = 'P0081';
   end if;
   begin
-    v_ip := nullif(p_audit ->> 'ip', '')::inet;
+    v_ip := nullif(v_audit ->> 'ip', '')::inet;
   exception when others then
     v_ip := null;
   end;
-  return query select v_meta, v_ip, left(nullif(p_audit ->> 'user_agent', ''), 512);
+  return query select v_meta, v_ip, left(nullif(v_audit ->> 'user_agent', ''), 512);
 end;
 $$;
 
-comment on function public.release_audit_context(jsonb) is
-  'Private helper of release_visit_results / undo_visit_release (0205): reads p_audit {metadata, ip, user_agent}. P0081 when metadata is not a (small) object; an unreadable ip becomes null.';
+comment on function public.release_audit_context(jsonb, text[]) is
+  'Private helper of release_visit_results / undo_visit_release (0205): reads p_audit {metadata, ip, user_agent}; metadata keys must be in p_allowed with scalar values (P0081 otherwise); JSON null = absent; an unreadable ip becomes null.';
 
-revoke all on function public.release_audit_context(jsonb) from public, anon, authenticated, service_role;
+revoke all on function public.release_audit_context(jsonb, text[]) from public, anon, authenticated, service_role;
 
 -- ---------------------------------------------------------------------------
--- result_view_count: the SQL twin of countResultViews (viewed-count.ts) —
--- `result.downloaded` rows naming this test by any of the historical shapes,
--- each counted once. Private helper.
+-- result_view_counts: the SQL twin of countResultViews (viewed-count.ts) —
+-- per test, the `result.downloaded` rows naming it by any of the historical
+-- shapes, each row counted once. One pass over the downloads for the whole
+-- undo, not one per line (it runs under the undo's row locks). Private helper.
 -- ---------------------------------------------------------------------------
-create or replace function public.result_view_count(p_test_request_id uuid)
-returns integer
+create or replace function public.result_view_counts(p_test_request_ids uuid[])
+returns table (test_request_id uuid, viewed_count integer)
 language sql
 stable
 security definer
 set search_path = pg_catalog, public, pg_temp
 as $$
-  select count(*)::integer
-    from public.audit_log a
-   where a.action = 'result.downloaded'
+  select t.id, count(a.id)::integer
+    from unnest(p_test_request_ids) t(id)
+    left join public.audit_log a
+      on a.action = 'result.downloaded'
      and a.resource_type = 'result'
-     and (a.metadata ->> 'test_request_id' = p_test_request_id::text
-          or a.metadata -> 'merged_component_ids' @> jsonb_build_array(p_test_request_id::text)
-          or a.metadata -> 'test_request_ids' @> jsonb_build_array(p_test_request_id::text)
+     and (a.metadata ->> 'test_request_id' = t.id::text
+          or a.metadata -> 'merged_component_ids' @> jsonb_build_array(t.id::text)
+          or a.metadata -> 'test_request_ids' @> jsonb_build_array(t.id::text)
           or a.resource_id in (select rtr.result_id
                                  from public.result_test_requests rtr
-                                where rtr.test_request_id = p_test_request_id));
+                                where rtr.test_request_id = t.id))
+   group by t.id;
 $$;
 
-comment on function public.result_view_count(uuid) is
-  'Private helper of undo_visit_release (0205): how many result.downloaded audit rows name this test (the SQL twin of countResultViews in src/lib/results/viewed-count.ts).';
+comment on function public.result_view_counts(uuid[]) is
+  'Private helper of undo_visit_release (0205): per test, how many result.downloaded audit rows name it (the SQL twin of countResultViews in src/lib/results/viewed-count.ts).';
 
-revoke all on function public.result_view_count(uuid) from public, anon, authenticated, service_role;
+revoke all on function public.result_view_counts(uuid[]) from public, anon, authenticated, service_role;
 
 -- ---------------------------------------------------------------------------
 -- release_visit_results (0198 body + the audit rows)
@@ -157,7 +176,9 @@ declare
 begin
   select a.actor_id, a.actor_role into v_actor, v_role from public.release_actor(p_actor) a;
   v_sections := public.lab_sections_for_role(v_role);  -- null = every section, {} = none
-  select c.extras, c.ip, c.user_agent into v_extras, v_ip, v_ua from public.release_audit_context(p_audit) c;
+  select c.extras, c.ip, c.user_agent into v_extras, v_ip, v_ua
+    from public.release_audit_context(p_audit,
+           array['source', 'bulk', 'selection', 'bulk_batch_id', 'package_header_id', 'result_id']) c;
 
   if p_medium is null or p_medium not in ('physical', 'email', 'viber', 'gcash', 'pickup', 'other') then
     raise exception 'Choose how the result was released.' using errcode = 'P0081';
@@ -369,7 +390,11 @@ declare
 begin
   select a.actor_id, a.actor_role into v_actor, v_role from public.release_actor(p_actor) a;
   v_sections := public.lab_sections_for_role(v_role);
-  select c.extras, c.ip, c.user_agent into v_extras, v_ip, v_ua from public.release_audit_context(p_audit) c;
+  -- via / undo_of_batch mark the 10-minute batch Undo: accepted only with its map.
+  select c.extras, c.ip, c.user_agent into v_extras, v_ip, v_ua
+    from public.release_audit_context(p_audit,
+           array['bulk', 'bulk_batch_id', 'sample_visit_delete']
+           || case when v_batch then array['via', 'undo_of_batch'] else '{}'::text[] end) c;
 
   if v_why is null or v_why = '' then
     raise exception 'Give a reason for undoing the release.' using errcode = 'P0081';
@@ -484,9 +509,9 @@ begin
   -- the row lock, so the audit rows (0205: written here, in this transaction)
   -- describe the release actually undone.
   with prior as (
-    select tr.id, tr.release_medium, tr.released_at,
-           public.result_view_count(tr.id) as viewed_count
+    select tr.id, tr.release_medium, tr.released_at, coalesce(vc.viewed_count, 0) as viewed_count
       from public.test_requests tr
+      left join public.result_view_counts(v_cands) vc on vc.test_request_id = tr.id
      where tr.id = any (v_cands)
   ),
   upd as (
@@ -567,8 +592,8 @@ begin
     raise exception '0205 post-check: a 0198 signature survived';
   end if;
   foreach f in array array[
-    'public.release_audit_context(jsonb)',
-    'public.result_view_count(uuid)',
+    'public.release_audit_context(jsonb,text[])',
+    'public.result_view_counts(uuid[])',
     'public.release_visit_results(uuid,uuid[],text,uuid,jsonb)',
     'public.undo_visit_release(uuid,uuid[],uuid,jsonb,text,jsonb)'
   ] loop
@@ -579,7 +604,7 @@ begin
       raise exception '0205 post-check: anon can execute %', f;
     end if;
   end loop;
-  foreach f in array array['public.release_audit_context(jsonb)', 'public.result_view_count(uuid)'] loop
+  foreach f in array array['public.release_audit_context(jsonb,text[])', 'public.result_view_counts(uuid[])'] loop
     if has_function_privilege('authenticated', f, 'EXECUTE')
        or has_function_privilege('service_role', f, 'EXECUTE') then
       raise exception '0205 post-check: % must stay private', f;

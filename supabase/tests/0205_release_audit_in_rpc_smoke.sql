@@ -19,8 +19,7 @@
 --      (report-mates too), in the call, with exactly the keys the TS wrapper
 --      wrote — bulk, selection, the caller's extras, visit_id, release_medium,
 --      released_at (the stamp the call returned, full precision) — plus the
---      ip / user agent. Extras may set bulk / selection but can't forge
---      visit_id, release_medium or released_at.
+--      ip / user agent. Extras may set bulk / selection.
 --   2. A DIRECT signed-in call with no p_audit is still audited (base keys).
 --   3. A service-role call with p_actor is audited as that staff member.
 --   4. A rolled-back release (payment gate) and a refused one write no rows.
@@ -29,14 +28,18 @@
 --      with visit_id, reason, prior_release_medium, prior_released_at,
 --      viewed_count (the SQL twin of countResultViews: every historical
 --      result.downloaded shape, each row counted once), the extras and
---      report_result_id; extras can't forge the reason or the view count; an
---      unreadable ip is stored as null.
+--      report_result_id; an unreadable ip is stored as null.
 --   7. Batch Undo map with a JSON null (or a number) for a member → P0081,
 --      nothing changes, no rows.
 --   8. Batch Undo when a released member has NO released_at (legacy) and the
 --      map is otherwise exact: the whole report is skipped (changed_since),
 --      none undone — the 0198 check split it.
---   9. p_audit that isn't an object / metadata that isn't a small object → P0081.
+--   8b. A batch Undo with the exact map undoes the report whole and may carry
+--      via / undo_of_batch.
+--   9. p_audit that isn't an object / metadata that isn't a small object of
+--      allow-listed scalar keys → P0081 (a direct call can't plant acting_as,
+--      visit_id, reason …; via / undo_of_batch only with a batch map); a JSON
+--      null p_audit is the same as none.
 --  10. Grants: the 0198 signatures are gone, the new RPCs are authenticated +
 --      service_role only, the two new helpers are private.
 -- =============================================================================
@@ -174,8 +177,7 @@ begin
     $q$select public.release_visit_results('e0000000-0000-4000-8000-000000000205',
          '{f1000000-0000-4000-8000-000000000205}'::uuid[], 'email', null,
          '{"metadata": {"source": "visit_page", "bulk": false, "selection": false,
-                        "bulk_batch_id": "11111111-1111-4111-8111-111111111111",
-                        "visit_id": "forged", "release_medium": "forged", "released_at": "forged"},
+                        "bulk_batch_id": "11111111-1111-4111-8111-111111111111"},
            "ip": "203.0.113.7", "user_agent": "smoke205-ua"}'::jsonb)$q$);
   perform pg_temp.expect('1 released count', jsonb_array_length(v -> 'released')::text, '3');
   perform pg_temp.expect('1 one audit row per released line (report-mates too)',
@@ -183,7 +185,7 @@ begin
   perform pg_temp.expect('1 keys',
     pg_temp.audit_keys('test_request.released', pg_temp.r1()),
     'bulk,bulk_batch_id,release_medium,released_at,selection,source,visit_id');
-  perform pg_temp.expect('1 actor / ip / ua / extras / forged keys ignored',
+  perform pg_temp.expect('1 actor / ip / ua / extras',
     (select string_agg(distinct concat_ws('/', a.actor_id, a.actor_type, host(a.ip_address), a.user_agent,
                                           a.metadata ->> 'source', a.metadata ->> 'bulk', a.metadata ->> 'selection',
                                           a.metadata ->> 'bulk_batch_id', a.metadata ->> 'visit_id',
@@ -284,25 +286,23 @@ begin
   v := pg_temp.run_as('a2000000-0000-4000-8000-000000000205',
     $q$select public.undo_visit_release('e0000000-0000-4000-8000-000000000205',
          '{f0000000-0000-4000-8000-000000000205}'::uuid[], null, null, '  Wrong patient  ',
-         '{"metadata": {"bulk": true, "via": "bulk_undo",
-                        "undo_of_batch": "11111111-1111-4111-8111-111111111111",
-                        "bulk_batch_id": "22222222-2222-4222-8222-222222222222",
-                        "reason": "forged", "viewed_count": 99, "report_result_id": "forged"},
+         '{"metadata": {"bulk": true, "sample_visit_delete": true,
+                        "bulk_batch_id": "22222222-2222-4222-8222-222222222222"},
            "ip": "not-an-ip", "user_agent": "smoke205-ua2"}'::jsonb)$q$);
   perform pg_temp.expect('6 undone count', jsonb_array_length(v -> 'undone')::text, '3');
   perform pg_temp.expect('6 one row per undone line',
     pg_temp.n_audit('test_request.release_undone', pg_temp.r1())::text, '3');
   perform pg_temp.expect('6 keys',
     pg_temp.audit_keys('test_request.release_undone', pg_temp.r1()),
-    'bulk,bulk_batch_id,prior_release_medium,prior_released_at,reason,report_result_id,undo_of_batch,via,viewed_count,visit_id');
+    'bulk,bulk_batch_id,prior_release_medium,prior_released_at,reason,report_result_id,sample_visit_delete,viewed_count,visit_id');
   perform pg_temp.expect('6 actor / ip / ua / reason / extras / report',
     (select string_agg(distinct concat_ws('/', a.actor_id, coalesce(host(a.ip_address), 'null'), a.user_agent,
-                                          a.metadata ->> 'reason', a.metadata ->> 'via', a.metadata ->> 'undo_of_batch',
+                                          a.metadata ->> 'reason', a.metadata ->> 'sample_visit_delete',
                                           a.metadata ->> 'bulk_batch_id', a.metadata ->> 'visit_id',
                                           a.metadata ->> 'prior_release_medium', a.metadata ->> 'report_result_id'), ',')
        from public.audit_log a
       where a.action = 'test_request.release_undone' and a.resource_id = any (pg_temp.r1())),
-    'a2000000-0000-4000-8000-000000000205/null/smoke205-ua2/Wrong patient/bulk_undo/11111111-1111-4111-8111-111111111111/22222222-2222-4222-8222-222222222222/e0000000-0000-4000-8000-000000000205/email/90000000-0000-4000-8000-000000000205');
+    'a2000000-0000-4000-8000-000000000205/null/smoke205-ua2/Wrong patient/true/22222222-2222-4222-8222-222222222222/e0000000-0000-4000-8000-000000000205/email/90000000-0000-4000-8000-000000000205');
   perform pg_temp.expect('6 viewed_count per line (f0, f1, f2)',
     (select string_agg(a.metadata ->> 'viewed_count', ',' order by a.resource_id)
        from public.audit_log a
@@ -365,6 +365,30 @@ begin
     pg_temp.n_audit('test_request.release_undone', pg_temp.r1())::text, '3');
 end $$;
 
+-- 8b. batch Undo with the exact map (stamp restored): whole report, via / undo_of_batch kept
+update public.test_requests t set released_at = (m ->> t.id::text)::timestamptz
+  from smoke205_map where t.id = 'f1000000-0000-4000-8000-000000000205';
+do $$
+declare v jsonb;
+begin
+  execute format('select pg_temp.run_as(%L, %L)', 'a0000000-0000-4000-8000-000000000205',
+    format($q$select public.undo_visit_release('e0000000-0000-4000-8000-000000000205',
+       '{f0000000-0000-4000-8000-000000000205}'::uuid[], null, %L::jsonb, 'Undone within 10 minutes of release',
+       '{"metadata": {"bulk": true, "via": "bulk_undo",
+                      "undo_of_batch": "33333333-3333-4333-8333-333333333333",
+                      "bulk_batch_id": "44444444-4444-4444-8444-444444444444"}}'::jsonb)$q$,
+      (select m from smoke205_map))) into v;
+  perform pg_temp.expect('8b whole report undone', jsonb_array_length(v -> 'undone')::text, '3');
+  perform pg_temp.expect('8b batch keys on the new rows',
+    (select string_agg(distinct concat_ws('/', a.metadata ->> 'via', a.metadata ->> 'undo_of_batch',
+                                          a.metadata ->> 'reason'), ',')
+       from public.audit_log a
+      where a.action = 'test_request.release_undone' and a.resource_id = any (pg_temp.r1())
+        and a.metadata ->> 'bulk_batch_id' = '44444444-4444-4444-8444-444444444444'),
+    'bulk_undo/33333333-3333-4333-8333-333333333333/Undone within 10 minutes of release');
+  perform pg_temp.expect('8b total undo rows', pg_temp.n_audit('test_request.release_undone', pg_temp.r1())::text, '6');
+end $$;
+
 -- 9. malformed p_audit → P0081 ----------------------------------------------------------
 select null from pg_temp.expect_error('9 p_audit not an object', 'a0000000-0000-4000-8000-000000000205',
   $q$select public.release_visit_results('e0000000-0000-4000-8000-000000000205',
@@ -377,6 +401,32 @@ select null from pg_temp.expect_error('9 oversized metadata', 'a0000000-0000-400
        '{f7000000-0000-4000-8000-000000000205}'::uuid[], 'email', null, %L::jsonb)$q$,
     jsonb_build_object('metadata', jsonb_build_object('pad', repeat('x', 5000)))), 'P0081');
 
+select null from pg_temp.expect_error('9 a key outside the allow-list (acting_as)', 'a0000000-0000-4000-8000-000000000205',
+  $q$select public.release_visit_results('e0000000-0000-4000-8000-000000000205',
+       '{f7000000-0000-4000-8000-000000000205}'::uuid[], 'email', null, '{"metadata": {"acting_as": "admin"}}'::jsonb)$q$, 'P0081');
+select null from pg_temp.expect_error('9 a function-owned key (visit_id)', 'a0000000-0000-4000-8000-000000000205',
+  $q$select public.release_visit_results('e0000000-0000-4000-8000-000000000205',
+       '{f7000000-0000-4000-8000-000000000205}'::uuid[], 'email', null, '{"metadata": {"visit_id": "forged"}}'::jsonb)$q$, 'P0081');
+select null from pg_temp.expect_error('9 a non-scalar value', 'a0000000-0000-4000-8000-000000000205',
+  $q$select public.release_visit_results('e0000000-0000-4000-8000-000000000205',
+       '{f7000000-0000-4000-8000-000000000205}'::uuid[], 'email', null, '{"metadata": {"source": {"x": 1}}}'::jsonb)$q$, 'P0081');
+select null from pg_temp.expect_error('9 undo_of_batch without a batch map', 'a2000000-0000-4000-8000-000000000205',
+  $q$select public.undo_visit_release('e0000000-0000-4000-8000-000000000205',
+       '{f7000000-0000-4000-8000-000000000205}'::uuid[], null, null, 'smoke205',
+       '{"metadata": {"undo_of_batch": "33333333-3333-4333-8333-333333333333"}}'::jsonb)$q$, 'P0081');
+select null from pg_temp.expect('9 refused calls wrote nothing and released nothing',
+  pg_temp.statuses(array['f7000000-0000-4000-8000-000000000205']::uuid[]), 'released');
+do $$
+begin
+  -- f7 is released (3); undo it with a JSON-null p_audit = no p_audit.
+  perform pg_temp.run_as('a2000000-0000-4000-8000-000000000205',
+    $q$select public.undo_visit_release('e0000000-0000-4000-8000-000000000205',
+         '{f7000000-0000-4000-8000-000000000205}'::uuid[], null, null, 'smoke205', 'null'::jsonb)$q$);
+  perform pg_temp.expect('9 JSON-null p_audit accepted',
+    pg_temp.audit_keys('test_request.release_undone', array['f7000000-0000-4000-8000-000000000205']::uuid[]),
+    'prior_release_medium,prior_released_at,reason,report_result_id,viewed_count,visit_id');
+end $$;
+
 -- 10. grants ------------------------------------------------------------------------------
 select null from pg_temp.expect('10 0198 signatures gone',
   (to_regprocedure('public.release_visit_results(uuid,uuid[],text,uuid)') is null
@@ -388,10 +438,10 @@ select null from pg_temp.expect('10 RPCs: authenticated + service_role, not anon
    and not has_function_privilege('anon', 'public.undo_visit_release(uuid,uuid[],uuid,jsonb,text,jsonb)', 'EXECUTE'))::text,
   'true');
 select null from pg_temp.expect('10 helpers private',
-  (has_function_privilege('authenticated', 'public.release_audit_context(jsonb)', 'EXECUTE')
-   or has_function_privilege('service_role', 'public.release_audit_context(jsonb)', 'EXECUTE')
-   or has_function_privilege('authenticated', 'public.result_view_count(uuid)', 'EXECUTE')
-   or has_function_privilege('service_role', 'public.result_view_count(uuid)', 'EXECUTE'))::text, 'false');
+  (has_function_privilege('authenticated', 'public.release_audit_context(jsonb,text[])', 'EXECUTE')
+   or has_function_privilege('service_role', 'public.release_audit_context(jsonb,text[])', 'EXECUTE')
+   or has_function_privilege('authenticated', 'public.result_view_counts(uuid[])', 'EXECUTE')
+   or has_function_privilege('service_role', 'public.result_view_counts(uuid[])', 'EXECUTE'))::text, 'false');
 
 \echo '0205 smoke: all checks passed'
 rollback;
