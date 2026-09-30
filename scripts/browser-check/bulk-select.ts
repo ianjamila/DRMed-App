@@ -908,7 +908,7 @@ async function sectionUndo(
       const undoBtn = med.locator('button:has-text("↶ Undo")').first();
       hadUndo = (await waitForCount(undoBtn)) > 0;
       if (hadUndo) await undoBtn.click();
-      await sleep(900);
+      await waitForUndoToFinish(med);
     } finally {
       // Flip back before the queue sections resume, which need medtech —
       // even if the block above threw.
@@ -949,7 +949,7 @@ async function sectionUndo(
     const hadUndoBeforeClick = (await waitForCount(undoBtn)) > 0;
     u6UndoSeenBefore = hadUndoBeforeClick;
     if (hadUndoBeforeClick) await undoBtn.click();
-    await sleep(900);
+    await waitForUndoToFinish(med);
     const afterUndo = await c.sql("select status, assigned_to from test_requests where visit_id = $1", [v.id]);
     if (batchId) {
       allBatchIds.push(batchId);
@@ -991,7 +991,7 @@ async function sectionUndo(
     const undoBtn = admin.locator('button:has-text("↶ Undo")').first();
     const hasUndo = (await waitForCount(undoBtn)) > 0;
     if (hasUndo) await undoBtn.click();
-    await sleep(900);
+    await waitForUndoToFinish(admin);
     const rows = await c.sql(
       `select tr.status, tr.assigned_to from test_requests tr
        join services s on s.id = tr.service_id
@@ -1032,7 +1032,7 @@ async function sectionUndo(
     const undoBtn = admin.locator('button:has-text("↶ Undo")').first();
     const hasUndo = (await waitForCount(undoBtn)) > 0;
     if (hasUndo) await undoBtn.click();
-    await sleep(900);
+    await waitForUndoToFinish(admin);
     const rows = await c.sql(
       `select tr.deleted_at from test_requests tr
        join services s on s.id = tr.service_id
@@ -1070,7 +1070,7 @@ async function sectionUndo(
     );
     const undoBtn = med.locator('button:has-text("↶ Undo")').first();
     await undoBtn.click();
-    await sleep(900);
+    await waitForUndoToFinish(med);
     const text = await outcomeText(med);
     const rows = await c.sql(
       `select tr.status from test_requests tr
@@ -1193,7 +1193,7 @@ async function sectionVisitRelease(c: CheckContext, admin: Page): Promise<void> 
       const undoBtn = admin.locator('button:has-text("↶ Undo")').first();
       const hadUndo = (await waitForCount(undoBtn)) > 0;
       if (hadUndo) await undoBtn.click();
-      await sleep(900);
+      await waitForUndoToFinish(admin);
 
       const afterUndo = await c.sql(
         `select tr.status from test_requests tr join services s on s.id = tr.service_id
@@ -1267,14 +1267,31 @@ async function runHistoricAction(
   return outcomeText(page);
 }
 
+/**
+ * Undo is a server action + router.refresh(). Wait until it has FINISHED:
+ * neither "↶ Undo" nor "Undoing…" is on the page (a refused Undo that keeps
+ * its button for a retry just runs out the clock). A fixed sleep, or waiting
+ * only for "↶ Undo" to go (it turns into "Undoing…" on click), read the DB
+ * before the Undo ran whenever the machine was busy, so a different Undo
+ * check failed on each run (U3/U4, PU1–PU3, H2–H4 in turn).
+ */
+async function waitForUndoToFinish(page: Page): Promise<void> {
+  const undoBtn = page.locator('button:has-text("↶ Undo")');
+  const pending = page.locator('button:has-text("Undoing")');
+  const start = Date.now();
+  while (((await undoBtn.count()) > 0 || (await pending.count()) > 0) && Date.now() - start < 45_000) {
+    await sleep(250);
+  }
+  await sleep(500);
+}
+
 async function clickUndo(page: Page): Promise<boolean> {
   const undoBtn = page.locator('button:has-text("↶ Undo")').first();
   const had = (await waitForCount(undoBtn)) > 0;
-  if (had) await undoBtn.click();
-  // Undo is a server action + router.refresh(); wait for the button to go.
-  const start = Date.now();
-  while (had && (await undoBtn.count()) > 0 && Date.now() - start < 10_000) await sleep(200);
-  await sleep(500);
+  if (had) {
+    await undoBtn.click();
+    await waitForUndoToFinish(page);
+  }
   return had;
 }
 
