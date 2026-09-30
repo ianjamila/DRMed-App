@@ -707,6 +707,11 @@ create unique index if not exists uq_patient_merges_live_source
 
 -- ---------------------------------------------------------------------------
 -- (3) Privileges. NOBYPASSRLS: every table needs a grant AND a policy.
+-- patient_merges and patient_consents were RLS-on/no-policy tables (0151's
+-- list, 0202's service_role-only ACL). The policies below name ONLY this
+-- NOLOGIN role, which nothing but the two merge functions runs as; anon and
+-- authenticated still hold no privilege on either table (0202's invariant,
+-- re-checked by the 0196 smoke s1.11).
 -- ---------------------------------------------------------------------------
 grant select on public.patients, public.visits, public.appointments, public.audit_log,
                 public.critical_alerts, public.patient_consents, public.appointment_attachments,
@@ -2004,6 +2009,13 @@ begin
     (select count(*) from pg_indexes where indexname = 'uq_patient_merges_live_source')::text, '5|1');
   perform pg_temp.expect('s1.9 rollback guard trigger enabled',
     (select tgenabled::text from pg_trigger where tgname = 'trg_patients_live_merge_guard'), 'O');
+  perform pg_temp.expect('s1.11 0202 still holds: merge-ledger/consent policies name only the writer; anon/authenticated hold nothing',
+    ((select bool_and(p.polroles = array['patient_merge_writer'::regrole::oid])
+        from pg_policy p where p.polrelid in ('public.patient_merges'::regclass, 'public.patient_consents'::regclass))
+     and not has_table_privilege('anon', 'public.patient_merges', 'SELECT')
+     and not has_table_privilege('authenticated', 'public.patient_merges', 'SELECT')
+     and not has_table_privilege('anon', 'public.patient_consents', 'SELECT')
+     and not has_table_privilege('authenticated', 'public.patient_consents', 'SELECT'))::text, 'true');
   perform pg_temp.expect('s1.10 writer cannot change deletion columns (0167 guard)',
     pg_temp.state_as('patient_merge_writer', format(
       'update public.patients set deleted_at = now() where id = %L', pg_temp.mk_patient('S1D'))), '42501');
@@ -4139,7 +4151,7 @@ Expected: `exit=0`, `12/12 races passed` (11 + CONTROL). Run it twice more; the 
 
 > *Possible duplicate patients* lists likely pairs (Probable+ or Include weak). **Merge into DRM-…** moves every visit, appointment, result, consent record and lab-request upload to the surviving record in one step — if anything is in the way, nothing changes and the page says why. Details the kept record is missing (middle name, sex, phone, email, address, birthdate) are copied from the merged-in record; older records already merged into the merged-in one now point at the surviving record too. **Recently merged** lists every merge from the last 30 days: **Undo** puts back what the merge moved, keeps any detail edited on the kept record since (and says which), and leaves anything added to the kept record after the merge where it is. When Undo is not available the row says why — the kept record was merged again or deleted, or a lab result made since combines tests from both records. For a pair the detector missed, **Manual merge by DRM-ID →** opens a separate form that takes **Keep this patient** and **Merge in this patient** and asks you to type `MERGE`.
 
-Bump the version at both places: `v2.51` → the next number after whatever main shows at rebase time (currently **v2.52**), date **30 September 2026** (or the merge date), and append `, 0196` to the footer's "Matches the production release at migration …" list.
+**Do not bump the version or date now** — CLAUDE.md (2026-09-30): content changes in the PR, the version/date bump (header line, footer, and the CLAUDE.md bullet) only at merge time after merging `main` into the branch (Task 18 Step 5b).
 
 - [ ] **Step 2: `drmed-migrations` skill.**
   - P-code registry: add `P0078` (merge/undo actor not an active admin, 0196), `P0079` (merge/undo refused — message passes through, 0196), `P0080` (merge marker changed outside the merge functions — 0196 for live v2 merges, 0197 for all).
@@ -4162,7 +4174,7 @@ Bump the version at both places: `v2.51` → the next number after whatever main
 
 - [ ] **Step 1: Rebase on current main and re-check numbers** — `git fetch -q origin && git rebase origin/main`; then from the main checkout `npm run -s claim -- list | tail -5` and `git ls-tree --name-only origin/main supabase/migrations/ | tail -3`. If main now holds a migration ≥ 0196 that is not ours, stop and tell the controller. If 0195 (session 2) landed on main, apply it locally with `psql -f` only if it is not already present.
 - [ ] **Step 2: Static gates** — `npm test 2>&1 | tail -4; npm run typecheck; npm run lint 2>&1 | tail -3`. Expected: all green (the known `amend-form.test.tsx` flake passes alone). Record counts.
-- [ ] **Step 3: Shared-stack DB proofs** — re-apply 0196 (`psql -f`, exit 0), then run: `0196` smoke, `0184` smoke, `0167` smoke, `npm run smoke:locks`, `npm run merge:concurrency-proof -- --control`, `npm run patient-sources:db-proof`. Expected: all pass (0151 and 0183 smokes have known shared-stack issues that are not ours — do not count them as ours, but do record them).
+- [ ] **Step 3: Shared-stack DB proofs** — re-apply 0196 (`psql -f`, exit 0), then run: `0196` smoke, `0184` smoke, `0167` smoke, `0151` smoke (fixed on main by #267 — must pass now), `npm run smoke:locks`, `npm run merge:concurrency-proof -- --control`, `npm run patient-sources:db-proof`. Expected: all pass (0151 and 0183 smokes have known shared-stack issues that are not ours — do not count them as ours, but do record them).
 - [ ] **Step 4: Isolated fresh replay** (NEVER reset the shared stack):
 
 ```bash
@@ -4210,6 +4222,7 @@ select m.id, m.merged_at, m.snapshot_version, s.merged_into_id = m.keep_id as to
 ```
 If the CLI reports `LegacyDbPushMissingLocalError` for a migration applied on prod but not in this tree (e.g. session 2's 0195 pushed ahead of its merge), copy that file in **untracked**, push, then remove it — never `migration repair`. The dry-run must list **only 0196**.
 - [ ] **Step 4: Verify on prod by object** (read-only): role attributes + membership; both functions' owner/secdef/ACL (`has_function_privilege` for anon/authenticated/service_role); the writer's helper EXECUTE grants; `patient_merges` new columns + `uq_patient_merges_live_source`; `trg_patients_live_merge_guard` enabled; `sync_patient_consent_state` body contains `recompute_patient_consent_cache`; ledger head `0196`.
+- [ ] **Step 5b: Guide version at merge time** — merge `origin/main` into the branch, then bump `docs/drmed-user-guide.html` version + date (header line and footer; append `0196` to the footer's migration list) and the CLAUDE.md guide bullet to the next number after main's; commit; re-run `npm test` for the docs tests.
 - [ ] **Step 5: Owner OK** — summarise for the owner (plain words) and ask for the go-ahead to merge. Do not merge without it.
 - [ ] **Step 6: Merge** with the exact full head SHA (`gh pr merge <n> --squash --match-head-commit <full sha>` — a short SHA gives a misleading "Head branch was modified"), then confirm the Vercel **Production** deployment for the merge commit is **Ready** (`gh api repos/:owner/:repo/deployments` / Vercel status) — merge ≠ deploy.
 - [ ] **Step 7: Re-run the cutover query (a)** after the deploy is Ready; reconcile anything unexpected by hand.
@@ -4220,7 +4233,7 @@ If the CLI reports `LegacyDbPushMissingLocalError` for a migration applied on pr
 
 - [ ] **Step 1:** Branch `docs/ledger-0196` off the new main.
 - [ ] **Step 2:** `CLAUDE.md` migration-ledger line: prod head = **0196** (`patient_merge_atomic`, #<PR>) with the verification facts from Task 18 Step 4, keeping the existing history after it (and 0195 as session 2 left it).
-- [ ] **Step 3:** User guide: bump the version once more if main moved it during the PR, and make the footer read "Matches the production release at migration 0196 …". Update CLAUDE.md's guide-version mention to match.
+- [ ] **Step 3:** User guide: only if main moved the version after Task 18 Step 5b, re-align the header/footer/CLAUDE.md bullet (the footer must name 0196).
 - [ ] **Step 4:** PR, owner OK, merge, confirm the deploy is Ready.
 
 ---
