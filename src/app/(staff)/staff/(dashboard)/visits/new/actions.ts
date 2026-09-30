@@ -5,6 +5,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { z } from "zod";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { audit } from "@/lib/audit/log";
 import { requireActiveStaff } from "@/lib/auth/require-staff";
 import { generatePin, hashPin } from "@/lib/auth/pin";
 import { setVisitPinFlash } from "@/lib/auth/visit-pin-flash";
