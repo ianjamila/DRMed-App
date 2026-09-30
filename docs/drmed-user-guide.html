@@ -247,7 +247,7 @@
 <div class="layout">
 <nav class="toc" aria-label="Contents">
   <p class="toc-brand">drmed<span>.</span>ph</p>
-  <p class="toc-tag">User guide · v2.51</p>
+  <p class="toc-tag">User guide · v2.54</p>
   <div class="filter" role="group" aria-label="Show chapters for">
     <button type="button" data-filter="all" aria-pressed="true">All roles</button>
     <button type="button" data-filter="reception">Reception</button>
@@ -326,7 +326,7 @@
   <div class="meta">
     <div><strong>Audience</strong>Reception · Medtech · X-ray · Pathologist · Admin · Patients</div>
     <div><strong>Covers</strong>Everything live in production as of the September 2026 release</div>
-    <div><strong>Version</strong>2.53 · 30 September 2026</div>
+    <div><strong>Version</strong>2.54 · 30 September 2026</div>
     <div><strong>Replaces</strong>Staff User Guide v1.0 (22 May 2026)</div>
   </div>
 </header>
@@ -1131,12 +1131,13 @@
     <h3>5.7 Sheet Sync</h3>
     <div class="screen"><div class="where">Admin › Admin Tools › <kbd class="ui">Sheet Sync</kbd> · <code class="route">/staff/admin/sheet-sync</code> · Admin only</div></div>
     <p class="intro">Keeps patients current from the reception Google Sheet <q>LAB SERVICES (RECEPTION)</q>, and keeps a reporting-only copy of its lab and consultation rows for patient-source counts. It ships <b>paused</b> — an admin turns it on. Nothing it does creates a visit, a payment or an accounting entry; a linked or created patient still needs a real visit at the counter like any other.</p>
-    <p>Four views, along the tabs at the top:</p>
+    <p>Five views, along the tabs at the top:</p>
     <dl class="defs">
       <dt>Overview</dt><dd>The on/off switch, <kbd class="ui">Preview (dry run)</kbd> / <kbd class="ui">Sync now</kbd>, and a table of the last run's rows read, copied rows and open issues per sheet tab.</dd>
       <dt>Review queue</dt><dd>Items the sync couldn't resolve on its own, grouped by kind with filter chips; a count badge shows how many are open. <kbd class="ui">Show handled</kbd> lists what was already resolved or dismissed, by whom and when — an item a later sync simply stopped seeing in the sheet clears itself, and shows there as <q>Cleared — no longer in the sheet</q> with <q>Automatic</q> under who handled it. A patient-matching item stays one item for its sheet row even when a later sync describes it differently (for example <q>Might already be a patient</q> becoming <q>Which patient is this?</q>), so its first-seen date and any decision on it are kept. Rows an <kbd class="ui">Undo</kbd> held back do not fill the open list: the next sync files their items straight under <kbd class="ui">Show handled</kbd> as <q>Kept undone (by the undo)</q>, with whoever ran the undo under who handled it, and one comes back to the open list only if a new matching patient appears in the sheet. Keeping a row undone does not close the question of who it is: under <kbd class="ui">Show handled</kbd>, every <q>Kept undone</q> or <q>Kept undone (by the undo)</q> item still shows its sheet rows and candidates with <kbd class="ui">Link to selected patient</kbd> and <kbd class="ui">Create a new patient</kbd> (no Dismiss there) — either one replaces the hold, like on an open item, and is applied on the next sync. If the page can't check which items are on hold, it shows every one of them as held so nothing can be dismissed by mistake; refresh the page to try again.</dd>
       <dt>Re-sort</dt><dd>Patients imported by the original May import's older, rougher <q>how did you hear about us</q> mapping. Each row proposes moving a group of patients who gave the same answer from their current channel to a more specific one; nothing changes until you approve a group.</dd>
       <dt>Run history</dt><dd>Every sync, re-sort approval, answer mapping and undo, newest first: when it ran, its type, status, duration, what changed, any error, and — where it applies — an <kbd class="ui">Undo</kbd> link, or on an undo that held rows back, <kbd class="ui">Let the sync decide again</kbd> (the row then reads <q>Sync decides again</q>). Paged.</dd>
+      <dt>First-night check</dt><dd>A read-only health check to run on the night the sync is switched on, and again on the nights after. See <a href="#adm-first-night-check">First-night check</a> below.</dd>
     </dl>
     <p>Every open review item is one of seven kinds:</p>
     <dl class="defs">
@@ -1159,6 +1160,25 @@
     <div class="note why"><span class="k">Two counts mean the sync deliberately did nothing, not that it failed</span><div><p>After a real sync (not Preview), Overview and Run history's <q>What changed</q> can show <q>N skipped — changed since the sync read them (next sync retries)</q> — a patient staff edited between the sheet read and the sync applying it, so the sync backed off rather than overwrite the newer change; the next sync re-plans it from a fresh read. They can also show <q>N skipped — already registered (next sync links them)</q> — reception registered that exact person at the counter after the sheet read, so the sync skipped creating a duplicate; the next sync links the sheet row to the patient reception already made.</p></div></div>
     <div class="note why"><span class="k">A few sheet quirks the sync handles on its own</span><div><p>The empty template rows at the bottom of the sheet — left over from copy-paste, with no name and no data except a formula-filled Age cell — are skipped silently; they never appear as review items. A row with a blank surname before the comma (no last name typed) is not silently dropped either way: it stays a <q>Row the sync can't use</q> review item until staff fix the surname in the sheet.</p></div></div>
     <div class="note why"><span class="k">The public forms gained new channels</span><div><p>Turning on the sheet's fuller list of <q>how did you hear about us?</q> answers added the matching channels to the website's own question on <code class="route">/schedule</code> and <code class="route">/register</code>. Two existing options were reworded so no two read the same: <q>Customer referral</q> now asks patients <q>Another DRMed patient told me</q>, and <q>Family / friends</q> asks <q>A friend or family member</q>.</p></div></div>
+  </section>
+
+  <section class="sub" id="adm-first-night-check">
+    <h4>First-night check (Sheet Sync)</h4>
+    <p>The <b>First-night check</b> proves that every screen showing <q>New patients</q> agrees, and flags any day whose count suddenly jumps — the sign that imported records are being counted as new patients. It only reads; it never changes anything. Run it the night the sync is switched on, and again on the mornings after.</p>
+    <dl class="defs">
+      <dt>From / To</dt><dd>The first and last day to check. Left alone, it checks the last 7 days. The screen checks up to 31 days at a time.</dd>
+      <dt>Spike threshold</dt><dd>A day with more new patients than this is flagged. It starts at 40: a normal day is single digits, and the busiest day in the past year was 37.</dd>
+      <dt>Run check</dt><dd>Runs the check. It takes a few seconds per day. The result has its own web address, so you can send it to the developer.</dd>
+    </dl>
+    <p>The result box at the top gives one of four verdicts:</p>
+    <dl class="defs">
+      <dt>All screens agree</dt><dd>Every screen shows the same New patients numbers, and no day was unusually high. <b>Nothing to do.</b></dd>
+      <dt>A day jumped above 40 new patients</dt><dd>(or <q>N days jumped above 40 new patients</q>.) The screens agree with each other, but a normal day is a handful. Open the day in the <b>Day by day</b> table and look at <b>Records created (app / imported)</b>. Many imported records created that night is expected — imported records do <b>not</b> count as new patients, so New patients should stay low. If the day's New patients count is high as well, imported records may be counted as new: tell the developer.</dd>
+      <dt>Screens disagree</dt><dd>Two screens show different New patients numbers for the same days. <b>Stop, do not trust the numbers, keep the sync paused, and send the page to the developer.</b></dd>
+      <dt>The check couldn't finish</dt><dd>Some figures could not be loaded; they are unknown, not zero. Run it again; if it keeps failing, keep the sync paused and tell the developer.</dd>
+    </dl>
+    <p>Below the verdict, <b>Whole range — every screen</b> compares each screen with Patient Sources (Yes / No), and <b>Day by day</b> lists each day's counts (confirmed · unconfirmed) on Patient Sources, the chart and the dashboard tile, with a <b>Flag</b> of <q>Screens differ</q> or <q>Above 40</q>. A line at the bottom says whether the sync is paused or on, and when it last ran.</p>
+    <div class="note why"><span class="k">For the developer</span><div><p>The same check runs as a command: <code>npm run first-night:check</code> (add <code>-- --prod</code> for the live database). It is read-only.</p></div></div>
   </section>
 
   <!-- 5.8 -->
@@ -1352,7 +1372,7 @@
 </section>
 
 <footer class="end">
-  <p>drmed.ph User Guide · v2.51 · 30 September 2026 · Matches the production release at migration 0186, plus 0193 (sync review fixes), 0192 (Results released email alert — applied before this deploy), 0189 (Patient Sources), 0191 (chemistry panels claimed and handed back whole), 0187 (View-as follow-ups), 0190 (claim-holder guard and End now), 0188 (why a patient notice failed, Retry notice), 0184 (patient lifecycle locks), 0183 (waived balance in the books), 0182, 0179 (corrected-result follow-ups), 0176 and 0170 (applied out of order) and 0167 (patient delete and restore). Every label in this guide was checked against the application code on that date. Print with <b>Ctrl/Cmd + P</b>; each chapter starts on a new page.</p>
+  <p>drmed.ph User Guide · v2.54 · 30 September 2026 · Matches the production release at migration 0186, plus 0193 (sync review fixes), 0192 (Results released email alert — applied before this deploy), 0189 (Patient Sources), 0191 (chemistry panels claimed and handed back whole), 0187 (View-as follow-ups), 0190 (claim-holder guard and End now), 0188 (why a patient notice failed, Retry notice), 0184 (patient lifecycle locks), 0183 (waived balance in the books), 0182, 0179 (corrected-result follow-ups), 0176 and 0170 (applied out of order) and 0167 (patient delete and restore). Every label in this guide was checked against the application code on that date. Print with <b>Ctrl/Cmd + P</b>; each chapter starts on a new page.</p>
 </footer>
 </main>
 </div>
