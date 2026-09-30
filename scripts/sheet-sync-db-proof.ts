@@ -3672,6 +3672,20 @@ async function main() {
       assert(run3.review.length === 1 && run3.review[0].payload.deleted_patient_id === undefined
         && (run3.review[0].payload.candidates as Array<{ patient_id: string }>).some((c) => c.patient_id === pid),
         `after a restore: expected a normal review whose candidates include the restored patient, got ${JSON.stringify(run3.review)}`);
+
+      // the deleted target can MOVE (restore, merge, the survivor deleted): re-sending the hold with the new id replaces it,
+      // and ANY other hold reason clears it (held_patient_id is meaningful only for a matches_deleted_patient hold)
+      const survivorId = "00000000-0000-4000-8000-0000000000b2";
+      await applyChunk([{ op: "hold", link_key: key, reason: "matches_deleted_patient", deleted_patient_id: survivorId }]);
+      await setRole("postgres", null);
+      const moved = await q<{ held_patient_id: string | null }>(`select held_patient_id from public.sheet_patient_links where link_key = $1`, [key]);
+      assert(moved.rows[0].held_patient_id === survivorId, `a re-sent hold must replace held_patient_id, got ${JSON.stringify(moved.rows[0])}`);
+      await applyChunk([{ op: "hold", link_key: key, reason: "several patients share this full name", deleted_patient_id: survivorId }]);
+      await setRole("postgres", null);
+      const cleared = await q<{ held_patient_id: string | null; hold_reason: string | null }>(
+        `select held_patient_id, hold_reason from public.sheet_patient_links where link_key = $1`, [key]);
+      assert(cleared.rows[0].held_patient_id === null && cleared.rows[0].hold_reason === "several patients share this full name",
+        `any other hold must clear held_patient_id, got ${JSON.stringify(cleared.rows[0])}`);
     });
   } finally {
     // Never persisted. This proof never writes anything real.

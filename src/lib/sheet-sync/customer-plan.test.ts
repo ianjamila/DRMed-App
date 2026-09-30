@@ -946,3 +946,47 @@ describe("S1 recheck: the deleted-patient evidence survives the persisted hold",
     for (const l of w1.links.values()) expect(l.held_patient_id ?? null).toBeNull();
   });
 });
+
+describe("S1 recheck 2: the held deleted target moves (restore, merge, survivor deleted)", () => {
+  const key = "reyes|ana#1990-01-01";
+  const delA: DeletedPatientEvidence = { id: "A", first_name: "Ana", middle_name: null, last_name: "Reyes", birthdate: "1985-05-05", phone: null };
+  const delB: DeletedPatientEvidence = { id: "B", first_name: "Ana", middle_name: null, last_name: "Reyes", birthdate: "1986-06-06", phone: null };
+  const saved = { link_key: key, patient_id: "A", decision: "link" as const, method: "auto_exact" as const };
+  const runOn = (w: World, patients: PatientRecord[], del: DeletedPatientEvidence[]) =>
+    planCustomers({ rows: rowsOf({ name: "Reyes, Ana", dob: 32874 }), index: buildPatientIndex(patients), links: w.links, facts: w.facts, prevRows: [], deletedPatients: del });
+
+  it("restore A → merge A into B → delete B: the hold follows the chain, re-persists B, and stays stable", () => {
+    const w0 = world([], [saved]);
+    const w1 = applyOps(runOn(w0, [], [delA]).ops, w0);
+    expect(w1.links.get(key)).toMatchObject({ held_patient_id: "A" });
+    const aMerged = patient({ id: "A", first_name: "Ana", middle_name: null, last_name: "Reyes", birthdate: "1985-05-05", merged_into_id: "B" });
+    const r2 = runOn(w1, [aMerged], [delB]);
+    expect(r2.review[0].payload).toMatchObject({ held_because: "matches_deleted_patient", deleted_patient_id: "B" });
+    expect(r2.ops.filter((o) => o.op === "hold")).toEqual([{ op: "hold", link_key: key, reason: "matches_deleted_patient", deleted_patient_id: "B" }]);
+    expect(r2.ops.some((o) => o.op === "create")).toBe(false);
+    const w2 = applyOps(r2.ops, w1);
+    expect(w2.links.get(key)).toMatchObject({ decision: "review", held_patient_id: "B", hold_reason: "matches_deleted_patient" });
+    const r3 = runOn(w2, [aMerged], [delB]);
+    expect(r3.ops.filter((o) => o.op === "hold")).toEqual([]);
+    expect(r3.review[0].payload).toMatchObject({ deleted_patient_id: "B" });
+  });
+
+  it("restore A → merge A into a LIVE survivor: the ordinary path (normal Link candidate), no deleted card", () => {
+    const w0 = world([], [saved]);
+    const w1 = applyOps(runOn(w0, [], [delA]).ops, w0);
+    const survivor = patient({ id: "B", first_name: "Ana", middle_name: null, last_name: "Reyes", birthdate: "1990-01-01" });
+    const aMerged = patient({ id: "A", first_name: "Ana", middle_name: null, last_name: "Reyes", birthdate: "1985-05-05", merged_into_id: "B" });
+    const r2 = runOn(w1, [survivor, aMerged], []);
+    expect(r2.review[0].payload.deleted_patient_id).toBeUndefined();
+    expect((r2.review[0].payload.candidates as Array<{ patient_id: string }>).map((c) => c.patient_id)).toContain("B");
+    expect(r2.ops.filter((o) => o.op === "hold" || o.op === "create")).toEqual([]);
+  });
+
+  it("any other hold clears an existing held_patient_id", () => {
+    const seeded = world([], [{ link_key: key, patient_id: null, decision: "review", method: "auto_exact",
+      hold_reason: "matches_deleted_patient", held_patient_id: "A" }]);
+    expect(seeded.links.get(key)!.held_patient_id).toBe("A"); // the seed really carries one
+    const after = applyOps([{ op: "hold", link_key: key, reason: "several patients share this full name" }], seeded);
+    expect(after.links.get(key)).toMatchObject({ hold_reason: "several patients share this full name", held_patient_id: null });
+  });
+});

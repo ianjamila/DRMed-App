@@ -254,7 +254,11 @@ export function planCustomers(input: Input): CustomerPlan {
    */
   const deletedById = new Set((input.deletedPatients ?? []).map((dp) => dp.id));
   function savedLinkDeletedPatient(g: Group): string | null {
-    let cur: string | null | undefined = g.stored?.patient_id;
+    return deletedEndOf(g.stored?.patient_id);
+  }
+  /** The DELETED patient at the end of id's merge chain (id itself when deleted), else null. */
+  function deletedEndOf(id: string | null | undefined): string | null {
+    let cur: string | null | undefined = id;
     for (let hop = 0; cur && hop < 11; hop++) {
       if (deletedById.has(cur)) return cur;
       const p = index.byId.get(cur);
@@ -365,8 +369,10 @@ export function planCustomers(input: Input): CustomerPlan {
     // deleted: once staff restore it, the ordinary path below runs (a live
     // candidate, a normal Link) — and only when the fresh answer has no live
     // candidates of its own to show.
-    const heldDeleted = g.stored?.hold_reason === DELETED_PATIENT_HOLD_REASON && g.stored.held_patient_id
-      && deletedById.has(g.stored.held_patient_id) ? g.stored.held_patient_id : null;
+    // The recorded patient may have been restored, merged into another and THAT
+    // one deleted: follow the same bounded merge chain a saved link uses, and
+    // report the deleted survivor (the hold op below re-persists its id).
+    const heldDeleted = g.stored?.hold_reason === DELETED_PATIENT_HOLD_REASON ? deletedEndOf(g.stored.held_patient_id) : null;
     if (heldDeleted && (fresh.kind === "create" || (fresh.kind === "review" && fresh.candidates.length === 0 && !fresh.extra?.deleted_patient_id))) {
       return review("possible_existing_patient", "held for an admin decision", [],
         { held_because: DELETED_PATIENT_HOLD_REASON, deleted_patient_id: heldDeleted });
@@ -639,6 +645,17 @@ export function planCustomers(input: Input): CustomerPlan {
   for (const g of groups) {
     if (g.res.kind !== "review") continue;
     const s = g.stored;
+    // A deleted-patient hold whose deleted target moved (restored, merged, the
+    // survivor deleted) is re-sent once so held_patient_id names the CURRENT
+    // deleted record; every other held key stays untouched.
+    if (s?.decision === "review" && s.hold_reason === DELETED_PATIENT_HOLD_REASON && s.method !== "admin") {
+      const cur = g.res.extra?.deleted_patient_id;
+      if (typeof cur === "string" && cur !== s.held_patient_id) {
+        ops.push({ op: "hold", link_key: g.key, reason: DELETED_PATIENT_HOLD_REASON, deleted_patient_id: cur });
+        holds++;
+      }
+      continue;
+    }
     if (s && (s.decision !== "link" || s.method === "admin")) continue;
     const settled = g.res.nameOnly && !createdNames.has(g.nameNorm) && s?.decision !== "link" && !g.collision;
     if (!settled) {
