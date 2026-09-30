@@ -1,8 +1,9 @@
 /**
  * Guarded, local-only, signed-in headless-Chrome checklist for every
  * bulk-select behaviour this PR (bulk-select follow-ups) added: fixed bars,
- * keyboard jump, named outcomes, dated callbacks, chemistry panels, Undo,
- * and the audit-log bulk filter. Every check ASSERTS via c.expect — it never
+ * keyboard jump, named outcomes, dated callbacks, chemistry panels, Undo
+ * (including Release selected and the historic HMO claim actions), and the
+ * audit-log bulk filter. Every check ASSERTS via c.expect — it never
  * just logs.
  *
  *   npm run check:bulk-select
@@ -779,6 +780,185 @@ async function sectionVisitRelease(c: CheckContext, admin: Page): Promise<void> 
 }
 
 // ---------------------------------------------------------------------------
+// Historic HMO claims: 10-minute Undo for Mark billed / Mark paid / Write off
+// (extras (d)). Fixtures: four `BSQ Hist *` claims, all unbilled
+// (bulk-select-fixtures.sql). Every check reads the claim and its journal
+// entries back from the database — the outcome text alone proves nothing.
+// ---------------------------------------------------------------------------
+const HMO_PAGE = `${APP_BASE}/staff/admin/accounting/hmo-claims`;
+
+async function histClaim(c: CheckContext, name: string) {
+  const [row] = await c.sql(
+    "select id, status, date_submitted, date_paid from historic_hmo_claims where patient_name = $1",
+    [name],
+  );
+  return row as { id: string; status: string; date_submitted: string | null; date_paid: string | null } | undefined;
+}
+
+/** Open All unbilled, narrow to one fixture claim and tick it. */
+async function selectHistoric(page: Page, name: string): Promise<void> {
+  await goto(page, HMO_PAGE);
+  await page.locator('nav[aria-label="HMO claims view selector"] button', { hasText: "All unbilled" }).click();
+  await page.locator('input[placeholder="Filter by provider / patient / service..."]').first().fill(name);
+  const box = page.locator(`tbody input[type="checkbox"][aria-label="Select ${name}"]`);
+  await box.waitFor({ timeout: 10_000 });
+  await box.check();
+}
+
+/** Click a footer action, confirm its modal, and wait for the outcome panel. */
+async function runHistoricAction(
+  page: Page,
+  button: RegExp,
+  confirmLabel: string,
+  fill?: (dialog: ReturnType<Page["locator"]>) => Promise<void>,
+): Promise<string | null> {
+  await page.locator("button", { hasText: button }).last().click();
+  const dialog = page.locator('[role="dialog"]');
+  await dialog.waitFor({ timeout: 10_000 });
+  if (fill) await fill(dialog);
+  await dialog.locator("button", { hasText: confirmLabel }).click();
+  await dialog.waitFor({ state: "detached", timeout: 15_000 });
+  await waitForCount(page.locator('button:has-text("↶ Undo")'));
+  return outcomeText(page);
+}
+
+async function clickUndo(page: Page): Promise<boolean> {
+  const undoBtn = page.locator('button:has-text("↶ Undo")').first();
+  const had = (await waitForCount(undoBtn)) > 0;
+  if (had) await undoBtn.click();
+  // Undo is a server action + router.refresh(); wait for the button to go.
+  const start = Date.now();
+  while (had && (await undoBtn.count()) > 0 && Date.now() - start < 10_000) await sleep(200);
+  await sleep(500);
+  return had;
+}
+
+/**
+ * The claim's journal evidence: every history_import JE posted for it, the
+ * reversal mirrors pointing at those, and whether their lines net to zero on
+ * every account.
+ */
+async function historicJeEvidence(c: CheckContext, claimId: string) {
+  const entries = await c.sql(
+    `select id, status, source_kind, reverses from journal_entries
+     where (source_kind = 'history_import' and source_id = $1)
+        or reverses in (select id from journal_entries where source_kind = 'history_import' and source_id = $1)
+     order by created_at`,
+    [claimId],
+  );
+  const originals = entries.filter((e) => e.source_kind === "history_import");
+  const mirrors = entries.filter((e) => e.reverses !== null);
+  const nets = await c.sql(
+    `select jl.account_id, sum(jl.debit_php - jl.credit_php)::numeric as net, count(*)::int as n
+     from journal_lines jl
+     where jl.entry_id in (
+       select id from journal_entries where source_kind = 'history_import' and source_id = $1
+       union
+       select id from journal_entries where reverses in (
+         select id from journal_entries where source_kind = 'history_import' and source_id = $1))
+     group by jl.account_id`,
+    [claimId],
+  );
+  const linesNetZero = nets.length > 0 && nets.every((r) => Number(r.net) === 0);
+  return { entries, originals, mirrors, nets, linesNetZero };
+}
+
+/** One reversed original + one posted mirror pointing at it, lines net to zero. */
+function reversedPairOk(ev: Awaited<ReturnType<typeof historicJeEvidence>>): boolean {
+  return (
+    ev.originals.length === 1 &&
+    ev.originals[0].status === "reversed" &&
+    ev.mirrors.length === 1 &&
+    ev.mirrors[0].status === "posted" &&
+    ev.mirrors[0].reverses === ev.originals[0].id &&
+    ev.linesNetZero
+  );
+}
+
+async function fillWriteOffReason(dialog: ReturnType<Page["locator"]>): Promise<void> {
+  await dialog.locator("textarea").fill("bsq-fixture: HMO denied claim");
+}
+
+async function sectionHistoricHmoUndo(c: CheckContext, admin: Page): Promise<void> {
+  await check(c, "H1 historic Mark billed -> Undo leaves the claim unbilled", async () => {
+    const name = "BSQ Hist Alpha";
+    const before = await histClaim(c, name);
+    await selectHistoric(admin, name);
+    const outcome = await runHistoricAction(admin, /^Mark billed \(/, "Confirm");
+    const afterAction = await histClaim(c, name);
+    const hadUndo = await clickUndo(admin);
+    const afterUndo = await histClaim(c, name);
+    const ok =
+      !!before && before.date_submitted === null &&
+      !!afterAction && afterAction.date_submitted !== null &&
+      hadUndo &&
+      !!afterUndo && afterUndo.date_submitted === null && afterUndo.status === before.status;
+    return { ok, detail: { before, afterAction, afterUndo, outcome, hadUndo } };
+  });
+
+  await check(c, "H2 historic Mark paid -> Undo reverses the JE and restores the claim", async () => {
+    const name = "BSQ Hist Bravo";
+    const before = await histClaim(c, name);
+    await selectHistoric(admin, name);
+    const outcome = await runHistoricAction(admin, /^Mark paid$/, "Confirm paid");
+    const afterAction = await histClaim(c, name);
+    const evAfterAction = await historicJeEvidence(c, before!.id);
+    const hadUndo = await clickUndo(admin);
+    const afterUndo = await histClaim(c, name);
+    const ev = await historicJeEvidence(c, before!.id);
+    const ok =
+      !!before && afterAction?.status === "paid" &&
+      evAfterAction.originals.length === 1 && evAfterAction.originals[0].status === "posted" &&
+      hadUndo &&
+      afterUndo?.status === before.status && afterUndo.date_paid === null &&
+      reversedPairOk(ev);
+    return { ok, detail: { before, afterAction, afterUndo, entries: ev.entries, nets: ev.nets, outcome } };
+  });
+
+  await check(c, "H3 historic Write off -> Undo reverses the JE and restores the claim", async () => {
+    // Charlie is seeded 'overdue' — proves Undo restores the PRIOR status,
+    // not a hardcoded 'pending'.
+    const name = "BSQ Hist Charlie";
+    const before = await histClaim(c, name);
+    await selectHistoric(admin, name);
+    const outcome = await runHistoricAction(admin, /^Write off$/, "Confirm write-off", fillWriteOffReason);
+    const afterAction = await histClaim(c, name);
+    const hadUndo = await clickUndo(admin);
+    const afterUndo = await histClaim(c, name);
+    const ev = await historicJeEvidence(c, before!.id);
+    const ok =
+      before?.status === "overdue" && afterAction?.status === "written_off" &&
+      hadUndo &&
+      afterUndo?.status === "overdue" &&
+      reversedPairOk(ev);
+    return { ok, detail: { before, afterAction, afterUndo, entries: ev.entries, nets: ev.nets, outcome } };
+  });
+
+  await check(c, "H4 historic Mark paid -> Undo -> Mark paid again leaves one posted JE", async () => {
+    const name = "BSQ Hist Delta";
+    const before = await histClaim(c, name);
+    await selectHistoric(admin, name);
+    await runHistoricAction(admin, /^Mark paid$/, "Confirm paid");
+    const hadUndo = await clickUndo(admin);
+    const afterUndo = await histClaim(c, name);
+    await selectHistoric(admin, name);
+    const outcome = await runHistoricAction(admin, /^Mark paid$/, "Confirm paid");
+    const afterRepay = await histClaim(c, name);
+    const ev = await historicJeEvidence(c, before!.id);
+    const posted = ev.originals.filter((e) => e.status === "posted");
+    const reversed = ev.originals.filter((e) => e.status === "reversed");
+    const ok =
+      hadUndo &&
+      afterUndo?.status === before?.status &&
+      afterRepay?.status === "paid" &&
+      posted.length === 1 &&
+      reversed.length === 1 &&
+      ev.mirrors.length === 1 && ev.mirrors[0].reverses === reversed[0].id;
+    return { ok, detail: { before, afterUndo, afterRepay, entries: ev.entries, outcome } };
+  });
+}
+
+// ---------------------------------------------------------------------------
 // Regression (PR 2 checklist, kept) — ported from tmp/bsq-check.mjs.
 // ---------------------------------------------------------------------------
 async function sectionRegression(c: CheckContext, med: Page, medState: StorageState): Promise<void> {
@@ -861,6 +1041,9 @@ async function main(): Promise<void> {
 
   await reseed(c);
   await sectionVisitRelease(c, admin);
+
+  await reseed(c);
+  await sectionHistoricHmoUndo(c, admin);
 
   await reseed(c);
   await sectionRegression(c, med, medState);

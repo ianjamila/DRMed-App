@@ -2,16 +2,17 @@
 -- Loaded by scripts/seed-bulk-select-fixtures.ts, which refuses any non-local target.
 --
 -- Re-runnable: wipes only rows it owns (never patients — the 0146-0148
--- soft-delete guard means Bsqfixture patients are created once and reused).
+-- soft-delete guard means Bsqfixture patients are created once and reused;
+-- never BSQ-* services either — other local smoke fixtures may borrow them,
+-- so they are upserted by code instead of deleted and recreated).
 -- Marked rows: services `BSQ-*`, visits `9101`-`9106`, patients with last
 -- name `Bsqfixture`, appointments with `notes = 'bsq-fixture'`, website
--- messages with `message like 'bsq-fixture%'`.
+-- messages with `message like 'bsq-fixture%'`, historic HMO claims with
+-- `patient_name like 'BSQ Hist %'` (plus the journal entries, reversal
+-- mirrors, lines and audit rows their Undo checks create).
 begin;
 
 -- ---- wipe what a previous run left (never patients) ----
--- Appointments (which reference services via service_id) must be deleted
--- BEFORE the BSQ-* services, or the services delete fails on
--- appointments_service_id_fkey.
 delete from audit_log where resource_type = 'test_request' and resource_id in (
   select tr.id from test_requests tr join visits v on v.id = tr.visit_id
   where v.visit_number in ('9101','9102','9103','9104','9105','9106'));
@@ -21,8 +22,34 @@ delete from visits where visit_number in ('9101','9102','9103','9104','9105','91
 delete from audit_log where resource_type = 'appointment' and resource_id in (
   select id from appointments where notes = 'bsq-fixture');
 delete from appointments where notes = 'bsq-fixture';
-delete from services where code like 'BSQ-%';
 delete from contact_messages where message like 'bsq-fixture%';
+
+-- Historic HMO claims (Undo end-to-end checks). Collect JE ids FIRST — the
+-- updates below null the FK pointers (`reverses` / `reversed_by`) that link a
+-- claim's original settlement/write-off JE to Undo's reversal mirror, so
+-- those pointers can't be used to find the mirror again afterwards. Nulling
+-- both pointers before deleting (rather than relying on delete order) avoids
+-- a `journal_entries.reverses`/`reversed_by` FK violation either way round.
+drop table if exists _bsq_hist_je_ids;
+create temporary table _bsq_hist_je_ids on commit drop as
+  with orig as (
+    select je.id from journal_entries je
+    where je.source_kind = 'history_import'
+      and je.source_id in (select id from historic_hmo_claims where patient_name like 'BSQ Hist %')
+  )
+  select id from orig
+  union
+  select je.id from journal_entries je join orig o on je.reverses = o.id;
+-- Back to draft first: trg_je_lines_balance_check refuses to leave a POSTED
+-- entry with no lines (P0003), and the Undo checks leave both the original
+-- (reversed) and its mirror (posted) behind.
+update journal_entries set reversed_by = null, reverses = null, status = 'draft'
+  where id in (select id from _bsq_hist_je_ids);
+delete from journal_lines where entry_id in (select id from _bsq_hist_je_ids);
+delete from journal_entries where id in (select id from _bsq_hist_je_ids);
+delete from audit_log where resource_type = 'historic_hmo_claim' and resource_id in (
+  select id from historic_hmo_claims where patient_name like 'BSQ Hist %');
+delete from historic_hmo_claims where patient_name like 'BSQ Hist %';
 
 -- ---- patients (created once, reused) ----
 insert into patients (first_name, last_name, birthdate, sex, phone)
@@ -35,10 +62,14 @@ insert into services (code, name, price_php, kind, section) values
   ('BSQ-CBC','BSQ Complete Blood Count',100,'lab_test','hematology'),
   ('BSQ-ESR','BSQ ESR',100,'lab_test','hematology'),
   ('BSQ-UA','BSQ Urinalysis',100,'lab_test','urinalysis'),
-  ('BSQ-XR','BSQ Chest X-ray',100,'lab_test','imaging_xray');
+  ('BSQ-XR','BSQ Chest X-ray',100,'lab_test','imaging_xray')
+on conflict (code) do update set name = excluded.name, price_php = excluded.price_php,
+  kind = excluded.kind, section = excluded.section, report_group_id = null;
 insert into services (code, name, price_php, kind, section, report_group_id)
 select c, n, 100, 'lab_test', 'chemistry', (select id from report_groups where code = 'CHEMISTRY')
-from (values ('BSQ-GLU','BSQ Glucose'), ('BSQ-CHOL','BSQ Cholesterol'), ('BSQ-TRIG','BSQ Triglycerides')) s(c, n);
+from (values ('BSQ-GLU','BSQ Glucose'), ('BSQ-CHOL','BSQ Cholesterol'), ('BSQ-TRIG','BSQ Triglycerides')) s(c, n)
+on conflict (code) do update set name = excluded.name, price_php = excluded.price_php,
+  kind = excluded.kind, section = excluded.section, report_group_id = excluded.report_group_id;
 
 -- ---- visits: 9101/9102/9105/9106 paid, 9103/9104 unpaid + HMO (lab-gate passes via HMO) ----
 with pts as (
@@ -107,5 +138,24 @@ insert into contact_messages (name, phone, message, status, kind) values
   ('BSQ Sender One', '09170000011', 'bsq-fixture: price of CBC?', 'new', 'general'),
   ('BSQ Sender Two', '09170000012', 'bsq-fixture: corporate APE for 40 staff', 'new', 'corporate'),
   ('BSQ Sender Three', '09170000013', 'bsq-fixture: thanks!', 'replied', 'general');
+
+-- ---- historic HMO claims (Undo end-to-end checks: Mark billed / Mark paid /
+-- Write off, each followed by Undo). Marked by patient_name like 'BSQ Hist %'.
+-- Provider picked from whatever exists locally (never hardcode a name — the
+-- seeder only guarantees hmo_providers is non-empty). All four start
+-- eligible (pending/overdue) and NOT YET BILLED (date_submitted null) — the
+-- Unbilled tab shows Mark billed / Mark paid / Write off on every historic
+-- row regardless of billed status (all three actions only require
+-- status in ('pending','overdue')), so a single tab exercises all three.
+with prov as (select name from hmo_providers order by name limit 1)
+insert into historic_hmo_claims
+  (hmo_provider, patient_name, claim_date, service_description, base_amount_php, final_amount_php, status, source_tab, source_row)
+select prov.name, x.patient_name, x.claim_date, x.service_description, x.amount, x.amount, x.status, 'LAB SERVICE', x.source_row
+from prov, (values
+  ('BSQ Hist Alpha',   current_date - 30, 'BSQ Hist Lab Test', 500::numeric, 'pending', -9101),
+  ('BSQ Hist Bravo',   current_date - 35, 'BSQ Hist Lab Test', 750::numeric, 'pending', -9102),
+  ('BSQ Hist Charlie', current_date - 40, 'BSQ Hist Lab Test', 600::numeric, 'overdue', -9103),
+  ('BSQ Hist Delta',   current_date - 32, 'BSQ Hist Lab Test', 450::numeric, 'pending', -9104)
+) as x(patient_name, claim_date, service_description, amount, status, source_row);
 
 commit;
