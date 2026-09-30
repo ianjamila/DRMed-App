@@ -217,12 +217,15 @@ export type Database = {
       ad_spend_daily: {
         Row: {
           ad_key: string
+          ad_label: string | null
           campaign_key: string
           campaign_label: string
           clicks: number | null
           id: number
           impressions: number | null
+          leads: number | null
           platform: string
+          platform_bookings: number | null
           spend_date: string
           spend_php: number
           upload_id: string
@@ -231,12 +234,15 @@ export type Database = {
         }
         Insert: {
           ad_key: string
+          ad_label?: string | null
           campaign_key: string
           campaign_label: string
           clicks?: number | null
           id?: never
           impressions?: number | null
+          leads?: number | null
           platform: string
+          platform_bookings?: number | null
           spend_date: string
           spend_php: number
           upload_id: string
@@ -245,12 +251,15 @@ export type Database = {
         }
         Update: {
           ad_key?: string
+          ad_label?: string | null
           campaign_key?: string
           campaign_label?: string
           clicks?: number | null
           id?: never
           impressions?: number | null
+          leads?: number | null
           platform?: string
+          platform_bookings?: number | null
           spend_date?: string
           spend_php?: number
           upload_id?: string
@@ -7427,6 +7436,22 @@ export type Database = {
         Args: { p_rejected_count?: number; p_rows: Json; p_upload_id: string }
         Returns: Json
       }
+      ad_spend_rows: {
+        Args: { p_from: string; p_to: string }
+        Returns: {
+          ad_key: string
+          ad_label: string
+          campaign_key: string
+          campaign_label: string
+          clicks: number
+          impressions: number
+          leads: number
+          platform: string
+          platform_bookings: number
+          spend_date: string
+          spend_php: number
+        }[]
+      }
       admin_delete_result_template: {
         Args: { p_template_id: string }
         Returns: undefined
@@ -7477,6 +7502,7 @@ export type Database = {
         Args: { p_actor_id: string; p_bill_id: string; p_reason: string }
         Returns: Json
       }
+      api_request_guard: { Args: never; Returns: undefined }
       apply_leave_entitlements: {
         Args: { p_year: number }
         Returns: {

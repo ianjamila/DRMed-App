@@ -28,14 +28,18 @@ export async function removeAdSpendAction(_prev: RemoveAdSpendResult | null, for
     console.error("[ad-spend] delete failed", error.code);
     return { ok: false, error: "Couldn't remove the saved spend. Nothing was removed — try again." };
   }
+  // Both screens read the saved spend: Patient Sources (cost per new patient) and Ad Performance.
   revalidatePath("/staff/marketing/patients");
+  revalidatePath("/staff/marketing");
   return { ok: true, data: { deleted: Number(data ?? 0) } };
 }
 
 const MAX_CSV_CHARS = 5_000_000;
 
-// Re-parses the RAW CSV text on the server (plan P14) — rows computed in the
-// browser's looser in-browser parser (ad-dashboard.tsx) are never trusted.
+// Re-parses the RAW CSV text on the server (plan P14) — the browser never
+// parses an ad file any more (ad-dashboard.tsx only sends the text), and this
+// is the ONLY write path for the Ad Performance screen. The same action saves
+// a browser's old localStorage rows (serialised back to a file first).
 // All-or-nothing: `ad_spend_import` (0189) upserts every row in one
 // transaction and is itself admin-gated (`has_role`) and audited
 // (`ad_spend.imported`), so this action does not write its own audit row;
@@ -79,6 +83,8 @@ export async function saveAdSpendAction(csvText: string): Promise<AdSpendSaveRes
     return { ok: false, error: "Couldn't save the ad spend. Nothing was saved — try again." };
   }
   const counts = data as { inserted: number; replaced: number; days: number };
+  // Both screens read the saved spend: Patient Sources (cost per new patient) and Ad Performance.
   revalidatePath("/staff/marketing/patients");
+  revalidatePath("/staff/marketing");
   return { ok: true, data: { ...counts, currencyAssumed: result.currencyAssumed, rejected } };
 }

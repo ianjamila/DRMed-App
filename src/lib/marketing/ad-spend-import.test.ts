@@ -52,6 +52,7 @@ describe("parseAdSpendCsv", () => {
     expect(r.rows).toEqual([{
       spend_date: "2026-09-01", platform: "meta", campaign_key: "beat the hospital price",
       ad_key: "id:123", campaign_label: "Beat_the_Hospital-Price", spend_php: 1010.5, impressions: 1000, clicks: 13,
+      ad_label: "Video A",
     }]);
   });
   it("rejects Meta rows that cover a range (no daily breakdown)", () => {
@@ -75,6 +76,7 @@ describe("parseAdSpendCsv", () => {
     expect(r.rows).toEqual([{
       spend_date: "2026-09-01", platform: "google", campaign_key: "search lab", ad_key: "(campaign)",
       campaign_label: "Search - Lab", spend_php: 250, impressions: 40, clicks: 4,
+      // no Ad name, Leads or Bookings column: those keys are omitted, not null
     }]);
   });
   it("refuses a non-PHP currency column", () => {
@@ -207,6 +209,79 @@ describe("parseAdSpendCsv", () => {
   });
 });
 
+describe("leads, platform bookings and the ad's display name", () => {
+  const hdr = ["platform", "date", "campaign", "ad", "spend", "impressions", "clicks", "leads", "bookings"];
+  const tpl = (rows: string[][]) => parseAdSpendCsv(rows.map((v) => Object.fromEntries(hdr.map((k, i) => [k, v[i] ?? ""]))), hdr);
+
+  it("reads the Ad Performance template's leads and bookings and keeps the ad name as uploaded", () => {
+    const r = tpl([["Meta", "2026-06-15", "Beat the Hospital Price", "Price vs Hospital", "300", "17600", "300", "48", "29"]]);
+    if (!r.ok) throw new Error();
+    expect(r.rows).toEqual([{
+      spend_date: "2026-06-15", platform: "meta", campaign_key: "beat the hospital price", ad_key: "price vs hospital",
+      campaign_label: "Beat the Hospital Price", spend_php: 300, impressions: 17600, clicks: 300,
+      ad_label: "Price vs Hospital", leads: 48, platform_bookings: 29,
+    }]);
+  });
+  it("keeps a blank cell as unknown (null) and an explicit 0 as a real zero", () => {
+    const r = tpl([
+      ["Meta", "2026-06-15", "C", "A", "10", "", "", "", ""],
+      ["Meta", "2026-06-16", "C", "A", "10", "", "", "0", "0"],
+      ["Meta", "2026-06-17", "C", "A", "10", "", "", "--", "n/a"],
+    ]);
+    if (!r.ok) throw new Error();
+    expect(r.rows.map((x) => [x.leads, x.platform_bookings])).toEqual([[null, null], [0, 0], [null, null]]);
+  });
+  it("sums duplicate (date, platform, campaign, ad) rows across every numeric field", () => {
+    const r = tpl([
+      ["Meta", "2026-06-15", "C", "Ad One", "10", "100", "5", "3", "1"],
+      ["Meta", "2026-06-15", "C", "Ad One", "5.5", "50", "2", "4", "0"],
+    ]);
+    if (!r.ok) throw new Error();
+    expect(r.rows).toHaveLength(1);
+    expect(r.rows[0]).toMatchObject({ spend_php: 15.5, impressions: 150, clicks: 7, leads: 7, platform_bookings: 1, ad_label: "Ad One" });
+  });
+  it("sums a known count with an unknown one as the known count, and two unknowns stay unknown", () => {
+    const r = tpl([
+      ["Meta", "2026-06-15", "C", "A", "1", "", "", "", "2"],
+      ["Meta", "2026-06-15", "C", "A", "1", "", "", "4", ""],
+      ["Meta", "2026-06-16", "C", "A", "1", "", "", "", ""],
+      ["Meta", "2026-06-16", "C", "A", "1", "", "", "", ""],
+    ]);
+    if (!r.ok) throw new Error();
+    expect(r.rows.map((x) => [x.leads, x.platform_bookings])).toEqual([[4, 2], [null, null]]);
+  });
+  it("maps a Meta export: Results = leads, and Cost per result / Result rate are never the count", () => {
+    const headers = ["Reporting starts", "Reporting ends", "Campaign name", "Ad name", "Amount spent (PHP)", "Results", "Cost per result", "Result rate", "Purchases"];
+    const r = parseAdSpendCsv(
+      [{ "Reporting starts": "2026-09-01", "Reporting ends": "2026-09-01", "Campaign name": "C", "Ad name": "A", "Amount spent (PHP)": "100", Results: "12", "Cost per result": "8.33", "Result rate": "3%", Purchases: "4" }],
+      headers,
+    );
+    if (!r.ok) throw new Error();
+    expect(r.rows[0]).toMatchObject({ leads: 12, platform_bookings: 4 });
+  });
+  it("maps a Google export: Conversions = bookings (fractional rounds), Conv. rate ignored", () => {
+    const headers = ["Day", "Campaign", "Cost", "Conversions", "Conv. rate", "Cost / conv."];
+    const r = parseAdSpendCsv(
+      [{ Day: "2026-09-01", Campaign: "Search", Cost: "250", Conversions: "2.6", "Conv. rate": "4.1%", "Cost / conv.": "96" }],
+      headers,
+    );
+    if (!r.ok) throw new Error();
+    expect(r.rows[0]).toMatchObject({ platform_bookings: 3 });
+    expect("leads" in r.rows[0]!).toBe(false);
+  });
+  it("a campaign-total row carries no ad label; an ad-ID row keeps the ad's name as its label", () => {
+    const r = parseAdSpendCsv(
+      [
+        { Day: "2026-09-01", Campaign: "C", Cost: "1" },
+        { Day: "2026-09-02", Campaign: "C", "Ad ID": "77", "Ad name": "Reel  A", Cost: "1" },
+      ],
+      ["Day", "Campaign", "Ad ID", "Ad name", "Cost"],
+    );
+    if (!r.ok) throw new Error();
+    expect(r.rows.map((x) => [x.ad_key, x.ad_label])).toEqual([["(campaign)", null], ["id:77", "Reel  A"]]);
+  });
+});
+
 describe("summary rows vs real campaigns named Total… (Codex C2)", () => {
   const H = ["Day", "Campaign", "Cost", "Currency code"];
   const row = (day: string, campaign: string, cost = "100") => ({ Day: day, Campaign: campaign, Cost: cost, "Currency code": "PHP" });
@@ -327,5 +402,62 @@ describe("describeAdSpendSave", () => {
       rejected: [{ reason: "covers more than one day — export with a 1-day breakdown", count: 4 }] } }))
       .toBe("Saved to clinic records: 2 days, 4 rows rejected (4 covers more than one day — export with a 1-day breakdown). No currency column — pesos assumed.");
     expect(describeAdSpendSave({ ok: false, error: "The file is empty." })).toBe("Not saved to clinic records: The file is empty.");
+  });
+});
+
+describe("absent column vs blank cell (a re-upload must not erase saved values)", () => {
+  const MIN = ["Date", "Platform", "Campaign", "Spend"];
+  const rec = { Date: "2026-09-01", Platform: "Facebook", Campaign: "C", Spend: "10" };
+
+  it("omits the KEY of every field the file has no column for", () => {
+    const r = parseAdSpendCsv([rec], MIN);
+    if (!r.ok) throw new Error();
+    for (const k of ["impressions", "clicks", "leads", "platform_bookings", "ad_label"]) {
+      expect(Object.prototype.hasOwnProperty.call(r.rows[0], k), k).toBe(false);
+    }
+    // ... and the JSON the RPC receives has no such key either.
+    expect(Object.keys(JSON.parse(JSON.stringify(r.rows[0]))).sort()).toEqual(
+      ["ad_key", "campaign_key", "campaign_label", "platform", "spend_date", "spend_php"],
+    );
+  });
+  it("keeps the key, with null, when the column exists but the cell is blank", () => {
+    const hdr = [...MIN, "Ad name", "Impressions", "Clicks", "Leads", "Bookings"];
+    const r = parseAdSpendCsv([{ ...rec, "Ad name": "", Impressions: "", Clicks: "", Leads: "", Bookings: "" }], hdr);
+    if (!r.ok) throw new Error();
+    expect(r.rows[0]).toMatchObject({ impressions: null, clicks: null, leads: null, platform_bookings: null, ad_label: null });
+    for (const k of ["impressions", "clicks", "leads", "platform_bookings", "ad_label"]) {
+      expect(Object.prototype.hasOwnProperty.call(r.rows[0], k), k).toBe(true);
+    }
+  });
+  it("keeps 0 as 0 and includes only the columns that exist", () => {
+    const r = parseAdSpendCsv([{ ...rec, Leads: "0" }], [...MIN, "Leads"]);
+    if (!r.ok) throw new Error();
+    expect(r.rows[0]!.leads).toBe(0);
+    expect("platform_bookings" in r.rows[0]!).toBe(false);
+    expect("impressions" in r.rows[0]!).toBe(false);
+  });
+});
+
+describe("fractional conversions round once per stored row", () => {
+  const hdr = ["Date", "Platform", "Campaign", "Ad name", "Spend", "Conv."];
+  const row = (v: string, ad = "A") => ({ Date: "2026-09-01", Platform: "Google", Campaign: "C", "Ad name": ad, Spend: "1", "Conv.": v });
+  it("three 0.4 rows for the same ad-day store 1", () => {
+    const r = parseAdSpendCsv([row("0.4"), row("0.4"), row("0.4")], hdr);
+    if (!r.ok) throw new Error();
+    expect(r.rows).toHaveLength(1);
+    expect(r.rows[0]!.platform_bookings).toBe(1);
+  });
+  it("a single 0.4 row stores 0, and 2.5 stores 3 (half-up)", () => {
+    const one = parseAdSpendCsv([row("0.4")], hdr);
+    if (!one.ok) throw new Error();
+    expect(one.rows[0]!.platform_bookings).toBe(0);
+    const half = parseAdSpendCsv([row("2.5")], hdr);
+    if (!half.ok) throw new Error();
+    expect(half.rows[0]!.platform_bookings).toBe(3);
+  });
+  it("different ads are rounded separately", () => {
+    const r = parseAdSpendCsv([row("0.4", "A"), row("0.4", "B")], hdr);
+    if (!r.ok) throw new Error();
+    expect(r.rows.map((x) => x.platform_bookings)).toEqual([0, 0]);
   });
 });
