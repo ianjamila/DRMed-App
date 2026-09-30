@@ -157,6 +157,22 @@ describe("resolveStaffAlertRecipients", () => {
     expect(r.loadError).toContain("gone");
   });
 
+  it("an alert switched OFF stays off when a different read fails", async () => {
+    const r = await resolveStaffAlertRecipients(
+      "result_released",
+      fakeAdmin({
+        pages: { 1: { data: null, error: { message: "timeout" } } },
+        tables: {
+          staff_profiles: profiles(["u0"]),
+          staff_alert_settings: { data: { enabled: false }, error: null },
+        },
+      }),
+    );
+    expect(r.enabled).toBe(false);
+    expect(r.emails).toEqual([]);
+    expect(r.loadError).toContain("timeout");
+  });
+
   it("a failed settings read still fails OPEN (enabled) but is reported", async () => {
     const r = await resolveStaffAlertRecipients(
       "result_released",

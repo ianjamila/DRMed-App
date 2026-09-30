@@ -108,11 +108,15 @@ export async function resolveStaffAlertRecipients(
   if (loadError) {
     // Still send to whoever could be resolved (a broken read must not
     // silently stop clinic alerts), but make the failure visible.
-    await reportError({
-      scope: "notify/staff-alert-recipients",
-      error: new Error(loadError),
-      metadata: { alert_key: key },
-    });
+    try {
+      await reportError({
+        scope: "notify/staff-alert-recipients",
+        error: new Error(loadError),
+        metadata: { alert_key: key },
+      });
+    } catch {
+      // Reporting failed — still return what could be resolved (fail open).
+    }
   }
   return {
     ...computeAlertRecipients({
