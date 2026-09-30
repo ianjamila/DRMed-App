@@ -1563,6 +1563,8 @@ git commit -m "docs: ledger 0203/0204/0206; Patient Sources numbers are read tog
 
 ### Task 12: Prod timing, push, PR, db push, merge (controller, with the user)
 
+**Never call a function on prod as a role that is refused EXECUTE** (prod image .111 segfaults and restarts the database on a refused function call — CLAUDE.md, 0201). Every prod check reads the catalog (`has_function_privilege`, `pg_get_functiondef`) or calls as `postgres`/`service_role`, which may run everything touched here. The ACL matrix is proven on the isolated stack only.
+
 - [ ] **Step 1: Prod timing (read-only).** Via MCP `execute_sql` on `qhptbmafrosgibooelpp`, inside `begin; … rollback;` with `set_config('request.jwt.claims','{"role":"service_role"}',true)`: time today's eight calls (summary; series day/served, period/served ×2 periods, day/new; revenue/overlaps/referrers are admin-only — time `_ps_revenue_lines` + identities instead) — this is the "before" figure; the "after" figure is measured after `db push` (Step 5) with `patient_sources_report`.
 - [ ] **Step 2:** Merge origin/main into the branch; bump the guide version/date (header + CLAUDE.md bullet) to the next version; re-run the gate if main moved.
 - [ ] **Step 3:** Ask the user once; push; open the PR (body: what/why, timings, proofs, controls, rollout).
