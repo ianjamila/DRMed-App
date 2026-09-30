@@ -7,6 +7,7 @@ import {
   REFERRAL_SOURCE_IDS,
   REFERRAL_SOURCE_LABEL,
   isReferralSource,
+  parseReferralAnswer,
   referralSourceLabel,
 } from "./referral-sources";
 
@@ -90,5 +91,15 @@ describe("referralSourceLabel", () => {
     expect(isReferralSource("online_facebook")).toBe(true);
     expect(isReferralSource("facebook")).toBe(false);
     expect(isReferralSource(3)).toBe(false);
+  });
+});
+
+describe("parseReferralAnswer", () => {
+  it("accepts a known id and treats blank or unknown as no answer", () => {
+    expect(parseReferralAnswer("online_facebook")).toBe("online_facebook");
+    expect(parseReferralAnswer("")).toBeNull();
+    expect(parseReferralAnswer(null)).toBeNull();
+    expect(parseReferralAnswer("not_recorded")).toBeNull();
+    expect(parseReferralAnswer("hacker")).toBeNull();
   });
 });

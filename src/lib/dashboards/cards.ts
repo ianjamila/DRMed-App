@@ -95,6 +95,7 @@ export const DASHBOARD_CARDS: readonly CardDef[] = [
   // ---- Admin: People ------------------------------------------------------
   { id: "admin.active_employees",        label: "Active employees",          roles: ["admin"], group: "people" },
   { id: "admin.payroll_runs",            label: "Payroll runs in progress",  roles: ["admin"], group: "people" },
+  { id: "admin.new_patients_today",      label: "New patients today",        roles: ["admin"], group: "people" },
 
   // ---- Admin: Attention ---------------------------------------------------
   { id: "admin.strip_audit",         label: "Strip: recent audit anomalies", roles: ["admin"], group: "attention" },

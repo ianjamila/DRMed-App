@@ -223,8 +223,8 @@ export function RevenueByClass({
         )}
         <RevenueTrend view={trendView} />
         <p className="mt-3 text-xs text-[color:var(--color-brand-text-soft)]">
-          Counts billed lines only — items inside a package are covered by the
-          package price. A visit with both lab and doctor work is counted under
+          Billed revenue by visit date — not released revenue. Counts billed lines
+          only; items inside a package are covered by the package price. A visit with both lab and doctor work is counted under
           both classifications, so the visit counts overlap.
         </p>
         {visitsHref || pnlHref ? (

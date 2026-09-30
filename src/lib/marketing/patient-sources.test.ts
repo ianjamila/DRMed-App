@@ -1,0 +1,140 @@
+import { describe, expect, it } from "vitest";
+import {
+  NOT_RECORDED, bucketLabel, channelLabel, channelTable, chartData, classifyReportError,
+  costPerNewPatient, formatNewToday, parseGrain, parseMode, previousPeriod, seriesCsvRows, sheetBanner,
+  type SeriesRow, type SummaryRow,
+} from "./patient-sources";
+
+const row = (bucket_start: string, channel: string, confirmed: number, unconfirmed = 0): SeriesRow =>
+  ({ bucket_start, channel, confirmed, unconfirmed });
+
+describe("parsers and labels", () => {
+  it("defaults mode to new and grain to day", () => {
+    expect(parseMode("served")).toBe("served");
+    expect(parseMode("x")).toBe("new");
+    expect(parseGrain("week")).toBe("week");
+    expect(parseGrain("month")).toBe("month");
+    expect(parseGrain("period")).toBe("day");
+  });
+  it("labels channels, including Not recorded and unknown ids", () => {
+    expect(channelLabel("online_facebook")).toBe("Facebook");
+    expect(channelLabel(NOT_RECORDED)).toBe("Not recorded");
+    expect(channelLabel("mystery_channel")).toBe("Mystery channel");
+  });
+  it("labels buckets without Date", () => {
+    expect(bucketLabel("day", "2026-09-01")).toBe("1 Sep");
+    expect(bucketLabel("week", "2026-08-31")).toBe("Wk of 31 Aug");
+    expect(bucketLabel("month", "2026-09-01")).toBe("Sep 2026");
+  });
+});
+
+describe("previousPeriod", () => {
+  it("is the same length, ending the day before", () => {
+    expect(previousPeriod("2026-09-01", "2026-09-30")).toEqual({ from: "2026-08-02", to: "2026-08-31" });
+    expect(previousPeriod("2026-09-28", "2026-09-28")).toEqual({ from: "2026-09-27", to: "2026-09-27" });
+    expect(previousPeriod("2026-01-01", "2026-01-07")).toEqual({ from: "2025-12-25", to: "2025-12-31" });
+  });
+});
+
+describe("channelTable", () => {
+  it("adds share and change, keeps channels that only existed before, sorts by total", () => {
+    const t = channelTable(
+      [row("2026-09-01", "walk_in", 5, 1), row("2026-09-01", "online_facebook", 2)],
+      [row("2026-08-01", "walk_in", 3), row("2026-08-01", "online_google", 4)],
+    );
+    expect(t.map((r) => r.channel)).toEqual(["walk_in", "online_facebook", "online_google"]);
+    expect(t[0]).toMatchObject({ confirmed: 5, unconfirmed: 1, total: 6, previousTotal: 3, change: 3 });
+    expect(t[0].share).toBeCloseTo(6 / 8);
+    expect(t[2]).toMatchObject({ total: 0, previousTotal: 4, change: -4, share: 0 });
+  });
+});
+
+describe("chartData", () => {
+  it("builds one datum per bucket with confirmed/unconfirmed keys per channel", () => {
+    const { rows, channels } = chartData(
+      [row("2026-09-01", "walk_in", 2, 1), row("2026-09-02", "online_google", 1)],
+      "day",
+    );
+    expect(channels.map((c) => c.key)).toEqual(["walk_in", "online_google"]);
+    expect(rows).toEqual([
+      { bucket: "2026-09-01", label: "1 Sep", walk_in__c: 2, walk_in__u: 1, online_google__c: 0, online_google__u: 0 },
+      { bucket: "2026-09-02", label: "2 Sep", walk_in__c: 0, walk_in__u: 0, online_google__c: 1, online_google__u: 0 },
+    ]);
+  });
+});
+
+describe("costPerNewPatient", () => {
+  it("divides spend by new customers on days with spend only", () => {
+    const out = costPerNewPatient(
+      [
+        { spend_date: "2026-09-01", platform: "meta", spend_php: 1000 },
+        { spend_date: "2026-09-02", platform: "meta", spend_php: 0 },
+        { spend_date: "2026-09-01", platform: "google", spend_php: 500 },
+      ],
+      [
+        row("2026-09-01", "online_facebook", 3, 1),
+        row("2026-09-02", "online_facebook", 9),
+        row("2026-09-03", "online_google", 7),
+      ],
+    );
+    expect(out.find((c) => c.platform === "meta")).toMatchObject({
+      spendPhp: 1000, days: 1, newConfirmed: 3, newUnconfirmed: 1, costPerNewPhp: 250,
+    });
+    expect(out.find((c) => c.platform === "google")).toMatchObject({
+      spendPhp: 500, days: 1, newConfirmed: 0, newUnconfirmed: 0, costPerNewPhp: null,
+    });
+  });
+});
+
+describe("formatNewToday", () => {
+  it("shows the top four channels, the rest as N more, and unconfirmed", () => {
+    const f = formatNewToday([
+      row("2026-09-28", "walk_in", 5), row("2026-09-28", "online_facebook", 2, 1),
+      row("2026-09-28", "online_google", 1), row("2026-09-28", "doctor_referral", 1),
+      row("2026-09-28", "flyers", 1), row("2026-09-28", NOT_RECORDED, 0, 2),
+    ]);
+    expect(f.total).toBe(13);
+    expect(f.unconfirmed).toBe(3);
+    expect(f.hint).toBe("5 Walk-in · 3 Facebook · 2 Not recorded · 1 Doctor referral · 2 more (3 unconfirmed)");
+  });
+  it("says so when nobody is new yet", () => {
+    expect(formatNewToday([])).toEqual({ total: 0, unconfirmed: 0, hint: "No new patients recorded yet today" });
+  });
+});
+
+describe("sheetBanner", () => {
+  it("covers never-loaded, partial, paused-with-data and current", () => {
+    expect(sheetBanner({ sheet_rows_present: false, sync_paused: true, last_run_status: null })).toMatch(/app records only/);
+    expect(sheetBanner({ sheet_rows_present: true, sync_paused: false, last_run_status: "partial" })).toMatch(/did not finish every tab/);
+    expect(sheetBanner({ sheet_rows_present: true, sync_paused: true, last_run_status: "succeeded" })).toMatch(/paused — sheet data is included/);
+    expect(sheetBanner({ sheet_rows_present: true, sync_paused: false, last_run_status: "succeeded" })).toBeNull();
+  });
+});
+
+describe("classifyReportError", () => {
+  it("maps the report SQLSTATEs", () => {
+    expect(classifyReportError({ code: "0A000", message: "x" }).kind).toBe("converted");
+    expect(classifyReportError({ code: "42501", message: "x" }).kind).toBe("forbidden");
+    expect(classifyReportError({ code: "22023", message: "x" }).kind).toBe("invalid");
+    expect(classifyReportError(new Error("boom")).kind).toBe("error");
+    expect(classifyReportError(null).kind).toBe("error");
+  });
+});
+
+describe("seriesCsvRows", () => {
+  it("puts the summary above the channel × bucket table", () => {
+    const summary = {
+      new_confirmed: 3, new_unconfirmed: 1, returning_first_recorded: 2, served_confirmed: 9,
+      served_unconfirmed: 4, undated_registrations: 7, source_recorded: 3, source_total: 4,
+      sheet_last_dates: {}, sync_paused: true, last_synced_at: null,
+      sheet_rows_present: false, last_run_status: null,
+    } satisfies SummaryRow;
+    const rows = seriesCsvRows({ from: "2026-09-01", to: "2026-09-30", mode: "new", grain: "day" }, summary,
+      [row("2026-09-01", "walk_in", 3, 1)]);
+    expect(rows[0]).toEqual(["Patient Sources", "2026-09-01 to 2026-09-30", "New customers", "Day"]);
+    expect(rows).toContainEqual(["New customers — confirmed", 3]);
+    expect(rows).toContainEqual(["New customers — unconfirmed", 1]);
+    expect(rows.at(-2)).toEqual(["Period start", "Channel", "Confirmed", "Unconfirmed"]);
+    expect(rows.at(-1)).toEqual(["2026-09-01", "Walk-in", 3, 1]);
+  });
+});

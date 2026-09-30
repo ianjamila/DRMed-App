@@ -40,7 +40,6 @@ const SURFACES: Record<string, Surface> = {
   [`src/${S}/appointments/actions.ts`]: { meaning: "active", why: "Attach-patient picks an existing record; an inactive one reads as not found." },
   [`src/${S}/visits/new/page.tsx`]: { meaning: "active", why: "New-visit picker and ?patient_id= preselection." },
   [`src/${S}/admin/settings/consent-gate/page.tsx`]: { meaning: "active", why: "Worklist count of active patients without consent." },
-  [`src/${S}/marketing/sources/page.tsx`]: { meaning: "active", why: "New-patient acquisition count counts active records only." },
   "src/app/(patient)/portal/login/actions.ts": { meaning: "active", why: "PIN login authenticates active records only, before PIN work and again before the cookie." },
   "src/app/(marketing)/find-my-id/actions.ts": { meaning: "active", why: "DRM-ID recovery answers for active records only." },
   "src/app/(marketing)/schedule/actions.ts": { meaning: "active", why: "Public lookup and the submitted existing-patient id." },

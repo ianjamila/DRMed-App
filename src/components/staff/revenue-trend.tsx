@@ -1,8 +1,17 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { VISIT_CLASS_LABEL, VISIT_CLASSES, type VisitClass } from "@/lib/visits/classification";
-import type { RevenueTrendPoint } from "@/lib/visits/revenue-presets";
+import {
+  trendDirection,
+  trendMonthHref,
+  trendTotal,
+  type RevenueTrendPoint,
+} from "@/lib/visits/revenue-presets";
+import { ExportCsvLink } from "@/components/staff/export-csv-link";
+import { manilaDate } from "@/lib/dates/manila";
 
 // Validated with the dataviz palette checker (adjacent stack pairs pass CVD and
 // the normal-vision floor on white). The consult violet is under 3:1 against
@@ -37,8 +46,21 @@ type State =
   | { kind: "error" }
   | { kind: "ready"; points: RevenueTrendPoint[] };
 
-function total(p: RevenueTrendPoint): number {
-  return p.lab + p.consult + p.procedure;
+const total = trendTotal;
+
+// Up/down vs the same dates last year. Shape carries the meaning (▲ ▼ =), so
+// the green/red is reinforcement, never the only signal.
+const DIR_GLYPH = { up: "▲", down: "▼", flat: "=" } as const;
+const DIR_CLASS = {
+  up: "fill-green-700 text-green-700",
+  down: "fill-red-700 text-red-700",
+  flat: "fill-[color:var(--color-brand-text-soft)] text-[color:var(--color-brand-text-soft)]",
+} as const;
+
+function directionWords(p: RevenueTrendPoint): string {
+  const d = trendDirection(p);
+  if (d.dir === "none") return "no revenue on the same dates last year";
+  return `${d.change} vs the same dates last year`;
 }
 
 function monthName(p: RevenueTrendPoint): string {
@@ -61,15 +83,20 @@ export function RevenueTrend({ view = "active" }: { view?: string }) {
   const [state, setState] = useState<State>({ kind: "idle" });
   const [width, setWidth] = useState(0);
   const [active, setActive] = useState<number | null>(null);
+  // Bumped by Retry: re-runs the effect, whose fresh `started` guard lets the
+  // load go again.
+  const [attempt, setAttempt] = useState(0);
 
   useEffect(() => {
     const el = wrapRef.current;
-    const details = el?.closest("details");
-    if (!el || !details) return;
+    if (!el) return;
+    // Inside the dropdown: wait until it is opened. Standalone (Monthly
+    // Trends): load straight away.
+    const details = el.closest("details");
     let started = false;
     let cancelled = false;
     const load = () => {
-      if (started || !details.open) return;
+      if (started || (details && !details.open)) return;
       started = true;
       setState({ kind: "loading" });
       fetch(`/api/admin/revenue-trend?view=${encodeURIComponent(view)}`, {
@@ -82,16 +109,19 @@ export function RevenueTrend({ view = "active" }: { view?: string }) {
           setState({ kind: "ready", points: body.points });
         })
         .catch(() => {
-          if (!cancelled) setState({ kind: "error" });
+          if (cancelled) return;
+          // Let a close + reopen of the dropdown try again, too.
+          started = false;
+          setState({ kind: "error" });
         });
     };
     load();
-    details.addEventListener("toggle", load);
+    details?.addEventListener("toggle", load);
     return () => {
       cancelled = true;
-      details.removeEventListener("toggle", load);
+      details?.removeEventListener("toggle", load);
     };
-  }, [view]);
+  }, [view, attempt]);
 
   useEffect(() => {
     const el = wrapRef.current;
@@ -106,6 +136,12 @@ export function RevenueTrend({ view = "active" }: { view?: string }) {
       <div className="mb-2 flex flex-wrap items-baseline justify-between gap-2">
         <h3 className="text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
           Last 12 months
+          <span className="ml-1 font-normal normal-case tracking-normal">
+            · billed, by visit date
+            {state.kind === "ready" && state.points.length > 0
+              ? ` · through ${manilaDate(state.points[state.points.length - 1].end)}`
+              : null}
+          </span>
         </h3>
         <ul className="flex flex-wrap gap-3 text-xs text-[color:var(--color-brand-text)]" aria-label="Legend">
           {VISIT_CLASSES.map((c) => (
@@ -122,15 +158,28 @@ export function RevenueTrend({ view = "active" }: { view?: string }) {
       </div>
 
       {state.kind === "error" ? (
-        <p role="status" className="text-sm text-red-700">
-          Couldn&apos;t load the 12-month trend. Close and reopen to try again.
+        <p role="status" className="flex flex-wrap items-center gap-2 text-sm text-red-700">
+          Couldn&apos;t load the 12-month trend.
+          <button
+            type="button"
+            onClick={() => setAttempt((a) => a + 1)}
+            className="rounded border border-[color:var(--color-brand-bg-mid)] px-2 py-1 text-xs font-semibold text-[color:var(--color-brand-navy)] hover:border-[color:var(--color-brand-cyan)]"
+          >
+            Retry
+          </button>
         </p>
       ) : state.kind !== "ready" ? (
         <p role="status" className="py-10 text-center text-xs text-[color:var(--color-brand-text-soft)]">
           Loading the last 12 months…
         </p>
       ) : (
-        <TrendChart points={state.points} width={width} active={active} setActive={setActive} />
+        <TrendChart
+          points={state.points}
+          width={width}
+          active={active}
+          setActive={setActive}
+          view={view}
+        />
       )}
     </div>
   );
@@ -141,12 +190,15 @@ function TrendChart({
   width,
   active,
   setActive,
+  view,
 }: {
   points: RevenueTrendPoint[];
   width: number;
   active: number | null;
   setActive: (i: number | null) => void;
+  view: string;
 }) {
+  const router = useRouter();
   const max = Math.max(0, ...points.map(total));
   const w = Math.max(width - 2, 240);
   const slot = w / points.length;
@@ -157,19 +209,31 @@ function TrendChart({
 
   return (
     <>
+      {/* Recessive scale reference + the arrow key, in HTML so it never
+          collides with a tall first bar. */}
+      <div className="mb-1 flex flex-wrap items-center justify-between gap-2">
+        <p className="text-[10px] text-[color:var(--color-brand-text-soft)]">
+          {max > 0 ? `Peak ${PHP_SHORT.format(max)}` : "No billed revenue yet"} · ▲ ▼ = vs the same
+          dates last year
+        </p>
+        {/* Plain anchor (ExportCsvLink): next/link would prefetch the route and
+            write an export audit row nobody asked for. */}
+        <ExportCsvLink
+          href={`/api/admin/reports/revenue-trend.csv?view=${encodeURIComponent(view)}`}
+          label="Download CSV"
+        />
+      </div>
       <div className="relative">
         <svg
           width={w}
           height={HEIGHT}
-          role="img"
+          // "group", not "img": an img role makes its children presentational,
+          // which would hide the month links inside it from screen readers.
+          role="group"
           aria-label={`Monthly billed revenue by classification, ${monthName(points[0])} to ${monthName(points[points.length - 1])}. Peak ${PHP.format(max)}. Table view below.`}
           className="block"
           onMouseLeave={() => setActive(null)}
         >
-          {/* Recessive scale reference: the peak value and a baseline. */}
-          <text x={0} y={10} className="fill-[color:var(--color-brand-text-soft)] text-[10px]">
-            {max > 0 ? `Peak ${PHP_SHORT.format(max)}` : "No billed revenue yet"}
-          </text>
           <line
             x1={0}
             x2={w}
@@ -182,6 +246,7 @@ function TrendChart({
             const x = cx - barW / 2;
             let y = PLOT_BOTTOM;
             const segs = VISIT_CLASSES.map((c) => ({ c, h: scale(p[c]) })).filter((s) => s.h > 0);
+            const dir = trendDirection(p).dir;
             return (
               <g key={p.key} opacity={active === null || active === i ? 1 : 0.45}>
                 {segs.map((s, j) => {
@@ -196,6 +261,17 @@ function TrendChart({
                     <rect key={s.c} x={x} y={top} width={barW} height={h} fill={SERIES_COLOR[s.c]} />
                   );
                 })}
+                {dir !== "none" ? (
+                  <text
+                    x={cx}
+                    y={Math.max(PLOT_BOTTOM - scale(total(p)) - 4, 10)}
+                    textAnchor="middle"
+                    aria-hidden="true"
+                    className={`text-[9px] ${DIR_CLASS[dir]}`}
+                  >
+                    {DIR_GLYPH[dir]}
+                  </text>
+                ) : null}
                 <text
                   x={cx}
                   y={HEIGHT - 5}
@@ -216,11 +292,17 @@ function TrendChart({
                   height={HEIGHT}
                   fill="transparent"
                   tabIndex={0}
-                  aria-label={`${monthName(p)}: ${PHP.format(total(p))} total`}
+                  role="link"
+                  aria-label={`${monthName(p)}: ${PHP.format(total(p))} total, ${directionWords(p)}. Open these visits in Visit Records.`}
                   onMouseEnter={() => setActive(i)}
                   onFocus={() => setActive(i)}
                   onBlur={() => setActive(null)}
-                  className="cursor-default outline-none focus-visible:stroke-[color:var(--color-brand-cyan)]"
+                  // Click (or Enter) opens that month in Visit Records.
+                  onClick={() => router.push(trendMonthHref(p, view))}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") router.push(trendMonthHref(p, view));
+                  }}
+                  className="cursor-pointer outline-none focus-visible:stroke-[color:var(--color-brand-cyan)]"
                 />
               </g>
             );
@@ -229,9 +311,9 @@ function TrendChart({
         {activePoint && active !== null ? (
           <div
             role="tooltip"
-            className="pointer-events-none absolute top-0 z-10 w-48 rounded-md border border-[color:var(--color-brand-bg-mid)] bg-white p-2 text-xs shadow-md"
+            className="pointer-events-none absolute top-0 z-10 w-60 rounded-md border border-[color:var(--color-brand-bg-mid)] bg-white p-2 text-xs shadow-md"
             style={{
-              left: Math.min(Math.max(slot * active + slot / 2 - 96, 0), Math.max(w - 192, 0)),
+              left: Math.min(Math.max(slot * active + slot / 2 - 120, 0), Math.max(w - 240, 0)),
               transform: "translateY(-100%)",
             }}
           >
@@ -253,6 +335,10 @@ function TrendChart({
               <span>Total</span>
               <span className="font-mono">{PHP.format(total(activePoint))}</span>
             </p>
+            <PriorYearLine point={activePoint} />
+            <p className="mt-1 text-[10px] text-[color:var(--color-brand-text-soft)]">
+              Click to open these visits
+            </p>
           </div>
         ) : null}
       </div>
@@ -269,19 +355,32 @@ function TrendChart({
                     {VISIT_CLASS_LABEL[c]}
                   </th>
                 ))}
-                <th className="py-1 text-right font-semibold">Total</th>
+                <th className="py-1 pr-3 text-right font-semibold">Total</th>
+                <th className="py-1 pr-3 text-right font-semibold">Same dates last year</th>
+                <th className="py-1 text-right font-semibold">Change</th>
               </tr>
             </thead>
             <tbody className="font-mono">
               {points.map((p) => (
                 <tr key={p.key} className="border-t border-[color:var(--color-brand-bg-mid)]">
-                  <td className="py-1 pr-3 font-sans">{monthName(p)}</td>
+                  <td className="py-1 pr-3 font-sans">
+                    <Link
+                      href={trendMonthHref(p, view)}
+                      className="text-[color:var(--color-brand-cyan)] hover:underline"
+                    >
+                      {monthName(p)}
+                    </Link>
+                  </td>
                   {VISIT_CLASSES.map((c) => (
                     <td key={c} className="py-1 pr-3 text-right">
                       {PHP.format(p[c])}
                     </td>
                   ))}
-                  <td className="py-1 text-right font-semibold">{PHP.format(total(p))}</td>
+                  <td className="py-1 pr-3 text-right font-semibold">{PHP.format(total(p))}</td>
+                  <td className="py-1 pr-3 text-right">{PHP.format(total(p.prior))}</td>
+                  <td className="py-1 text-right font-sans">
+                    <ChangeCell point={p} />
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -289,5 +388,28 @@ function TrendChart({
         </div>
       </details>
     </>
+  );
+}
+
+function ChangeCell({ point }: { point: RevenueTrendPoint }) {
+  const d = trendDirection(point);
+  if (d.dir === "none") return <span className="text-[color:var(--color-brand-text-soft)]">—</span>;
+  return (
+    <span className={`font-semibold ${DIR_CLASS[d.dir]}`}>
+      <span aria-hidden="true">{DIR_GLYPH[d.dir]} </span>
+      {d.change}
+    </span>
+  );
+}
+
+function PriorYearLine({ point }: { point: RevenueTrendPoint }) {
+  return (
+    <p className="mt-1 flex justify-between gap-2 text-[color:var(--color-brand-text-soft)]">
+      <span>Same dates last year</span>
+      <span>
+        <span className="font-mono">{PHP.format(total(point.prior))}</span>{" "}
+        <ChangeCell point={point} />
+      </span>
+    </p>
   );
 }
