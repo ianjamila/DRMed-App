@@ -867,3 +867,36 @@ describe("S2: facts ops carry the read row_version and survive their own fill (s
     expect(after.counts).toMatchObject({ facts: 1, stale: 0 });
   });
 });
+
+describe("S1 (admin link): an admin-chosen patient who was later deleted", () => {
+  const key = "reyes|ana#1990-01-01";
+  const adminLink = (pid: string) => new Map([[key, { link_key: key, patient_id: pid, decision: "link" as const, method: "admin" as const }]]);
+  const run = (patients: PatientRecord[], deleted: DeletedPatientEvidence[], pid: string) =>
+    planCustomers({ rows: rowsOf({ name: "Reyes, Ana", dob: 32874 }), index: buildPatientIndex(patients), links: adminLink(pid), facts: new Map(),
+      prevRows: [], deletedPatients: deleted });
+  const del = (over: Partial<DeletedPatientEvidence> = {}): DeletedPatientEvidence =>
+    ({ id: "gone-1", first_name: "Someone", middle_name: null, last_name: "Else", birthdate: null, phone: null, ...over });
+
+  it("is a matches_deleted_patient review with the deleted id, no hold op (admin rows are never overwritten), no create", () => {
+    const out = run([], [del()], "gone-1");
+    expect(out.review[0]).toMatchObject({ kind: "possible_existing_patient",
+      payload: { held_because: "matches_deleted_patient", deleted_patient_id: "gone-1" } });
+    expect(out.ops.some((o) => o.op === "hold" || o.op === "create")).toBe(false);
+  });
+  it("follows a merge to a deleted survivor", () => {
+    const merged = patient({ merged_into_id: "gone-1" });
+    const out = run([merged], [del()], merged.id);
+    expect(out.review[0].payload).toMatchObject({ deleted_patient_id: "gone-1" });
+  });
+  it("a live survivor is still followed (linked, no review)", () => {
+    const survivor = patient({});
+    const merged = patient({ merged_into_id: survivor.id });
+    const out = run([survivor, merged], [del()], merged.id);
+    expect(out.review).toHaveLength(0);
+    expect(out.mirror[0]).toMatchObject({ patient_id: survivor.id, link_state: "linked" });
+  });
+  it("a truly missing patient keeps the generic hold", () => {
+    const out = run([], [], "nobody");
+    expect(out.review[0]).toMatchObject({ kind: "ambiguous_patient", payload: { reason: "the chosen patient no longer exists" } });
+  });
+});

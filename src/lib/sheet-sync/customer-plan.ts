@@ -371,8 +371,17 @@ export function planCustomers(input: Input): CustomerPlan {
       // that name too (an admin said "the undated rows with this name are this
       // patient"); a DATED key only ever covers rows carrying that DOB.
       const s = link.patient_id ? index.survivor(link.patient_id) : null;
+      // A deleted chosen patient (or a survivor deleted after a merge) gets the
+      // same deleted-patient review as an auto link (S1, owner rule: never
+      // re-create a deleted person silently). No hold op follows — an admin
+      // row is never overwritten by the sync — so Keep deleted is a plain
+      // dismiss of the item. A truly missing patient keeps the generic hold.
+      const deletedChosen = s ? null : savedLinkDeletedPatient(g);
       g.res = s ? { kind: "linked", patientId: s, trusted: true, linkOp: null }
-        : review("ambiguous_patient", "the chosen patient no longer exists");
+        : deletedChosen
+          ? review("possible_existing_patient", DELETED_PATIENT_HOLD_REASON, [],
+            { held_because: DELETED_PATIENT_HOLD_REASON, deleted_patient_id: deletedChosen })
+          : review("ambiguous_patient", "the chosen patient no longer exists");
       continue;
     }
     if (link?.decision === "create") { g.res = { kind: "create" }; g.adminCreate = true; continue; }
