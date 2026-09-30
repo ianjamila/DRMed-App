@@ -55,6 +55,7 @@ const SURFACES: Record<string, Surface> = {
   [`src/${S}/patients/[id]/consent/signed/page.tsx`]: { meaning: "history", why: "Viewing a signed consent form of any record." },
   [`src/${S}/patients/[id]/edit-actions.ts`]: { meaning: "history", why: "Reads consent_current of a target already proven active by assertPatientActive." },
   "src/lib/actions/results/amend-consolidated.ts": { meaning: "history", why: "Reads sex/birthdate of a target already proven active by assertPatientActive above." },
+  "src/lib/marketing/first-night-check.server.ts": { meaning: "history", why: "First-night check counts records CREATED per day (head-only count); deleted and merged records were still created, so it must not filter." },
   [`src/${S}/audit/page.tsx`]: { meaning: "history", why: "Audit enrichment must keep deleted and merged names." },
   [`src/${S}/queue/[id]/actions.ts`]: { meaning: "history", why: "Demographics of an existing result's patient; writes are guarded separately." },
   "src/app/(patient)/portal/(authenticated)/data-export/route.ts": { meaning: "history", why: "RA 10173 export of the signed-in (already active-checked) patient's own record." },

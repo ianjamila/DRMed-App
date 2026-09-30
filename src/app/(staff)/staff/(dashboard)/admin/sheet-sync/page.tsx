@@ -15,6 +15,7 @@ import type { RunOutcome } from "@/lib/sheet-sync/run";
 import type { Database } from "@/types/database";
 import { SyncSwitch, SyncNow } from "./sync-controls";
 import { RunHistory } from "./run-history";
+import { FirstNightCheck } from "./first-night-check";
 import { ReviewQueue } from "./review-queue";
 import { ResortPanel } from "./resort-panel";
 import { DoneBanner } from "./done-banner";
@@ -27,13 +28,14 @@ export const maxDuration = 300; // "Sync now" runs inside this page's server act
 const BASE_PATH = "/staff/admin/sheet-sync";
 type Client = SupabaseClient<Database>;
 
-const VIEWS = ["overview", "review", "resort", "history"] as const;
+const VIEWS = ["overview", "review", "resort", "history", "check"] as const;
 type View = (typeof VIEWS)[number];
 const VIEW_LABEL: Record<View, string> = {
   overview: "Overview",
   review: "Review queue",
   resort: "Re-sort",
   history: "Run history",
+  check: "First-night check",
 };
 
 // TabOutcome.status is typed "succeeded" | "failed" | "skipped", distinct
@@ -208,6 +210,7 @@ export default async function SheetSyncPage({
         <ReviewQueue searchParams={params} openByKind={openByKind} openCountsFailed={openCountsFailed} />
       )}
       {view === "resort" && <ResortPanel />}
+      {view === "check" && <FirstNightCheck searchParams={params} />}
     </div>
   );
 }

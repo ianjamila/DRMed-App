@@ -35,6 +35,7 @@ import { QUEUE_DELETE_ROLES } from "@/lib/visits/deletion";
 import { labQueueGate } from "@/lib/visits/lab-gate";
 import { loadOwnBatchRows } from "@/lib/audit/bulk-batch";
 import { readInChunks } from "@/lib/supabase/in-chunks";
+import { mapWithConcurrency } from "@/lib/async/map-with-concurrency";
 import { restoreTestRequestsForVisit, revalidateQueueSurfaces } from "@/lib/actions/visits/queue-restore-core";
 import {
   BULK_UNDO_VIA,
@@ -476,20 +477,6 @@ export async function releaseTestsAction(input: unknown): Promise<BulkReleaseRes
     skipped: ids.filter((id) => skipped.has(id) && !changedSet.has(id)).map((id) => ({ id, reason: skipped.get(id)! })),
     warnings,
   };
-}
-
-/** Run `fn` over `items` with at most `limit` in flight; results keep input order. */
-async function mapWithConcurrency<T, R>(items: readonly T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> {
-  const results = new Array<R>(items.length);
-  let next = 0;
-  const worker = async () => {
-    while (next < items.length) {
-      const i = next++;
-      results[i] = await fn(items[i]);
-    }
-  };
-  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
-  return results;
 }
 
 export async function reassignTestAction(

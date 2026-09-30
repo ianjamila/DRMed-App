@@ -56,7 +56,7 @@ import {
 } from "@/lib/results/updated-filter";
 import { resultsMemberSections, membersWithinSections } from "@/lib/results/report-section-gate";
 import { InactivePatientBadge } from "@/components/staff/inactive-patient-badge";
-import { isActivePatient } from "@/lib/patients/active";
+import { activeEmbeddedPatients, isActivePatient } from "@/lib/patients/active";
 
 export const metadata = { title: "Results" };
 export const dynamic = "force-dynamic";
@@ -373,6 +373,12 @@ export default async function AllResultsPage({ searchParams }: SearchProps) {
       query = query.in("services.section", allowedSections);
     }
   }
+
+  // Deleted and merged-away patients are HIDDEN from this worklist (owner
+  // decision 2026-09-30), not just badged — in the query, so the count and
+  // paging stay honest. `visits.patients` is `!inner` at both hops in every
+  // select shape above, which is what makes PostgREST honour the filter.
+  query = activeEmbeddedPatients(query, "visits.patients");
 
   // Free-text search is a real filter like the rest: every word must match the
   // row's patient / visit # / test / panel text (migration 0194), so `total`
@@ -1062,7 +1068,9 @@ function ArchiveItemActions({
    *  deleted member's values, so a lab role must cover every linked test,
    *  not just the live ones this row shows. */
   pdfAllowed: boolean;
-  /** 0167: a deleted/merged patient's result stays viewable but not editable. */
+  /** 0167: a deleted/merged patient's result stays viewable but not editable.
+   *  The archive query now excludes inactive patients, so this only matters
+   *  if that filter is ever removed. */
   patientActive: boolean;
 }) {
   const editable =

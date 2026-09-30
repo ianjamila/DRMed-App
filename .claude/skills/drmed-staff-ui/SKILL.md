@@ -27,7 +27,7 @@ The three "chrome" systems every staff page hangs off of: the **sidebar nav conf
 | Card component | `…/(dashboard)/_dashboards/_components/stat-card.tsx` (`StatCard`) |
 | Brand theme tokens | `src/app/globals.css` (`--color-brand-*`) |
 | Cron Health (admin-only, Operations nav subgroup) | `src/app/(staff)/staff/(dashboard)/admin/operations/cron-health/page.tsx` — beside the `(daily-monitoring)` route group, so no tab bar; canonical legs (with the plain `label` + `description` the page shows) + status rule in `src/lib/ops/cron-heartbeats.ts`, drift guards in `cron-heartbeats.test.ts` |
-| Sheet Sync (admin-only, Admin Tools nav item, last after Patient Merge) | `src/app/(staff)/staff/(dashboard)/admin/sheet-sync/page.tsx` — 4 in-page views (`?view=overview\|review\|resort\|history`) via `sectionTabClass`/`sectionTabsNavClass` (a param-driven bar, not `<SectionTabs/>`); nav entry + description in `staff-nav-config.ts` |
+| Sheet Sync (admin-only, Admin Tools nav item, last after Patient Merge) | `src/app/(staff)/staff/(dashboard)/admin/sheet-sync/page.tsx` — 5 in-page views (`?view=overview\|review\|resort\|history\|check`; `check` = "First-night check", `admin/sheet-sync/first-night-check.tsx`, runs only on `run=1`) via `sectionTabClass`/`sectionTabsNavClass` (a param-driven bar, not `<SectionTabs/>`); nav entry + description in `staff-nav-config.ts` |
 
 Roles everywhere: `reception`, `medtech`, `xray_technician`, `pathologist`, `admin`.
 
