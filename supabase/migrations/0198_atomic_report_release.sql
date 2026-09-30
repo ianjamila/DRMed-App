@@ -357,14 +357,15 @@ begin
          and t.visit_id = p_visit_id
          and t.status = 'ready_for_release'
          and t.deleted_at is null
-      returning t.id, t.service_id
+      returning t.id, t.service_id, t.released_at
     )
     select count(*),
            coalesce(jsonb_agg(jsonb_build_object(
              'id', upd.id,
              'name', coalesce(s.name, 'Result'),
              'report_id', rtr.result_id,
-             'selected', upd.id = any (v_ids)) order by upd.id), '[]'::jsonb)
+             'selected', upd.id = any (v_ids),
+             'released_at', upd.released_at) order by upd.id), '[]'::jsonb)
       into v_count, v_released
       from upd
       left join public.services s on s.id = upd.service_id
@@ -390,7 +391,7 @@ end;
 $$;
 
 comment on function public.release_visit_results(uuid, uuid[], text, uuid) is
-  'Releases the selected ready tests of one visit (0198), each combined report WHOLE or not at all, planned and written under the membership → patient → visit → test_requests locks. Returns {released: [{id, name, report_id, selected}], refused: [{id, code, report_id, count}]}; every selected id lands in exactly one of them. Codes: not_ready, outside_sections, report_outside_sections, report_package_header, report_other_visit, report_doctor_member, report_deleted_member, report_not_finished (count = unfinished members). Raises P0081 (whole call refused, message passes through), 40001/P0072 (retry), P0058 (patient inactive), 42501, and the payment/consent gates'' check_violation.';
+  'Releases the selected ready tests of one visit (0198), each combined report WHOLE or not at all, planned and written under the membership → patient → visit → test_requests locks. Returns {released: [{id, name, report_id, selected, released_at}], refused: [{id, code, report_id, count}]}; every selected id lands in exactly one of them. Codes: not_ready, outside_sections, report_outside_sections, report_package_header, report_other_visit, report_doctor_member, report_deleted_member, report_not_finished (count = unfinished members). Raises P0081 (whole call refused, message passes through), 40001/P0072 (retry), P0058 (patient inactive), 42501, and the payment/consent gates'' check_violation.';
 
 revoke all on function public.release_visit_results(uuid, uuid[], text, uuid) from public, anon, authenticated, service_role;
 grant execute on function public.release_visit_results(uuid, uuid[], text, uuid) to authenticated, service_role;
@@ -398,10 +399,19 @@ grant execute on function public.release_visit_results(uuid, uuid[], text, uuid)
 -- ---------------------------------------------------------------------------
 -- undo_visit_release
 -- ---------------------------------------------------------------------------
+-- (A 3-argument draft of this function existed only on local stacks.)
+drop function if exists public.undo_visit_release(uuid, uuid[], uuid);
+
 create or replace function public.undo_visit_release(
-  p_visit_id         uuid,
-  p_test_request_ids uuid[],
-  p_actor            uuid default null
+  p_visit_id             uuid,
+  p_test_request_ids     uuid[],
+  p_actor                uuid default null,
+  -- The 10-minute batch Undo (undoReleaseBatchAction): {test_request_id:
+  -- released_at} of the EXACT release that batch made. When given, a line is
+  -- undone only while it still carries that release, and a combined report
+  -- only when EVERY member does — otherwise it is skipped (changed_since),
+  -- never undone in part and never raised. Null for every other caller.
+  p_expected_released_at jsonb default null
 )
 returns jsonb
 language plpgsql
@@ -420,10 +430,24 @@ declare
   v_cands    uuid[];
   v_undone   jsonb;
   v_count    int;
+  v_batch    boolean := p_expected_released_at is not null;
+  v_refused  uuid[]  := '{}';  -- members of reports a batch Undo must leave alone
+  v_skipped  jsonb;
   r          record;
 begin
   select a.actor_id, a.actor_role into v_actor, v_role from public.release_actor(p_actor) a;
   v_sections := public.lab_sections_for_role(v_role);
+
+  if v_batch then
+    begin
+      if jsonb_typeof(p_expected_released_at) <> 'object' then
+        raise exception using errcode = '22023';
+      end if;
+      perform (e.key)::uuid, (e.value)::timestamptz from jsonb_each_text(p_expected_released_at) e;
+    exception when others then
+      raise exception 'Couldn''t read which release to undo — try again.' using errcode = 'P0081';
+    end;
+  end if;
 
   v_ids := array(
     select distinct x from unnest(coalesce(p_test_request_ids, '{}'::uuid[])) x
@@ -468,6 +492,19 @@ begin
       raise exception 'This report spans more than one visit, which shouldn''t happen — ask an admin to check it.'
         using errcode = 'P0081';
     end if;
+    -- Batch Undo: the report comes back only if every member (deleted ones
+    -- included) is still exactly the release this batch made.
+    if v_batch and exists (
+         select 1
+           from unnest(r.member_ids) m
+           join public.test_requests tr on tr.id = m
+          where not (p_expected_released_at ? m::text
+                     and tr.status = 'released'
+                     and tr.deleted_at is null
+                     and tr.released_at = (p_expected_released_at ->> m::text)::timestamptz)) then
+      v_refused := v_refused || r.member_ids;
+      continue;
+    end if;
     v_ok := v_ok || r.result_id;
     v_expanded := v_expanded || r.member_ids;
   end loop;
@@ -486,8 +523,12 @@ begin
        and not tr.is_package_header
        and tr.deleted_at is null
        and (v_sections is null or s.section = any (v_sections))
+       and not (tr.id = any (v_refused))
+       and (not v_batch
+            or (p_expected_released_at ? tr.id::text
+                and tr.released_at = (p_expected_released_at ->> tr.id::text)::timestamptz))
      order by tr.id);
-  if cardinality(v_cands) = 0 then
+  if cardinality(v_cands) = 0 and not v_batch then
     raise exception 'None of the selected tests can be unreleased.' using errcode = 'P0081';
   end if;
 
@@ -524,15 +565,23 @@ begin
       using errcode = '40001';
   end if;
 
-  return jsonb_build_object('undone', v_undone);
+  -- Selected lines not undone: no longer released (or, for a batch Undo, no
+  -- longer this batch's release, or on a report that is not).
+  v_skipped := coalesce((
+    select jsonb_agg(jsonb_build_object(
+             'id', x, 'code', case when v_batch then 'changed_since' else 'not_released' end) order by x)
+      from unnest(v_ids) x
+     where not (x = any (v_cands))), '[]'::jsonb);
+
+  return jsonb_build_object('undone', v_undone, 'skipped', v_skipped);
 end;
 $$;
 
-comment on function public.undo_visit_release(uuid, uuid[], uuid) is
-  'Undoes the release of the selected tests of one visit (0198), expanded to every member of each touched combined report (0172), under the same locks as release_visit_results. Returns {undone: [{id, prior_release_medium, prior_released_at, report_id}]}. Raises P0081 (whole request refused, message passes through), 40001/P0072 (retry), P0058 (patient inactive), 42501.';
+comment on function public.undo_visit_release(uuid, uuid[], uuid, jsonb) is
+  'Undoes the release of the selected tests of one visit (0198), expanded to every member of each touched combined report (0172), under the same locks as release_visit_results. Returns {undone: [{id, prior_release_medium, prior_released_at, report_id}], skipped: [{id, code: not_released|changed_since}]}. p_expected_released_at (batch Undo) limits it to lines — and whole reports — still carrying that exact release, and then never raises for nothing-to-undo. Raises P0081 (whole request refused, message passes through), 40001/P0072 (retry), P0058 (patient inactive), 42501.';
 
-revoke all on function public.undo_visit_release(uuid, uuid[], uuid) from public, anon, authenticated, service_role;
-grant execute on function public.undo_visit_release(uuid, uuid[], uuid) to authenticated, service_role;
+revoke all on function public.undo_visit_release(uuid, uuid[], uuid, jsonb) from public, anon, authenticated, service_role;
+grant execute on function public.undo_visit_release(uuid, uuid[], uuid, jsonb) to authenticated, service_role;
 
 -- ---------------------------------------------------------------------------
 -- Post-checks
@@ -545,7 +594,7 @@ begin
     'public.release_actor(uuid)',
     'public.release_report_locks(uuid,uuid[],text)',
     'public.release_visit_results(uuid,uuid[],text,uuid)',
-    'public.undo_visit_release(uuid,uuid[],uuid)'
+    'public.undo_visit_release(uuid,uuid[],uuid,jsonb)'
   ] loop
     if not (select prosecdef from pg_proc where oid = f::regprocedure) then
       raise exception '0198 post-check: % is not SECURITY DEFINER', f;
@@ -560,7 +609,7 @@ begin
       raise exception '0198 post-check: % must stay private', f;
     end if;
   end loop;
-  foreach f in array array['public.release_visit_results(uuid,uuid[],text,uuid)', 'public.undo_visit_release(uuid,uuid[],uuid)'] loop
+  foreach f in array array['public.release_visit_results(uuid,uuid[],text,uuid)', 'public.undo_visit_release(uuid,uuid[],uuid,jsonb)'] loop
     if not has_function_privilege('authenticated', f, 'EXECUTE')
        or not has_function_privilege('service_role', f, 'EXECUTE') then
       raise exception '0198 post-check: % must be executable by authenticated and service_role', f;

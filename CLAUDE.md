@@ -18,9 +18,11 @@ Key reference artifacts:
 - `IMPLEMENTATION_PLAN.md` — original phase plan (historical; cross-check before relying on it)
 - `README.md` — operational setup
 - `.env.example` — env-var inventory
-- `docs/drmed-user-guide.html` — the staff + patient user guide (v2.54, 30 Sep 2026): every
-  screen, label and blocked-message the app shows, checked against the code. Update it in the
-  PR that changes a flow it describes.
+- `docs/drmed-user-guide.html` — the staff + patient user guide (v2.55, 30 Sep 2026): every
+  screen, label and blocked-message the app shows, checked against the code. Update its
+  **content** in the PR that changes a flow it describes, but bump the **version and date**
+  (the header line and this bullet) only at merge time, after merging `main` into the branch —
+  parallel PRs that each bumped it kept colliding (#245 had to go from v2.36 to v2.37 at merge).
 - `docs/superpowers/specs/` and `docs/superpowers/audits/` — design specs and audits for
   every post-1.0 programme (partner revisions, release lifecycle, group templates, EOD
   denomination count…). Read the spec before re-deriving a design decision.
@@ -105,6 +107,8 @@ Compliance target: **Philippine Data Privacy Act (RA 10173)**. Locale: en-PH, As
 | `npm run smoke:results` / `smoke:chemistry` / `smoke:dashboards` | Render-pipeline / consolidated-chemistry / dashboard smoke tests |
 | `npm run smoke:locks` | Two-connection races against the patient lifecycle lock (0184) — 29 races proving lock order, deadlock retry and the result-membership lock. Local stack only, needs `supabase start`; not run against prod |
 | `npm run smoke:print` | Every staff print surface in real Chrome with scrollbars on (local stack; needs a dev server — `APP_BASE=http://localhost:3007 npm run smoke:print`). Seeds and deletes its own data; checks clip, repeating `<tfoot>`, required text and PDF page count, plus the statement's Email-to-patient, Patient AR link, the patient's own portal statement, the waived amount on the Queue / patient Visits / Visit Records (+ CSV), the portal's Your visits list, and a mid-session consent withdrawal (client navigation, stale-tab email, data export and the page payload must all refuse) (start the dev server with `SUPABASE_JWT_SECRET` from `supabase status -o env`) |
+| `npm run seed:bulk-fixtures [-- --as=<role>]` | Local-only BSQ fixtures for the bulk-select checks (refuses any remote target, even with `--prod`) |
+| `npm run check:bulk-select` | Signed-in headless-Chrome checklist for every bulk bar (local stack + dev server on :3007; `APP_BASE` to change) |
 
 There is **no PR-triggered CI** — `.github/workflows/` holds only scheduled jobs:
 `db-backup.yml` and `cron-watchdog.yml` (independent jobs for Vercel cron heartbeats
@@ -141,6 +145,9 @@ then call `requireLocalOrExplicitProd("<npm script name>", { writes: "…" })`
 dry-run that reads live rows is still a live read. `npm test` enforces this:
 `scripts/lib/guard-coverage.test.ts` walks each runner's module graph and fails
 when a service-role client is reachable before the guard.
+
+Fixture and browser-check scripts also call `refuseNonLocal()` — they must
+never run remotely, opt-in or not.
 
 Every runner with a `--commit` mode additionally requires `--confirm=<target>`,
 where `<target>` is `local` or the Supabase project ref — never a fixed

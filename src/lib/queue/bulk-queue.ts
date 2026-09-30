@@ -3,6 +3,8 @@
 // shows afterwards. Lives in src/lib because "use server" modules may only
 // export async functions and both sides need these.
 
+import { formatBulkOutcome } from "@/lib/ui/bulk-outcome";
+
 export const QUEUE_KIND = {
   claim: "claimable",
   unclaim: "unclaimable",
@@ -26,14 +28,28 @@ export function queueRowKinds(flags: {
   return kinds;
 }
 
+/**
+ * deleteTestRequestsManyCore's refusal when EVERY id it was given is already
+ * deleted or gone (before any write). Shared, not duplicated: the bulk Delete
+ * action recognises it to tell a stale set of single tests apart from a role /
+ * reason / input refusal, which must still refuse the whole selection.
+ */
+export const NOTHING_TO_DELETE_REFUSAL =
+  "Nothing to delete — these tests were already deleted or no longer exist.";
+/** The per-row reason for a test or panel that was already deleted or is gone. */
+export const ALREADY_DELETED_REASON = "Already deleted or no longer exists.";
+
 export interface SkippedRow {
   id: string;
   reason: string;
 }
 
-/** Every id sent lands in exactly one of changedIds / skipped. */
+/**
+ * Every id sent lands in exactly one of changedIds / skipped. Ids are
+ * SELECTION keys — a test id, or a panel key for a whole panel.
+ */
 export type BulkQueueResult =
-  | { ok: true; changedIds: string[]; skipped: SkippedRow[] }
+  | { ok: true; changedIds: string[]; skipped: SkippedRow[]; batchId?: string }
   | { ok: false; error: string };
 
 /** What the bar knows about a selectable row — serialisable, built by the server page. */
@@ -75,6 +91,9 @@ export function parsePanelRowKey(key: string): { visitId: string; groupId: strin
  * single-test call is returned as-is — the caller never runs the panels then.
  * A refusal of a whole panel call lands every key in `panelKeys` in
  * `skipped`, because the single tests before it DID change.
+ * The batch id (one per call, shared by the single tests and the panels — the
+ * caller minted it once) rides the result only when something changed: it is
+ * what shows the bar's Undo, and there is nothing to undo otherwise.
  */
 export function combineClaimResults(
   single: BulkQueueResult | null,
@@ -92,7 +111,13 @@ export function combineClaimResults(
       skipped.push(...panelKeys.map((id) => ({ id, reason: panels.error })));
     }
   }
-  return { ok: true, changedIds, skipped };
+  const batchId = single?.batchId ?? (panels?.ok ? panels.batchId : undefined);
+  return {
+    ok: true,
+    changedIds,
+    skipped,
+    ...(batchId && changedIds.length > 0 ? { batchId } : {}),
+  };
 }
 
 /**
@@ -145,18 +170,16 @@ export function bulkQueueMessage(
   result: { changedIds: readonly string[]; skipped: readonly SkippedRow[] },
   rowsByKey: Readonly<Record<string, QueueRowInfo>>,
 ): string {
-  const changed = result.changedIds.length;
-  const head =
-    changed === 0
-      ? `Nothing ${verb.toLowerCase()}.`
-      : changed === sentCount
-        ? `${verb} ${changed} ${tests(changed)}.`
-        : `${verb} ${changed} of ${sentCount} ${tests(sentCount)}.`;
-  if (result.skipped.length === 0) return head;
-  const lines = result.skipped.map(
-    (s) => `• ${rowsByKey[s.id]?.label ?? "A test"}: ${s.reason}`,
-  );
-  return [head, `Not changed (${result.skipped.length}):`, ...lines].join("\n");
+  return formatBulkOutcome({
+    verb,
+    noun: { one: "test", many: "tests" },
+    sent: sentCount,
+    changed: result.changedIds.length,
+    notChanged: result.skipped.map((s) => ({
+      label: rowsByKey[s.id]?.label ?? "A test",
+      reason: s.reason,
+    })),
+  });
 }
 
 /** Expand panel rows so an outcome message can name a skipped member test by its card. */

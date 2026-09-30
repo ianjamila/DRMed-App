@@ -18,6 +18,14 @@ const PHP = new Intl.NumberFormat("en-PH", {
 export type StaffPick = { id: string; full_name: string };
 export type PaymentMethod = { code: string; name: string };
 
+/** Reported to the parent so it can show the 10-minute Undo outcome panel —
+ * the modal itself no longer refreshes the page, the parent does (so the
+ * outcome text survives the refresh instead of unmounting with the modal). */
+export interface HistoricBulkOutcome {
+  updated: number;
+  batchId: string;
+}
+
 function ModalShell({
   title,
   description,
@@ -96,11 +104,16 @@ export function MarkHistoricBilledModal({
   totalAmount,
   staff,
   onClose,
+  onSuccess,
 }: {
   claimIds: string[];
   totalAmount: number;
   staff: StaffPick[];
   onClose: () => void;
+  /** Optional: a caller that wants the 10-minute Undo outcome (the hmo-claims
+   * list page) reads the result here. This modal always refreshes itself
+   * regardless, so a caller that doesn't pass this keeps working unchanged. */
+  onSuccess?: (outcome: HistoricBulkOutcome) => void;
 }) {
   const router = useRouter();
   const today = todayManilaISODate();
@@ -119,6 +132,7 @@ export function MarkHistoricBilledModal({
         billed_by_staff_id: staffId,
       });
       if (!res.ok) { setErr(res.error); return; }
+      onSuccess?.({ updated: res.data?.updated ?? 0, batchId: res.data?.batchId ?? "" });
       router.refresh();
       onClose();
     });
@@ -171,12 +185,15 @@ export function MarkHistoricPaidModal({
   staff,
   paymentMethods,
   onClose,
+  onSuccess,
 }: {
   claimIds: string[];
   totalAmount: number;
   staff: StaffPick[];
   paymentMethods: PaymentMethod[];
   onClose: () => void;
+  /** See MarkHistoricBilledModal's onSuccess doc — same optional contract. */
+  onSuccess?: (outcome: HistoricBulkOutcome) => void;
 }) {
   const router = useRouter();
   const today = todayManilaISODate();
@@ -200,6 +217,7 @@ export function MarkHistoricPaidModal({
         paid_recorded_by_staff_id: staffId,
       });
       if (!res.ok) { setErr(res.error); return; }
+      onSuccess?.({ updated: res.data?.updated ?? 0, batchId: res.data?.batchId ?? "" });
       router.refresh();
       onClose();
     });
@@ -290,11 +308,14 @@ export function WriteOffHistoricModal({
   totalAmount,
   staff,
   onClose,
+  onSuccess,
 }: {
   claimIds: string[];
   totalAmount: number;
   staff: StaffPick[];
   onClose: () => void;
+  /** See MarkHistoricBilledModal's onSuccess doc — same optional contract. */
+  onSuccess?: (outcome: HistoricBulkOutcome) => void;
 }) {
   const router = useRouter();
   const today = todayManilaISODate();
@@ -319,6 +340,7 @@ export function WriteOffHistoricModal({
         write_off_date: date,
       });
       if (!res.ok) { setErr(res.error); return; }
+      onSuccess?.({ updated: res.data?.updated ?? 0, batchId: res.data?.batchId ?? "" });
       router.refresh();
       onClose();
     });

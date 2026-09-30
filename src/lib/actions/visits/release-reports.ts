@@ -16,6 +16,8 @@ import { scheduleReleaseStaffAlert } from "@/lib/notifications/release-staff-ale
 import { reportError } from "@/lib/observability/report-error";
 
 export type ReleasedRow = { id: string; name: string };
+/** A released row with the exact released_at the database stamped (the batch Undo matches on it). */
+type StampedRow = ReleasedRow & { releasedAt: string };
 
 export type VisitReleaseOutcome = {
   /** Selected ids the write actually released (authoritative RETURNING). */
@@ -49,6 +51,7 @@ interface RpcReleased {
   name: string;
   report_id: string | null;
   selected: boolean;
+  released_at: string;
 }
 interface RpcRefused {
   id: string;
@@ -65,7 +68,7 @@ function parseReleaseResult(data: unknown): { released: RpcReleased[]; refused: 
   const released = data.released;
   const refused = data.refused;
   const releasedOk = released.every(
-    (r) => isObj(r) && typeof r.id === "string" && typeof r.name === "string" && isStrOrNull(r.report_id) && typeof r.selected === "boolean",
+    (r) => isObj(r) && typeof r.id === "string" && typeof r.name === "string" && isStrOrNull(r.report_id) && typeof r.selected === "boolean" && typeof r.released_at === "string",
   );
   const refusedOk = refused.every(
     (r) => isObj(r) && typeof r.id === "string" && typeof r.code === "string" && isStrOrNull(r.report_id) && typeof r.count === "number",
@@ -86,7 +89,7 @@ async function auditReleased(
   session: Pick<StaffSession, "user_id">,
   visitId: string,
   medium: ReleaseMedium,
-  released: readonly ReleasedRow[],
+  released: readonly StampedRow[],
   auditMeta: Record<string, Json>,
 ): Promise<void> {
   const h = await headers();
@@ -105,6 +108,10 @@ async function auditReleased(
         bulk: true,
         selection: true,
         ...auditMeta,
+        // The exact instant the database stamped (full precision, never through
+        // a JS Date): the 10-minute Undo (undoReleaseBatchAction) restores a row
+        // only while it still carries this release.
+        released_at: row.releasedAt,
       },
       ip_address: ip,
       user_agent: ua,
@@ -117,17 +124,21 @@ export async function notifyReleased(
   visitId: string,
   rows: readonly ReleasedRow[],
   medium: ReleaseMedium,
+  // The release call's bulk_batch_id, stamped on the notice's own audit row
+  // so the batch's Undo does not read it as a later, unrelated change.
+  bulkBatchId?: string,
 ): Promise<void> {
   if (rows.length === 0) return;
   try {
     if (rows.length === 1) {
-      await notifyResultReleased({ testRequestId: rows[0].id, visitId, releaseMedium: medium });
+      await notifyResultReleased({ testRequestId: rows[0].id, visitId, releaseMedium: medium, bulkBatchId });
     } else {
       await notifyResultsReleasedBulk({
         visitId,
         testRequestIds: rows.map((r) => r.id),
         testNames: rows.map((r) => r.name),
         releaseMedium: medium,
+        bulkBatchId,
       });
     }
   } catch (err) {
@@ -154,8 +165,17 @@ export async function releaseVisitSelection(args: {
   selectedIds: readonly string[];
   medium: ReleaseMedium;
   auditMeta: Record<string, Json>;
+  /**
+   * A server-minted id for a call that offers Undo (visit page Release
+   * selected): stamped as bulk_batch_id on EVERY released row's audit row —
+   * report-mates pulled in included — and on the patient notice's audit row.
+   */
+  bulkBatchId?: string;
 }): Promise<VisitReleaseOutcome> {
-  const { supabase, session, visitId, medium, auditMeta } = args;
+  const { supabase, session, visitId, medium, bulkBatchId } = args;
+  const auditMeta: Record<string, Json> = bulkBatchId
+    ? { ...args.auditMeta, bulk_batch_id: bulkBatchId }
+    : args.auditMeta;
   const selected = Array.from(new Set(args.selectedIds));
   const skipped = new Map<string, string>();
   const skip = (ids: readonly string[], reason: string) => {
@@ -201,18 +221,20 @@ export async function releaseVisitSelection(args: {
 
   const { released, refused } = result;
   for (const r of refused) skip([r.id], refusalReason(r));
-  const releasedRows: ReleasedRow[] = released.map((r) => ({ id: r.id, name: r.name }));
+  const stamped: StampedRow[] = released.map((r) => ({ id: r.id, name: r.name, releasedAt: r.released_at }));
+  const releasedRows: ReleasedRow[] = stamped.map(({ id, name }) => ({ id, name }));
   const releasedSet = new Set(releasedRows.map((r) => r.id));
   // Every selected id is released or refused; anything else raced.
   for (const id of selected) if (!releasedSet.has(id)) skip([id], RACED_REASON);
 
-  await auditReleased(session, visitId, medium, releasedRows, auditMeta);
+  await auditReleased(session, visitId, medium, stamped, auditMeta);
 
   const changedIds = released.filter((r) => r.selected).map((r) => r.id);
   const alsoReleasedIds = released.filter((r) => !r.selected).map((r) => r.id);
   if (releasedRows.length > 0) {
-    await notifyReleased(visitId, releasedRows, medium);
+    await notifyReleased(visitId, releasedRows, medium, bulkBatchId);
     scheduleReleaseStaffAlert(visitId, releasedRows.length);
   }
   return finish(changedIds, alsoReleasedIds, releasedRows);
+
 }

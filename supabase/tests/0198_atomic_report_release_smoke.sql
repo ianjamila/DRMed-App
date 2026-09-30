@@ -33,6 +33,9 @@
 --      undo with nothing released.
 --  10. Package siblings released one after another: the header auto-releases
 --      with the second component, exactly once.
+--  11. Batch Undo (p_expected_released_at): release returns the stored
+--      released_at; a report with ONE member no longer on that release is
+--      skipped whole (changed_since, no raise); the exact identities undo it whole.
 -- =============================================================================
 
 begin;
@@ -292,7 +295,7 @@ begin
 end $$;
 select null from pg_temp.expect('8 anon cannot execute',
   (has_function_privilege('anon', 'public.release_visit_results(uuid,uuid[],text,uuid)', 'EXECUTE')
-   or has_function_privilege('anon', 'public.undo_visit_release(uuid,uuid[],uuid)', 'EXECUTE'))::text, 'false');
+   or has_function_privilege('anon', 'public.undo_visit_release(uuid,uuid[],uuid,jsonb)', 'EXECUTE'))::text, 'false');
 select null from pg_temp.expect('8 helpers private',
   (has_function_privilege('authenticated', 'public.release_report_locks(uuid,uuid[],text)', 'EXECUTE')
    or has_function_privilege('service_role', 'public.release_actor(uuid)', 'EXECUTE'))::text, 'false');
@@ -337,6 +340,45 @@ begin
   perform pg_temp.expect('10 header one JE',
     pg_temp.posted_jes(array['f7000000-0000-4000-8000-000000000198']::uuid[])::text, '1');
 end $$;
+
+-- 11. batch Undo (p_expected_released_at): only the exact release this batch made --
+do $$
+declare v jsonb; v_map jsonb; v_old jsonb;
+begin
+  -- R1 is released (step 8). Undo it, release it as a batch, keep its identities.
+  perform pg_temp.run_as('a2000000-0000-4000-8000-000000000198',
+    $q$select public.undo_visit_release('e0000000-0000-4000-8000-000000000198',
+         '{f0000000-0000-4000-8000-000000000198}'::uuid[])$q$);
+  v := pg_temp.run_as('a0000000-0000-4000-8000-000000000198',
+    $q$select public.release_visit_results('e0000000-0000-4000-8000-000000000198',
+         '{f0000000-0000-4000-8000-000000000198}'::uuid[], 'other')$q$);
+  v_map := (select jsonb_object_agg(e ->> 'id', e -> 'released_at') from jsonb_array_elements(v -> 'released') e);
+  perform pg_temp.expect('11 released_at returned', (select count(*) from jsonb_each(v_map))::text, '3');
+  perform pg_temp.expect('11 released_at is the stored one',
+    (select count(*) from public.test_requests t
+      where t.id = any (pg_temp.r1()) and t.released_at = (v_map ->> t.id::text)::timestamptz)::text, '3');
+
+  -- A wrong identity for one member: the whole report is skipped, nothing undone, no raise.
+  v_old := jsonb_set(v_map, array['f1000000-0000-4000-8000-000000000198'], '"2000-01-01T00:00:00+00:00"');
+  execute format('select pg_temp.run_as(%L, %L)', 'a0000000-0000-4000-8000-000000000198',
+    format($q$select public.undo_visit_release('e0000000-0000-4000-8000-000000000198',
+       '{f0000000-0000-4000-8000-000000000198}'::uuid[], null, %L::jsonb)$q$, v_old)) into v;
+  perform pg_temp.expect('11 changed report skipped', (v -> 'undone')::text, '[]');
+  perform pg_temp.expect('11 skipped code',
+    (select string_agg(e ->> 'code', ',') from jsonb_array_elements(v -> 'skipped') e), 'changed_since');
+  perform pg_temp.expect('11 still released', pg_temp.statuses(pg_temp.r1()), 'released,released,released');
+
+  -- The exact identities: the whole report comes back.
+  execute format('select pg_temp.run_as(%L, %L)', 'a0000000-0000-4000-8000-000000000198',
+    format($q$select public.undo_visit_release('e0000000-0000-4000-8000-000000000198',
+       '{f0000000-0000-4000-8000-000000000198}'::uuid[], null, %L::jsonb)$q$, v_map)) into v;
+  perform pg_temp.expect('11 batch undo count', jsonb_array_length(v -> 'undone')::text, '3');
+  perform pg_temp.expect('11 statuses', pg_temp.statuses(pg_temp.r1()),
+    'ready_for_release,ready_for_release,ready_for_release');
+end $$;
+select pg_temp.expect_error('11 malformed identities', 'a0000000-0000-4000-8000-000000000198',
+  $q$select public.undo_visit_release('e0000000-0000-4000-8000-000000000198',
+       '{f0000000-0000-4000-8000-000000000198}'::uuid[], null, '{"f0000000-0000-4000-8000-000000000198":"not a time"}'::jsonb)$q$, 'P0081');
 
 \echo '0198 smoke: all checks passed'
 rollback;

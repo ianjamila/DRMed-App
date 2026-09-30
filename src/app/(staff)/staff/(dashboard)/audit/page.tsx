@@ -18,6 +18,7 @@ import {
 import { SortableTh, PlainTh } from "@/components/staff/sortable-th";
 import { ListPagination, PAGE_SIZES } from "@/components/staff/list-pagination";
 import { AUDIT_PRESETS } from "@/lib/audit/presets";
+import { BULK_AUDIT_OR, batchAuditOr, batchIdOf, parseBatchParam } from "@/lib/audit/bulk-filter";
 import { VIEW_AS_ROLES } from "@/lib/auth/view-as";
 import { ROLE_LABEL } from "@/lib/staff/role-labels";
 import { parseViewingAsFilter, viewingAsLabel } from "@/lib/audit/viewing-as-filter";
@@ -45,6 +46,8 @@ interface Props {
     dir?: string;
     page?: string;
     size?: string;
+    bulk?: string;
+    batch?: string;
   }>;
 }
 
@@ -78,6 +81,8 @@ export default async function AuditLogPage({ searchParams }: Props) {
   const size = parsePageSize(params.size, DEFAULT_SIZE);
   const page = parsePage(params.page);
   const [offset, rangeTo] = rangeFor(page, size);
+  const bulkOnly = params.bulk === "1";
+  const batchId = parseBatchParam(params.batch);
   const viewingAs = parseViewingAsFilter(params.viewing_as);
 
   // Resolve a DRM-ID to its patient_id once, then filter audit rows by
@@ -122,6 +127,12 @@ export default async function AuditLogPage({ searchParams }: Props) {
 
   if (params.action) {
     query = query.ilike("action", `${params.action}%`);
+  }
+  if (bulkOnly) {
+    query = query.or(BULK_AUDIT_OR);
+  }
+  if (batchId) {
+    query = query.or(batchAuditOr(batchId));
   }
   if (params.actor) {
     query = query.eq("actor_type", params.actor);
@@ -170,6 +181,8 @@ export default async function AuditLogPage({ searchParams }: Props) {
     sort: isDefaultSort ? null : sort.key,
     dir: isDefaultSort ? null : sort.dir,
     size: size === DEFAULT_SIZE ? null : String(size),
+    bulk: bulkOnly ? "1" : null,
+    batch: batchId,
   };
 
   const sortHref = (key: SortColumn) => {
@@ -189,7 +202,7 @@ export default async function AuditLogPage({ searchParams }: Props) {
   );
 
   const hasAnyFilter = Boolean(
-    params.action || params.actor || params.drm || viewingAs || params.since || params.until,
+    params.action || params.actor || params.drm || viewingAs || params.since || params.until || bulkOnly || batchId,
   );
 
   return (
@@ -226,6 +239,8 @@ export default async function AuditLogPage({ searchParams }: Props) {
         {size === DEFAULT_SIZE ? null : (
           <input type="hidden" name="size" value={String(size)} />
         )}
+        {bulkOnly ? <input type="hidden" name="bulk" value="1" /> : null}
+        {batchId ? <input type="hidden" name="batch" value={batchId} /> : null}
         <input
           type="search"
           name="action"
@@ -300,6 +315,8 @@ export default async function AuditLogPage({ searchParams }: Props) {
                 viewing_as: null,
                 since: null,
                 until: null,
+                bulk: null,
+                batch: null,
                 page: null,
               })}
               className="rounded-md border border-[color:var(--color-brand-bg-mid)] bg-white px-4 py-2 text-sm font-semibold text-[color:var(--color-brand-navy)] hover:bg-[color:var(--color-brand-bg)]"
@@ -315,6 +332,21 @@ export default async function AuditLogPage({ searchParams }: Props) {
           clicks; clicking the active chip clears it. */}
       <nav aria-label="Quick filters" className="mb-3 flex flex-wrap items-center gap-2 text-xs">
         <span className="font-semibold text-[color:var(--color-brand-text-soft)]">Quick filters:</span>
+        <Link
+          href={buildListHref(BASE_PATH, baseParams, {
+            bulk: bulkOnly ? null : "1",
+            page: null,
+          })}
+          title="Actions run from a selection bar, and their Undo"
+          aria-current={bulkOnly ? "true" : undefined}
+          className={`rounded-full border px-3 py-1 font-semibold ${
+            bulkOnly
+              ? "border-[color:var(--color-brand-navy)] bg-[color:var(--color-brand-navy)] text-white"
+              : "border-[color:var(--color-brand-bg-mid)] bg-white text-[color:var(--color-brand-navy)] hover:border-[color:var(--color-brand-cyan)]"
+          }`}
+        >
+          Bulk actions
+        </Link>
         {AUDIT_PRESETS.map((p) => {
           const active = params.action === p.action;
           return (
@@ -346,6 +378,25 @@ export default async function AuditLogPage({ searchParams }: Props) {
       {patientLookupError ? (
         <p className="mb-3 text-xs text-amber-700" role="alert">
           {patientLookupError}
+        </p>
+      ) : null}
+
+      {batchId ? (
+        <p
+          role="status"
+          className="mb-3 rounded-md bg-sky-50 px-3 py-2 text-xs text-sky-900"
+        >
+          Showing one bulk action and its Undo.{" "}
+          <Link
+            href={buildListHref(BASE_PATH, baseParams, {
+              batch: null,
+              bulk: "1",
+              page: null,
+            })}
+            className="font-semibold underline hover:no-underline"
+          >
+            Show all bulk actions
+          </Link>
         </p>
       ) : null}
 
@@ -403,9 +454,23 @@ export default async function AuditLogPage({ searchParams }: Props) {
                   </td>
                   <td className="px-4 py-3">
                     {r.metadata ? (
-                      <code className="block max-w-[24rem] overflow-x-auto rounded bg-slate-100 px-2 py-1 text-[10px] text-slate-700">
-                        {JSON.stringify(r.metadata)}
-                      </code>
+                      <>
+                        {batchIdOf(r.metadata) ? (
+                          <Link
+                            href={buildListHref(BASE_PATH, baseParams, {
+                              batch: batchIdOf(r.metadata),
+                              bulk: null,
+                              page: null,
+                            })}
+                            className="mb-1 block text-[10px] font-semibold text-[color:var(--color-brand-cyan)] hover:underline"
+                          >
+                            Whole batch
+                          </Link>
+                        ) : null}
+                        <code className="block max-w-[24rem] overflow-x-auto rounded bg-slate-100 px-2 py-1 text-[10px] text-slate-700">
+                          {JSON.stringify(r.metadata)}
+                        </code>
+                      </>
                     ) : (
                       <span className="text-xs text-[color:var(--color-brand-text-soft)]">
                         —

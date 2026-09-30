@@ -126,6 +126,50 @@ describe("combineClaimResults", () => {
     });
   });
 
+  it("carries the shared batch id when anything changed", () => {
+    expect(
+      combineClaimResults(
+        { ok: true, changedIds: ["a"], skipped: [], batchId: "b1" },
+        { ok: true, changedIds: ["m1"], skipped: [], batchId: "b1" },
+        [panelKey],
+      ),
+    ).toEqual({ ok: true, changedIds: ["a", "m1"], skipped: [], batchId: "b1" });
+    // panels only, and singles-only
+    expect(
+      combineClaimResults(null, { ok: true, changedIds: ["m1"], skipped: [], batchId: "b2" }, [panelKey]),
+    ).toEqual({ ok: true, changedIds: ["m1"], skipped: [], batchId: "b2" });
+    expect(
+      combineClaimResults({ ok: true, changedIds: ["a"], skipped: [], batchId: "b3" }, null, []),
+    ).toEqual({ ok: true, changedIds: ["a"], skipped: [], batchId: "b3" });
+  });
+
+  it("omits the batch id when nothing changed — there is nothing to undo", () => {
+    expect(
+      combineClaimResults(
+        { ok: true, changedIds: [], skipped: [{ id: "a", reason: "taken" }], batchId: "b1" },
+        { ok: true, changedIds: [], skipped: [{ id: panelKey, reason: "taken" }], batchId: "b1" },
+        [panelKey],
+      ),
+    ).toEqual({
+      ok: true,
+      changedIds: [],
+      skipped: [
+        { id: "a", reason: "taken" },
+        { id: panelKey, reason: "taken" },
+      ],
+    });
+  });
+
+  it("still carries the batch id when the panel call is refused but the singles changed", () => {
+    expect(
+      combineClaimResults(
+        { ok: true, changedIds: ["a"], skipped: [], batchId: "b1" },
+        { ok: false, error: "nope" },
+        [panelKey],
+      ),
+    ).toMatchObject({ ok: true, changedIds: ["a"], batchId: "b1" });
+  });
+
   it("works with panels only", () => {
     expect(
       combineClaimResults(null, { ok: true, changedIds: ["m1"], skipped: [] }, [panelKey]),
