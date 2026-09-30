@@ -39,9 +39,10 @@ describe("a panel's Undo is atomic in the database — no compensation machinery
     const write = loop.indexOf("await restorePanelMembers(session, admin, {");
     expect(guard).toBeGreaterThan(-1);
     expect(write).toBeGreaterThan(guard);
-    expect(loop).toMatch(/deletedAt:\s*s\.deletedAt!/);
-    expect(loop).toMatch(/panelReasonOf\.set\(group\.key, active\.error\)/);
-    expect(loop).toMatch(/panelReasonOf\.set\(group\.key, result\.error\)/);
+    // the row's own just-read spelling, not the audit string
+    expect(loop).toMatch(/deletedAt:\s*currentDeletedAtById\.get\(s\.id\)!/);
+    expect(loop).toMatch(/reasonOf\.set\(group\.key, active\.error\)/);
+    expect(loop).toMatch(/reasonOf\.set\(group\.key, result\.error\)/);
   });
 
   it("singles still restore through restoreTestRequestsForVisit with the exact deleted_at map", () => {

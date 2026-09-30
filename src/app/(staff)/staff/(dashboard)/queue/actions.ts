@@ -843,7 +843,9 @@ export async function undoBulkQueueAction(input: unknown): Promise<QueueUndoResu
             .maybeSingle(),
         );
         if (error || !data) {
-          notRestored.push({ id: group.key, reason: RECLAIM_STATE_MOVED });
+          // A real error (e.g. P0075, the claim-holder guard) names its own
+          // reason; "no row matched" is the plain moved-on case.
+          notRestored.push({ id: group.key, reason: error ? translatePgError(error) : RECLAIM_STATE_MOVED });
           continue;
         }
         await audit({
@@ -935,6 +937,10 @@ export async function undoBulkQueueAction(input: unknown): Promise<QueueUndoResu
       }
 
       const auditExtra = { via: BULK_UNDO_VIA, undo_of_batch: parsed.data.batchId, bulk_batch_id: undoBatchId };
+      // Why a group was not put back, when the write path said so (an inactive
+      // patient, a deleted visit, a database refusal) — shown instead of the
+      // generic "already restored or changed".
+      const reasonOf = new Map<string, string>();
 
       // Singles: one row each, so restoreTestRequestsForVisit's per-row
       // exact-deleted_at write is already all-or-nothing per row.
@@ -949,6 +955,12 @@ export async function undoBulkQueueAction(input: unknown): Promise<QueueUndoResu
         );
         if (outcome.ok) {
           for (const id of outcome.restoredIds) restoredTestIds.add(id);
+        } else {
+          for (const group of restoreGroups) {
+            if (validGroupKeys.has(group.key) && group.steps[0]!.panelKey === null && group.steps[0]!.visitId === visitId) {
+              reasonOf.set(group.key, outcome.error);
+            }
+          }
         }
       }
 
@@ -957,22 +969,27 @@ export async function undoBulkQueueAction(input: unknown): Promise<QueueUndoResu
       // was and there is nothing to put back. Same active-patient rule as a
       // single Restore: the function itself is service-role only and trusts
       // its caller to have asked (the write-guards EXEMPT text promises it).
-      const panelReasonOf = new Map<string, string>();
       for (const group of panelGroups) {
         const visitId = group.steps[0]!.visitId;
         const active = await assertVisitPatientActive(admin, visitId);
         if (!active.ok) {
-          panelReasonOf.set(group.key, active.error);
+          reasonOf.set(group.key, active.error);
           continue;
         }
         const result = await restorePanelMembers(session, admin, {
           visitId,
-          members: group.steps.map((s) => ({ id: s.id, deletedAt: s.deletedAt! })),
+          // The value READ from the row just now (the pre-check above proved it
+          // is the same instant as the audit's), not the audit string: the
+          // function matches to the microsecond, and the row's own spelling is
+          // what it compares against — robust if a delete path ever stamps
+          // now() with microseconds that the audit metadata (a JS ISO string)
+          // has already rounded to milliseconds.
+          members: group.steps.map((s) => ({ id: s.id, deletedAt: currentDeletedAtById.get(s.id)! })),
           reason: "Undo of a bulk delete",
           auditExtra: { ...auditExtra, panel_key: group.key },
         });
         if (!result.ok) {
-          panelReasonOf.set(group.key, result.error);
+          reasonOf.set(group.key, result.error);
           continue;
         }
         for (const id of result.restoredIds) restoredTestIds.add(id);
@@ -990,7 +1007,7 @@ export async function undoBulkQueueAction(input: unknown): Promise<QueueUndoResu
           // Pre-validated but still refused — a genuine race in the instant
           // between the check above and the write, or an inactive patient.
           // Refused whole, same as any other panel mismatch.
-          notRestored.push({ id: group.key, reason: panelReasonOf.get(group.key) ?? RESTORE_PANEL_CHANGED });
+          notRestored.push({ id: group.key, reason: reasonOf.get(group.key) ?? RESTORE_PANEL_CHANGED });
         }
       }
     }

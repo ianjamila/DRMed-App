@@ -25,7 +25,7 @@ const h = vi.hoisted(() => ({
   session: { user_id: "user-admin", role: "admin" } as { user_id: string; role: string },
   db: null as unknown,
   audit: vi.fn(async (entry: Record<string, unknown>) => void entry),
-  patientActive: vi.fn(async (): Promise<{ ok: true } | { ok: false; error: string }> => ({ ok: true })),
+  patientActive: vi.fn<(db?: unknown, visitId?: string) => Promise<{ ok: true } | { ok: false; error: string }>>(async () => ({ ok: true })),
 }));
 
 vi.mock("@/lib/auth/require-staff", () => ({ requireActiveStaff: async () => h.session }));
@@ -764,12 +764,41 @@ describe("Undo of a bulk Unclaim: reclaim", () => {
       expect(auditsOf("test_request.reassigned")).toHaveLength(1);
     });
 
+    it("a real write error (P0075, the claim-holder guard) is reported with its own message, not the generic moved-on text", async () => {
+      seedSingle();
+      const message = "Only an X-ray Technician can hold this test.";
+      db.hooks.beforeWrite = (call) => {
+        if (call.table === "test_requests" && call.patch && isReclaimWrite(call.patch)) return { code: "P0075", message };
+      };
+      const r = await run();
+
+      expect(r).toEqual({ ok: true, restoredIds: [], restoredTestCount: 0, notRestored: [{ id: "s1", reason: message }] });
+      expect(db.updates("test_requests").filter((c) => isReclaimWrite(c.patch!))).toHaveLength(1); // P0075 is not a retryable race
+      expect(db.row("test_requests", "s1")).toMatchObject({ status: "requested", assigned_to: null });
+      expect(h.audit).not.toHaveBeenCalled();
+    });
+
+    it("a write that matches no row (someone claimed it in the instant) still reads as the plain moved-on reason", async () => {
+      seedSingle();
+      db.hooks.beforeWrite = (call, d) => {
+        if (call.patch && isReclaimWrite(call.patch)) Object.assign(d.row("test_requests", "s1"), { status: "in_progress", assigned_to: "user-c" });
+      };
+      const r = await run();
+      expect(r).toEqual({ ok: true, restoredIds: [], restoredTestCount: 0, notRestored: [{ id: "s1", reason: STATE_MOVED }] });
+    });
+
     it("a second P0072 is reported as not restored, with the row untouched and nothing audited", async () => {
       seedSingle();
       lifecycleRaceOnUpdates(db, isReclaimWrite, 2);
       const r = await run();
 
-      expect(r).toEqual({ ok: true, restoredIds: [], restoredTestCount: 0, notRestored: [{ id: "s1", reason: STATE_MOVED }] });
+      // the second loss is shown as the lifecycle message (translatePgError), not the plain moved-on text
+      expect(r).toEqual({
+        ok: true,
+        restoredIds: [],
+        restoredTestCount: 0,
+        notRestored: [{ id: "s1", reason: "This patient's records changed while you were saving. Please try again." }],
+      });
       expect(db.updates("test_requests").filter((c) => isReclaimWrite(c.patch!))).toHaveLength(2); // exactly one retry, never more
       expect(db.row("test_requests", "s1")).toMatchObject({ status: "requested", assigned_to: null });
       expect(h.audit).not.toHaveBeenCalled();
@@ -806,14 +835,15 @@ describe("Undo of a bulk Delete: restore", () => {
     h.session = { user_id: "user-rec", role: "reception" };
   });
 
-  it("(b) restores a deleted panel in ONE restore_panel_members call with the exact deleted_at strings, and audits each member", async () => {
+  it("(b) restores a deleted panel in ONE restore_panel_members call with the row's own deleted_at strings, and audits each member", async () => {
     seedDeletedPanel();
     const r = await run();
 
     expect(r).toEqual({ ok: true, restoredIds: [KEY], restoredTestCount: 3, notRestored: [] });
-    // one call per panel; the audit's own strings, untouched by Date
+    // one call per panel, carrying the spelling the ROW has (the pre-check proved it is the audit's instant) —
+    // microseconds intact, never round-tripped through Date
     expect(db.rpcCalls).toEqual([
-      { fn: "restore_panel_members", args: { p_visit_id: VISIT, p_test_request_ids: ["d1", "d2", "d3"], p_deleted_at: [D, D, D] } },
+      { fn: "restore_panel_members", args: { p_visit_id: VISIT, p_test_request_ids: ["d1", "d2", "d3"], p_deleted_at: [pg(D), pg(D), pg(D)] } },
     ]);
     for (const id of ["d1", "d2", "d3"]) {
       expect(db.row("test_requests", id)).toMatchObject({ deleted_at: null, deleted_by: null, delete_reason: null });
@@ -903,13 +933,39 @@ describe("Undo of a bulk Delete: restore", () => {
     expect(db.row("test_requests", "d1").deleted_at).toBe(pg(D));
   });
 
-  it("refuses a SINGLE test when the patient is inactive (restore refused by the core) and writes nothing", async () => {
+  it("refuses a SINGLE test when the patient is inactive (restore refused by the core), with the patient message, and writes nothing", async () => {
     db.seed("test_requests", [tr("only", { deleted_at: pg(D), deleted_by: "user-rec", delete_reason: "dup" })]);
     db.seed("audit_log", [deleted("only", D, null)]);
     h.patientActive.mockResolvedValue({ ok: false, error: "This patient record is deleted." });
     const r = await run();
-    expect(r).toMatchObject({ restoredIds: [], restoredTestCount: 0, notRestored: [{ id: "only", reason: PANEL_CHANGED }] });
+    // the core's own reason reaches the operator, not the generic "already restored or changed"
+    expect(r).toEqual({
+      ok: true,
+      restoredIds: [],
+      restoredTestCount: 0,
+      notRestored: [{ id: "only", reason: "This patient record is deleted." }],
+    });
     expectNoWrites();
+  });
+
+  it("a single test's restore that the core refuses names the core's reason for that test only; a good single on another visit is still restored", async () => {
+    db.seed("test_requests", [
+      tr("only", { deleted_at: pg(D), deleted_by: "user-rec", delete_reason: "dup" }),
+      tr("other", { visit_id: VISIT_2, deleted_at: pg(D), deleted_by: "user-rec", delete_reason: "dup" }),
+    ]);
+    db.seed("audit_log", [deleted("only", D, null), deleted("other", D, null, VISIT_2)]);
+    h.patientActive.mockImplementation(async (_db?: unknown, visitId?: string) =>
+      visitId === VISIT ? { ok: false, error: "This patient record is deleted." } : { ok: true },
+    );
+    const r = await run();
+    expect(r).toEqual({
+      ok: true,
+      restoredIds: ["other"],
+      restoredTestCount: 1,
+      notRestored: [{ id: "only", reason: "This patient record is deleted." }],
+    });
+    expect(db.row("test_requests", "only").deleted_at).toBe(pg(D));
+    expect(db.row("test_requests", "other").deleted_at).toBeNull();
   });
 
   it("only the panel's own visit is asked about — a stale-refused panel is never checked or written", async () => {
@@ -996,7 +1052,7 @@ describe("Undo of a bulk Delete: restore", () => {
     expect(r).toEqual({ ok: true, restoredIds: [KEY, "x1", "x2"], restoredTestCount: 5, notRestored: [] });
     // the rpc carries the panel's members and nothing else
     expect(db.rpcCalls).toEqual([
-      { fn: "restore_panel_members", args: { p_visit_id: VISIT, p_test_request_ids: ["d1", "d2", "d3"], p_deleted_at: [D, D, D] } },
+      { fn: "restore_panel_members", args: { p_visit_id: VISIT, p_test_request_ids: ["d1", "d2", "d3"], p_deleted_at: [pg(D), pg(D), pg(D)] } },
     ]);
     // the singles are restored by the core's conditional update, pinned to deleted_at
     const writes = db.updates("test_requests");
