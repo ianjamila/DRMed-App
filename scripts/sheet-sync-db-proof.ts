@@ -213,7 +213,7 @@
 //   # check-38 FAIL named (the sub-assertion is in its detail):
 //   #  H  "if not ((v_op->>'expected_row_version')::bigint = v_facts_ver - 1" -> "if not (false and (v_op->>'expected_row_version')::bigint = v_facts_ver - 1"   (a) one chunk
 //   #  I  "c.run_id = v_run and" -> "true and"                                                                                     (e) a later run gets no credit
-//   #  J  "(v_op->>'expected_row_version')::bigint = v_facts_ver - 1\n and exists" -> "true and exists"                          (f) version one below the fill
+//   #  J  "::bigint = v_facts_ver - 1" -> "::bigint is not null"  (single-line on purpose: the helper THROWS "mutation target not found" if the text is absent)   (f) version one below the fill
 //   #  K  "if v_op ? 'expected_row_version' and v_facts_ver is distinct from" -> "if false and v_facts_ver is distinct from"   (c) stale identity (+ the older stale-facts check)
 //   #  L  the fill's not-found branch back to "n_skipped := n_skipped + 1; continue;"                                               (g) deleted target (+ check 36)
 //   # (S1 and S4 are pinned by customer-plan.test.ts and review-queue.test.tsx.)

@@ -341,6 +341,9 @@ begin
       -- row_version_after this run recorded in sheet_sync_changes for its own
       -- fill AND the version the planner read is exactly one below it. Any
       -- other movement (staff edit, before or after our fill) stays stale.
+      -- Replay note: after a lost-response replay of the FILL chunk a patient can be
+      -- in stale_patient_ids while its facts row was written (the fill applied the first
+      -- time). Harmless: the mirror row stays unlinked one night and the next run re-plans.
       if v_op ? 'expected_row_version' and v_facts_ver is distinct from (v_op->>'expected_row_version')::bigint then
         if not ((v_op->>'expected_row_version')::bigint = v_facts_ver - 1
                 and exists (select 1 from public.sheet_sync_changes c
