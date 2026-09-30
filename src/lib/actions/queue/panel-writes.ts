@@ -16,10 +16,27 @@ import { translatePgError } from "@/lib/accounting/pg-errors";
 import { labQueueGate } from "@/lib/visits/lab-gate";
 import { canClaimSection, sectionsForRole } from "@/lib/auth/role-sections";
 import { scopeToAllowedSections } from "@/lib/visits/bulk-selection";
+import { readInChunks } from "@/lib/supabase/in-chunks";
 import { withLifecycleRetry } from "@/lib/patients/lifecycle-retry";
 
 export type PanelOutcome = { ok: true } | { ok: false; error: string };
 type Supabase = Awaited<ReturnType<typeof createClient>>;
+
+/**
+ * The bulk-batch identity of ONE panel write, minted server-side by the bulk
+ * action (never read from a browser input — this module is not an endpoint).
+ * With it, the write leaves one audit row PER MEMBER carrying the batch id, the
+ * panel key and the exact state the bulk Undo needs to reverse it (see
+ * planQueueUndo in src/lib/ui/bulk-undo.ts); without it, the shapes the panel
+ * page and the row buttons rely on are unchanged.
+ */
+export interface PanelBatchAudit {
+  batchId: string;
+  /** Rows in the whole selection (singles + panels), for audit only. */
+  batchSize: number;
+  panelKey: string;
+  visitId: string;
+}
 
 // Every check + the all-or-nothing claim for one panel's bench members.
 export async function claimPanelMembers(
@@ -27,6 +44,7 @@ export async function claimPanelMembers(
   supabase: Supabase,
   testRequestIds: string[],
   auditExtra: Record<string, unknown> = {},
+  batch?: PanelBatchAudit,
 ): Promise<PanelOutcome> {
   // Same defense-in-depth pre-read as claimTestAction: a stale tab must not
   // start lab work on a deleted entry, a deleted visit, or a visit still
@@ -102,16 +120,61 @@ export async function claimPanelMembers(
   }
 
   const h = await headers();
-  await audit({
-    actor_id: session.user_id,
-    actor_type: "staff",
-    action: "test_request.claimed",
-    resource_type: "test_request",
-    resource_id: null,
-    metadata: { test_request_ids: testRequestIds, grouped: true, ...auditExtra },
-    ip_address: h.get("x-forwarded-for")?.split(",")[0]?.trim() ?? null,
-    user_agent: h.get("user-agent"),
-  });
+  const ip = h.get("x-forwarded-for")?.split(",")[0]?.trim() ?? null;
+  const ua = h.get("user-agent");
+
+  if (!batch) {
+    await audit({
+      actor_id: session.user_id,
+      actor_type: "staff",
+      action: "test_request.claimed",
+      resource_type: "test_request",
+      resource_id: null,
+      metadata: { test_request_ids: testRequestIds, grouped: true, ...auditExtra },
+      ip_address: ip,
+      user_agent: ua,
+    });
+    return { ok: true };
+  }
+
+  // A bulk claim leaves one row PER MEMBER, keyed by resource_id — the shape
+  // claimTestsCore writes and planQueueUndo reads — carrying the exact
+  // started_at this claim stamped, so Undo can predicate its unclaim on it.
+  // The RPC has committed by now, so a failed read-back must not lose the
+  // audit: every member is still written, with started_at null and
+  // outcome_unverified, which Undo refuses as "changed" (safe).
+  const { data: stamped, error: readBackError } = await supabase
+    .from("test_requests")
+    .select("id, started_at, visits!inner ( id )")
+    .in("id", testRequestIds)
+    .eq("assigned_to", session.user_id)
+    .eq("status", "in_progress")
+    .is("deleted_at", null)
+    .is("visits.deleted_at", null);
+  const startedAtById = new Map<string, string | null>();
+  if (!readBackError) for (const r of stamped ?? []) startedAtById.set(r.id, r.started_at);
+  for (const id of testRequestIds) {
+    const startedAt = startedAtById.get(id) ?? null;
+    await audit({
+      actor_id: session.user_id,
+      actor_type: "staff",
+      action: "test_request.claimed",
+      resource_type: "test_request",
+      resource_id: id,
+      metadata: {
+        ...auditExtra,
+        visit_id: batch.visitId,
+        started_at: startedAt,
+        panel_key: batch.panelKey,
+        bulk_batch_id: batch.batchId,
+        bulk_batch_size: batch.batchSize,
+        grouped: true,
+        ...(startedAt === null ? { outcome_unverified: true } : {}),
+      },
+      ip_address: ip,
+      user_agent: ua,
+    });
+  }
   return { ok: true };
 }
 
@@ -132,6 +195,10 @@ export async function unclaimPanelMembers(
     reason: string | null;
     selfService: boolean;
     auditExtra?: Record<string, unknown>;
+    /** Bulk batch identity; adds the batch id, panel key and previous_started_at to each row. */
+    batch?: PanelBatchAudit;
+    /** The started_at each member held when the operator handed it back (pre-read by the caller). */
+    startedAtOf?: (testRequestId: string) => string | null;
   },
 ): Promise<PanelOutcome> {
   // Same retry-once rule as claimPanelMembers above: P0077 (a member no
@@ -160,10 +227,46 @@ export async function unclaimPanelMembers(
         self_service: args.selfService,
         grouped: true,
         ...(args.auditExtra ?? {}),
+        ...(args.batch
+          ? {
+              panel_key: args.batch.panelKey,
+              bulk_batch_id: args.batch.batchId,
+              bulk_batch_size: args.batch.batchSize,
+              previous_started_at: args.startedAtOf?.(id) ?? null,
+            }
+          : {}),
       },
       ip_address: h.get("x-forwarded-for")?.split(",")[0]?.trim() ?? null,
       user_agent: h.get("user-agent"),
     });
   }
   return { ok: true };
+}
+
+/**
+ * The started_at each bench member holds right now — read ONCE for a whole
+ * bulk Unclaim, before any panel is handed back, so every panel's audit rows
+ * can carry the exact previous_started_at Undo needs to put the claim back.
+ * `ok: false` on a failed read: the caller fails closed per panel rather than
+ * hand a report back with no way to reverse it exactly.
+ */
+export async function readBenchStartedAt(
+  supabase: Supabase,
+  testRequestIds: readonly string[],
+): Promise<{ ok: true; startedAtById: Map<string, string | null> } | { ok: false }> {
+  const startedAtById = new Map<string, string | null>();
+  if (testRequestIds.length === 0) return { ok: true, startedAtById };
+  // Up to MAX_BULK_RECORDS (500) members across the selected panels: read in
+  // IN_CHUNK slices, and any failed slice fails the whole read (closed).
+  const read = await readInChunks(testRequestIds, (chunk) =>
+    supabase
+      .from("test_requests")
+      .select("id, started_at, visits!inner ( id )")
+      .in("id", chunk)
+      .is("deleted_at", null)
+      .is("visits.deleted_at", null),
+  );
+  if (!read.ok) return { ok: false };
+  for (const r of read.rows) startedAtById.set(r.id, r.started_at);
+  return { ok: true, startedAtById };
 }

@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect } from "react";
+import { requestBarFocus } from "@/components/staff/row-selection/bar-focus";
 import { MAX_BULK_SELECTION } from "@/lib/visits/bulk-selection";
 import {
   useRowSelection,
@@ -41,6 +42,11 @@ export function RowSelectCheckbox({ testRequestId, eligibility, label }: Props) 
       checked={checked}
       disabled={atCap}
       onChange={() => toggle(testRequestId, eligibility)}
+      onKeyDown={(e) => {
+        if (e.key !== "Enter") return;
+        e.preventDefault();
+        requestBarFocus();
+      }}
       aria-label={`Select ${label}`}
       title={
         atCap

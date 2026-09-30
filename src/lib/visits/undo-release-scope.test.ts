@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
   expandUndoReleaseScope,
+  groupIdsByExpectedReleasedAt,
+  reportsToRefuse,
   undoUpdateIds,
   type UndoScopeMemberRow,
 } from "./undo-release-scope";
@@ -203,5 +205,115 @@ describe("undoUpdateIds — whole-report undo racing a release", () => {
 
   it("lists each id once", () => {
     expect(undoUpdateIds(["t1", "t2"], ["t2", "t1", "t3"]).sort()).toEqual(["t1", "t2", "t3"]);
+  });
+});
+
+describe("reportsToRefuse — Finding 4 (P1): combined reports are all-or-nothing for a batch Undo", () => {
+  it("leaves an intact report alone: every member released by this batch, none changed since", () => {
+    const refused = reportsToRefuse({
+      reportResultIdByTestRequestId: new Map([
+        ["t1", "r1"],
+        ["t2", "r1"],
+      ]),
+      batchReleasedIds: new Set(["t1", "t2"]),
+      changedSinceIds: new Set(),
+    });
+    expect(refused).toEqual(new Set());
+  });
+
+  it("refuses the WHOLE report when one member was rejected as changed-since", () => {
+    // t2 was flagged changed-since by loadOwnBatchRows — t1 must not come
+    // back in through t2's report membership (Finding 4a).
+    const refused = reportsToRefuse({
+      reportResultIdByTestRequestId: new Map([
+        ["t1", "r1"],
+        ["t2", "r1"],
+      ]),
+      batchReleasedIds: new Set(["t1", "t2"]),
+      changedSinceIds: new Set(["t2"]),
+    });
+    expect(refused).toEqual(new Set(["t1", "t2"]));
+  });
+
+  it("refuses the WHOLE report when a member was never released by this batch", () => {
+    // t3 belongs to the report but has no release audit row in THIS batch —
+    // an older/separate release (Finding 4b) — so t1/t2 must be refused too.
+    const refused = reportsToRefuse({
+      reportResultIdByTestRequestId: new Map([
+        ["t1", "r1"],
+        ["t2", "r1"],
+        ["t3", "r1"],
+      ]),
+      batchReleasedIds: new Set(["t1", "t2"]), // t3 missing
+      changedSinceIds: new Set(),
+    });
+    expect(refused).toEqual(new Set(["t1", "t2", "t3"]));
+  });
+
+  it("never touches a standalone id absent from reportResultIdByTestRequestId", () => {
+    // Standalone ids keep the plain per-row rule — this function only ever
+    // sees ids that expandUndoReleaseScope put in an EXPANDED report.
+    const refused = reportsToRefuse({
+      reportResultIdByTestRequestId: new Map(),
+      batchReleasedIds: new Set(["standalone"]),
+      changedSinceIds: new Set(["standalone"]),
+    });
+    expect(refused).toEqual(new Set());
+  });
+
+  it("refuses only the affected report, not a sibling report the batch also touched", () => {
+    const refused = reportsToRefuse({
+      reportResultIdByTestRequestId: new Map([
+        ["t1", "r1"],
+        ["t2", "r1"],
+        ["t4", "r2"],
+        ["t5", "r2"],
+      ]),
+      batchReleasedIds: new Set(["t1", "t2", "t4", "t5"]),
+      changedSinceIds: new Set(["t2"]), // only r1 is bad
+    });
+    expect(refused).toEqual(new Set(["t1", "t2"]));
+  });
+});
+
+describe("groupIdsByExpectedReleasedAt — Finding 4 (P1): predicate the write on the exact release", () => {
+  it("groups ids that share the same recorded released_at into one group", () => {
+    const { groups, refusedIds } = groupIdsByExpectedReleasedAt(
+      ["t1", "t2", "t3"],
+      new Map([
+        ["t1", "2026-09-30T10:00:00.000Z"],
+        ["t2", "2026-09-30T10:00:00.000Z"],
+        ["t3", "2026-09-30T11:00:00.000Z"],
+      ]),
+    );
+    expect(refusedIds).toEqual([]);
+    expect(groups).toHaveLength(2);
+    const byValue = new Map(groups.map((g) => [g.releasedAt, g.ids.slice().sort()]));
+    expect(byValue.get("2026-09-30T10:00:00.000Z")).toEqual(["t1", "t2"]);
+    expect(byValue.get("2026-09-30T11:00:00.000Z")).toEqual(["t3"]);
+  });
+
+  it("groups a 'Z' value and its PostgREST '+00:00' spelling together (sameInstant)", () => {
+    // Only the map's values are ever compared with sameInstant here — this
+    // fixture models a value read back in the "+00:00" shape landing in the
+    // same map as one still in the "Z" shape a JS Date wrote.
+    const { groups } = groupIdsByExpectedReleasedAt(
+      ["t1", "t2"],
+      new Map([
+        ["t1", "2026-09-30T10:00:00.000Z"],
+        ["t2", "2026-09-30T10:00:00.000+00:00"],
+      ]),
+    );
+    expect(groups).toHaveLength(1);
+    expect(groups[0]?.ids.slice().sort()).toEqual(["t1", "t2"]);
+  });
+
+  it("refuses ids with no recorded released_at, excluding them from every group", () => {
+    const { groups, refusedIds } = groupIdsByExpectedReleasedAt(
+      ["t1", "t2"],
+      new Map([["t1", "2026-09-30T10:00:00.000Z"]]), // t2 missing
+    );
+    expect(refusedIds).toEqual(["t2"]);
+    expect(groups).toEqual([{ releasedAt: "2026-09-30T10:00:00.000Z", ids: ["t1"] }]);
   });
 });

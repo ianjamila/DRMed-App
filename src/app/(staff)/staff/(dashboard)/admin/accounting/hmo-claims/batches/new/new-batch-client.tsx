@@ -8,6 +8,7 @@ import {
   addItemsToBatchAction,
 } from "../../actions";
 import { Panel } from "@/components/ui/panel";
+import { FixedBottomBar } from "@/components/staff/fixed-bottom-bar";
 import { manilaDate } from "@/lib/dates/manila";
 
 const PHP = new Intl.NumberFormat("en-PH", {
@@ -248,29 +249,31 @@ export function NewBatchClient({
         </Panel>
       )}
 
-      <Panel className="sticky bottom-0 z-10 flex flex-wrap items-center justify-between gap-3 p-4 shadow-sm">
-        <div className="text-xs text-[color:var(--color-brand-text-soft)]">
-          <span className="font-semibold text-[color:var(--color-brand-navy)]">
-            {selected.size}
-          </span>{" "}
-          selected · total{" "}
-          <span className="font-mono font-semibold text-[color:var(--color-brand-navy)]">
-            {PHP.format(total)}
-          </span>
-        </div>
-        <button
-          type="button"
-          onClick={onSave}
-          disabled={pending || selected.size < 1}
-          className="min-h-[44px] rounded-md bg-[color:var(--color-brand-navy)] px-4 text-xs font-bold uppercase tracking-wider text-white disabled:opacity-50"
-        >
-          {pending
-            ? "Saving…"
-            : isAddMode
-              ? `Add ${selected.size} item${selected.size === 1 ? "" : "s"} to batch`
-              : "Create draft batch"}
-        </button>
-      </Panel>
+      <FixedBottomBar>
+        <Panel className="flex flex-wrap items-center justify-between gap-3 p-4 shadow-lg">
+          <div className="text-xs text-[color:var(--color-brand-text-soft)]">
+            <span className="font-semibold text-[color:var(--color-brand-navy)]">
+              {selected.size}
+            </span>{" "}
+            selected · total{" "}
+            <span className="font-mono font-semibold text-[color:var(--color-brand-navy)]">
+              {PHP.format(total)}
+            </span>
+          </div>
+          <button
+            type="button"
+            onClick={onSave}
+            disabled={pending || selected.size < 1}
+            className="min-h-[44px] rounded-md bg-[color:var(--color-brand-navy)] px-4 text-xs font-bold uppercase tracking-wider text-white disabled:opacity-50"
+          >
+            {pending
+              ? "Saving…"
+              : isAddMode
+                ? `Add ${selected.size} item${selected.size === 1 ? "" : "s"} to batch`
+                : "Create draft batch"}
+          </button>
+        </Panel>
+      </FixedBottomBar>
       {err ? (
         <p role="alert" className="text-sm text-red-700">
           {err}

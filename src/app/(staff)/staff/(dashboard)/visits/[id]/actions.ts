@@ -1,5 +1,6 @@
 "use server";
 
+import { z } from "zod";
 import { headers } from "next/headers";
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
@@ -10,6 +11,14 @@ import { requireAdminStaff } from "@/lib/auth/require-admin";
 import { assertVisitPatientActive } from "@/lib/patients/require-active";
 import { withLifecycleRetry } from "@/lib/patients/lifecycle-retry";
 import { ipAndAgent } from "@/lib/server/action-helpers";
+import { loadOwnBatchRows } from "@/lib/audit/bulk-batch";
+import {
+  BULK_UNDO_VIA,
+  CHANGED_SINCE_REASON,
+  UNDO_ALREADY,
+  UNDO_EXPIRED,
+  type BulkUndoResult,
+} from "@/lib/ui/bulk-undo";
 import {
   QueueDeleteReasonSchema,
   WaiveBalanceSchema,
@@ -38,7 +47,10 @@ import { canManuallyReleasePackageHeader } from "@/lib/visits/package-header-rel
 import { isReleaseMedium, type ReleaseMedium } from "@/lib/visits/release-media";
 import {
   expandUndoReleaseScope,
+  groupIdsByExpectedReleasedAt,
+  reportsToRefuse,
   undoUpdateIds,
+  type UndoReleaseScopeExpansion,
   type UndoScopeMemberRow,
   type UndoScopeRejectionReason,
 } from "@/lib/visits/undo-release-scope";
@@ -51,8 +63,8 @@ export type ReleaseResult =
 // Bulk-selection actions additionally report how many rows the UPDATE
 // actually touched, so the UI can tell the user when part of the selection
 // was skipped (already handled by a concurrent action, or outside the
-// caller's section scope). Local to releaseSelectedAction /
-// undoReleaseSelectedAction — the older per-row/per-package actions keep the
+// caller's section scope). Used by undoReleaseSelectedAction and
+// deleteSampleVisitAction — the older per-row/per-package actions keep the
 // plain ReleaseResult shape.
 export type BulkSelectionResult =
   | { ok: true; count: number }
@@ -128,7 +140,17 @@ export type VisitReleaseResult =
   | { ok: true; changedCount: number; alsoReleasedCount: number; skipped: SkippedRow[]; warnings: string[] }
   | { ok: false; error: string };
 export type VisitBulkReleaseResult =
-  | { ok: true; count: number; alsoReleasedCount: number; skipped: SkippedRow[]; warnings: string[] }
+  | {
+      ok: true;
+      count: number;
+      alsoReleasedCount: number;
+      skipped: SkippedRow[];
+      warnings: string[];
+      /** releaseSelectedAction only: the Undo handle (undoReleaseBatchAction). */
+      batchId?: string;
+      /** releaseSelectedAction only: released tests the patient was told about. */
+      notifiedCount?: number;
+    }
   | { ok: false; error: string };
 
 /**
@@ -420,6 +442,14 @@ export async function releaseSelectedAction(
   const requested = Array.from(new Set(testRequestIds));
   const scopedIds = requested.filter((id) => scoped.has(id));
 
+  // Undo (owner 2026-09-28): one server-minted batch id for this call.
+  // releaseVisitSelection stamps it, with the exact released_at, on the audit
+  // row of EVERY test it releases — report-mates it pulls in included — and
+  // on the patient notice, so undoReleaseBatchAction can read back exactly
+  // what this call released (loadOwnBatchRows). Only returned to the caller
+  // once at least one row actually released (below).
+  const batchId = crypto.randomUUID();
+
   const out = await releaseVisitSelection({
     supabase,
     session,
@@ -427,6 +457,7 @@ export async function releaseSelectedAction(
     selectedIds: scopedIds,
     medium: releaseMedium,
     auditMeta: { source: "visit_page", bulk: true, selection: true },
+    bulkBatchId: batchId,
   });
   revalidateReleaseSurfaces(visitId);
 
@@ -446,6 +477,195 @@ export async function releaseSelectedAction(
     alsoReleasedCount: out.alsoReleasedIds.length,
     skipped,
     warnings: out.warnings,
+    batchId,
+    notifiedCount: await notifiedCount(supabase, visitId, releaseMedium, out.announced.length),
+  };
+}
+
+// How many released tests the patient was actually sent a notice about, for
+// the bar's "already notified" line. 0 for a report withheld as unverified
+// (not in `announced`), for a physical / pickup hand-off (notify-released
+// M7) and for a sample visit (SAMPLE_SKIP_REASON) — none of those message the
+// patient. A failed sample read counts as notified: the line then errs on
+// telling staff to inform the patient.
+async function notifiedCount(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  visitId: string,
+  medium: ReleaseMedium,
+  announced: number,
+): Promise<number> {
+  if (announced === 0 || medium === "physical" || medium === "pickup") return 0;
+  const { data } = await supabase
+    .from("visits")
+    .select("is_sample")
+    .eq("id", visitId)
+    .is("deleted_at", null)
+    .maybeSingle();
+  return data?.is_sample === true ? 0 : announced;
+}
+
+// Server-checked 10-minute Undo for releaseSelectedAction (owner 2026-09-28):
+// same window/same-staff/own-batch rules as every other bulk Undo
+// (loadOwnBatchRows), reusing undoReleasedRows — the exact core the
+// hand-picked undoReleaseSelectedAction runs — so the reason ("Undone within
+// 10 minutes of release", automatic, no prompt), the whole-report expansion
+// (0172) and the "patient already viewed" audit snapshot all behave
+// identically to a manual Unrelease. Its audit rows carry `via: BULK_UNDO_VIA`
+// plus `undo_of_batch`/`bulk_batch_id` (a NEW batch id, so this Undo is
+// itself undo-batch-traceable, though nothing currently re-undoes an Undo).
+// A combined (chemistry) report is released whole (releaseVisitSelection), so
+// every member this batch pulled in carries its own audit row in the batch
+// and the report comes back whole. The bar's outcome message counts
+// `restoredIds.length` — the true number put back, report-mates included.
+export async function undoReleaseBatchAction(
+  input: { batchId: string },
+): Promise<BulkUndoResult> {
+  const parsed = z.object({ batchId: z.string().uuid() }).safeParse(input);
+  if (!parsed.success) return { ok: false, error: UNDO_EXPIRED };
+
+  const session = await requireActiveStaff();
+
+  const loaded = await loadOwnBatchRows({
+    actorId: session.user_id,
+    batchId: parsed.data.batchId,
+    resourceType: "test_request",
+    nowMs: Date.now(),
+  });
+  if (!loaded.ok) return { ok: false, error: loaded.error };
+  if (loaded.alreadyUndone) return { ok: false, error: UNDO_ALREADY };
+
+  const releasedRows = loaded.rows.filter(
+    (r) => r.action === "test_request.released",
+  );
+  if (releasedRows.length === 0) return { ok: false, error: UNDO_EXPIRED };
+
+  const notRestored: Array<{ id: string; reason: string }> = [];
+  const candidateIds: string[] = [];
+  // Every id THIS batch released (has its own test_request.released audit row
+  // in it), regardless of changedSince — reportsToRefuse needs the full set
+  // to tell "a report member this batch never released" apart from "one of
+  // ours that changed since" (Finding 4, P1).
+  const batchReleasedIds = new Set<string>();
+  // testRequestId -> the exact released_at this batch's audit row recorded —
+  // the release identity undoReleasedRows' write is predicated on below.
+  const expectedReleasedAtOf = new Map<string, string>();
+  const seen = new Set<string>();
+  let visitId: string | null = null;
+  for (const row of releasedRows) {
+    const id = row.resource_id;
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    if (visitId === null) {
+      const vid = row.metadata?.visit_id;
+      if (typeof vid === "string") visitId = vid;
+    }
+    batchReleasedIds.add(id);
+    const releasedAt = row.metadata?.released_at;
+    if (typeof releasedAt === "string") expectedReleasedAtOf.set(id, releasedAt);
+    if (loaded.changedSince.has(id)) {
+      notRestored.push({ id, reason: CHANGED_SINCE_REASON });
+      continue;
+    }
+    candidateIds.push(id);
+  }
+  // releaseRows always stamps visit_id — a batch with none of its
+  // rows carrying it is not a batch this action wrote.
+  if (!visitId) return { ok: false, error: UNDO_EXPIRED };
+  if (candidateIds.length === 0) {
+    return notRestored.length > 0
+      ? { ok: true, restoredIds: [], notRestored }
+      : { ok: false, error: UNDO_EXPIRED };
+  }
+
+  const supabase = await createClient();
+
+  // Finding 4 (P1): combined reports are all-or-nothing (owner rule), but the
+  // shared core (undoReleasedRows) expands ANY selected member to the WHOLE
+  // report regardless of the other members' provenance — so a member this
+  // batch never released, or one already rejected above as changed-since,
+  // would otherwise be pulled back in by the expansion, and its warning would
+  // be silently dropped by the restoredSet filter below. So: before handing
+  // candidateIds to the core, expand them to whole-report membership
+  // ourselves (same reads/expandUndoReleaseScope the core uses, via the
+  // shared loadReportExpansion) and refuse the WHOLE report — every member
+  // added to notRestored, none passed to the core — when any member is
+  // changed-since or was not released by this exact batch. Standalone
+  // (non-report) ids are untouched by this and keep today's per-row rule.
+  // A read/validation failure here fails CLOSED (refuses the whole undo)
+  // rather than silently falling through to the core's unfiltered expansion.
+  const allowedSections = sectionsForRole(session.role);
+  const expansionResult = await loadReportExpansion(
+    supabase,
+    candidateIds,
+    visitId,
+    allowedSections,
+  );
+  if (!expansionResult.ok) return { ok: false, error: expansionResult.error };
+
+  const refusedReportIds = reportsToRefuse({
+    reportResultIdByTestRequestId: expansionResult.expansion.reportResultIdByTestRequestId,
+    batchReleasedIds,
+    changedSinceIds: loaded.changedSince,
+  });
+  let scopedCandidateIds = candidateIds;
+  if (refusedReportIds.size > 0) {
+    scopedCandidateIds = candidateIds.filter((id) => !refusedReportIds.has(id));
+    for (const id of refusedReportIds) {
+      // Name only tests THIS batch released — a report member released
+      // separately is why the report was refused, not one of the actor's own
+      // rows, and counting it would inflate "Not undone (N)".
+      if (!batchReleasedIds.has(id)) continue;
+      if (!notRestored.some((n) => n.id === id)) {
+        notRestored.push({ id, reason: CHANGED_SINCE_REASON });
+      }
+    }
+  }
+  // Defensive: every id reaching here came from a `test_request.released` row
+  // this SAME batch wrote, which always stamps `released_at` (see
+  // releaseRows) — so this only fires for a row whose audit row somehow
+  // lacks it. Refuse it rather
+  // than silently drop it from both restoredIds and notRestored (rule: a
+  // rejected member's warning must never be dropped).
+  const withoutReleaseIdentity = scopedCandidateIds.filter((id) => !expectedReleasedAtOf.has(id));
+  if (withoutReleaseIdentity.length > 0) {
+    scopedCandidateIds = scopedCandidateIds.filter((id) => expectedReleasedAtOf.has(id));
+    for (const id of withoutReleaseIdentity) {
+      if (!notRestored.some((n) => n.id === id)) {
+        notRestored.push({ id, reason: CHANGED_SINCE_REASON });
+      }
+    }
+  }
+  if (scopedCandidateIds.length === 0) {
+    return notRestored.length > 0
+      ? { ok: true, restoredIds: [], notRestored }
+      : { ok: false, error: UNDO_EXPIRED };
+  }
+
+  const undoBatchId = crypto.randomUUID();
+  const result = await undoReleasedRows(
+    supabase,
+    session,
+    visitId,
+    scopedCandidateIds,
+    "Undone within 10 minutes of release",
+    {
+      bulk: true,
+      via: BULK_UNDO_VIA,
+      undo_of_batch: parsed.data.batchId,
+      bulk_batch_id: undoBatchId,
+    },
+    expectedReleasedAtOf,
+  );
+  // The Queue's Pending release tab and the dashboard cards list ready
+  // work too (#261), so refresh every release surface, as Unrelease does.
+  revalidateReleaseSurfaces(visitId);
+  if (!result.ok) return { ok: false, error: result.error };
+
+  const restoredSet = new Set(result.undoneIds);
+  return {
+    ok: true,
+    restoredIds: result.undoneIds,
+    notRestored: notRestored.filter((n) => !restoredSet.has(n.id)),
   };
 }
 
@@ -493,39 +713,29 @@ type UndoRowsResult =
   | { ok: true; undoneIds: string[] }
   | { ok: false; error: string };
 
-// The body of undo-release, shared by undoReleaseSelectedAction and
-// deleteSampleVisitAction so a sample-visit delete reverts results through
-// exactly the same scope expansion, status-filtered UPDATE (and so the same
-// 0110 accounting reversal) and per-row audit as a hand-picked undo. The
-// caller has already validated input and owns revalidation; the deleted-visit
-// check lives HERE, next to the line reads it protects (query-surfaces.test.ts
-// looks for it in this function). `auditExtra` is merged into each row's
-// audit metadata.
-async function undoReleasedRows(
+type ReportExpansionResult =
+  | { ok: true; expansion: UndoReleaseScopeExpansion }
+  | { ok: false; error: string };
+
+// 0172 / PR 2 §5, §9 R4: undo-release is WHOLE-REPORT. Expand a selection to
+// every member of any combined (chemistry) result it touches — regardless of
+// that member's own status — before scoping/updating, so a partially-released
+// or legacy report is undone as a whole rather than splitting one report
+// across two statuses. Two batched queries, no N+1: which results the
+// selection links to, then every member of those results.
+// expandUndoReleaseScope rejects the WHOLE request (no partial undo) when a
+// member is outside the caller's sections, a package header, or on another
+// visit — the server expansion is authoritative; any client wording of the
+// scope is display only. Fail closed: a read error must not silently shrink
+// the undo to a partial report. Shared by undoReleasedRows (below) and
+// undoReleaseBatchAction's Finding-4 pre-check, so both see the SAME
+// membership for the same ids rather than two independently-drifting reads.
+async function loadReportExpansion(
   supabase: Awaited<ReturnType<typeof createClient>>,
-  session: Awaited<ReturnType<typeof requireActiveStaff>>,
-  visitId: string,
   testRequestIds: string[],
-  trimmedReason: string,
-  auditExtra: Record<string, boolean>,
-): Promise<UndoRowsResult> {
-  const visitDeleted = await refuseIfVisitDeleted(supabase, visitId);
-  if (visitDeleted) return visitDeleted;
-
-  const allowedSections = sectionsForRole(session.role);
-
-  // 0172 / PR 2 §5, §9 R4: undo-release is WHOLE-REPORT. Expand the caller's
-  // selection to every member of any combined (chemistry) result it touches
-  // — regardless of that member's own status — before scoping/updating, so a
-  // partially-released or legacy report is undone as a whole rather than
-  // splitting one report across two statuses. Two batched queries, no N+1:
-  // which results the selection links to, then every member of those
-  // results. expandUndoReleaseScope rejects the WHOLE request (no partial
-  // undo) when a member is outside the caller's sections, a package header,
-  // or on another visit — the server expansion is authoritative; any client
-  // wording of the scope is display only.
-  // Fail closed: a read error must not silently shrink the undo to a partial
-  // report.
+  visitId: string,
+  allowedSections: readonly string[] | null,
+): Promise<ReportExpansionResult> {
   const { data: initialLinks, error: linkErr } = await supabase
     .from("result_test_requests")
     .select("test_request_id, result_id")
@@ -566,8 +776,44 @@ async function undoReleasedRows(
   if (!expansion.ok) {
     return { ok: false, error: UNDO_SCOPE_REJECTION_MESSAGE[expansion.reason] };
   }
-  const expandedIds = expansion.expandedIds;
-  const reportResultIdByTestRequestId = expansion.reportResultIdByTestRequestId;
+  return { ok: true, expansion };
+}
+
+// The body of undo-release, shared by undoReleaseSelectedAction and
+// deleteSampleVisitAction so a sample-visit delete reverts results through
+// exactly the same scope expansion, status-filtered UPDATE (and so the same
+// 0110 accounting reversal) and per-row audit as a hand-picked undo. The
+// caller has already validated input and owns revalidation; the deleted-visit
+// check lives HERE, next to the line reads it protects (query-surfaces.test.ts
+// looks for it in this function). `auditExtra` is merged into each row's
+// audit metadata. `expectedReleasedAtOf` (undoReleaseBatchAction only) scopes
+// the final UPDATE to the EXACT release each id's audit row recorded — see
+// the write below; when omitted (every other caller), behaviour is
+// byte-for-byte what it was before Finding 4's fix.
+async function undoReleasedRows(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  session: Awaited<ReturnType<typeof requireActiveStaff>>,
+  visitId: string,
+  testRequestIds: string[],
+  trimmedReason: string,
+  auditExtra: Record<string, string | boolean>,
+  expectedReleasedAtOf?: ReadonlyMap<string, string>,
+): Promise<UndoRowsResult> {
+  const visitDeleted = await refuseIfVisitDeleted(supabase, visitId);
+  if (visitDeleted) return visitDeleted;
+
+  const allowedSections = sectionsForRole(session.role);
+
+  const expansionResult = await loadReportExpansion(
+    supabase,
+    testRequestIds,
+    visitId,
+    allowedSections,
+  );
+  if (!expansionResult.ok) return { ok: false, error: expansionResult.error };
+  const expandedIds = expansionResult.expansion.expandedIds;
+  const reportResultIdByTestRequestId =
+    expansionResult.expansion.reportResultIdByTestRequestId;
 
   // is_package_header = false is LOAD-BEARING, not a convenience filter:
   // nothing at the DB layer blocks a direct header released→ready_for_release
@@ -621,20 +867,58 @@ async function undoReleasedRows(
   // member is in the caller's sections, on this visit and not a header; the
   // status filter decides which rows actually revert.
   const updateIds = undoUpdateIds(scopedIds, reportResultIdByTestRequestId.keys());
-  const { data: undone, error } = await supabase
-    .from("test_requests")
-    .update({
-      status: "ready_for_release",
-      released_at: null,
-      released_by: null,
-      release_medium: null,
-    })
-    .in("id", updateIds)
-    .eq("visit_id", visitId)
-    .eq("status", "released")
-    .eq("is_package_header", false)
-    .is("deleted_at", null)
-    .select("id");
+
+  const UNRELEASE_PATCH = {
+    status: "ready_for_release" as const,
+    released_at: null,
+    released_by: null,
+    release_medium: null,
+  };
+  let undone: Array<{ id: string }> | null;
+  let error: { code?: string; message?: string; details?: string } | null;
+  if (expectedReleasedAtOf && expectedReleasedAtOf.size > 0) {
+    // Finding 4 (P1): scope the write to the EXACT release this batch wrote,
+    // not merely "still released" — a row unreleased and re-released by
+    // someone else inside the Undo window must not come back. Group by
+    // distinct released_at (a report's members share one, since
+    // releaseRows stamps every row of one release with the same `releasedAt`) and issue
+    // one UPDATE per group; ids with no recorded released_at are refused
+    // (excluded from every write, never matched) rather than restored on a
+    // guess.
+    const { groups } = groupIdsByExpectedReleasedAt(updateIds, expectedReleasedAtOf);
+    const rows: Array<{ id: string }> = [];
+    error = null;
+    for (const group of groups) {
+      const { data, error: groupError } = await supabase
+        .from("test_requests")
+        .update(UNRELEASE_PATCH)
+        .in("id", group.ids)
+        .eq("visit_id", visitId)
+        .eq("status", "released")
+        .eq("is_package_header", false)
+        .is("deleted_at", null)
+        .eq("released_at", group.releasedAt)
+        .select("id");
+      if (groupError) {
+        error = groupError;
+        break;
+      }
+      rows.push(...(data ?? []));
+    }
+    undone = error ? null : rows;
+  } else {
+    const result = await supabase
+      .from("test_requests")
+      .update(UNRELEASE_PATCH)
+      .in("id", updateIds)
+      .eq("visit_id", visitId)
+      .eq("status", "released")
+      .eq("is_package_header", false)
+      .is("deleted_at", null)
+      .select("id");
+    undone = result.data;
+    error = result.error;
+  }
 
   if (error) return { ok: false, error: translatePgError(error) };
   if (!undone || undone.length === 0) {

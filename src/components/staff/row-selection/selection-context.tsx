@@ -38,6 +38,15 @@ export interface RowSelection {
   /** How many rows the last setMany could not add because a cap was reached; 0 after any other change. */
   refusedCount: number;
   limits: SelectionLimits;
+  /**
+   * Increments on every deliberate operator edit to the selection (`toggle`,
+   * `setMany`) — NOT on `clear`, `clearKeys` (post-action pruning, or
+   * unmount pruning on a refresh) or the resetKey reset. A bulk bar stamps
+   * this value on the outcome it shows and drops that outcome once the
+   * counter moves on, so a partial action's outcome survives the very
+   * `clearKeys` call that prunes the rows it just acted on.
+   */
+  selectionEdits: number;
 }
 
 const SelectionContext = createContext<RowSelection | null>(null);
@@ -69,10 +78,15 @@ interface SelectionAndRefused {
   refused: number;
   /** The `resetKey` this state belongs to — see the render-time reset check below. */
   key: string;
+  /** See `RowSelection.selectionEdits`. Kept (not zeroed) across a resetKey
+   * reset: a stale outcome surviving a filter/view change is harmless — the
+   * rows it named are gone either way — and keeping the counter running is
+   * simpler than special-casing the reset. */
+  edits: number;
 }
 
-function emptyFor(key: string): SelectionAndRefused {
-  return { selection: EMPTY_SELECTION, refused: 0, key };
+function emptyFor(key: string, edits = 0): SelectionAndRefused {
+  return { selection: EMPTY_SELECTION, refused: 0, key, edits };
 }
 
 export function SelectionProvider({ resetKey, limits, children }: ProviderProps) {
@@ -94,7 +108,7 @@ export function SelectionProvider({ resetKey, limits, children }: ProviderProps)
   // changed it, with no wasted/incorrect commit and no remount of `children`.
   let current = sel;
   if (sel.key !== resetKey) {
-    current = emptyFor(resetKey);
+    current = emptyFor(resetKey, sel.edits);
     setSel(current);
   }
 
@@ -104,6 +118,7 @@ export function SelectionProvider({ resetKey, limits, children }: ProviderProps)
         selection: toggleEntry(prev.selection, entry, resolvedLimits),
         refused: 0,
         key: prev.key,
+        edits: prev.edits + 1,
       }));
     },
     [resolvedLimits],
@@ -116,19 +131,20 @@ export function SelectionProvider({ resetKey, limits, children }: ProviderProps)
           selection: removeKeys(prev.selection, entries.map((e) => e.rowKey)),
           refused: 0,
           key: prev.key,
+          edits: prev.edits + 1,
         }));
         return;
       }
       setSel((prev) => {
         const { next, refused } = addEntries(prev.selection, entries, resolvedLimits);
-        return { selection: next, refused: refused.length, key: prev.key };
+        return { selection: next, refused: refused.length, key: prev.key, edits: prev.edits + 1 };
       });
     },
     [resolvedLimits],
   );
 
   const clear = useCallback(() => {
-    setSel((prev) => emptyFor(prev.key));
+    setSel((prev) => emptyFor(prev.key, prev.edits));
   }, []);
 
   const clearKeys = useCallback((rowKeys: readonly string[]) => {
@@ -140,7 +156,7 @@ export function SelectionProvider({ resetKey, limits, children }: ProviderProps)
       // fires for every row on a full revalidation.
       const next = removeKeys(prev.selection, rowKeys);
       if (next === prev.selection) return prev;
-      return { selection: next, refused: 0, key: prev.key };
+      return { selection: next, refused: 0, key: prev.key, edits: prev.edits };
     });
   }, []);
 
@@ -168,6 +184,7 @@ export function SelectionProvider({ resetKey, limits, children }: ProviderProps)
       records: recordsOf(current.selection),
       refusedCount: current.refused,
       limits: resolvedLimits,
+      selectionEdits: current.edits,
     }),
     [current, isSelected, toggle, setMany, clear, clearKeys, canAdd, byKind, resolvedLimits],
   );

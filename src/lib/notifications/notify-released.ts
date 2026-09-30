@@ -23,6 +23,14 @@ interface Input {
   // How the result was handed over. A physical/pickup hand-off means the
   // patient collected the printout in person — no message is sent (M7).
   releaseMedium: string;
+  // Undo (owner 2026-09-28): when the caller is releaseSelectedAction, this
+  // is that call's bulk_batch_id — stamped onto this function's own
+  // `result.notified` audit row so loadOwnBatchRows' `changedSince` guard
+  // recognises it as belonging to the SAME release, not an independent later
+  // change. Without it, this row (written moments after the release rows, by
+  // "system") would make the batch's own Undo permanently refuse the test it
+  // is attached to.
+  bulkBatchId?: string;
 }
 
 // Fired by reception's release action. Pulls the patient + test name, then
@@ -34,6 +42,7 @@ export async function notifyResultReleased({
   testRequestId,
   visitId,
   releaseMedium,
+  bulkBatchId,
 }: Input): Promise<void> {
   const admin = createAdminClient();
 
@@ -104,6 +113,7 @@ export async function notifyResultReleased({
         sms: skipped,
         email: skipped,
         review_cta: { shown: false },
+        ...(bulkBatchId ? { bulk_batch_id: bulkBatchId } : {}),
       },
     });
     return;
@@ -237,6 +247,7 @@ export async function notifyResultReleased({
           ? { ok: false, skipped: true, reason: emailResult.reason }
           : { ok: false, error: emailResult.error, to: to.email },
       review_cta: { shown: includeReviewCta && emailResult.ok },
+      ...(bulkBatchId ? { bulk_batch_id: bulkBatchId } : {}),
     },
   });
 }

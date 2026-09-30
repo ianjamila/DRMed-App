@@ -178,7 +178,7 @@ const SURFACES: Record<string, Surface> = {
   },
   "app/(staff)/staff/(dashboard)/queue/actions.ts": {
     meaning: "lab",
-    why: "Claim/unclaim/reassign bench work. A consultation has no bench step to claim, and claiming one would park it in in_progress forever.",
+    why: "Claim/unclaim/reassign bench work, and the reclaim / unclaim branches of undoBulkQueueAction. A consultation has no bench step to claim, and claiming one would park it in in_progress forever. ONE deliberate exception: undoBulkQueueAction's restore branch reads DELETED rows through the admin client with no doctor-kind exclusion (and no services embed at all, so this guard does not see it). That is intended, not an oversight: a bulk Delete means the whole bill line of any kind (deleteTestRequestsManyCore is \"all\"), so its Undo must be able to put back whichever kind was deleted. What bounds it is the id set — only test ids from the caller's OWN bulk-Delete audit rows for one batch (loadOwnBatchRows, 10-minute window) — plus the exact deleted_at that batch stamped; the write is restoreTestRequestsForVisit (\"all\"). Nothing here presents a restored row as lab work.",
   },
   "app/(staff)/staff/(dashboard)/queue/[id]/actions.ts": {
     meaning: "structural",
@@ -272,9 +272,17 @@ const SURFACES: Record<string, Surface> = {
     meaning: "lab",
     why: "The one ready_for_release → released write for the visit page and the lab queue. Doctor lines never reach ready_for_release by design; the candidate read excludes them by kind anyway.",
   },
-  "lib/actions/visits/queue-deletion.ts": {
+  "lib/actions/queue/bulk-cores.ts": {
+    meaning: "lab",
+    why: "The bulk Claim / Unclaim bodies, moved out of queue/actions.ts (its old home was \"lab\": claim/unclaim/reassign bench work). A consultation has no bench step to claim, and claiming one would park it in in_progress forever — claimTestsCore refuses a doctor line through evaluateClaim.",
+  },
+  "lib/actions/queue/bulk-delete-core.ts": {
     meaning: "all",
-    why: "Soft-delete/restore of whatever line reception selected. A mis-keyed consultation is exactly the sort of line that gets deleted.",
+    why: "The bulk Delete body and deleteTestRequestsForVisit, moved out of queue-deletion.ts (its old home was \"all\"). Soft-delete of whatever line reception selected. A mis-keyed consultation is exactly the sort of line that gets deleted.",
+  },
+  "lib/actions/visits/queue-restore-core.ts": {
+    meaning: "all",
+    why: "restoreTestRequestsForVisit, extracted from queue-deletion.ts's restoreTestRequestsAction — same reasoning: restores whatever line reception (or the bulk queue Undo) selected.",
   },
 
   // --- Patient lifecycle (0167) --------------------------------------------
@@ -458,7 +466,11 @@ const LIFECYCLES: Record<string, LifecycleSurface> = {
   },
   "lib/actions/visits/queue-deletion.ts": {
     lifecycle: "any",
-    why: "Delete and restore. The restore path reads with .not('deleted_at','is',null) on purpose — it is looking for exactly the rows every other surface hides.",
+    why: "The public delete / restore endpoints: whole-visit delete and restore (the visit restore reads with .not('deleted_at','is',null) on purpose — it is looking for exactly the visits every other surface hides) and thin wrappers over the delete / restore cores in bulk-delete-core.ts and queue-restore-core.ts.",
+  },
+  "lib/actions/visits/queue-restore-core.ts": {
+    lifecycle: "any",
+    why: "restoreTestRequestsForVisit, extracted from queue-deletion.ts. It reads with .not('deleted_at','is',null) on purpose — it is looking for exactly the deleted rows every other surface hides, so it can restore them.",
   },
   "app/(staff)/staff/(dashboard)/visits/[id]/page.tsx": {
     lifecycle: "any",
@@ -495,7 +507,7 @@ const LIFECYCLES: Record<string, LifecycleSurface> = {
   },
   "app/(staff)/staff/(dashboard)/queue/actions.ts": {
     lifecycle: "live",
-    why: "Claim/unclaim/reassign. Claiming a deleted line would park it in in_progress with nobody able to finish it.",
+    why: "Claim/unclaim/reassign. Claiming a deleted line would park it in in_progress with nobody able to finish it. ONE deliberate exception, classified here anyway because every other read in the file is live: undoBulkQueueAction's restore branch reads DELETED rows (.not(\"deleted_at\", \"is\", null)) through the admin client, since finding the deleted_at a bulk Delete stamped is its whole job. The guard only passes that chain on its selected deleted_at / visits ( deleted_at ) evidence, not because it filters live rows. The gate is the caller's own batch audit rows (ids), the exact-deleted_at comparison (sameInstant) before anything is written, and restoreTestRequestsForVisit's visit-deleted refusal.",
   },
   "app/(staff)/staff/(dashboard)/queue/[id]/actions.ts": {
     lifecycle: "live",
@@ -504,6 +516,14 @@ const LIFECYCLES: Record<string, LifecycleSurface> = {
   "app/(staff)/staff/(dashboard)/queue/consolidated/[visitId]/[groupId]/page.tsx": {
     lifecycle: "live",
     why: "The consolidated chemistry panel's entry screen — bench work, same rule as the queue it belongs to.",
+  },
+  "lib/actions/queue/bulk-cores.ts": {
+    lifecycle: "live",
+    why: "The bulk Claim / Unclaim bodies, moved out of queue/actions.ts (its old home was \"live\"). Claiming a deleted line would park it in in_progress with nobody able to finish it; every read filters the line's own deleted_at, unclaim also filters the deleted visit in the query, and claim refuses one in JS (evaluateClaim's visitDeleted).",
+  },
+  "lib/actions/queue/bulk-delete-core.ts": {
+    lifecycle: "any",
+    why: "The bulk Delete body and deleteTestRequestsForVisit, moved out of queue-deletion.ts (its old home was \"any\"). deleteTestRequestsManyCore reads candidates by the line's own deleted_at only; deleteTestRequestsForVisit refuses a deleted visit with the clear message 'Visit is already deleted.'.",
   },
   "lib/actions/queue/panel-writes.ts": {
     lifecycle: "live",
@@ -798,15 +818,36 @@ function collectChain(start: ts.CallExpression): {
   return { methods, calls };
 }
 
+/**
+ * Is this function the per-slice `fetch` callback handed straight to
+ * `readInChunks` (src/lib/supabase/in-chunks.ts)? That helper only splits a
+ * long id list into several identical reads; the callback is the caller's own
+ * query, run once per slice, so it is part of the caller's scope — the doctor
+ * / visit markers the caller applies around the read (e.g. claimTestsCore's
+ * isDoctorKind check) still speak for it. Without this, wrapping an existing
+ * read in the helper would silently shrink its scope to the arrow.
+ */
+function isChunkedReadCallback(fn: ts.Node): boolean {
+  const call = fn.parent;
+  return (
+    !!call &&
+    ts.isCallExpression(call) &&
+    ts.isIdentifier(call.expression) &&
+    call.expression.text === "readInChunks" &&
+    call.arguments.includes(fn as ts.Expression)
+  );
+}
+
 /** Nearest enclosing function-like node, for the cross-statement fallback. */
 function enclosingScope(node: ts.Node, src: ts.SourceFile): ts.Node {
   let current: ts.Node | undefined = node;
   while (current) {
     if (
-      ts.isFunctionDeclaration(current) ||
-      ts.isFunctionExpression(current) ||
-      ts.isArrowFunction(current) ||
-      ts.isMethodDeclaration(current)
+      (ts.isFunctionDeclaration(current) ||
+        ts.isFunctionExpression(current) ||
+        ts.isArrowFunction(current) ||
+        ts.isMethodDeclaration(current)) &&
+      !isChunkedReadCallback(current)
     ) {
       return current;
     }

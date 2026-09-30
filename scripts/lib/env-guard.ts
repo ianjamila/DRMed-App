@@ -375,6 +375,47 @@ function countdown(seconds: number, scriptName: string): void {
 }
 
 // ---------------------------------------------------------------------------
+// Local-only scripts (test fixtures, browser checks)
+// ---------------------------------------------------------------------------
+//
+// Some scripts must NEVER run against a remote database, opt-in or not:
+// fixture seeders and browser checks create fake patients, flip a staff
+// account's role and run bulk actions. They call requireLocalOrExplicitProd
+// first (the convention guard-coverage.test.ts enforces), then refuseNonLocal,
+// which ignores --prod / SEED_ALLOW_PROD entirely.
+
+/** Every non-local target (DB env vars plus any extra URLs such as APP_BASE), described. */
+export function localOnlyProblems(
+  env: ScriptEnv,
+  extraUrls: Record<string, string | undefined>,
+): string[] {
+  const targets = classifyTargets(env);
+  if (targets.length === 0) return ["no database is configured"];
+  const problems = targets
+    .filter((t) => !t.isLocal)
+    .map((t) => `${t.varName} → ${t.host ?? "(unparseable)"}`);
+  for (const [name, url] of Object.entries(extraUrls)) {
+    if (!url) continue;
+    const host = hostOf(url);
+    if (!isLocalHost(host)) problems.push(`${name} → ${host ?? "(unparseable)"}`);
+  }
+  return problems;
+}
+
+export function refuseNonLocal(
+  scriptName: string,
+  extraUrls: Record<string, string | undefined> = {},
+): void {
+  const problems = localOnlyProblems(process.env, extraUrls);
+  if (problems.length === 0) return;
+  console.error(
+    `\n  ${scriptName} is LOCAL-ONLY and refuses to run against:\n${problems.map((p) => `    ${p}`).join("\n")}\n` +
+      `  (--prod / ${PROD_OPT_IN_ENV} do not apply to it.)\n`,
+  );
+  process.exit(1);
+}
+
+// ---------------------------------------------------------------------------
 // Typed target confirmation (destructive scripts)
 // ---------------------------------------------------------------------------
 //

@@ -1,8 +1,15 @@
 "use server";
 
 // The queue LIST's actions on consolidated chemistry panels: the panel row's
-// Claim, and the bulk bar's Claim / Unclaim / Delete over a selection that
-// mixes single tests and panels.
+// Claim, and the bulk bar's Claim / Unclaim / Delete over ANY selection — single
+// tests, panels, or a mix.
+//
+// Every bulk action mints ONE batch id (crypto.randomUUID(), here, never from
+// the input) and hands it to the single-test core AND to every panel write, so
+// one Undo covers the whole selection. The id is not a field of any schema in
+// this file: every export of a "use server" module is a public endpoint, and an
+// id the browser could supply could fold unrelated audit rows into someone's
+// Undo.
 //
 // The list pages by test row BEFORE folding chemistry into one card, so a card
 // can show part of its panel (and the Unclaimed tab hides a member someone
@@ -21,6 +28,8 @@ import { MAX_BULK_RECORDS, MAX_BULK_ROWS } from "@/lib/ui/bulk-selection";
 import { QUEUE_DELETE_ROLES } from "@/lib/visits/deletion";
 import { UNCLAIM_REFUSAL_ANY, UNCLAIM_REFUSAL_OWN } from "@/lib/queue/claim-eligibility";
 import {
+  ALREADY_DELETED_REASON,
+  NOTHING_TO_DELETE_REFUSAL,
   combineClaimResults,
   panelRowKey,
   type BulkQueueResult,
@@ -35,15 +44,18 @@ import {
 } from "@/lib/queue/panel-members";
 import {
   claimPanelMembers,
+  readBenchStartedAt,
   unclaimPanelMembers,
+  type PanelBatchAudit,
   type PanelOutcome,
 } from "@/lib/actions/queue/panel-writes";
-import { deleteTestRequestsManyAction } from "@/lib/actions/visits/queue-deletion";
-import { claimTestsAction, unclaimTestsAction } from "./actions";
+import { claimTestsCore, unclaimTestsCore, type BulkBatchContext } from "@/lib/actions/queue/bulk-cores";
+import { NOT_QUEUE_DELETE_STAFF, deleteTestRequestsManyCore } from "@/lib/actions/queue/bulk-delete-core";
 
 type Supabase = Awaited<ReturnType<typeof createClient>>;
 
 const INPUT_ERROR = "Could not read the selection — refresh the queue and try again.";
+const READ_FAILED = "Could not read the report — refresh the queue and try again.";
 const NOTHING_ON_BENCH = "Nothing in this report is waiting on the bench any more — refresh the queue.";
 
 const PanelSchema = z.object({
@@ -69,7 +81,7 @@ async function resolvePanels(
   refs: readonly PanelRef[],
 ): Promise<{ ok: true; states: Map<string, PanelState> } | { ok: false; error: string }> {
   const read = await fetchPanelMembers(supabase, refs);
-  if (!read.ok) return { ok: false, error: "Could not read the report — refresh the queue and try again." };
+  if (!read.ok) return { ok: false, error: READ_FAILED };
   const states = new Map<string, PanelState>();
   for (const [key, members] of read.byKey) {
     // Deletability is re-proven by the delete guard triggers; the server
@@ -93,6 +105,11 @@ function uniquePanels<T extends PanelRef>(panels: readonly T[]): Array<T & { key
     out.push({ ...p, key });
   }
   return out;
+}
+
+/** The batch identity of one panel's write — same id as the whole selection's. */
+function panelBatch(ctx: BulkBatchContext, panel: { key: string; visitId: string }): PanelBatchAudit {
+  return { batchId: ctx.batchId, batchSize: ctx.batchSize, panelKey: panel.key, visitId: panel.visitId };
 }
 
 function tooMany(total: number): BulkQueueResult {
@@ -154,9 +171,11 @@ export async function claimQueueSelectionAction(input: unknown): Promise<BulkQue
     panels.reduce((n, p) => n + (resolved.states.get(p.key)?.benchIds.length ?? 0), 0);
   if (total > MAX_BULK_RECORDS) return tooMany(total);
 
-  // The single-test path keeps its own role/input refusals; a refused call is
-  // refused for the panels too (nothing has been claimed yet).
-  const single = singleIds.length > 0 ? await claimTestsAction(singleIds) : null;
+  // ONE batch for the whole selection, minted here after every check that can
+  // refuse it. The single-test core keeps its own role refusal; a refused call
+  // is refused for the panels too (nothing has been claimed yet).
+  const ctx: BulkBatchContext = { batchId: crypto.randomUUID(), batchSize: singleIds.length + panels.length };
+  const single = singleIds.length > 0 ? await claimTestsCore(session, supabase, singleIds, ctx) : null;
   if (single && !single.ok) return single;
 
   const changedIds: string[] = [];
@@ -167,16 +186,18 @@ export async function claimQueueSelectionAction(input: unknown): Promise<BulkQue
       skipped.push({ id: panel.key, reason: NOTHING_ON_BENCH });
       continue;
     }
-    const result = await claimPanelMembers(session, supabase, state.benchIds, {
-      visit_id: panel.visitId,
-      report_group_id: panel.groupId,
-      bulk_batch_size: singleIds.length + panels.length,
-    });
+    const result = await claimPanelMembers(
+      session,
+      supabase,
+      state.benchIds,
+      { visit_id: panel.visitId, report_group_id: panel.groupId },
+      panelBatch(ctx, panel),
+    );
     if (result.ok) changedIds.push(...state.benchIds);
     else skipped.push({ id: panel.key, reason: result.error });
   }
   if (changedIds.length > 0) revalidatePath("/staff/queue");
-  return combineClaimResults(single, { ok: true, changedIds, skipped }, []);
+  return combineClaimResults(single, { ok: true, changedIds, skipped, batchId: ctx.batchId }, []);
 }
 
 // ---------------------------------------------------------------------------
@@ -194,9 +215,10 @@ const UnclaimSelectionSchema = z
   .refine((v) => rowsWithin(v.items.length + v.panels.length));
 
 /**
- * The bulk bar's Unclaim. Single tests go through unclaimTestsAction
- * unchanged; each panel is handed back whole (unclaim_panel_members) while
- * its bench is still exactly the members and holders the operator saw.
+ * The bulk bar's Unclaim. Single tests go through unclaimTestsCore; each panel
+ * is handed back whole (unclaim_panel_members) while its bench is still
+ * exactly the members and holders the operator saw. Every member's audit row
+ * carries the started_at it held, so Undo can put the claim back exactly.
  */
 export async function unclaimQueueSelectionAction(input: unknown): Promise<BulkQueueResult> {
   const parsed = UnclaimSelectionSchema.safeParse(input);
@@ -205,19 +227,33 @@ export async function unclaimQueueSelectionAction(input: unknown): Promise<BulkQ
   const supabase = await createClient();
   const reason = parsed.data.reason?.trim() || undefined;
   const panels = uniquePanels(parsed.data.panels);
+  // First occurrence of a test id wins, as in the core.
+  const firstItem = new Map<string, (typeof parsed.data.items)[number]>();
+  for (const i of parsed.data.items) if (!firstItem.has(i.testRequestId)) firstItem.set(i.testRequestId, i);
+  const items = [...firstItem.values()];
 
   const resolved = await resolvePanels(supabase, session, panels);
   if (!resolved.ok) return resolved;
   const total =
-    parsed.data.items.length +
+    items.length +
     panels.reduce((n, p) => n + (resolved.states.get(p.key)?.benchIds.length ?? 0), 0);
   if (total > MAX_BULK_RECORDS) return tooMany(total);
 
-  const single =
-    parsed.data.items.length > 0
-      ? await unclaimTestsAction({ items: parsed.data.items, reason })
-      : null;
+  const ctx: BulkBatchContext = { batchId: crypto.randomUUID(), batchSize: items.length + panels.length };
+  const single = items.length > 0 ? await unclaimTestsCore(session, supabase, { items, reason }, ctx) : null;
   if (single && !single.ok) return single;
+
+  // The started_at every bench member holds, read once for all panels. Fail
+  // closed per panel: with no exact previous_started_at the hand-back could
+  // not be undone precisely, so it is not made (the singles above still are).
+  // This read happens BEFORE the unclaim RPC — the same window unclaimTestsCore
+  // has between its read and its write. A member missing from the map records
+  // previous_started_at null, and Undo's reclaim then cannot restore the
+  // original start time.
+  const startedAt = await readBenchStartedAt(
+    supabase,
+    panels.flatMap((p) => resolved.states.get(p.key)?.benchIds ?? []),
+  );
 
   const refusal = session.role === "admin" ? UNCLAIM_REFUSAL_ANY : UNCLAIM_REFUSAL_OWN;
   const changedIds: string[] = [];
@@ -236,12 +272,17 @@ export async function unclaimQueueSelectionAction(input: unknown): Promise<BulkQ
       skipped.push({ id: panel.key, reason: refusal });
       continue;
     }
+    if (!startedAt.ok) {
+      skipped.push({ id: panel.key, reason: READ_FAILED });
+      continue;
+    }
     const result = await unclaimPanelMembers(session, supabase, {
       members: state.benchIds.map((id, i) => ({ id, holder: state.benchHolders[i]! })),
       visitIdOf: () => panel.visitId,
       reason: reason ?? null,
       selfService: session.role !== "admin",
-      auditExtra: { bulk_batch_size: parsed.data.items.length + panels.length },
+      batch: panelBatch(ctx, panel),
+      startedAtOf: (id) => startedAt.startedAtById.get(id) ?? null,
     });
     if (result.ok) changedIds.push(...state.benchIds);
     else skipped.push({ id: panel.key, reason: result.error });
@@ -250,7 +291,7 @@ export async function unclaimQueueSelectionAction(input: unknown): Promise<BulkQ
     revalidatePath("/staff/queue");
     for (const id of changedIds) revalidatePath(`/staff/queue/${id}`);
   }
-  return combineClaimResults(single, { ok: true, changedIds, skipped }, []);
+  return combineClaimResults(single, { ok: true, changedIds, skipped, batchId: ctx.batchId }, []);
 }
 
 // ---------------------------------------------------------------------------
@@ -270,7 +311,8 @@ const DeleteSelectionSchema = z
  * just the ones its page showed — in its own call, so it is one visit's
  * atomic statement (the 0125/0147/0172 guards refuse all of it or none).
  * Deletion itself, its reason rules and its audit rows are
- * deleteTestRequestsManyAction's, unchanged.
+ * deleteTestRequestsManyCore's; each panel's call adds its panel key to the
+ * audit rows so its Undo can find the members.
  */
 export async function deleteQueueSelectionAction(input: unknown): Promise<BulkQueueResult> {
   const parsed = DeleteSelectionSchema.safeParse(input);
@@ -279,7 +321,7 @@ export async function deleteQueueSelectionAction(input: unknown): Promise<BulkQu
   // single-test bulk delete.
   const session = await requireActiveStaff();
   if (!QUEUE_DELETE_ROLES.has(session.role)) {
-    return { ok: false, error: "Only reception or admin can delete queue entries." };
+    return { ok: false, error: NOT_QUEUE_DELETE_STAFF };
   }
   const supabase = await createClient();
   const singleIds = Array.from(new Set(parsed.data.testRequestIds));
@@ -292,28 +334,43 @@ export async function deleteQueueSelectionAction(input: unknown): Promise<BulkQu
     panels.reduce((n, p) => n + (resolved.states.get(p.key)?.allIds.length ?? 0), 0);
   if (total > MAX_BULK_RECORDS) return tooMany(total);
 
+  const ctx: BulkBatchContext = { batchId: crypto.randomUUID(), batchSize: singleIds.length + panels.length };
   const changedIds: string[] = [];
   const skipped: SkippedRow[] = [];
   if (singleIds.length > 0) {
-    const single = await deleteTestRequestsManyAction({
-      testRequestIds: singleIds,
-      reason: parsed.data.reason,
-    });
-    // Role / reason / input refusal: nothing was deleted, refuse it all.
-    if (!single.ok) return single;
-    changedIds.push(...single.changedIds);
-    skipped.push(...single.skipped);
+    const single = await deleteTestRequestsManyCore(
+      session,
+      { testRequestIds: singleIds, reason: parsed.data.reason },
+      ctx,
+    );
+    if (!single.ok) {
+      if (panels.length > 0 && single.error === NOTHING_TO_DELETE_REFUSAL) {
+        // Every single test was already deleted (a stale selection) — that is
+        // a per-row outcome, not a refusal of the call: a live panel in the
+        // same selection must still be attempted. Name each single, as the
+        // panel branch below does for a panel that is gone.
+        for (const id of singleIds) skipped.push({ id, reason: ALREADY_DELETED_REASON });
+      } else {
+        // Role / reason / input refusal (or a lone stale set, with nothing
+        // else to do): nothing was deleted, refuse it all.
+        return single;
+      }
+    } else {
+      changedIds.push(...single.changedIds);
+      skipped.push(...single.skipped);
+    }
   }
   for (const panel of panels) {
     const state = resolved.states.get(panel.key);
     if (!state || state.allIds.length === 0) {
-      skipped.push({ id: panel.key, reason: "Already deleted or no longer exists." });
+      skipped.push({ id: panel.key, reason: ALREADY_DELETED_REASON });
       continue;
     }
-    const result = await deleteTestRequestsManyAction({
-      testRequestIds: state.allIds,
-      reason: parsed.data.reason,
-    });
+    const result = await deleteTestRequestsManyCore(
+      session,
+      { testRequestIds: state.allIds, reason: parsed.data.reason },
+      { ...ctx, panelKey: panel.key },
+    );
     if (!result.ok) {
       // Nothing has been deleted yet → the refusal (a bad reason) is the
       // whole answer; otherwise report it against this panel.
@@ -328,5 +385,5 @@ export async function deleteQueueSelectionAction(input: unknown): Promise<BulkQu
       skipped.push({ id: panel.key, reason: result.skipped[0]!.reason });
     }
   }
-  return { ok: true, changedIds, skipped };
+  return { ok: true, changedIds, skipped, ...(changedIds.length > 0 ? { batchId: ctx.batchId } : {}) };
 }

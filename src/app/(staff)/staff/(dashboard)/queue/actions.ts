@@ -4,6 +4,7 @@ import { z } from "zod";
 import { headers } from "next/headers";
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase/admin";
 import { audit } from "@/lib/audit/log";
 import { requireActiveStaff, type StaffSession } from "@/lib/auth/require-staff";
 import { requireAdminStaff } from "@/lib/auth/require-admin";
@@ -25,10 +26,79 @@ import {
   evaluateUnclaim,
 } from "@/lib/queue/claim-eligibility";
 import { ipAndAgent } from "@/lib/server/action-helpers";
-import type { BulkQueueResult, BulkReleaseResult, SkippedRow } from "@/lib/queue/bulk-queue";
+import { parsePanelRowKey, type BulkReleaseResult } from "@/lib/queue/bulk-queue";
 import { unclaimPanelMembers } from "@/lib/actions/queue/panel-writes";
-import { mapWithConcurrency } from "@/lib/async/map-with-concurrency";
 import { withLifecycleRetry } from "@/lib/patients/lifecycle-retry";
+import { LAB_CAPABLE_ROLES } from "@/lib/actions/queue/bulk-cores";
+import { stillCommittedRows, PARTIAL_PANEL_LEFTOVER_REASON, partiallyRestoredIds } from "@/lib/queue/partial-panel";
+import { QUEUE_DELETE_ROLES } from "@/lib/visits/deletion";
+import { labQueueGate } from "@/lib/visits/lab-gate";
+import { loadOwnBatchRows } from "@/lib/audit/bulk-batch";
+import { readInChunks } from "@/lib/supabase/in-chunks";
+import { mapWithConcurrency } from "@/lib/async/map-with-concurrency";
+import { restoreTestRequestsForVisit, revalidateQueueSurfaces } from "@/lib/actions/visits/queue-restore-core";
+import {
+  BULK_UNDO_VIA,
+  CHANGED_SINCE_REASON,
+  UNDO_ALREADY,
+  UNDO_EXPIRED,
+  groupUndoSteps,
+  planQueueUndo,
+  holderByMember,
+  sameInstant,
+  unclaimStepStillHeld,
+  restoredTestCountOf,
+  type QueueUndoResult,
+  type QueueUndoStep,
+} from "@/lib/ui/bulk-undo";
+
+// Shared shape for the fresh re-read after a failed panel-write compensation
+// (Undo reclaim — the only branch that calls it now that un-claiming a panel
+// is atomic in unclaim_panel_members): whatever is STILL in the state this call put
+// it in must be audited, never dropped silently (P1). Takes the rows the
+// compensation attempt targeted (not just their ids) so a failed
+// verification read still has enough (visit_id) to audit them by (finding 7).
+async function auditLeftoverPanelRows(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  rows: readonly { id: string; visit_id: string }[],
+  isCommitted: (row: { id: string; visit_id: string; status: string; assigned_to: string | null; started_at: string | null }) => boolean,
+  buildAudit: (row: { id: string; visit_id: string }) => Parameters<typeof audit>[0],
+): Promise<string[]> {
+  if (rows.length === 0) return [];
+  const ids = rows.map((r) => r.id);
+  // deleted_at / visits.deleted_at: excluded rather than merely selected — a
+  // row a concurrent DELETE has since removed from the queue is covered by
+  // that delete's own audit row, not this one.
+  const { data: fresh, error } = await supabase
+    .from("test_requests")
+    .select("id, visit_id, status, assigned_to, started_at, deleted_at, visits!inner ( deleted_at )")
+    .in("id", ids)
+    .is("deleted_at", null)
+    .is("visits.deleted_at", null);
+  if (error || !fresh) {
+    // Fail CLOSED (finding 7): the write that got us here already committed
+    // every one of `rows` — this read only tells us which are STILL in that
+    // state. If the read itself fails, we cannot tell "compensation fully
+    // reverted everything" from "we have no idea", and the old code treated
+    // that ambiguity as "nothing to audit" — audit every row instead, flagged
+    // unverified, so the caller reports the panel as changed rather than
+    // silently trusting an empty leftover list.
+    for (const row of rows) {
+      const built = buildAudit(row);
+      const metadata =
+        built.metadata && typeof built.metadata === "object" && !Array.isArray(built.metadata)
+          ? (built.metadata as Record<string, unknown>)
+          : {};
+      await audit({ ...built, metadata: { ...metadata, outcome_unverified: true } });
+    }
+    return ids;
+  }
+  const leftover = stillCommittedRows(fresh, isCommitted);
+  for (const row of leftover) {
+    await audit(buildAudit({ id: row.id, visit_id: row.visit_id }));
+  }
+  return leftover.map((r) => r.id);
+}
 
 export type ClaimResult = { ok: true } | { ok: false; error: string };
 
@@ -113,14 +183,6 @@ export async function claimTestAction(
   revalidatePath(`/staff/queue/${testRequestId}`);
   return { ok: true };
 }
-
-// Roles that can hold a lab claim — reassignment targets must be one of these.
-const LAB_CAPABLE_ROLES = [
-  "medtech",
-  "xray_technician",
-  "pathologist",
-  "admin",
-] as const;
 
 // Shared by the admin unclaim (any holder) and the self-service unclaim (own
 // claim only). `ownerId` narrows the UPDATE to rows the caller holds — RLS on
@@ -305,108 +367,7 @@ export async function unclaimFromQueueAction(
   );
 }
 
-// ---------------------------------------------------------------------------
-// Bulk claim / unclaim from the queue list's selection bar (spec §6).
-// Per-row atomicity: each row is evaluated and written on its own, one skip
-// never blocks the rest, and every id sent comes back in exactly one of
-// changedIds / skipped. Independent single-test rows only — chemistry panels
-// get no checkbox, so performUnclaim's all-or-nothing panel contract above is
-// untouched.
-// ---------------------------------------------------------------------------
-
-const NOT_LAB_STAFF = "Only lab staff can claim or unclaim tests from the queue.";
 const BULK_INPUT_ERROR = "Could not read the selection — refresh the queue and try again.";
-
-const BulkClaimSchema = z.array(z.string().uuid()).min(1).max(MAX_BULK_SELECTION);
-
-export async function claimTestsAction(input: unknown): Promise<BulkQueueResult> {
-  // Role before anything candidate-dependent (spec §9 item 5).
-  const session = await requireActiveStaff();
-  if (!(LAB_CAPABLE_ROLES as readonly string[]).includes(session.role)) {
-    return { ok: false, error: NOT_LAB_STAFF };
-  }
-  const parsed = BulkClaimSchema.safeParse(input);
-  if (!parsed.success) return { ok: false, error: BULK_INPUT_ERROR };
-  const ids = Array.from(new Set(parsed.data));
-
-  const supabase = await createClient();
-  const { data: rows, error: readError } = await supabase
-    .from("test_requests")
-    .select(
-      "id, is_package_header, services!inner ( kind, section, name ), visits!inner ( deleted_at, payment_status, hmo_provider_id )",
-    )
-    .in("id", ids)
-    // A queue-deleted line (0125) reads as not found.
-    .is("deleted_at", null);
-  if (readError) return { ok: false, error: translatePgError(readError) };
-  const byId = new Map((rows ?? []).map((r) => [r.id, r]));
-
-  const changed: Array<{ id: string; visit_id: string }> = [];
-  const skipped: SkippedRow[] = [];
-  const startedAt = new Date().toISOString();
-  for (const id of ids) {
-    const row = byId.get(id);
-    if (!row) {
-      skipped.push({ id, reason: "Deleted from the queue or no longer exists." });
-      continue;
-    }
-    const verdict = evaluateClaim(
-      {
-        isPackageHeader: row.is_package_header,
-        isDoctorLine: isDoctorKind(row.services.kind),
-        section: row.services.section,
-        visitDeleted: row.visits.deleted_at !== null,
-        visit: row.visits,
-      },
-      session.role,
-    );
-    if (!verdict.ok) {
-      skipped.push({ id, reason: verdict.error });
-      continue;
-    }
-    // The state the operator saw: requested, nobody holding it. Retry once —
-    // this conditional UPDATE rolls back whole on a P0072/40P01 lock race
-    // (0184), so a retry can't double-claim the row.
-    const { data, error } = await withLifecycleRetry(() =>
-      supabase
-        .from("test_requests")
-        .update({ status: "in_progress", assigned_to: session.user_id, started_at: startedAt })
-        .eq("id", id)
-        .eq("status", "requested")
-        .is("assigned_to", null)
-        .is("deleted_at", null)
-        .select("id, visit_id")
-        .maybeSingle(),
-    );
-    if (error) {
-      skipped.push({ id, reason: translatePgError(error) });
-    } else if (!data) {
-      skipped.push({ id, reason: "Claimed by someone else or changed just now." });
-    } else {
-      changed.push(data);
-    }
-  }
-
-  const { ip, ua } = await ipAndAgent();
-  for (const row of changed) {
-    await audit({
-      actor_id: session.user_id,
-      actor_type: "staff",
-      action: "test_request.claimed",
-      resource_type: "test_request",
-      resource_id: row.id,
-      metadata: { visit_id: row.visit_id, bulk_batch_size: ids.length },
-      ip_address: ip,
-      user_agent: ua,
-    });
-  }
-
-  if (changed.length > 0) {
-    revalidatePath("/staff/queue");
-    for (const row of changed) revalidatePath(`/staff/queue/${row.id}`);
-  }
-  return { ok: true, changedIds: changed.map((r) => r.id), skipped };
-}
 
 // ---------------------------------------------------------------------------
 // Bulk release from the lab queue. A combined (chemistry) report is released
@@ -518,116 +479,6 @@ export async function releaseTestsAction(input: unknown): Promise<BulkReleaseRes
   };
 }
 
-const BulkUnclaimSchema = z.object({
-  items: z
-    .array(
-      z.object({
-        testRequestId: z.string().uuid(),
-        // The holder the operator SAW — the write only lands while it still holds.
-        assignedTo: z.string().uuid(),
-      }),
-    )
-    .min(1)
-    .max(MAX_BULK_SELECTION),
-  reason: z.string().max(500).optional(),
-});
-
-export async function unclaimTestsAction(input: unknown): Promise<BulkQueueResult> {
-  const session = await requireActiveStaff();
-  if (!(LAB_CAPABLE_ROLES as readonly string[]).includes(session.role)) {
-    return { ok: false, error: NOT_LAB_STAFF };
-  }
-  const parsed = BulkUnclaimSchema.safeParse(input);
-  if (!parsed.success) return { ok: false, error: BULK_INPUT_ERROR };
-  // First occurrence of an id wins.
-  const seenHolder = new Map<string, string>();
-  for (const item of parsed.data.items) {
-    if (!seenHolder.has(item.testRequestId)) seenHolder.set(item.testRequestId, item.assignedTo);
-  }
-  const ids = [...seenHolder.keys()];
-  const reason = parsed.data.reason?.trim() || null;
-  // Same power as the row's Unclaim: admin anyone's, everyone else their own.
-  const ownerId = session.role === "admin" ? null : session.user_id;
-
-  const supabase = await createClient();
-  const { data: before, error: readError } = await supabase
-    .from("test_requests")
-    .select("id, assigned_to, status, visits!inner ( id )")
-    .in("id", ids)
-    .is("deleted_at", null)
-    .is("visits.deleted_at", null);
-  if (readError) return { ok: false, error: translatePgError(readError) };
-  const byId = new Map((before ?? []).map((r) => [r.id, r]));
-
-  const changed: Array<{ id: string; visit_id: string; previous: string }> = [];
-  const skipped: SkippedRow[] = [];
-  for (const id of ids) {
-    const row = byId.get(id);
-    const saw = seenHolder.get(id)!;
-    if (!row) {
-      skipped.push({ id, reason: "Deleted from the queue — restore it before unclaiming it." });
-      continue;
-    }
-    const verdict = evaluateUnclaim(row, ownerId);
-    if (!verdict.ok) {
-      skipped.push({ id, reason: verdict.error });
-      continue;
-    }
-    if (row.assigned_to !== saw) {
-      skipped.push({ id, reason: "Someone else holds this test now — refresh the queue." });
-      continue;
-    }
-    // Retry once — this conditional UPDATE rolls back whole on a
-    // P0072/40P01 lock race (0184), so a retry can't double-unclaim the row.
-    const { data, error } = await withLifecycleRetry(() =>
-      supabase
-        .from("test_requests")
-        .update({ status: "requested", assigned_to: null, started_at: null })
-        .eq("id", id)
-        .eq("status", "in_progress")
-        .eq("assigned_to", saw)
-        .is("deleted_at", null)
-        .select("id, visit_id")
-        .maybeSingle(),
-    );
-    if (error) {
-      skipped.push({ id, reason: translatePgError(error) });
-    } else if (!data) {
-      skipped.push({ id, reason: "Changed just now — refresh the queue." });
-    } else {
-      changed.push({ id: data.id, visit_id: data.visit_id, previous: saw });
-    }
-  }
-
-  // Same audit shape as performUnclaim, so the queue's Remarks column
-  // (queue_claim_remarks, 0160) reads bulk unclaims unchanged.
-  const { ip, ua } = await ipAndAgent();
-  for (const row of changed) {
-    await audit({
-      actor_id: session.user_id,
-      actor_type: "staff",
-      action: "test_request.unclaimed",
-      resource_type: "test_request",
-      resource_id: row.id,
-      metadata: {
-        visit_id: row.visit_id,
-        previous_assignee: row.previous,
-        reason,
-        self_service: ownerId !== null,
-        bulk_batch_size: ids.length,
-      },
-      ip_address: ip,
-      user_agent: ua,
-    });
-  }
-
-  if (changed.length > 0) {
-    revalidatePath("/staff/queue");
-    for (const row of changed) revalidatePath(`/staff/queue/${row.id}`);
-  }
-  return { ok: true, changedIds: changed.map((r) => r.id), skipped };
-}
-
 export async function reassignTestAction(
   testRequestId: string,
   newAssigneeId: string,
@@ -735,4 +586,552 @@ export async function reassignTestAction(
   revalidatePath("/staff/queue");
   revalidatePath(`/staff/queue/${testRequestId}`);
   return { ok: true };
+}
+
+// ---------------------------------------------------------------------------
+// Undo for the lab queue's bulk bar (owner 2026-09-28): reverses the caller's
+// own bulk Claim / Unclaim / Delete for 10 minutes, read back from that
+// call's audit rows (bulk_batch_id). Each test is reversed only while it is
+// still exactly as the action left it; a chemistry panel reverses all-or-
+// nothing. Un-claiming a panel is atomic in the database
+// (unclaim_panel_members, 0191: every member or none, P0077 on a lost race),
+// so it needs no compensation. Reclaim and restore are still per-row
+// conditional writes: a partial write is compensated back. Reclaim audits
+// anything the compensation could not revert (auditLeftoverPanelRows);
+// restore re-deletes and audits what it compensated, and reports a panel it
+// could not fully put back (stillCommittedRows / partiallyRestoredIds).
+//   claimed   → unclaim  (still in progress, held by the caller, at the exact
+//                         started_at the claim stamped)
+//   unclaimed → reclaim  (still requested and unheld; the old holder is still
+//                         an active lab worker allowed that section)
+//   deleted   → restore  (restoreTestRequestsForVisit — same rules as Restore)
+// A batch's rows are all one action (each write action stamps ONE
+// bulk_batch_id, one action verb), so planQueueUndo's steps for a batch are
+// all one `kind` — read once from the first group rather than re-checked per
+// group.
+// ---------------------------------------------------------------------------
+
+const UNDO_ROLE_CHANGED = "Your role can no longer do this.";
+const UNCLAIM_UNDO_MOVED_ON =
+  "claimed work has moved on — a result was uploaded or someone else holds it";
+const RECLAIM_HOLDER_UNUSABLE = "the person who held it can no longer take this test";
+const RECLAIM_STATE_MOVED = "someone claimed it since, or it changed";
+const RESTORE_PANEL_CHANGED = "part of this panel was already restored or changed";
+
+function isKind<K extends QueueUndoStep["kind"]>(
+  steps: readonly QueueUndoStep[],
+  kind: K,
+): steps is Extract<QueueUndoStep, { kind: K }>[] {
+  return steps.every((s) => s.kind === kind);
+}
+
+export async function undoBulkQueueAction(input: unknown): Promise<QueueUndoResult> {
+  const session = await requireActiveStaff();
+  // Role first, before ANY read of the batch: loadOwnBatchRows uses the admin
+  // client, and its alreadyUndone / later-rows reads are not scoped to the
+  // caller, so a role that can do none of Claim / Unclaim / Delete must not be
+  // able to probe whether an arbitrary batch id exists or was undone. Each
+  // branch below still re-checks the one role its own action needs.
+  if (!(LAB_CAPABLE_ROLES as readonly string[]).includes(session.role) && !QUEUE_DELETE_ROLES.has(session.role)) {
+    return { ok: false, error: UNDO_ROLE_CHANGED };
+  }
+  const parsed = z.object({ batchId: z.string().uuid() }).safeParse(input);
+  if (!parsed.success) return { ok: false, error: UNDO_EXPIRED };
+  const loaded = await loadOwnBatchRows({
+    actorId: session.user_id,
+    batchId: parsed.data.batchId,
+    resourceType: "test_request",
+    nowMs: Date.now(),
+  });
+  if (!loaded.ok) return { ok: false, error: loaded.error };
+  if (loaded.alreadyUndone) return { ok: false, error: UNDO_ALREADY };
+  const { changedSince } = loaded;
+  const groups = groupUndoSteps(planQueueUndo(loaded.rows));
+  if (groups.length === 0) return { ok: false, error: UNDO_EXPIRED };
+
+  const kind = groups[0]!.steps[0]!.kind;
+  const restoredIds: string[] = [];
+  const notRestored: Array<{ id: string; reason: string }> = [];
+  const touchedTestPages = new Set<string>();
+  const touchedPanelRefs = new Map<string, { visitId: string; groupId: string }>();
+  let anyChanged = false;
+
+  const trackPanel = (key: string) => {
+    if (touchedPanelRefs.has(key)) return;
+    const ref = parsePanelRowKey(key);
+    if (ref) touchedPanelRefs.set(key, ref);
+  };
+
+  if (kind === "unclaim") {
+    if (!(LAB_CAPABLE_ROLES as readonly string[]).includes(session.role)) {
+      for (const g of groups) notRestored.push({ id: g.key, reason: UNDO_ROLE_CHANGED });
+    } else {
+      const supabase = await createClient();
+      const { ip, ua } = await ipAndAgent();
+      const undoBatchId = crypto.randomUUID();
+      for (const group of groups) {
+        if (!isKind(group.steps, "unclaim")) continue;
+        if (group.steps.some((s) => changedSince.has(s.id))) {
+          notRestored.push({ id: group.key, reason: CHANGED_SINCE_REASON });
+          continue;
+        }
+        const ids = group.steps.map((s) => s.id);
+        const panelKey = group.steps[0]!.panelKey;
+        const stepOf = new Map(group.steps.map((s) => [s.id, s]));
+
+        // ONE read validates every member. unclaimStepStillHeld pins the exact
+        // started_at THIS batch's claim wrote, so Undo can only reverse THAT
+        // claim, never a same-holder reclaim that happened since (P1: exact
+        // predicates) — and a step with a null startedAt (a claim whose
+        // read-back failed: outcome_unverified) is never eligible.
+        const { data: before, error: readError } = await supabase
+          .from("test_requests")
+          .select("id, visit_id, status, assigned_to, started_at, deleted_at, visits!inner ( deleted_at )")
+          .in("id", ids);
+        const beforeRows = before ?? [];
+        const eligible =
+          !readError &&
+          beforeRows.length === ids.length &&
+          beforeRows.every((r) => {
+            const step = stepOf.get(r.id);
+            return step !== undefined && unclaimStepStillHeld(r, step, session.user_id);
+          });
+        if (!eligible) {
+          notRestored.push({ id: group.key, reason: UNCLAIM_UNDO_MOVED_ON });
+          continue;
+        }
+
+        if (panelKey !== null) {
+          // A chemistry panel goes back through unclaim_panel_members (0191):
+          // one statement, every member or none (P0077) — so there is nothing
+          // to compensate, and a lost race changes nothing.
+          const visitOf = new Map(beforeRows.map((r) => [r.id, r.visit_id]));
+          const result = await unclaimPanelMembers(session, supabase, {
+            members: ids.map((id) => ({ id, holder: session.user_id })),
+            visitIdOf: (id) => stepOf.get(id)?.visitId ?? visitOf.get(id) ?? null,
+            reason: "Undo of a bulk claim",
+            selfService: session.role !== "admin",
+            auditExtra: {
+              via: BULK_UNDO_VIA,
+              undo_of_batch: parsed.data.batchId,
+              bulk_batch_id: undoBatchId,
+              panel_key: panelKey,
+            },
+          });
+          if (!result.ok) {
+            notRestored.push({ id: group.key, reason: result.error });
+            continue;
+          }
+          for (const id of ids) touchedTestPages.add(id);
+          trackPanel(group.key);
+          restoredIds.push(group.key);
+          anyChanged = true;
+          continue;
+        }
+
+        // A single row: today's exact-predicate write.
+        const startedAtValue = stepOf.get(ids[0]!)!.startedAt!;
+        const { data, error } = await supabase
+          .from("test_requests")
+          .update({ status: "requested", assigned_to: null, started_at: null })
+          .in("id", ids)
+          .eq("status", "in_progress")
+          .eq("assigned_to", session.user_id)
+          .eq("started_at", startedAtValue)
+          .is("deleted_at", null)
+          .select("id, visit_id");
+        const got = error ? [] : (data ?? []);
+        if (got.length !== ids.length) {
+          notRestored.push({ id: group.key, reason: UNCLAIM_UNDO_MOVED_ON });
+          continue;
+        }
+        for (const row of got) {
+          await audit({
+            actor_id: session.user_id,
+            actor_type: "staff",
+            action: "test_request.unclaimed",
+            resource_type: "test_request",
+            resource_id: row.id,
+            metadata: {
+              visit_id: row.visit_id,
+              previous_assignee: session.user_id,
+              reason: "Undo of a bulk claim",
+              self_service: session.role !== "admin",
+              via: BULK_UNDO_VIA,
+              undo_of_batch: parsed.data.batchId,
+              bulk_batch_id: undoBatchId,
+            },
+            ip_address: ip,
+            user_agent: ua,
+          });
+          touchedTestPages.add(row.id);
+        }
+        restoredIds.push(group.key);
+        anyChanged = true;
+      }
+    }
+  } else if (kind === "reclaim") {
+    if (!(LAB_CAPABLE_ROLES as readonly string[]).includes(session.role)) {
+      for (const g of groups) notRestored.push({ id: g.key, reason: UNDO_ROLE_CHANGED });
+    } else {
+      const supabase = await createClient();
+      const { ip, ua } = await ipAndAgent();
+      const undoBatchId = crypto.randomUUID();
+      for (const group of groups) {
+        if (!isKind(group.steps, "reclaim")) continue;
+        if (group.steps.some((s) => changedSince.has(s.id))) {
+          notRestored.push({ id: group.key, reason: CHANGED_SINCE_REASON });
+          continue;
+        }
+        const steps = group.steps;
+        const panel = steps[0]!.panelKey !== null;
+        // Each member goes back to ITS OWN holder: an admin's hand-back of a
+        // panel split between two people recorded a previous_assignee per
+        // member, so the members must not all land under the first one's name.
+        const holderOf = holderByMember(steps);
+        const distinctHolders = [...new Set(holderOf.values())];
+
+        const { data: holderProfileRows } = await supabase
+          .from("staff_profiles")
+          .select("id, role, is_active, deleted_at")
+          .in("id", distinctHolders);
+        const holderProfileOf = new Map((holderProfileRows ?? []).map((p) => [p.id, p]));
+        const everyHolderUsable = distinctHolders.every((h) => {
+          const p = holderProfileOf.get(h);
+          return (
+            !!p && p.is_active && p.deleted_at === null && (LAB_CAPABLE_ROLES as readonly string[]).includes(p.role)
+          );
+        });
+        if (!everyHolderUsable) {
+          notRestored.push({ id: group.key, reason: RECLAIM_HOLDER_UNUSABLE });
+          continue;
+        }
+
+        const ids = steps.map((s) => s.id);
+        const { data: before, error: readError } = await supabase
+          .from("test_requests")
+          .select(
+            "id, status, assigned_to, deleted_at, services!inner ( section, kind ), visits!inner ( deleted_at, payment_status, hmo_provider_id )",
+          )
+          .in("id", ids)
+          .not("services.kind", "in", DOCTOR_KINDS_PG_LIST);
+        const beforeRows = before ?? [];
+        const structurallyEligible =
+          !readError &&
+          beforeRows.length === ids.length &&
+          beforeRows.every(
+            (r) =>
+              r.status === "requested" &&
+              r.assigned_to === null &&
+              r.deleted_at === null &&
+              r.visits.deleted_at === null &&
+              canClaimSection(holderProfileOf.get(holderOf.get(r.id)!)!.role as StaffSession["role"], r.services.section),
+          );
+        if (!structurallyEligible) {
+          notRestored.push({ id: group.key, reason: RECLAIM_STATE_MOVED });
+          continue;
+        }
+        // Same payment gate a fresh claim would apply (P2): reclaiming after
+        // a bulk unclaim must not restart lab work on a visit whose payment
+        // was voided in the meantime.
+        const gateFailure = beforeRows.map((r) => labQueueGate(r.visits)).find((g) => !g.ok);
+        if (gateFailure && !gateFailure.ok) {
+          notRestored.push({ id: group.key, reason: gateFailure.hint });
+          continue;
+        }
+
+        const startedAtOf = new Map(steps.map((s) => [s.id, s.startedAt]));
+        const got: Array<{ id: string; visit_id: string }> = [];
+        let writeError = false;
+        for (const id of ids) {
+          const { data, error } = await supabase
+            .from("test_requests")
+            .update({
+              status: "in_progress",
+              assigned_to: holderOf.get(id)!,
+              started_at: startedAtOf.get(id) ?? new Date().toISOString(),
+            })
+            .eq("id", id)
+            .eq("status", "requested")
+            .is("assigned_to", null)
+            .is("deleted_at", null)
+            .select("id, visit_id")
+            .maybeSingle();
+          if (error) writeError = true;
+          else if (data) got.push(data);
+        }
+        if (writeError || got.length !== ids.length) {
+          let leftoverIds: string[] = [];
+          if (got.length > 0) {
+            let compensatedCount = 0;
+            let compensateError: unknown = null;
+            for (const row of got) {
+              const { data: reverted, error: cErr } = await supabase
+                .from("test_requests")
+                .update({ status: "requested", assigned_to: null, started_at: null })
+                .eq("id", row.id)
+                .eq("status", "in_progress")
+                .eq("assigned_to", holderOf.get(row.id)!)
+                .select("id");
+              if (cErr) compensateError ??= cErr;
+              else if ((reverted ?? []).length > 0) compensatedCount += 1;
+            }
+            if (compensateError || compensatedCount !== got.length) {
+              console.error("bulk undo reclaim compensation failed", {
+                key: group.key,
+                ids: got.map((r) => r.id),
+                error: compensateError ?? `expected to revert ${got.length} rows, reverted ${compensatedCount}`,
+              });
+            }
+            // Compensation didn't (fully) revert — anything still exactly as
+            // THIS Undo left it (reclaimed by the old holder) really did
+            // happen and must be audited, never dropped silently (P1).
+            leftoverIds = await auditLeftoverPanelRows(
+              supabase,
+              got,
+              (r) => r.status === "in_progress" && r.assigned_to === holderOf.get(r.id),
+              (row) => ({
+                actor_id: session.user_id,
+                actor_type: "staff",
+                action: "test_request.reassigned",
+                resource_type: "test_request",
+                resource_id: row.id,
+                metadata: {
+                  visit_id: row.visit_id,
+                  from: null,
+                  to: holderOf.get(row.id) ?? null,
+                  via: BULK_UNDO_VIA,
+                  undo_of_batch: parsed.data.batchId,
+                  bulk_batch_id: undoBatchId,
+                  partial_panel: true,
+                },
+                ip_address: ip,
+                user_agent: ua,
+              }),
+            );
+            for (const id of leftoverIds) touchedTestPages.add(id);
+            if (leftoverIds.length > 0) {
+              if (panel) trackPanel(group.key);
+              anyChanged = true;
+            }
+          }
+          notRestored.push({
+            id: group.key,
+            reason: leftoverIds.length > 0 ? PARTIAL_PANEL_LEFTOVER_REASON : RECLAIM_STATE_MOVED,
+          });
+          continue;
+        }
+        for (const row of got) {
+          await audit({
+            actor_id: session.user_id,
+            actor_type: "staff",
+            action: "test_request.reassigned",
+            resource_type: "test_request",
+            resource_id: row.id,
+            metadata: {
+              visit_id: row.visit_id,
+              from: null,
+              to: holderOf.get(row.id) ?? null,
+              via: BULK_UNDO_VIA,
+              undo_of_batch: parsed.data.batchId,
+              bulk_batch_id: undoBatchId,
+            },
+            ip_address: ip,
+            user_agent: ua,
+          });
+          touchedTestPages.add(row.id);
+        }
+        if (panel) trackPanel(group.key);
+        restoredIds.push(group.key);
+        anyChanged = true;
+      }
+    }
+  } else {
+    // restore
+    if (!QUEUE_DELETE_ROLES.has(session.role)) {
+      for (const g of groups) notRestored.push({ id: g.key, reason: UNDO_ROLE_CHANGED });
+    } else {
+      const undoBatchId = crypto.randomUUID();
+      const admin = createAdminClient();
+
+      const restoreGroups: Array<{ key: string; steps: Extract<QueueUndoStep, { kind: "restore" }>[] }> = [];
+      for (const group of groups) {
+        if (isKind(group.steps, "restore")) restoreGroups.push({ key: group.key, steps: group.steps });
+      }
+
+      // Pre-validate each group as a WHOLE — every member still deleted at
+      // exactly the deleted_at this batch recorded, and not touched since by
+      // anyone else — BEFORE restoring anything, so a panel that partially
+      // changed is refused whole rather than partially restored (P2: panel
+      // atomicity). restoreTestRequestsForVisit's own expectedDeletedAtOf
+      // check is the second line of defense against a race in the instant
+      // between this read and its write.
+      const allIds = restoreGroups.flatMap((g) => g.steps.map((s) => s.id));
+      // Deliberately reads DELETED rows (.not "is" null) — it is looking for
+      // exactly the deleted_at every live surface hides, to compare it
+      // against what this batch recorded. visits.deleted_at is selected only
+      // as evidence: restoreTestRequestsForVisit applies its own
+      // visit-deleted refusal below, whole-visit, same as a single Restore.
+      // deleted_by / delete_reason ride along too (finding 6): if a
+      // partially-restored panel needs compensating back to deleted, this is
+      // its prior state, not a synthetic one.
+      // Read in IN_CHUNK slices (a batch can hold up to MAX_BULK_RECORDS ids).
+      // A failed slice leaves `current` empty, so EVERY group reads as stale
+      // and is refused (RESTORE_PANEL_CHANGED) before anything is restored —
+      // fail closed, never a restore against a partial picture.
+      const currentRead = await readInChunks(allIds, (chunk) =>
+        admin
+          .from("test_requests")
+          .select("id, deleted_at, deleted_by, delete_reason, visits ( deleted_at )")
+          .in("id", chunk)
+          .not("deleted_at", "is", null),
+      );
+      const current = currentRead.ok ? currentRead.rows : [];
+      const currentDeletedAtById = new Map(current.map((r) => [r.id, r.deleted_at]));
+      const priorOf = new Map(
+        current.map((r) => [r.id, { deleted_by: r.deleted_by, delete_reason: r.delete_reason }]),
+      );
+
+      const expectedDeletedAtOf = new Map<string, string>();
+      const idsByVisit = new Map<string, string[]>();
+      const validGroupKeys = new Set<string>();
+      for (const group of restoreGroups) {
+        const changed = group.steps.some((s) => changedSince.has(s.id));
+        const stale = group.steps.some(
+          (s) => s.deletedAt === null || !sameInstant(currentDeletedAtById.get(s.id), s.deletedAt),
+        );
+        if (changed || stale) {
+          notRestored.push({ id: group.key, reason: changed ? CHANGED_SINCE_REASON : RESTORE_PANEL_CHANGED });
+          continue;
+        }
+        validGroupKeys.add(group.key);
+        for (const s of group.steps) {
+          expectedDeletedAtOf.set(s.id, s.deletedAt!);
+          const list = idsByVisit.get(s.visitId) ?? [];
+          list.push(s.id);
+          idsByVisit.set(s.visitId, list);
+        }
+      }
+
+      const restoredTestIds = new Set<string>();
+      for (const [visitId, ids] of idsByVisit) {
+        const outcome = await restoreTestRequestsForVisit(
+          session,
+          visitId,
+          ids,
+          "Undo of a bulk delete",
+          { via: BULK_UNDO_VIA, undo_of_batch: parsed.data.batchId, bulk_batch_id: undoBatchId },
+          expectedDeletedAtOf,
+        );
+        if (outcome.ok) {
+          for (const id of outcome.restoredIds) restoredTestIds.add(id);
+        }
+      }
+
+      // A group where SOME but not all of its pre-validated members came
+      // back is a genuine race in the instant between the read above and the
+      // write inside restoreTestRequestsForVisit — put the restored ones back
+      // to exactly their prior deleted state rather than leaving the panel
+      // half-restored (P2, finding 6). The core already wrote each restored
+      // id a `test_request.restored` audit row; a successful compensation
+      // gets its own `test_request.deleted` row so the trail says what really
+      // happened, and a FAILED compensation leaves that `restored` row as the
+      // only (accurate) record — nothing is unaudited either way.
+      const compensationReasonOf = new Map<string, string>();
+      if (restoreGroups.some((g) => validGroupKeys.has(g.key))) {
+        const { ip, ua } = await ipAndAgent();
+        for (const group of restoreGroups) {
+          if (!validGroupKeys.has(group.key)) continue;
+          const ids = group.steps.map((s) => s.id);
+          const partial = partiallyRestoredIds(ids, restoredTestIds);
+          if (!partial) continue;
+          anyChanged = true;
+          const stepById = new Map(group.steps.map((s) => [s.id, s]));
+          const compensatedIds: string[] = [];
+          const visitIdsTouched = new Set<string>();
+          for (const id of partial) {
+            const step = stepById.get(id)!;
+            const prior = priorOf.get(id);
+            const { data: compensated, error: compensateError } = await admin
+              .from("test_requests")
+              .update({
+                deleted_at: step.deletedAt,
+                deleted_by: prior?.deleted_by ?? null,
+                delete_reason: prior?.delete_reason ?? null,
+              })
+              .eq("id", id)
+              .is("deleted_at", null)
+              .select("id")
+              .maybeSingle();
+            if (compensateError || !compensated) {
+              console.error("bulk undo restore compensation failed", {
+                key: group.key,
+                id,
+                error: compensateError ?? "expected to re-delete 1 row, matched 0",
+              });
+              continue;
+            }
+            compensatedIds.push(id);
+            restoredTestIds.delete(id);
+            visitIdsTouched.add(step.visitId);
+            await audit({
+              actor_id: session.user_id,
+              actor_type: "staff",
+              action: "test_request.deleted",
+              resource_type: "test_request",
+              resource_id: id,
+              metadata: {
+                visit_id: step.visitId,
+                reason: "Undo of a bulk delete could not restore the whole panel — put back",
+                deleted_at: step.deletedAt,
+                via: BULK_UNDO_VIA,
+                undo_of_batch: parsed.data.batchId,
+                bulk_batch_id: undoBatchId,
+                panel_key: group.key,
+                compensation: true,
+              },
+              ip_address: ip,
+              user_agent: ua,
+            });
+          }
+          for (const visitId of visitIdsTouched) revalidateQueueSurfaces(visitId);
+          const stillLeftover = partial.filter((id) => !compensatedIds.includes(id));
+          // Either outcome means this group can never be a clean restore —
+          // whether compensation cleanly put the rest back (RESTORE_PANEL_CHANGED)
+          // or failed for some (PARTIAL_PANEL_LEFTOVER_REASON: those stay
+          // restored, a real committed change, but already audited above via
+          // the core's own restore rows).
+          compensationReasonOf.set(
+            group.key,
+            stillLeftover.length > 0 ? PARTIAL_PANEL_LEFTOVER_REASON : RESTORE_PANEL_CHANGED,
+          );
+        }
+      }
+
+      if (restoredTestIds.size > 0) anyChanged = true;
+      for (const group of restoreGroups) {
+        if (!validGroupKeys.has(group.key)) continue; // already reported above
+        const ids = group.steps.map((s) => s.id);
+        if (ids.some((id) => restoredTestIds.has(id))) trackPanel(group.key);
+        if (ids.length > 0 && ids.every((id) => restoredTestIds.has(id))) {
+          restoredIds.push(group.key);
+        } else {
+          // Pre-validated but still didn't fully come back — a genuine race
+          // in the instant between the check above and the write. Refused
+          // whole, same as any other panel mismatch.
+          notRestored.push({ id: group.key, reason: compensationReasonOf.get(group.key) ?? RESTORE_PANEL_CHANGED });
+        }
+      }
+    }
+  }
+
+  if (anyChanged) {
+    revalidatePath("/staff/queue");
+    for (const id of touchedTestPages) revalidatePath(`/staff/queue/${id}`);
+    for (const ref of touchedPanelRefs.values()) {
+      revalidatePath(`/staff/queue/consolidated/${ref.visitId}/${ref.groupId}`);
+    }
+  }
+  // Tests, not rows: a restored panel key stands for all of its members.
+  return { ok: true, restoredIds, restoredTestCount: restoredTestCountOf(groups, restoredIds), notRestored };
 }

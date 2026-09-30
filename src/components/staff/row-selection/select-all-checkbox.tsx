@@ -2,6 +2,7 @@
 
 import { useEffect, useRef } from "react";
 import { selectAllState, type SelectionEntry } from "@/lib/ui/bulk-selection";
+import { requestBarFocus } from "./bar-focus";
 import { useRowSelection } from "./selection-context";
 
 interface Props {
@@ -30,6 +31,11 @@ export function SelectAllCheckbox({ entries, label }: Props) {
         checked={status === "all"}
         disabled={entries.length === 0}
         onChange={() => setMany(entries, status !== "all")}
+        onKeyDown={(e) => {
+          if (e.key !== "Enter") return;
+          e.preventDefault();
+          requestBarFocus();
+        }}
         aria-label={label}
         className="h-4 w-4 accent-[color:var(--color-brand-cyan)] disabled:opacity-40"
       />

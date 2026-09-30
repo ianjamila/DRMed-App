@@ -1,4 +1,5 @@
 import { quickLinkGroupsFor } from "@/components/staff/staff-nav-config";
+import { activeEmbeddedPatients } from "@/lib/patients/active";
 import type { StaffSession } from "@/lib/auth/require-staff";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
@@ -299,10 +300,12 @@ async function loadReceptionStats(userId: string, show: (id: string) => boolean)
           REPORT_EXPORT_MAX_ROWS,
         )
       : Promise.resolve({ rows: [] as UnpaidMoneyRow[], truncated: false, error: null }),
+    // Skips deleted / merged-away patients, as the queue and results pages do
+    // (owner decision 2026-09-30).
     show("reception.pending_release")
-      ? supabase
+      ? activeEmbeddedPatients(supabase
           .from("test_requests")
-          .select("id, services!inner ( id ), visits!inner ( id )", {
+          .select("id, services!inner ( id ), visits!inner ( id, patients!inner ( id ) )", {
             count: "exact",
             head: true,
           })
@@ -319,14 +322,15 @@ async function loadReceptionStats(userId: string, show: (id: string) => boolean)
           // `ready_for_release`, where it was counted here and sat in the
           // tile as work nobody owes. Same reasoning lab-tat.ts applies to
           // its own Pending tile.
-          .not("services.kind", "in", DOCTOR_KINDS_PG_LIST)
+          .not("services.kind", "in", DOCTOR_KINDS_PG_LIST),
+        "visits.patients")
       : SKIP_COUNT,
     // Released since Manila midnight — what's ready to print at the counter.
     // The window is Manila-day-correct (todayManilaWindow), never a naive date.
     show("reception.released_today")
-      ? supabase
+      ? activeEmbeddedPatients(supabase
           .from("test_requests")
-          .select("id, services!inner ( kind ), visits!inner ( id )", {
+          .select("id, services!inner ( kind ), visits!inner ( id, patients!inner ( id ) )", {
             count: "exact",
             head: true,
           })
@@ -336,7 +340,8 @@ async function loadReceptionStats(userId: string, show: (id: string) => boolean)
           .eq("is_package_header", false)
           .not("services.kind", "in", DOCTOR_KINDS_PG_LIST)
           .is("deleted_at", null)
-          .is("visits.deleted_at", null)
+          .is("visits.deleted_at", null),
+        "visits.patients")
       : SKIP_COUNT,
     // Selected (not head-count) so distinct BOOKINGS can be grouped in JS —
     // a single multi-service booking is several `appointments` rows sharing
