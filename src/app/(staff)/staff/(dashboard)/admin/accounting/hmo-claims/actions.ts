@@ -1477,6 +1477,12 @@ export async function undoHistoricHmoBatchAction(input: unknown): Promise<BulkUn
       sourceId: step.id,
       actorId: session.user_id,
       reason: "Undone within 10 minutes",
+      // The claim-state check above already re-read this exact id moments
+      // ago; pin the reversal to it so a concurrent Undo of the same claim
+      // (or a lookup race) can't reverse a JE this call never verified, or
+      // silently no-op while this claim gets restored anyway (Codex P1
+      // findings 1 + 2).
+      expectedEntryId: step.journalEntryId,
     });
     if (reverseErr) {
       notRestored.push({ id: step.id, reason: "could not reverse the journal entry — try again" });

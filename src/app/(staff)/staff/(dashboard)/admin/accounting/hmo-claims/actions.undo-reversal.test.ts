@@ -2,6 +2,22 @@ import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
+// Codex review findings 1 + 2 (2026-09-30): a concurrent Undo of the same
+// historic claim could reverse the same posted JE twice (the posted→draft
+// transition in journal-entry.ts used to be unconditional), and a discarded
+// lookup error there read identically to "nothing to reverse", so a failed
+// lookup let this action restore the claim row while the original JE stayed
+// posted. Both are pinned below: this file's call must pass
+// `expectedEntryId` (so a reversal that doesn't match what this action just
+// re-verified is refused rather than silently accepted), and journal-entry.ts
+// itself must make the status transition conditional and never drop the
+// lookup's error.
+const JOURNAL_ENTRY_FILE = join(
+  process.cwd(),
+  "src/lib/accounting/journal-entry.ts",
+);
+const journalEntrySrc = readFileSync(JOURNAL_ENTRY_FILE, "utf8");
+
 // 10-minute Undo (owner 2026-09-28): Mark paid / Write off undo must reverse
 // the JE through the ledger's reversal pairs (reverseJournalEntryBySource —
 // original marked 'reversed', a mirror posted, so reports net to zero, per
@@ -46,6 +62,45 @@ describe("undoHistoricHmoBatchAction reverses the JE through the ledger, not aro
     const stillValidAt = body.indexOf("stillValid");
     expect(stillValidAt).toBeGreaterThan(-1);
     expect(stillValidAt).toBeLessThan(reverseAt);
+  });
+
+  it("pins the reversal to the exact JE it just re-verified via expectedEntryId", () => {
+    const reverseAt = body.indexOf("reverseJournalEntryBySource(");
+    expect(reverseAt).toBeGreaterThan(-1);
+    const callEnd = body.indexOf(");", reverseAt);
+    const call = body.slice(reverseAt, callEnd);
+    expect(call).toMatch(/expectedEntryId:\s*step\.journalEntryId/);
+  });
+});
+
+describe("reverseJournalEntryBySource itself closes the race + swallowed-error gaps (journal-entry.ts)", () => {
+  it("claims the posted->draft transition conditionally, not unconditionally", () => {
+    // The update that flips the original entry to 'draft' must be predicated
+    // on status = 'posted' AND its result checked for zero rows — an
+    // unconditional `.update({ status: "draft" }).eq("id", original.id)`
+    // with no re-assertion of "posted" and no row-count check would let two
+    // concurrent callers both "win" and both build a posted reversal mirror.
+    const at = journalEntrySrc.indexOf('.update({ status: "draft" })');
+    expect(at, "posted->draft update not found").toBeGreaterThan(-1);
+    const chain = journalEntrySrc.slice(at, journalEntrySrc.indexOf(";", at));
+    expect(chain).toMatch(/\.eq\("status",\s*"posted"\)/);
+    expect(chain).toMatch(/\.select\("id"\)/);
+    // ...and the caller must actually inspect that result for zero rows.
+    const afterChain = journalEntrySrc.slice(journalEntrySrc.indexOf(";", at));
+    expect(afterChain.slice(0, 300)).toMatch(/draftRows[\s\S]{0,60}length === 0/);
+  });
+
+  it("never discards the initial lookup's error", () => {
+    const selectAt = journalEntrySrc.indexOf('.select("id")\n    .eq("source_kind"');
+    expect(selectAt, "initial lookup not found").toBeGreaterThan(-1);
+    const nearby = journalEntrySrc.slice(Math.max(0, selectAt - 120), selectAt + 400);
+    expect(nearby).toMatch(/error:\s*lookupErr/);
+    expect(nearby).toMatch(/if\s*\(lookupErr\)\s*return translatePgError\(lookupErr\)/);
+  });
+
+  it("treats a mismatched or missing entry as an error only when expectedEntryId is given", () => {
+    expect(journalEntrySrc).toMatch(/expectedEntryId\?\s*:\s*string/);
+    expect(journalEntrySrc).toMatch(/input\.expectedEntryId\s*&&\s*original\.id\s*!==\s*input\.expectedEntryId/);
   });
 });
 
