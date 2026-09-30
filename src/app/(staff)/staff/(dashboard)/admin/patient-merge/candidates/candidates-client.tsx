@@ -4,6 +4,7 @@ import type { CandidatePair } from "@/lib/patients/find-duplicates";
 import type { DupSignal } from "@/lib/patients/duplicates";
 import { mergeCandidateAction, undoMergeAction, type MergeResult, type UndoResult, type RecentMerge } from "../actions";
 import { manilaDate } from "@/lib/dates/manila";
+import { InactivePatientBadge } from "@/components/staff/inactive-patient-badge";
 
 const SIGNAL_LABEL: Record<DupSignal, string> = {
   exact_email: "Same email",
@@ -48,14 +49,29 @@ function MergeButton({ pair }: { pair: CandidatePair }) {
 
 function UndoButton({ merge }: { merge: RecentMerge }) {
   const [state, action, pending] = useActionState<UndoResult | null, FormData>(undoMergeAction, null);
-  if (state?.ok) return <span className="text-xs text-green-700">Undone ✓</span>;
+  if (state?.ok) {
+    return (
+      <div className="text-xs text-green-700" role="status">
+        <p className="font-semibold">Undone ✓</p>
+        <ul className="mt-1 list-disc pl-4">
+          {state.lines.map((l) => <li key={l}>{l}</li>)}
+        </ul>
+      </div>
+    );
+  }
+  const label = merge.interrupted ? "Finish undo" : "Undo";
   return (
-    <form action={action} onSubmit={(e) => { if (!confirm("Undo this merge?")) e.preventDefault(); }}>
+    <form
+      action={action}
+      onSubmit={(e) => {
+        if (!confirm(merge.interrupted ? "Finish the undo of this merge?" : "Undo this merge?")) e.preventDefault();
+      }}
+    >
       <input type="hidden" name="merge_id" value={merge.id} />
       <button disabled={pending} className="text-xs font-semibold text-cyan-700 hover:underline disabled:opacity-50">
-        {pending ? "Undoing…" : "Undo"}
+        {pending ? "Undoing…" : label}
       </button>
-      {state && !state.ok && <span className="ml-2 text-xs text-red-600">{state.error}</span>}
+      {state && !state.ok && <span className="ml-2 text-xs text-red-600" role="alert">{state.error}</span>}
     </form>
   );
 }
@@ -103,9 +119,21 @@ export function CandidatesClient({ pairs, recent }: { pairs: CandidatePair[]; re
           <h2 className="mb-2 text-sm font-bold">Recently merged (undo within 30 days)</h2>
           <ul className="divide-y">
             {recent.map((m) => (
-              <li key={m.id} className="flex items-center justify-between py-2 text-sm">
-                <span>{m.source_drm_id} → {m.keep_drm_id} <span className="text-slate-400">· {manilaDate(m.merged_at)}</span></span>
-                <UndoButton merge={m} />
+              <li key={m.id} className="flex items-start justify-between gap-4 py-2 text-sm">
+                <div>
+                  <span>
+                    {m.source_drm_id ?? "—"} → {m.keep_drm_id ?? "—"}
+                    <InactivePatientBadge deletedAt={m.keep_deleted_at} mergedIntoId={m.keep_merged_into_id} />
+                    <span className="text-slate-400"> · {manilaDate(m.merged_at)}</span>
+                  </span>
+                  {m.interrupted && (
+                    <p className="text-xs text-amber-700">Undo was interrupted — finish it.</p>
+                  )}
+                  {!m.undoable && m.blocked_reason && (
+                    <p className="text-xs text-slate-500">{m.blocked_reason}</p>
+                  )}
+                </div>
+                {m.undoable && <UndoButton merge={m} />}
               </li>
             ))}
           </ul>
