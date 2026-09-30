@@ -168,3 +168,20 @@ export function computeAlertRecipients(input: AlertRecipientInput): AlertRecipie
   if (!input.enabled) return { enabled: false, emails: [], staffOn, staffWithoutEmail };
   return { enabled: true, emails, staffOn, staffWithoutEmail };
 }
+
+/**
+ * Why an alert emailed nobody, for the sender's audit row — or null when
+ * someone will be emailed. A failed read of who gets the alert (loadError from
+ * resolveStaffAlertRecipients) is never reported as "nobody is switched on":
+ * that sends an admin to Email Alerts to fix settings that are fine.
+ */
+export function alertSkipReason(r: {
+  enabled: boolean;
+  emails: readonly string[];
+  loadError?: string | null;
+}): string | null {
+  if (r.emails.length > 0) return null;
+  if (!r.enabled) return "turned off in Email Alerts";
+  if (r.loadError) return `couldn't read who gets this alert (${r.loadError}) — nobody was emailed`;
+  return "nobody is switched on for this alert in Email Alerts";
+}

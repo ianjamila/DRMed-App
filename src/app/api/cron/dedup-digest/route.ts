@@ -5,6 +5,7 @@ import { audit } from "@/lib/audit/log";
 import { loadCandidatePairs } from "@/lib/patients/find-duplicates";
 import { sendEmail } from "@/lib/notifications/email";
 import { resolveStaffAlertRecipients } from "@/lib/notifications/staff-alert-recipients";
+import { alertSkipReason } from "@/lib/notifications/staff-alerts";
 import { renderEmailShell, emailParagraph, emailButton } from "@/lib/notifications/branded-email";
 
 export const dynamic = "force-dynamic";
@@ -40,6 +41,7 @@ export async function GET(request: Request) {
       // switch people on/off or turn the digest off entirely.
       const alert = await resolveStaffAlertRecipients("dedup_digest", admin);
       const recipients = alert.emails;
+      const skipReason = alertSkipReason(alert);
 
       const base = process.env.NEXT_PUBLIC_SITE_URL ?? "https://drmed.ph";
       const reviewUrl = `${base}/staff/admin/patient-merge/candidates`;
@@ -71,7 +73,8 @@ export async function GET(request: Request) {
           by_tier: byTier,
           recipients: recipients.length,
           emailed,
-          ...(alert.enabled ? {} : { skipped: "turned off in Email Alerts" }),
+          ...(skipReason ? { skipped: skipReason } : {}),
+          ...(alert.loadError ? { recipients_error: alert.loadError } : {}),
         },
       });
       await audit({
