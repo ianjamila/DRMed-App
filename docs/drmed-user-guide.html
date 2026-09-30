@@ -247,7 +247,7 @@
 <div class="layout">
 <nav class="toc" aria-label="Contents">
   <p class="toc-brand">drmed<span>.</span>ph</p>
-  <p class="toc-tag">User guide · v2.48</p>
+  <p class="toc-tag">User guide · v2.49</p>
   <div class="filter" role="group" aria-label="Show chapters for">
     <button type="button" data-filter="all" aria-pressed="true">All roles</button>
     <button type="button" data-filter="reception">Reception</button>
@@ -326,7 +326,7 @@
   <div class="meta">
     <div><strong>Audience</strong>Reception · Medtech · X-ray · Pathologist · Admin · Patients</div>
     <div><strong>Covers</strong>Everything live in production as of the September 2026 release</div>
-    <div><strong>Version</strong>2.48 · 30 September 2026</div>
+    <div><strong>Version</strong>2.49 · 30 September 2026</div>
     <div><strong>Replaces</strong>Staff User Guide v1.0 (22 May 2026)</div>
   </div>
 </header>
@@ -926,7 +926,7 @@
       <dt>Blocked when</dt><dd>visit not paid, waived or HMO-billed · consent gate on and consent missing · a PF-earning doctor line has no attending physician</dd></dl></div>
     <p>Reception never releases: their screens show no Release button, and the server refuses with <q>Results are released by the lab team, not reception.</q></p>
     <p>The test page now shows a <b>Result on file</b> panel with <kbd class="ui">View / download result</kbd> (a 5-minute link; every view is logged) and <kbd class="ui">Edit result…</kbd>. The test is <span class="status">ready for release</span>. Releasing is what makes it visible to the patient, and it is your job, not reception's.</p>
-    <div class="note why"><span class="k">Changed in v2.48: the visit page releases a combined report whole</span><div><p>Releasing one test on a combined report (for example a chemistry panel) now releases every finished test on that report together — the visit page's button reads <kbd class="ui">Release report (N tests)</kbd>. If any test on the report is still waiting for a result or sign-off, the report can't be released yet: the page shows <q>Part of this combined report isn't finished — N tests are still awaiting a result or sign-off.</q> and offers no tick box for it. The Queue follows the same rule everywhere. Before, the visit page let you release a single chemistry test on its own.</p></div></div>
+    <div class="note why"><span class="k">Changed in v2.49: the visit page releases a combined report whole</span><div><p>Releasing one test on a combined report (for example a chemistry panel) now releases every finished test on that report together — the visit page's button reads <kbd class="ui">Release report (N tests)</kbd>. If any test on the report is still waiting for a result or sign-off, the report can't be released yet: the page shows <q>Part of this combined report isn't finished — N tests are still awaiting a result or sign-off.</q> and offers no tick box for it. The Queue follows the same rule everywhere. Before, the visit page let you release a single chemistry test on its own.</p></div></div>
     <h4>Releasing from the Queue</h4>
     <ol class="steps">
       <li><p class="step-title">Open the <span class="tab">Pending release</span> tab of your queue.</p><p>Every finished, unreleased result is a row. A row that can't be released says why in place of the button (for example the payment or consent messages below).</p></li>
@@ -1349,7 +1349,7 @@
 </section>
 
 <footer class="end">
-  <p>drmed.ph User Guide · v2.48 · 30 September 2026 · Matches the production release at migration 0186, plus 0189 (Patient Sources), 0191 (chemistry panels claimed and handed back whole), 0187 (View-as follow-ups), 0190 (claim-holder guard and End now), 0188 (why a patient notice failed, Retry notice), 0183 (waived balance in the books), 0182, 0179 (corrected-result follow-ups), 0176 and 0170 (applied out of order) and 0167 (patient delete and restore). Every label in this guide was checked against the application code on that date. Print with <b>Ctrl/Cmd + P</b>; each chapter starts on a new page.</p>
+  <p>drmed.ph User Guide · v2.49 · 30 September 2026 · Matches the production release at migration 0186, plus 0192 (Results released email alert — applied before this deploy), 0189 (Patient Sources), 0191 (chemistry panels claimed and handed back whole), 0187 (View-as follow-ups), 0190 (claim-holder guard and End now), 0188 (why a patient notice failed, Retry notice), 0183 (waived balance in the books), 0182, 0179 (corrected-result follow-ups), 0176 and 0170 (applied out of order) and 0167 (patient delete and restore). Every label in this guide was checked against the application code on that date. Print with <b>Ctrl/Cmd + P</b>; each chapter starts on a new page.</p>
 </footer>
 </main>
 </div>
