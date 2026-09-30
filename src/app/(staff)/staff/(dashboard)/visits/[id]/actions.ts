@@ -596,8 +596,9 @@ export async function releaseSelectedAction(
 // itself undo-batch-traceable, though nothing currently re-undoes an Undo).
 // Note: if any of this batch's tests belong to a consolidated (chemistry)
 // report, undoReleasedRows' whole-report expansion can restore MORE ids than
-// this batch released — those extra ids come back in `restoredIds` too, per
-// the caller's `count > sent.length` handling elsewhere in this file.
+// this batch released — those extra ids come back in `restoredIds` too, and
+// the bar's outcome message counts `restoredIds.length`, so it reports the
+// true number put back rather than the number this batch released.
 export async function undoReleaseBatchAction(
   input: { batchId: string },
 ): Promise<BulkUndoResult> {
