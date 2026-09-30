@@ -91,6 +91,7 @@ export function planMessageUndo(rows: readonly AuditRowForUndo[]): MessageUndoEn
     const from = m.from;
     const to = m.to;
     const stamp = m.handled_at;
+    // Belt-and-braces: a bulk row always writes both keys; a missing key would also fail nullableString.
     if (!("previous_handled_by" in m) || !("previous_handled_at" in m)) continue;
     const previousHandledBy = nullableString(m.previous_handled_by);
     const previousHandledAt = nullableString(m.previous_handled_at);

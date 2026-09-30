@@ -104,3 +104,96 @@ describe("bucketMessageUndo", () => {
     ]);
   });
 });
+
+describe("groupMessagesForWrite exactness", () => {
+  const base = { id: "1", from: "new" as const, handled_by: null as string | null, handled_at: null as string | null };
+
+  it("keeps rows that differ only in status apart", () => {
+    const groups = groupMessagesForWrite([base, { ...base, id: "2", from: "closed" }]);
+    expect(groups.map((g) => [g.from, g.ids])).toEqual([["new", ["1"]], ["closed", ["2"]]]);
+  });
+
+  it("keeps rows that differ only in handled_by apart", () => {
+    const groups = groupMessagesForWrite([
+      { ...base, handled_by: "u1" },
+      { ...base, id: "2", handled_by: "u2" },
+    ]);
+    expect(groups.map((g) => [g.handledBy, g.ids])).toEqual([["u1", ["1"]], ["u2", ["2"]]]);
+  });
+
+  it("keeps a null handler apart from the string 'null'", () => {
+    const groups = groupMessagesForWrite([base, { ...base, id: "2", handled_by: "null" }]);
+    expect(groups.map((g) => [g.handledBy, g.ids])).toEqual([[null, ["1"]], ["null", ["2"]]]);
+  });
+});
+
+describe("planMessageUndo skip guards, one at a time", () => {
+  const good = { from: "new", to: "closed", previous_handled_by: null, previous_handled_at: null, handled_at: STAMP };
+
+  it("the control row is planned", () => {
+    expect(planMessageUndo([row("1", good)])).toHaveLength(1);
+  });
+
+  it("skips an empty-string handled_at stamp", () => {
+    expect(planMessageUndo([row("1", { ...good, handled_at: "" })])).toEqual([]);
+  });
+
+  it("skips an unknown from status", () => {
+    expect(planMessageUndo([row("1", { ...good, from: "bogus" })])).toEqual([]);
+  });
+
+  it("skips a non-string, non-null previous_handled_by", () => {
+    expect(planMessageUndo([row("1", { ...good, previous_handled_by: 5 })])).toEqual([]);
+  });
+
+  it("skips a row with null metadata", () => {
+    expect(
+      planMessageUndo([{ resource_id: "1", action: "contact_message.status_changed", metadata: null }]),
+    ).toEqual([]);
+  });
+
+  it("skips a row missing previous_handled_by even when previous_handled_at is present", () => {
+    const rest: Record<string, unknown> = { ...good };
+    delete rest.previous_handled_by;
+    expect(planMessageUndo([row("1", rest)])).toEqual([]);
+  });
+});
+
+describe("bucketMessageUndo exactness", () => {
+  const entry = (id: string, over: Partial<Parameters<typeof bucketMessageUndo>[0][number]> = {}) => ({
+    id,
+    current: "closed" as const,
+    restoreTo: "new" as const,
+    previousHandledBy: "u1" as string | null,
+    previousHandledAt: "2026-09-29T00:00:00+00:00" as string | null,
+    stamp: STAMP,
+    ...over,
+  });
+
+  it("returns whole buckets (every field, ids, no id)", () => {
+    expect(bucketMessageUndo([entry("1"), entry("2")])).toEqual([
+      {
+        current: "closed",
+        restoreTo: "new",
+        previousHandledBy: "u1",
+        previousHandledAt: "2026-09-29T00:00:00+00:00",
+        stamp: STAMP,
+        ids: ["1", "2"],
+      },
+    ]);
+  });
+
+  it("splits entries that differ in only the stamp", () => {
+    expect(bucketMessageUndo([entry("1"), entry("2", { stamp: "2026-09-30T04:00:00.000Z" })]).map((b) => b.ids)).toEqual([["1"], ["2"]]);
+  });
+
+  it("splits entries that differ in only previousHandledAt", () => {
+    expect(
+      bucketMessageUndo([entry("1"), entry("2", { previousHandledAt: "2026-09-28T00:00:00+00:00" })]).map((b) => b.ids),
+    ).toEqual([["1"], ["2"]]);
+  });
+
+  it("splits entries that differ in only current", () => {
+    expect(bucketMessageUndo([entry("1"), entry("2", { current: "replied" })]).map((b) => b.ids)).toEqual([["1"], ["2"]]);
+  });
+});
