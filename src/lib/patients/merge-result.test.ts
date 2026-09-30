@@ -48,6 +48,15 @@ describe("parseUndoRpcResult", () => {
   it("rejects a report missing left_on_keep", () => {
     expect(parseUndoRpcResult({ merge_id: "m1" })).toBeNull();
   });
+  it("defaults rechained_not_restored to [] when absent, and parses it when present", () => {
+    const payload = {
+      merge_id: "m1", keep_id: K, source_id: S, kept_drm_id: "DRM-0001", source_drm_id: "DRM-0002",
+      resumed_interrupted_undo: false, moved_back: ZERO, left_on_keep: EMPTY_LEFT,
+      kept_fields: [], reverted_fields: [], rechained_back: 1,
+    };
+    expect(parseUndoRpcResult(payload)?.rechainedNotRestored).toEqual([]);
+    expect(parseUndoRpcResult({ ...payload, rechained_not_restored: ["c1"] })?.rechainedNotRestored).toEqual(["c1"]);
+  });
 });
 
 describe("movedSummary / fieldList", () => {
@@ -65,7 +74,7 @@ describe("undoReportLines", () => {
   const base: UndoReport = {
     mergeId: "m1", keepId: K, sourceId: S, keptDrmId: "DRM-0001", sourceDrmId: "DRM-0002",
     resumedInterruptedUndo: false, movedBack: { ...ZERO, visits: 2 }, leftOnKeep: EMPTY_LEFT,
-    keptFields: [], revertedFields: ["email"], rechainedBack: 0,
+    keptFields: [], revertedFields: ["email"], rechainedBack: 0, rechainedNotRestored: [],
   };
   it("plain undo", () => {
     expect(undoReportLines(base)).toEqual(["Moved back to DRM-0002: 2 visits."]);
@@ -85,6 +94,18 @@ describe("undoReportLines", () => {
       "Moved back to DRM-0002: 2 visits.",
       "This finished an earlier undo that had stopped part-way.",
       "Not reverted — the earlier undo was interrupted, so check by hand: phone.",
+    ]);
+  });
+  it("chain members that could not be re-pointed (singular)", () => {
+    expect(undoReportLines({ ...base, rechainedNotRestored: ["c1"] })).toEqual([
+      "Moved back to DRM-0002: 2 visits.",
+      "1 older merged record still points at DRM-0001 — it was changed after the merge.",
+    ]);
+  });
+  it("chain members that could not be re-pointed (plural)", () => {
+    expect(undoReportLines({ ...base, rechainedNotRestored: ["c1", "c2"] })).toEqual([
+      "Moved back to DRM-0002: 2 visits.",
+      "2 older merged records still point at DRM-0001 — they were changed after the merge.",
     ]);
   });
 });
@@ -108,6 +129,17 @@ describe("undoableState", () => {
     expect(undoableState(row({ legacy: true, source: { merged_into_id: null, deleted_at: null } }), now)).toEqual({
       undoable: true, interrupted: true, reason: null,
     }));
+  it("interrupted legacy row older than 30 days is undoable", () =>
+    expect(
+      undoableState(
+        row({
+          legacy: true,
+          mergedAt: new Date(now - 45 * DAY).toISOString(),
+          source: { merged_into_id: null, deleted_at: null },
+        }),
+        now,
+      ),
+    ).toEqual({ undoable: true, interrupted: true, reason: null }));
   it("v2 row whose source is no longer the tombstone", () =>
     expect(undoableState(row({ source: { merged_into_id: null, deleted_at: null } }), now).undoable).toBe(false));
   it("missing records", () => expect(undoableState(row({ keep: null }), now).undoable).toBe(false));

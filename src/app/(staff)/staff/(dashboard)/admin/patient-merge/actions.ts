@@ -280,6 +280,9 @@ export interface RecentMerge {
 
 // Every live merge inside the undo window, paged with a total order
 // (merged_at desc, id desc) — a dedup CLI batch can exceed any fixed cap.
+// A live LEGACY row (snapshot_version is null) is included at any age too
+// (F1): it can only be an interrupted old-app undo, which is undoable at any
+// age — undoableState below decides "undoable" vs. "past the window".
 export async function loadRecentMerges(page = 1): Promise<{ rows: RecentMerge[]; total: number; page: number }> {
   await requireAdminStaff();
   const admin = createAdminClient();
@@ -290,7 +293,7 @@ export async function loadRecentMerges(page = 1): Promise<{ rows: RecentMerge[];
     .from("patient_merges")
     .select("id, keep_id, source_id, merged_at, snapshot_version", { count: "exact" })
     .is("undone_at", null)
-    .gte("merged_at", cutoff)
+    .or(`merged_at.gte.${cutoff},snapshot_version.is.null`)
     .order("merged_at", { ascending: false })
     .order("id", { ascending: false })
     .range(from, from + RECENT_MERGES_PAGE_SIZE - 1);
