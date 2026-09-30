@@ -1,4 +1,5 @@
 import { incomeStatementTotals, loadIncomeStatementLines } from "@/lib/accounting/income-statement";
+import { activeEmbeddedPatients } from "@/lib/patients/active";
 import { quickLinksFor } from "@/components/staff/staff-nav-config";
 import type { StaffSession } from "@/lib/auth/require-staff";
 import { createClient } from "@/lib/supabase/server";
@@ -181,10 +182,12 @@ async function loadAdminStats(show: (id: string) => boolean) {
           .eq("visit_date", today)
           .is("deleted_at", null)
       : SKIP_COUNT,
+    // Worklist cards below skip deleted / merged-away patients, as the queue
+    // and results pages do (owner decision 2026-09-30).
     show("admin.queue_total")
-      ? supabase
+      ? activeEmbeddedPatients(supabase
           .from("test_requests")
-          .select("id, services!inner ( id ), visits!inner ( id )", {
+          .select("id, services!inner ( id ), visits!inner ( id, patients!inner ( id ) )", {
             count: "exact",
             head: true,
           })
@@ -196,14 +199,15 @@ async function loadAdminStats(show: (id: string) => boolean) {
           // The destination withholds work whose visit hasn't settled, so
           // counting it here made the card read higher than the queue it
           // opens. Same predicate, same numbers.
-          .or(LAB_QUEUE_GATE_VISITS_OR, { foreignTable: "visits" })
+          .or(LAB_QUEUE_GATE_VISITS_OR, { foreignTable: "visits" }),
+        "visits.patients")
       : SKIP_COUNT,
     // Finished lab results waiting to go out, all sections (the Pending release
     // tab as an admin sees it) — and how many of them are on a settled visit.
     show("admin.ready_for_release")
-      ? supabase
+      ? activeEmbeddedPatients(supabase
           .from("test_requests")
-          .select("id, services!inner ( kind ), visits!inner ( id )", {
+          .select("id, services!inner ( kind ), visits!inner ( id, patients!inner ( id ) )", {
             count: "exact",
             head: true,
           })
@@ -211,12 +215,13 @@ async function loadAdminStats(show: (id: string) => boolean) {
           .eq("is_package_header", false)
           .not("services.kind", "in", DOCTOR_KINDS_PG_LIST)
           .is("deleted_at", null)
-          .is("visits.deleted_at", null)
+          .is("visits.deleted_at", null),
+        "visits.patients")
       : SKIP_COUNT,
     show("admin.ready_for_release")
-      ? supabase
+      ? activeEmbeddedPatients(supabase
           .from("test_requests")
-          .select("id, services!inner ( kind ), visits!inner ( id )", {
+          .select("id, services!inner ( kind ), visits!inner ( id, patients!inner ( id ) )", {
             count: "exact",
             head: true,
           })
@@ -225,12 +230,13 @@ async function loadAdminStats(show: (id: string) => boolean) {
           .not("services.kind", "in", DOCTOR_KINDS_PG_LIST)
           .is("deleted_at", null)
           .is("visits.deleted_at", null)
-          .or(MONEY_SETTLED_VISITS_OR, { foreignTable: "visits" })
+          .or(MONEY_SETTLED_VISITS_OR, { foreignTable: "visits" }),
+        "visits.patients")
       : SKIP_COUNT,
     show("admin.released_today")
-      ? supabase
+      ? activeEmbeddedPatients(supabase
           .from("test_requests")
-          .select("id, services!inner ( id ), visits!inner ( id )", {
+          .select("id, services!inner ( id ), visits!inner ( id, patients!inner ( id ) )", {
             count: "exact",
             head: true,
           })
@@ -240,7 +246,8 @@ async function loadAdminStats(show: (id: string) => boolean) {
           .lt("released_at", startOfTomorrowUtc)
           .is("deleted_at", null)
           .is("visits.deleted_at", null)
-          .not("services.kind", "in", DOCTOR_KINDS_PG_LIST)
+          .not("services.kind", "in", DOCTOR_KINDS_PG_LIST),
+        "visits.patients")
       : SKIP_COUNT,
     // "Released today by staff" replaces the bare released-today count with
     // something the owner can act on: who cleared what today. Attributed by
@@ -253,9 +260,9 @@ async function loadAdminStats(show: (id: string) => boolean) {
     show("admin.strip_released_by_staff")
       ? pagedRows<ReleasedByRow>(
           (from, to) =>
-            admin
+            activeEmbeddedPatients(admin
               .from("test_requests")
-              .select("id, assigned_to, services!inner ( id ), visits!inner ( id )")
+              .select("id, assigned_to, services!inner ( id ), visits!inner ( id, patients!inner ( id ) )")
               .eq("status", "released")
               .eq("is_package_header", false)
               .gte("released_at", startOfTodayUtc)
@@ -266,6 +273,7 @@ async function loadAdminStats(show: (id: string) => boolean) {
               .order("id", { ascending: true })
               .range(from, to)
               .returns<ReleasedByRow[]>(),
+              "visits.patients"),
           REPORT_EXPORT_MAX_ROWS,
         )
       : SKIP_ROWS,
@@ -512,7 +520,7 @@ async function loadAdminStats(show: (id: string) => boolean) {
   const unclaimedQuery = (xrayOnly: boolean) => {
     let q = supabase
       .from("test_requests")
-      .select("id, services!inner ( id, section ), visits!inner ( id )", {
+      .select("id, services!inner ( id, section ), visits!inner ( id, patients!inner ( id ) )", {
         count: "exact",
         head: true,
       })
@@ -523,6 +531,7 @@ async function loadAdminStats(show: (id: string) => boolean) {
       .is("visits.deleted_at", null)
       .not("services.kind", "in", DOCTOR_KINDS_PG_LIST)
       .or(LAB_QUEUE_GATE_VISITS_OR, { foreignTable: "visits" });
+    q = activeEmbeddedPatients(q, "visits.patients");
     if (xrayOnly) q = q.eq("services.section", "imaging_xray");
     return q;
   };
@@ -860,6 +869,8 @@ export async function AdminDashboard({
   const showOperations =
     show("admin.revenue_today") ||
     show("admin.visits_today") ||
+    // Worklist cards below skip deleted / merged-away patients, as the queue
+    // and results pages do (owner decision 2026-09-30).
     show("admin.queue_total") ||
     show("admin.queue_unclaimed") ||
     show("admin.ready_for_release") ||
