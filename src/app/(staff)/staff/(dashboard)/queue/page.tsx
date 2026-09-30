@@ -724,7 +724,7 @@ export default async function QueuePage({ searchParams }: SearchProps) {
     if (releaseTab) {
       // A failed read leaves every panel refused (fail closed).
       const unreadable = "Couldn't load this panel's tests — refresh the page.";
-      for (const card of matched) {
+      for (const card of cards) {
         if (card.kind !== "grouped") continue;
         card.releaseBlock = unreadable;
         const members = read.ok ? read.byKey.get(panelRowKey(card.visitId, card.groupId)) : undefined;
