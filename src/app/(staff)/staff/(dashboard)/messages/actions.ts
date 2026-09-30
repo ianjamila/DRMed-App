@@ -23,13 +23,25 @@ import { sendEmail } from "@/lib/notifications/email";
 import { sendSms, normalizePhPhone } from "@/lib/notifications/sms";
 import {
   CONTACT_MESSAGE_KINDS,
+  CONTACT_MESSAGE_STATUSES,
   STAFF_NOTES_MAX,
   type ContactMessageKind,
+  type ContactMessageStatus,
   type ReplyChannel,
   type ReplyOutcome,
 } from "@/lib/contact-messages/labels";
 import { firstNameOf } from "@/lib/contact-messages/first-name";
-import { STAFF_STATUS_TARGETS, type StaffStatusTarget } from "@/lib/contact-messages/status-transitions";
+import { STAFF_STATUS_TARGETS, canTransition, type StaffStatusTarget } from "@/lib/contact-messages/status-transitions";
+import { MAX_BULK_ROWS } from "@/lib/ui/bulk-selection";
+import {
+  MESSAGE_CHANGED_REASON,
+  MESSAGE_GONE_REASON,
+  MESSAGE_WRITE_FAILED_REASON,
+  groupMessagesForWrite,
+  notAllowedReason,
+  type BulkMessageResult,
+  type MessageWriteRow,
+} from "@/lib/contact-messages/bulk-status";
 import { ReplyInputSchema, buildEmailReply, buildSmsReplyBody } from "@/lib/contact-messages/reply-content";
 
 export type MessageActionResult<T = { id: string }> =
@@ -118,6 +130,132 @@ export async function updateMessageStatusAction(
 
   revalidateMessageSurfaces(parsed.data.id);
   return { ok: true, data: { id: parsed.data.id } };
+}
+
+const BulkStatusSchema = z.object({
+  entries: z
+    .array(z.object({ id: z.string().uuid(), from: z.enum(CONTACT_MESSAGE_STATUSES) }))
+    .min(1)
+    .max(MAX_BULK_ROWS),
+  to: z.enum(STAFF_STATUS_TARGETS),
+});
+const BULK_INPUT_ERROR = "Could not read the selection — refresh the inbox and try again.";
+
+/**
+ * The inbox bulk bar (spec 2026-09-25 §7). Each entry carries the status the
+ * operator SAW; the server re-reads each message and writes one guarded
+ * UPDATE per exact (status, handled_by, handled_at) it read, so a message
+ * changed by anyone since — status or handler — is skipped and named, never
+ * overwritten (the single action above reads then writes by id alone). The
+ * same three columns as the single action change; every changed message gets
+ * its own audit row carrying the batch id, the handler it had before and the
+ * one handled_at this call stamped — exactly what the 10-minute Undo needs.
+ */
+export async function updateMessageStatusManyAction(input: unknown): Promise<BulkMessageResult> {
+  const { session, error: roleError } = await requireInboxStaff();
+  if (!session) return { ok: false, error: roleError };
+  const parsed = BulkStatusSchema.safeParse(input);
+  if (!parsed.success) return { ok: false, error: BULK_INPUT_ERROR };
+  const { to } = parsed.data;
+
+  // First occurrence of an id wins.
+  const fromOf = new Map<string, ContactMessageStatus>();
+  for (const e of parsed.data.entries) if (!fromOf.has(e.id)) fromOf.set(e.id, e.from);
+  const ids = [...fromOf.keys()];
+
+  const skipped: Array<{ id: string; reason: string }> = [];
+  const candidates = ids.filter((id) => {
+    const from = fromOf.get(id)!;
+    if (canTransition(from, to)) return true;
+    skipped.push({ id, reason: notAllowedReason(from, to) });
+    return false;
+  });
+
+  const supabase = await createClient();
+  const current = new Map<string, { status: string; handled_by: string | null; handled_at: string | null }>();
+  if (candidates.length > 0) {
+    const { data, error } = await supabase
+      .from("contact_messages")
+      .select("id, status, handled_by, handled_at")
+      .in("id", candidates);
+    if (error) return { ok: false, error: translatePgError(error) };
+    for (const r of data ?? []) current.set(r.id, r);
+  }
+
+  const writable: MessageWriteRow[] = [];
+  for (const id of candidates) {
+    const row = current.get(id);
+    if (!row) skipped.push({ id, reason: MESSAGE_GONE_REASON });
+    else if (row.status !== fromOf.get(id)) skipped.push({ id, reason: MESSAGE_CHANGED_REASON });
+    else writable.push({ id, from: fromOf.get(id)!, handled_by: row.handled_by, handled_at: row.handled_at });
+  }
+
+  const batchId = crypto.randomUUID();
+  const stamp = new Date().toISOString();
+  const changed: MessageWriteRow[] = [];
+  const erroredIds = new Set<string>();
+  let firstError: { code?: string; message: string } | null = null;
+  for (const group of groupMessagesForWrite(writable)) {
+    let q = supabase
+      .from("contact_messages")
+      .update({ status: to, handled_by: session.user_id, handled_at: stamp })
+      .in("id", group.ids)
+      .eq("status", group.from);
+    q = group.handledBy === null ? q.is("handled_by", null) : q.eq("handled_by", group.handledBy);
+    q = group.handledAt === null ? q.is("handled_at", null) : q.eq("handled_at", group.handledAt);
+    const { data, error } = await q.select("id");
+    if (error) {
+      firstError ??= error;
+      for (const id of group.ids) erroredIds.add(id);
+      continue;
+    }
+    const got = new Set((data ?? []).map((r) => r.id));
+    for (const w of writable) if (got.has(w.id)) changed.push(w);
+  }
+  const changedSet = new Set(changed.map((c) => c.id));
+  for (const w of writable) {
+    if (changedSet.has(w.id)) continue;
+    skipped.push({ id: w.id, reason: erroredIds.has(w.id) ? MESSAGE_WRITE_FAILED_REASON : MESSAGE_CHANGED_REASON });
+  }
+
+  if (changed.length > 0) {
+    const { ip, ua } = await ipAndAgent();
+    await Promise.all(
+      changed.map((row) =>
+        audit({
+          actor_id: session.user_id,
+          actor_type: "staff",
+          action: "contact_message.status_changed",
+          resource_type: "contact_message",
+          resource_id: row.id,
+          metadata: {
+            from: row.from,
+            to,
+            previous_handled_by: row.handled_by,
+            previous_handled_at: row.handled_at,
+            handled_at: stamp,
+            bulk_batch_id: batchId,
+            bulk_batch_size: ids.length,
+          },
+          ip_address: ip,
+          user_agent: ua,
+        }),
+      ),
+    );
+    revalidatePath("/staff/messages");
+    for (const row of changed) revalidatePath(`/staff/messages/${row.id}`);
+    revalidatePath("/staff", "layout");
+  }
+  if (firstError && changed.length === 0) return { ok: false, error: translatePgError(firstError) };
+
+  // Every id sent lands in exactly one of changedIds / skipped, in input order.
+  const reasonOf = new Map(skipped.map((s) => [s.id, s.reason]));
+  return {
+    ok: true,
+    changedIds: ids.filter((id) => changedSet.has(id)),
+    skipped: ids.filter((id) => reasonOf.has(id)).map((id) => ({ id, reason: reasonOf.get(id)! })),
+    ...(changed.length > 0 ? { batchId } : {}),
+  };
 }
 
 export async function updateMessageNotesAction(
