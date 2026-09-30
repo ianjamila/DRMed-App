@@ -74,6 +74,7 @@ import {
   type PanelState,
 } from "@/lib/queue/panel-members";
 import { QueueBulkBar } from "./queue-bulk-bar";
+import { ReleaseOutcomeProvider } from "@/components/staff/release/release-outcome";
 
 const LAB_QUEUE_SUBSCRIPTIONS = [
   { table: "test_requests", event: "INSERT" },
@@ -777,6 +778,7 @@ export default async function QueuePage({ searchParams }: SearchProps) {
 
   return (
     <div className="px-4 py-8 sm:px-6 lg:px-8">
+      <ReleaseOutcomeProvider>
       {viewingHistory ? null : (
         <RealtimeRefresher
           channelName="queue-page"
@@ -1347,6 +1349,7 @@ export default async function QueuePage({ searchParams }: SearchProps) {
         }))}
         noun="test"
       />
+      </ReleaseOutcomeProvider>
     </div>
   );
 }

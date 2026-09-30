@@ -31,6 +31,7 @@ import { shouldOfferNotify } from "@/lib/results/copy-followups";
 import { fetchCopyStates } from "@/lib/results/copy-followups.server";
 import { fetchVersionDiff } from "@/lib/results/version-diff.server";
 import type { AmendmentChanges } from "@/lib/results/version-diff";
+import { ReleaseOutcomeProvider } from "@/components/staff/release/release-outcome";
 
 type One<T> = T | T[] | null;
 const one = <T,>(v: One<T>): T | null => (Array.isArray(v) ? (v[0] ?? null) : v);
@@ -529,6 +530,7 @@ export default async function ConsolidatedQueuePage({
 
   return (
     <div className="px-4 py-8 sm:px-6 lg:px-8">
+      <ReleaseOutcomeProvider>
       <Link
         href="/staff/queue"
         className="text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-cyan)] hover:underline"
@@ -574,6 +576,7 @@ export default async function ConsolidatedQueuePage({
       >
         Open visit →
       </Link>
+      </ReleaseOutcomeProvider>
     </div>
   );
 }

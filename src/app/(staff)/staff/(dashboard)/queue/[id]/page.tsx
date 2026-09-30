@@ -40,6 +40,7 @@ import { ResultChanges } from "@/components/staff/result-changes";
 import { isActivePatient } from "@/lib/patients/active";
 import { loadPatientLifecycle, type PatientLifecycleDisplay } from "@/lib/patients/lifecycle-display";
 import { PatientLifecycleBanner } from "@/components/staff/patient-lifecycle-banner";
+import { ReleaseOutcomeProvider } from "@/components/staff/release/release-outcome";
 
 const loadTestDetail = cache(async (id: string) => {
   const session = await requireActiveStaff();
@@ -413,6 +414,7 @@ export default async function QueueTestDetailPage({ params }: Props) {
 
   return (
     <div className="px-4 py-8 sm:px-6 lg:px-8">
+      <ReleaseOutcomeProvider>
       <Link
         href="/staff/queue"
         className="text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-cyan)] hover:underline"
@@ -689,6 +691,7 @@ export default async function QueueTestDetailPage({ params }: Props) {
       >
         Open visit →
       </Link>
+      </ReleaseOutcomeProvider>
     </div>
   );
 }
