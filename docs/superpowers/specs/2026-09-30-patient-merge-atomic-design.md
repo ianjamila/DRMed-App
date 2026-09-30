@@ -57,6 +57,7 @@ functions (and every SECURITY INVOKER trigger they fire) need — enumerated in 
 |---|---|---|
 | `patients` | SELECT, UPDATE (fill fields, consent cache columns, `merged_into_id`, `merged_at`, `updated_at`, `row_version`) | lock/read, fill, consent re-sync, tombstone, chain re-parent |
 | `visits`, `appointments`, `audit_log`, `critical_alerts`, `patient_consents`, `appointment_attachments` | SELECT, UPDATE (`patient_id`) | the six moves |
+| `critical_alerts` | UPDATE (`patient_drm_id`) | re-stamp the copied DRM-ID (merge and undo) |
 | `test_requests` | SELECT | the critical-alert move-back predicate |
 | `staff_profiles` | SELECT | actor validation |
 | `patient_merges` | SELECT, INSERT, UPDATE | ledger (RLS on, no policies today) |
@@ -144,11 +145,16 @@ Same ownership/ACL. One transaction:
 
 1. Validate actor (**P0078**) and context keys.
 2. Plain read of the ledger row; missing → **P0079** "merge record not found".
-3. **Lock**, same global order: plain read of the affected result set `R` = results linked
-   to any test on a visit in `moved.visits` still owned by keep, ∪ `result_id` of keep's
-   alerts on those tests; `lifecycle_lock_results(R, false)`; then keep, source and the
-   ledger's `rechained` ids exclusive, sorted; then the ledger row `for update`; then the
-   patient rows `for no key update`; re-resolve `R` → P0072 if changed.
+3. **Lock**, same global order. The affected result set `R` covers the **complete undo
+   scope**, whatever the current owner (recheck R1'): results linked to any test on **any**
+   visit in `moved.visits` — on keep, or already back on source after an interrupted legacy
+   undo — ∪ `result_id` of every alert (on keep or source) whose test is on one of those
+   visits, i.e. every alert the dependent-row step may update. Plain read of `R`;
+   `lifecycle_lock_results(R, false)`; then keep, source and the ledger's `rechained` ids
+   exclusive, sorted; then the ledger row `for update`; then the patient rows `for no key
+   update`; re-resolve `R` → P0072 if changed. The split-result check (step 4) evaluates
+   every result in `R` against the **final** planned ownership, so a result an interrupted
+   old undo already split is caught too.
 4. **Refuse** (all **P0079**, specific messages) unless: not already undone; `now() -
    merged_at < interval '30 days'` (the window moves from TS into SQL — one source of truth;
    tested at 29d 23h 59m 59s allowed, exactly 30d and 30d + 1s refused); keep active (not
@@ -172,15 +178,24 @@ Same ownership/ACL. One transaction:
    source.drm_id` — including alerts created, acknowledged or withdrawn after the merge; a
    recorded alert whose test's visit stayed on keep stays (reported). So 0184's (a2')
    alert-matches-its-test rule holds by construction and never aborts with 23514.
-   `appointment_attachments` follow their booking group: an attachment on keep moves when
-   every appointment sharing its `booking_group_id` is now on source (recorded ids that fail
-   this stay, reported).
+   `appointment_attachments` (`booking_group_id` is deliberately not an FK, 0103, so a group
+   can be empty — recheck R5'): the **evidence** for a group is its appointments with a
+   non-NULL `patient_id`. An **unrecorded** attachment on keep moves only on positive
+   evidence — at least one such appointment and all of them now on source. A **recorded**
+   attachment still on keep moves when its group has no evidence (empty, or walk-in-only) or
+   all evidence is on source; it stays (reported) when any evidence is on keep or a third
+   patient. So keep's own orphan uploads are never taken.
 7. **Revert the fill.** Version 2: set a field back to its `before` value only while keep's
    current value still equals the recorded `after`; otherwise leave it and report it as
    "kept (edited since merge)". **Legacy rows** (no `snapshot_version`: today's one prod row
-   and any merge made before the 3b deploy): clear a `filled_from_source` field only while
-   keep's current value equals the source's current value (the fill copied it; the source
-   kept its own), else keep + report.
+   and any merge made before the 3b deploy) whose source is still this merge's tombstone:
+   clear a `filled_from_source` field only while keep's current value equals the source's
+   current value (the fill copied it; the tombstone kept its own), else keep + report. In the
+   **interrupted-legacy-resume** branch the source has been active and editable since the old
+   undo stopped, so its value is no longer evidence of what was copied (recheck R4'): every
+   fill field is left as it is and reported as "not reverted — undo was interrupted, check by
+   hand". Fixture: legacy merge copies a phone, undo interrupted, both records then corrected
+   to the same new phone → recovery keeps it.
 8. **Restore the chain**: `update patients set merged_into_id = source where id =
    any(rechained) and merged_into_id = keep`.
 9. **Consent re-sync** for both.
@@ -218,8 +233,9 @@ merge → old-app undo refused, nothing changed → roll forward → RPC undo su
 - `mergeCandidateAction` unchanged (delegates). `loadRecentMerges` lists **every** live
   merge inside the 30-day window, paged (`merged_at desc, id desc`, `count: "exact"`, Codex
   R8 — a CLI batch can exceed the old latest-50 cap), computes a real `undoable` + reason
-  (keep merged/deleted, source no longer this tombstone) and renders `InactivePatientBadge`
-  next to a deleted kept record.
+  (keep merged/deleted, source no longer this tombstone — except the interrupted-legacy-resume
+  state, which stays undoable and is labelled "undo was interrupted — finish it") and renders
+  `InactivePatientBadge` next to a deleted kept record.
 - **Delete** `merge-steps.ts`, `undo-merge-steps.ts`, their tests, `actions.rollback.test.ts`,
   `rollbackMergeMoveStep`, `revertFillFields`, `snapshotSourceIds`, `reportMergeStopped`.
 - **Dedup CLI**: `mergeOne` becomes one RPC call with `context {source:'dedup-cli', tier}`.
@@ -284,6 +300,12 @@ Rollback: drop the trigger (app unaffected).
   nothing changed). Races added to the concurrency proof: result link (membership exclusive)
   vs merge and vs undo, and a row-first child update vs merge — each proves rollback and
   retry convergence.
+- Added after the Codex recheck: `service_role` calls of both functions with alerts present
+  (the `patient_drm_id` column grant); legacy recovery with a visit already back on source,
+  an unmoved alert and a shared result; the legacy edit-after-interruption fixture; attachment
+  groups that are empty, walk-in-only, split across owners; ordinary staff patient edits and
+  delete/restore still work under 0196's new `patients` trigger; the all-five-column consent
+  fold = cache comparison stays a real deployment gate (pre-push query + 0196 post-condition).
 - `supabase/tests/0197_merge_marker_smoke.sql`: direct service_role marker writes refused;
   both functions still work; lifecycle writer cannot set markers; merged-row edits refused.
 - Fresh replay of the full history on the isolated replay stack; Playwright browser smoke of
@@ -304,6 +326,15 @@ Rollback: drop the trigger (app unaffected).
 2. PR 3b-follow-up: 0197 push → verify → merge. Rollback: revert 0197 first, then app code;
    with the app reverted, version-2 merges stay un-undoable (refused, nothing changed) until
    roll-forward.
+
+**App rollback past 3b needs a merge freeze (recheck R3').** The old merge paths are
+multi-statement and move rows before they touch any marker, so no database guard can refuse
+them cleanly at step 1: e.g. after a v2 merge A→B, the old CLI merging B→C commits B's moves,
+then its chain re-point of A is refused (A is a live v2 source) and it throws with no
+rollback. Therefore: before any app rollback to a pre-3b build, freeze Merge, candidates
+Merge, Undo and the dedup CLI (owner + Claude are the only operators; the CLI is run only by
+hand) until roll-forward. The 0196 guard stays as a backstop for old-app Undo and is **not**
+weakened. The rollback rehearsal documents the CLI scenario as the reason for the freeze.
 
 ## Out of scope — suggestions for the owner
 
@@ -333,3 +364,12 @@ verified against the code and closed above.
 
 Also added during revision: moved alerts' copied `patient_drm_id` is re-stamped (merge) and
 restored (undo), since three staff surfaces print it.
+
+### Codex recheck (same session, 2026-09-30) — closed without a further run
+
+The one allowed recheck confirmed R3, R4 and R8 and partly resolved the rest, and raised five
+new issues from the revisions, all verified and closed above: R1' legacy-resume result scope
+(undo step 3), R2' `patient_drm_id` column grant (role table), R3' old CLI after an app
+rollback (merge freeze in "Deploy order"), R4' legacy-resume fill evidence (undo step 7),
+R5' empty attachment groups (undo step 6). The one-recheck limit is used; remaining assurance
+comes from the smokes, the two-session proofs and the Opus review of the SQL.
