@@ -752,3 +752,105 @@ begin
   return v_report;
 end;
 $$;
+
+-- ---------------------------------------------------------------------------
+-- (8) Ownership + ACLs. PG17: the new owner needs CREATE on the schema at
+-- transfer time — granted for these two statements only.
+-- ---------------------------------------------------------------------------
+grant create on schema public to patient_merge_writer;
+alter function public.merge_patients_guarded(uuid, uuid, uuid, jsonb) owner to patient_merge_writer;
+alter function public.undo_patient_merge_guarded(uuid, uuid, jsonb) owner to patient_merge_writer;
+revoke create on schema public from patient_merge_writer;
+
+revoke all on function public.merge_patients_guarded(uuid, uuid, uuid, jsonb) from public, anon, authenticated;
+revoke all on function public.undo_patient_merge_guarded(uuid, uuid, jsonb) from public, anon, authenticated;
+grant execute on function public.merge_patients_guarded(uuid, uuid, uuid, jsonb) to service_role;
+grant execute on function public.undo_patient_merge_guarded(uuid, uuid, jsonb) to service_role;
+
+-- 0184 revoked EXECUTE on its helpers from every role; a role granted TO
+-- postgres does not inherit postgres's rights, so the writer needs its own.
+grant execute on function public.lifecycle_lock(uuid[], boolean) to patient_merge_writer;
+grant execute on function public.lifecycle_lock_results(uuid[], boolean) to patient_merge_writer;
+
+-- ---------------------------------------------------------------------------
+-- (9) Post-conditions. A failure aborts the push; nothing is half-applied.
+-- ---------------------------------------------------------------------------
+do $assert$
+declare
+  n int;
+begin
+  if exists (select 1 from pg_roles where rolname = 'patient_merge_writer'
+               and (rolcanlogin or rolinherit or rolbypassrls or rolsuper)) then
+    raise exception '0196: patient_merge_writer must be NOLOGIN NOINHERIT NOBYPASSRLS';
+  end if;
+  if exists (select 1 from pg_auth_members am join pg_roles r on r.oid = am.member
+              where am.roleid = 'patient_merge_writer'::regrole and r.rolname <> 'postgres') then
+    raise exception '0196: patient_merge_writer is granted to a role other than postgres';
+  end if;
+  if exists (select 1 from pg_proc p
+              where p.pronamespace = 'public'::regnamespace
+                and p.proname in ('merge_patients_guarded', 'undo_patient_merge_guarded')
+                and (pg_get_userbyid(p.proowner) <> 'patient_merge_writer' or not p.prosecdef)) then
+    raise exception '0196: merge functions must be SECURITY DEFINER owned by patient_merge_writer';
+  end if;
+  if has_function_privilege('anon', 'public.merge_patients_guarded(uuid, uuid, uuid, jsonb)', 'execute')
+     or has_function_privilege('authenticated', 'public.merge_patients_guarded(uuid, uuid, uuid, jsonb)', 'execute')
+     or has_function_privilege('anon', 'public.undo_patient_merge_guarded(uuid, uuid, jsonb)', 'execute')
+     or has_function_privilege('authenticated', 'public.undo_patient_merge_guarded(uuid, uuid, jsonb)', 'execute')
+     or not has_function_privilege('service_role', 'public.merge_patients_guarded(uuid, uuid, uuid, jsonb)', 'execute')
+     or not has_function_privilege('service_role', 'public.undo_patient_merge_guarded(uuid, uuid, jsonb)', 'execute') then
+    raise exception '0196: merge functions must be EXECUTE service_role only';
+  end if;
+  if has_schema_privilege('patient_merge_writer', 'public', 'create') then
+    raise exception '0196: patient_merge_writer kept CREATE on public';
+  end if;
+  if not has_function_privilege('patient_merge_writer', 'public.lifecycle_lock(uuid[], boolean)', 'execute')
+     or not has_function_privilege('patient_merge_writer', 'public.lifecycle_lock_results(uuid[], boolean)', 'execute')
+     or not has_function_privilege('patient_merge_writer', 'public.recompute_patient_consent_cache(uuid)', 'execute') then
+    raise exception '0196: patient_merge_writer is missing a helper EXECUTE grant';
+  end if;
+  if has_function_privilege('service_role', 'public.recompute_patient_consent_cache(uuid)', 'execute')
+     or has_function_privilege('authenticated', 'public.recompute_patient_consent_cache(uuid)', 'execute')
+     or has_function_privilege('anon', 'public.recompute_patient_consent_cache(uuid)', 'execute') then
+    raise exception '0196: recompute_patient_consent_cache must not be callable by runtime roles';
+  end if;
+  if not exists (select 1 from pg_trigger where tgname = 'trg_patients_live_merge_guard' and tgenabled = 'O') then
+    raise exception '0196: trg_patients_live_merge_guard missing or disabled';
+  end if;
+
+  -- The consent fold must reproduce every patient's cached state (spec R4):
+  -- if it did not, re-running it on a merge would silently rewrite consent.
+  with recursive ev as (
+    select c.patient_id, c.event_type, c.consent_scope, c.created_at, c.method, c.notice_version,
+           row_number() over (partition by c.patient_id order by c.seq) as rn
+      from public.patient_consents c
+  ), f as (
+    select p.id as pid, 0::bigint as rn, false as cur, null::timestamptz as signed,
+           null::timestamptz as wd, null::text as meth, null::text as nv
+      from public.patients p
+    union all
+    select f.pid, e.rn,
+           (e.event_type = 'granted' and e.consent_scope = 'full'),
+           case when e.event_type = 'granted' and e.consent_scope = 'full' then e.created_at
+                when e.event_type = 'granted' then null else f.signed end,
+           case when e.event_type = 'granted' then null else e.created_at end,
+           case when e.event_type = 'granted' and e.consent_scope = 'full' then e.method
+                when e.event_type = 'granted' then null else f.meth end,
+           case when e.event_type = 'granted' and e.consent_scope = 'full' then e.notice_version
+                when e.event_type = 'granted' then null else f.nv end
+      from f join ev e on e.patient_id = f.pid and e.rn = f.rn + 1
+  ), last as (
+    select distinct on (pid) * from f order by pid, rn desc
+  )
+  select count(*) into n
+    from last l join public.patients p on p.id = l.pid
+   where (l.cur, l.signed, l.wd, l.meth, l.nv)
+         is distinct from (p.consent_current, p.consent_signed_at, p.consent_withdrawn_at,
+                           p.consent_method, p.consent_notice_version);
+  if n > 0 then
+    raise exception '0196: % patient(s) have a consent cache that differs from their event history', n;
+  end if;
+end
+$assert$;
+
+reset lock_timeout;

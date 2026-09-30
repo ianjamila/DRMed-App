@@ -272,6 +272,58 @@ begin
   reset role;
 end $f$;
 
+-- s1 ---------------------------------------------------------------------------
+do $s1$
+begin
+  perform pg_temp.expect('s1.1 writer role is NOLOGIN NOINHERIT NOBYPASSRLS',
+    (select rolcanlogin::text || rolinherit::text || rolbypassrls::text from pg_roles where rolname = 'patient_merge_writer'),
+    'falsefalsefalse');
+  perform pg_temp.expect('s1.2 only postgres is a member',
+    (select string_agg(distinct r.rolname, ',') from pg_auth_members am join pg_roles r on r.oid = am.member
+      where am.roleid = 'patient_merge_writer'::regrole), 'postgres');
+  perform pg_temp.expect('s1.3 no runtime role can assume the writer',
+    pg_has_role('authenticator', 'patient_merge_writer', 'member')::text || pg_has_role('service_role', 'patient_merge_writer', 'member')::text
+    || pg_has_role('authenticated', 'patient_merge_writer', 'member')::text || pg_has_role('anon', 'patient_merge_writer', 'member')::text,
+    'falsefalsefalsefalse');
+  perform pg_temp.expect('s1.4 both functions: owner, definer, pinned search_path',
+    (select string_agg(p.proname || ':' || pg_get_userbyid(p.proowner) || ':' || p.prosecdef::text || ':' ||
+                       array_to_string(p.proconfig, ';'), ',' order by p.proname)
+       from pg_proc p where p.pronamespace = 'public'::regnamespace
+        and p.proname in ('merge_patients_guarded', 'undo_patient_merge_guarded')),
+    'merge_patients_guarded:patient_merge_writer:true:search_path=pg_catalog, public, pg_temp,'
+    || 'undo_patient_merge_guarded:patient_merge_writer:true:search_path=pg_catalog, public, pg_temp');
+  perform pg_temp.expect('s1.5 writer may call exactly the helpers it needs',
+    has_function_privilege('patient_merge_writer', 'public.lifecycle_lock(uuid[], boolean)', 'execute')::text
+    || has_function_privilege('patient_merge_writer', 'public.lifecycle_lock_results(uuid[], boolean)', 'execute')::text
+    || has_function_privilege('patient_merge_writer', 'public.recompute_patient_consent_cache(uuid)', 'execute')::text
+    || has_function_privilege('patient_merge_writer', 'public.lifecycle_lock_and_assert(uuid[], boolean)', 'execute')::text,
+    'truetruetruefalse');
+  perform pg_temp.expect('s1.6 runtime roles cannot call the consent helper',
+    has_function_privilege('service_role', 'public.recompute_patient_consent_cache(uuid)', 'execute')::text
+    || has_function_privilege('authenticated', 'public.recompute_patient_consent_cache(uuid)', 'execute')::text
+    || has_function_privilege('anon', 'public.recompute_patient_consent_cache(uuid)', 'execute')::text,
+    'falsefalsefalse');
+  perform pg_temp.expect('s1.7 writer has no CREATE on public',
+    has_schema_privilege('patient_merge_writer', 'public', 'create')::text, 'false');
+  perform pg_temp.expect('s1.8 ledger columns + live-source index',
+    (select count(*) from information_schema.columns where table_schema = 'public' and table_name = 'patient_merges'
+      and column_name in ('snapshot_version', 'fill_snapshot', 'rechained', 'context', 'undo_report'))::text || '|' ||
+    (select count(*) from pg_indexes where indexname = 'uq_patient_merges_live_source')::text, '5|1');
+  perform pg_temp.expect('s1.9 rollback guard trigger enabled',
+    (select tgenabled::text from pg_trigger where tgname = 'trg_patients_live_merge_guard'), 'O');
+  perform pg_temp.expect('s1.11 0202 still holds: merge-ledger/consent policies name only the writer; anon/authenticated hold nothing',
+    ((select bool_and(p.polroles = array['patient_merge_writer'::regrole::oid])
+        from pg_policy p where p.polrelid in ('public.patient_merges'::regclass, 'public.patient_consents'::regclass))
+     and not has_table_privilege('anon', 'public.patient_merges', 'SELECT')
+     and not has_table_privilege('authenticated', 'public.patient_merges', 'SELECT')
+     and not has_table_privilege('anon', 'public.patient_consents', 'SELECT')
+     and not has_table_privilege('authenticated', 'public.patient_consents', 'SELECT'))::text, 'true');
+  perform pg_temp.expect('s1.10 writer cannot change deletion columns (0167 guard)',
+    pg_temp.state_as('patient_merge_writer', format(
+      'update public.patients set deleted_at = now() where id = %L', pg_temp.mk_patient('S1D'))), '42501');
+end
+$s1$;
+
 -- s2 ---------------------------------------------------------------------------
 do $s2$
 declare
