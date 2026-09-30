@@ -891,9 +891,10 @@ export async function deleteSampleVisitAction(
           : deleted.error,
     };
   }
-  // deleteVisitAction refreshes the queue lists; the undone releases also
-  // change the dashboard tiles and the queue report pages.
-  if (unreleased > 0) revalidateReleaseSurfaces(visitId);
+  // deleteVisitAction refreshes the queue lists; the deleted visit (and any
+  // release undone above) also changes the dashboard tiles and the queue
+  // report pages, even when nothing had been released.
+  revalidateReleaseSurfaces(visitId);
   return { ok: true, count: unreleased };
 }
 

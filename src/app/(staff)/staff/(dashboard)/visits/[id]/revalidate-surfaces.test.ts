@@ -122,12 +122,12 @@ describe("deleteSampleVisitAction refreshes every surface", () => {
     expect(fx.revalidated).toEqual(ALL_SURFACES);
   });
 
-  it("success with nothing to unrelease: no extra refresh (deleteVisitAction owns it)", async () => {
+  it("success with nothing to unrelease: still every surface (its ready lines leave the queue and dashboard)", async () => {
     fx.visitRow = sampleVisit(["requested"]);
     const res = await deleteSampleVisitAction("v1", "sample");
     expect(res).toEqual({ ok: true, count: 0 });
     expect(fx.rpcCalls).toEqual([]);
-    expect(fx.revalidated).toEqual([]);
+    expect(fx.revalidated).toEqual(ALL_SURFACES);
   });
 });
 
