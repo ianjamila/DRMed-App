@@ -375,6 +375,7 @@ describe("Undo", () => {
     vi.mocked(undoBulkQueueAction).mockResolvedValue({
       ok: true,
       restoredIds: ["t1", "t2"],
+      restoredTestCount: 2,
       notRestored: [],
     });
     const user = userEvent.setup();
@@ -463,7 +464,14 @@ describe("Undo after a chemistry-panel bulk action", () => {
       skipped: [],
       batchId: "b-1",
     });
-    vi.mocked(undoBulkQueueAction).mockResolvedValue({ ok: true, restoredIds: MEMBERS, notRestored: [] });
+    vi.mocked(undoBulkQueueAction).mockResolvedValue({
+      ok: true,
+      // What the real server returns for a panel: ONE key per restored group
+      // plus the exact number of test rows it put back.
+      restoredIds: [panelKey],
+      restoredTestCount: MEMBERS.length,
+      notRestored: [],
+    });
     const user = userEvent.setup();
     render(<Harness rows={[panelRow(QUEUE_KIND.claim)]} />);
     await user.click(screen.getByRole("checkbox", { name: "Select Chemistry panel — Santos, Maria" }));
@@ -478,6 +486,8 @@ describe("Undo after a chemistry-panel bulk action", () => {
     await user.click(await screen.findByRole("button", { name: "↶ Undo" }));
     expect(undoBulkQueueAction).toHaveBeenCalledTimes(1);
     expect(undoBulkQueueAction).toHaveBeenCalledWith({ batchId: "b-1" });
+    // The Undo counts the 3 tests the server restored, not the 1 panel key.
+    expect((await screen.findByRole("status")).textContent).toContain("Undone — 3 tests are back to what they were.");
   });
 
   it("Unclaim of ONE panel row offers ↶ Undo that undoes the whole batch", async () => {
@@ -487,7 +497,14 @@ describe("Undo after a chemistry-panel bulk action", () => {
       skipped: [],
       batchId: "b-unclaim-panel",
     });
-    vi.mocked(undoBulkQueueAction).mockResolvedValue({ ok: true, restoredIds: MEMBERS, notRestored: [] });
+    vi.mocked(undoBulkQueueAction).mockResolvedValue({
+      ok: true,
+      // What the real server returns for a panel: ONE key per restored group
+      // plus the exact number of test rows it put back.
+      restoredIds: [panelKey],
+      restoredTestCount: MEMBERS.length,
+      notRestored: [],
+    });
     const user = userEvent.setup();
     render(<Harness rows={[panelRow(QUEUE_KIND.unclaim, "holder-a")]} />);
     await user.click(screen.getByRole("checkbox", { name: "Select Chemistry panel — Santos, Maria" }));
@@ -502,6 +519,7 @@ describe("Undo after a chemistry-panel bulk action", () => {
     expect((await screen.findByRole("status")).textContent).toContain("Unclaimed 3 tests.");
     await user.click(await screen.findByRole("button", { name: "↶ Undo" }));
     expect(undoBulkQueueAction).toHaveBeenCalledWith({ batchId: "b-unclaim-panel" });
+    expect((await screen.findByRole("status")).textContent).toContain("Undone — 3 tests are back to what they were.");
   });
 
   it("Delete of ONE panel row offers ↶ Undo that undoes the whole batch", async () => {
@@ -511,7 +529,14 @@ describe("Undo after a chemistry-panel bulk action", () => {
       skipped: [],
       batchId: "b-delete-panel",
     });
-    vi.mocked(undoBulkQueueAction).mockResolvedValue({ ok: true, restoredIds: MEMBERS, notRestored: [] });
+    vi.mocked(undoBulkQueueAction).mockResolvedValue({
+      ok: true,
+      // What the real server returns for a panel: ONE key per restored group
+      // plus the exact number of test rows it put back.
+      restoredIds: [panelKey],
+      restoredTestCount: MEMBERS.length,
+      notRestored: [],
+    });
     const user = userEvent.setup();
     render(<Harness rows={[panelRow(QUEUE_KIND.delete)]} />);
     await user.click(screen.getByRole("checkbox", { name: "Select Chemistry panel — Santos, Maria" }));
@@ -527,6 +552,7 @@ describe("Undo after a chemistry-panel bulk action", () => {
     expect((await screen.findByRole("status")).textContent).toContain("Deleted 3 tests.");
     await user.click(await screen.findByRole("button", { name: "↶ Undo" }));
     expect(undoBulkQueueAction).toHaveBeenCalledWith({ batchId: "b-delete-panel" });
+    expect((await screen.findByRole("status")).textContent).toContain("Undone — 3 tests are back to what they were.");
   });
 
   it("a panel Claim result with no batchId shows no ↶ Undo", async () => {

@@ -34,6 +34,33 @@ export type BulkUndoResult =
   | { ok: true; restoredIds: string[]; notRestored: Array<{ id: string; reason: string }> }
   | { ok: false; error: string };
 
+/**
+ * The lab queue's Undo result. `restoredIds` are SELECTION keys — one per
+ * restored group (a test id, or a chemistry panel's key), which is how the bar
+ * names a row that was not undone. A panel stands for several tests, so the
+ * key count is NOT the test count: `restoredTestCount` is the exact number of
+ * test rows the server put back (the sum of every restored group's size), the
+ * same unit the forward "Claimed 12 tests." message counts in. A subtype of
+ * BulkUndoResult, so the other bars' shape is untouched.
+ */
+export type QueueUndoResult =
+  | {
+      ok: true;
+      restoredIds: string[];
+      restoredTestCount: number;
+      notRestored: Array<{ id: string; reason: string }>;
+    }
+  | { ok: false; error: string };
+
+/** Test rows across the restored groups: each group's member count, summed. */
+export function restoredTestCountOf(
+  groups: ReadonlyArray<{ key: string; steps: readonly unknown[] }>,
+  restoredKeys: readonly string[],
+): number {
+  const restored = new Set(restoredKeys);
+  return groups.reduce((n, g) => (restored.has(g.key) ? n + g.steps.length : n), 0);
+}
+
 export const UNDO_EXPIRED =
   "Undo is no longer available — it lasts 10 minutes and only for your own bulk changes.";
 export const UNDO_ALREADY = "This bulk change was already undone.";

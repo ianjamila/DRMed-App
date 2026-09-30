@@ -38,7 +38,8 @@ import {
   holderByMember,
   sameInstant,
   unclaimStepStillHeld,
-  type BulkUndoResult,
+  restoredTestCountOf,
+  type QueueUndoResult,
   type QueueUndoStep,
 } from "@/lib/ui/bulk-undo";
 
@@ -489,7 +490,7 @@ function isKind<K extends QueueUndoStep["kind"]>(
   return steps.every((s) => s.kind === kind);
 }
 
-export async function undoBulkQueueAction(input: unknown): Promise<BulkUndoResult> {
+export async function undoBulkQueueAction(input: unknown): Promise<QueueUndoResult> {
   const session = await requireActiveStaff();
   const parsed = z.object({ batchId: z.string().uuid() }).safeParse(input);
   if (!parsed.success) return { ok: false, error: UNDO_EXPIRED };
@@ -991,5 +992,6 @@ export async function undoBulkQueueAction(input: unknown): Promise<BulkUndoResul
       revalidatePath(`/staff/queue/consolidated/${ref.visitId}/${ref.groupId}`);
     }
   }
-  return { ok: true, restoredIds, notRestored };
+  // Tests, not rows: a restored panel key stands for all of its members.
+  return { ok: true, restoredIds, restoredTestCount: restoredTestCountOf(groups, restoredIds), notRestored };
 }

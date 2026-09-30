@@ -7,6 +7,7 @@ import {
   planAppointmentUndo,
   planHistoricHmoUndo,
   planQueueUndo,
+  restoredTestCountOf,
   sameInstant,
   unclaimStepStillHeld,
   undoOutcomeMessage,
@@ -374,5 +375,27 @@ describe("planHistoricHmoUndo", () => {
         { resource_id: "c1", action: "historic_hmo.claim_marked_billed", metadata: { billed_recorded_at: "b" } },
       ]),
     ).toEqual([{ kind: "billed", id: "c1", billedRecordedAt: "a" }]);
+  });
+});
+
+describe("restoredTestCountOf", () => {
+  const step = (id: string) => ({ kind: "restore", id });
+  const groups = [
+    { key: "visit:group", steps: [step("m1"), step("m2"), step("m3")] },
+    { key: "t9", steps: [step("t9")] },
+    { key: "t10", steps: [step("t10")] },
+  ];
+
+  it("sums the member counts of the restored groups: a 3-test panel plus a single is 4 tests, not 2 keys", () => {
+    expect(restoredTestCountOf(groups, ["visit:group", "t9"])).toBe(4);
+  });
+
+  it("counts a refused group as zero", () => {
+    expect(restoredTestCountOf(groups, ["t10"])).toBe(1);
+    expect(restoredTestCountOf(groups, [])).toBe(0);
+  });
+
+  it("counts a repeated key once and ignores a key that is not a group", () => {
+    expect(restoredTestCountOf(groups, ["visit:group", "visit:group", "nope"])).toBe(3);
   });
 });

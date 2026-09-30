@@ -151,3 +151,12 @@ describe("Task 5: panel Undo un-claims through unclaim_panel_members; reclaim re
     expect(reclaimBranch).toMatch(/canClaimSection\(holderProfileOf\.get\(holderOf\.get\(r\.id\)!\)!\.role/);
   });
 });
+
+describe("the Undo message counts TESTS, not selection keys", () => {
+  it("undoBulkQueueAction returns restoredTestCount summed over the restored groups by restoredTestCountOf", () => {
+    const body = bodyOf("undoBulkQueueAction");
+    expect(body).toMatch(
+      /return \{ ok: true, restoredIds, restoredTestCount: restoredTestCountOf\(groups, restoredIds\), notRestored \};/,
+    );
+  });
+});

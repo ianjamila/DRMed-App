@@ -153,11 +153,15 @@ export function QueueBulkBar({ rowsByKey }: Props) {
         });
         return;
       }
-      // Ids are already unique selection keys (test id or panel key) — no
-      // label-based collapsing needed (two unnamed walk-ins, or two same-name
-      // patients, must still count as two). The label is only for display;
-      // the first reason seen per row wins.
-      const restoredCount = new Set(r.restoredIds).size;
+      // The count is the server's own: the number of TEST rows put back. Not
+      // r.restoredIds.length — those are selection keys, one per restored
+      // group, so a 10-test panel would read as 1 and the message would
+      // disagree with the forward "Claimed 12 tests." The notRestored ids are
+      // unique selection keys (test id or panel key) too, so no label-based
+      // collapsing is needed (two unnamed walk-ins, or two same-name patients,
+      // must still count as two). The label is only for display; the first
+      // reason seen per row wins.
+      const restoredCount = r.restoredTestCount;
       const notRestoredByKey = new Map<string, { label: string; reason: string }>();
       for (const n of r.notRestored) {
         if (!notRestoredByKey.has(n.id)) {
