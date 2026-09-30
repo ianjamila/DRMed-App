@@ -1,5 +1,17 @@
 import { describe, expect, it } from "vitest";
-import { QUEUE_KIND, bulkQueueMessage, queueRowKinds, type QueueRowInfo } from "./bulk-queue";
+import {
+  QUEUE_KIND,
+  bulkQueueMessage,
+  bulkReleaseMessage,
+  combineClaimResults,
+  labelsByTestId,
+  panelRowKey,
+  parsePanelRowKey,
+  queueRowKinds,
+  rowTestCount,
+  sentTestCount,
+  type QueueRowInfo,
+} from "./bulk-queue";
 
 const rows: Record<string, QueueRowInfo> = {
   a: { visitId: "v1", label: "CBC — Santos, Maria", assignedTo: null },
@@ -9,11 +21,11 @@ const rows: Record<string, QueueRowInfo> = {
 
 describe("queueRowKinds", () => {
   it("lists only the true flags, in bar order", () => {
-    expect(queueRowKinds({ claimable: true, unclaimable: false, deletable: true })).toEqual([
+    expect(queueRowKinds({ claimable: true, unclaimable: false, releasable: false, deletable: true })).toEqual([
       QUEUE_KIND.claim,
       QUEUE_KIND.delete,
     ]);
-    expect(queueRowKinds({ claimable: false, unclaimable: false, deletable: false })).toEqual([]);
+    expect(queueRowKinds({ claimable: false, unclaimable: false, releasable: false, deletable: false })).toEqual([]);
   });
 });
 
@@ -63,5 +75,144 @@ describe("bulkQueueMessage", () => {
     const lines = msg.split("\n");
     expect(lines[1]).toBe("Not changed (7):");
     expect(lines.slice(2)).toEqual(skipped.map((s) => `• A test: ${s.reason}`));
+  });
+});
+
+const V = "11111111-1111-4111-8111-111111111111";
+const G = "22222222-2222-4222-8222-222222222222";
+
+describe("panelRowKey / parsePanelRowKey", () => {
+  it("round-trips a visit + report group", () => {
+    expect(parsePanelRowKey(panelRowKey(V, G))).toEqual({ visitId: V, groupId: G });
+  });
+
+  it("reads a single test id (or anything malformed) as not a panel", () => {
+    expect(parsePanelRowKey(V)).toBeNull();
+    expect(parsePanelRowKey("panel:")).toBeNull();
+    expect(parsePanelRowKey(`panel:${V}`)).toBeNull();
+    expect(parsePanelRowKey(`panel:${V}:${G}:extra`)).toBeNull();
+  });
+});
+
+describe("combineClaimResults", () => {
+  const panelKey = panelRowKey(V, G);
+
+  it("returns a refused single-test call as-is", () => {
+    const refused = { ok: false as const, error: "Only lab staff can claim or unclaim tests from the queue." };
+    expect(combineClaimResults(refused, null, [panelKey])).toBe(refused);
+  });
+
+  it("joins claimed tests and skipped rows from both calls", () => {
+    expect(
+      combineClaimResults(
+        { ok: true, changedIds: ["a"], skipped: [{ id: "b", reason: "taken" }] },
+        { ok: true, changedIds: ["m1", "m2"], skipped: [] },
+        [panelKey],
+      ),
+    ).toEqual({ ok: true, changedIds: ["a", "m1", "m2"], skipped: [{ id: "b", reason: "taken" }] });
+  });
+
+  it("keeps the single tests claimed when the whole panel call is refused", () => {
+    expect(
+      combineClaimResults(
+        { ok: true, changedIds: ["a"], skipped: [] },
+        { ok: false, error: "Could not read the selection." },
+        [panelKey],
+      ),
+    ).toEqual({
+      ok: true,
+      changedIds: ["a"],
+      skipped: [{ id: panelKey, reason: "Could not read the selection." }],
+    });
+  });
+
+  it("works with panels only", () => {
+    expect(
+      combineClaimResults(null, { ok: true, changedIds: ["m1"], skipped: [] }, [panelKey]),
+    ).toEqual({ ok: true, changedIds: ["m1"], skipped: [] });
+  });
+});
+
+describe("sentTestCount", () => {
+  const withPanel: Record<string, QueueRowInfo> = {
+    ...rows,
+    [panelRowKey(V, G)]: {
+      visitId: V,
+      label: "Chemistry (10 tests) — Jamila, Ian",
+      assignedTo: null,
+      testCount: 10,
+    },
+  };
+
+  it("equals the key count for single tests", () => {
+    expect(
+      sentTestCount({ changedIds: ["a"], skipped: [{ id: "b", reason: "x" }] }, rows),
+    ).toBe(2);
+  });
+
+  it("weights a skipped panel by its tests, so the message says 1 of 11", () => {
+    const result = {
+      changedIds: ["a"],
+      skipped: [{ id: panelRowKey(V, G), reason: "Some tests in this report were already claimed or changed status." }],
+    };
+    expect(sentTestCount(result, withPanel)).toBe(11);
+    expect(bulkQueueMessage("Claimed", sentTestCount(result, withPanel), result, withPanel)).toBe(
+      "Claimed 1 of 11 tests.\nNot changed (1):\n• Chemistry (10 tests) — Jamila, Ian: Some tests in this report were already claimed or changed status.",
+    );
+  });
+});
+
+describe("rowTestCount / sentTestCount scope", () => {
+  // Ten tests on a finished report plus one new test on the bench.
+  const panel: QueueRowInfo = {
+    visitId: V,
+    label: "Chemistry (11 tests) — Jamila, Ian",
+    assignedTo: null,
+    testCount: 11,
+    benchCount: 1,
+  };
+
+  it("counts only bench members for Claim / Unclaim, every member for Delete", () => {
+    expect(rowTestCount(panel, "bench")).toBe(1);
+    expect(rowTestCount(panel, "all")).toBe(11);
+  });
+
+  it("falls back to 1 for a single test and testCount when no benchCount", () => {
+    expect(rowTestCount(rows.a, "bench")).toBe(1);
+    expect(rowTestCount({ ...panel, benchCount: undefined }, "bench")).toBe(11);
+  });
+
+  it("weights a skipped panel by the action's scope", () => {
+    const key = panelRowKey(V, G);
+    const result = { changedIds: [], skipped: [{ id: key, reason: "x" }] };
+    expect(sentTestCount(result, { [key]: panel }, "bench")).toBe(1);
+    expect(sentTestCount(result, { [key]: panel }, "all")).toBe(11);
+  });
+});
+
+describe("release kinds and messages", () => {
+  it("orders release after claim/unclaim and before delete", () => {
+    expect(queueRowKinds({ claimable: false, unclaimable: false, releasable: true, deletable: true }))
+      .toEqual([QUEUE_KIND.release, QUEUE_KIND.delete]);
+  });
+
+  it("maps every panel member to its card's label", () => {
+    const panelRows: Record<string, QueueRowInfo> = {
+      t1: { visitId: "v", label: "FECALYSIS — Jamila, Ian", assignedTo: null },
+      "panel:v:g": { visitId: "v", label: "Chemistry — Cruz, Ana", assignedTo: null, memberIds: ["a", "b"] },
+    };
+    expect(labelsByTestId(panelRows)).toEqual({
+      t1: panelRows.t1,
+      a: panelRows["panel:v:g"],
+      b: panelRows["panel:v:g"],
+    });
+  });
+
+  it("reports tests, and the extra report members a release pulled in", () => {
+    const one: Record<string, QueueRowInfo> = {
+      a: { visitId: "v", label: "FBS — Cruz, Ana", assignedTo: null },
+    };
+    expect(bulkReleaseMessage(1, { changedIds: ["a"], skipped: [], alsoReleasedIds: ["b", "c"] }, one))
+      .toBe("Released 1 test.\nAlso released 2 other tests on the same combined report.");
   });
 });

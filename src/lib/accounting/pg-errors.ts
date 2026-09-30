@@ -1,6 +1,7 @@
 import "server-only";
 
 import { eodClosedMessage } from "./eod-closed-message";
+import { RELEASE_BLOCKED_CONSENT, RELEASE_BLOCKED_UNPAID } from "@/lib/visits/release-messages";
 
 interface PgError {
   code?: string;
@@ -34,10 +35,10 @@ export function translatePgError(err: PgError): string {
     case "23514": {
       const m = err.message ?? "";
       if (/consent/i.test(m)) {
-        return "Patient data-privacy consent is not on file — capture consent before releasing.";
+        return RELEASE_BLOCKED_CONSENT;
       }
       if (/payment_status/i.test(m)) {
-        return "Visit must be paid, waived, or HMO-covered before results can be released.";
+        return RELEASE_BLOCKED_UNPAID;
       }
       return "Invalid value: that combination is not allowed by the schema.";
     }
@@ -250,6 +251,11 @@ export function translatePgError(err: PgError): string {
     // mid-simulation.
     case "P0076":
       return "Only an admin who isn't viewing the app as another role can end someone's role view.";
+    // 0191 claim_panel_members: the panel was not claimed at all (all or nothing).
+    case "P0077":
+      return err.message
+        ? err.message
+        : "Some tests in this report were already claimed or changed status.";
     default:
       return err.message ?? "Database error. Please try again.";
   }

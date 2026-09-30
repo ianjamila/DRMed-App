@@ -527,7 +527,7 @@ function HandledTable({
  * parked the row, it did not answer who it is (0170's sheet_review_resolve
  * accepts link / create on it). No Dismiss / Keep undone there.
  */
-function HandledRows({ item, resolverNames }: { item: ReviewItemRow; resolverNames: Map<string, string> }) {
+export function HandledRows({ item, resolverNames }: { item: ReviewItemRow; resolverNames: Map<string, string> }) {
   const actionable = isKeptUndoneActionable(item);
   const payload = actionable ? (item.payload as unknown as IdentityPayload) : null;
   return (
@@ -554,7 +554,7 @@ function HandledRows({ item, resolverNames }: { item: ReviewItemRow; resolverNam
               Matches a deleted patient record
             </p>
             <EvidenceTable rows={payload.rows} />
-            <DeletedPatientMatchControls itemId={item.id} rowLabel={rowLabelFor(item)} />
+            <DeletedPatientMatchControls itemId={item.id} rowLabel={rowLabelFor(item)} handled />
           </td>
         </tr>
       )}

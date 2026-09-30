@@ -32,18 +32,22 @@ describe("sheet mirror tables stay out of money surfaces (spec §11)", () => {
     const hits = walk(join(ROOT, "src/lib/sheet-sync")).filter((f) => /sheet_customer_rows/.test(readFileSync(f, "utf8")));
     expect(hits.length).toBeGreaterThan(0);
   });
-  it("no migration other than the sheet sync foundation and Patient Sources mentions the mirror tables", () => {
+  it("no migration other than the sheet sync foundation, Patient Sources and their review-fix follow-up mentions the mirror tables", () => {
     // Matched by name, not number: the foundation migration has been renumbered
     // before. Patient Sources (PR 2, 0189) reads the mirror through admin-gated
-    // report functions only; money surfaces stay forbidden.
+    // report functions only; money surfaces stay forbidden. 0193 (sync review
+    // fixes) re-creates functions from both — the sheet-sync apply RPC and the
+    // Patient Sources readers — and nothing else.
     const migrationsDir = join(ROOT, "supabase/migrations");
     const sql = readdirSync(migrationsDir).filter((f) => f.endsWith(".sql"));
     const foundation = sql.filter((f) => /_sheet_sync_foundation\.sql$/.test(f));
     const patientSources = sql.filter((f) => /_patient_sources\.sql$/.test(f));
     expect(foundation).toHaveLength(1);
     expect(patientSources).toHaveLength(1);
+    const reviewFixes = sql.filter((f) => /_sync_review_gaps\.sql$/.test(f));
+    expect(reviewFixes).toHaveLength(1);
     const offenders = sql
-      .filter((f) => !foundation.includes(f) && !patientSources.includes(f))
+      .filter((f) => !foundation.includes(f) && !patientSources.includes(f) && !reviewFixes.includes(f))
       .filter((f) => MIRROR.test(readFileSync(join(migrationsDir, f), "utf8")));
     expect(offenders).toEqual([]);
   });

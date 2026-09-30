@@ -245,6 +245,28 @@ export function planCustomers(input: Input): CustomerPlan {
     return null;
   }
 
+  /**
+   * The deleted patient a key's SAVED link points at, if any: the linked
+   * patient itself, or — a merged-away patient still resolves to its
+   * survivor — the survivor at the end of the merge chain when that survivor
+   * was deleted. A live chain end returns null (the survivor() path handles
+   * it before this is ever asked).
+   */
+  const deletedById = new Set((input.deletedPatients ?? []).map((dp) => dp.id));
+  function savedLinkDeletedPatient(g: Group): string | null {
+    return deletedEndOf(g.stored?.patient_id);
+  }
+  /** The DELETED patient at the end of id's merge chain (id itself when deleted), else null. */
+  function deletedEndOf(id: string | null | undefined): string | null {
+    let cur: string | null | undefined = id;
+    for (let hop = 0; cur && hop < 11; hop++) {
+      if (deletedById.has(cur)) return cur;
+      const p = index.byId.get(cur);
+      cur = p?.merged_into_id;
+    }
+    return null;
+  }
+
   // Corroboration sources: rows linked last run that vanished from this snapshot.
   const currentKeys = new Set(input.rows.map((r) => r.sourceKey));
   const vanishedByPhone = new Map<string, string[]>();
@@ -301,9 +323,6 @@ export function planCustomers(input: Input): CustomerPlan {
     if (loose.length > 0) return nameReview("similar name (surname + first name) — not linked automatically", loose);
     const hits = corroborate(g);
     if (hits.length > 0) return review("possible_existing_patient", "same phone or date of birth as an existing patient", hits);
-    // A saved link whose patient is gone (deleted, or missing from this read):
-    // creating would silently re-make someone staff already removed or linked.
-    if (staleDecision) return review("ambiguous_patient", "the previously linked patient no longer exists");
     // Review fix E: this row would otherwise become a create, but its
     // identity matches a patient staff deleted — hold it for an admin
     // instead of silently re-creating that person. candidates: [] (not the
@@ -311,11 +330,24 @@ export function planCustomers(input: Input): CustomerPlan {
     // index, which a deleted patient is never in; the id travels in `extra`
     // instead, which the SQL create-recheck backstop is the last line of
     // defense against as well.
-    const deletedMatch = matchDeletedPatient(g);
+    //
+    // S1 (sync review gaps): this check comes BEFORE the stale-decision
+    // return. A key whose SAVED auto link points at a patient staff later
+    // deleted used to fall into the generic "no longer exists" hold, which
+    // SQL refuses to Dismiss and the UI offers no candidates for — leaving
+    // "Create a new patient" as the only way out, i.e. re-creating the very
+    // person staff deleted. The saved link's own patient (followed through
+    // merges to a deleted survivor) is the strongest evidence, so it wins
+    // over the name+DOB / name+phone matcher.
+    const deletedMatch = (staleDecision ? savedLinkDeletedPatient(g) : null) ?? matchDeletedPatient(g);
     if (deletedMatch) {
       return review("possible_existing_patient", DELETED_PATIENT_HOLD_REASON, [],
         { held_because: DELETED_PATIENT_HOLD_REASON, deleted_patient_id: deletedMatch });
     }
+    // A saved link whose patient is gone for another reason (missing from
+    // this read): creating would silently re-make someone staff already
+    // removed or linked.
+    if (staleDecision) return review("ambiguous_patient", "the previously linked patient no longer exists");
     return { kind: "create" };
   }
 
@@ -329,8 +361,32 @@ export function planCustomers(input: Input): CustomerPlan {
   function resolveHeld(g: Group): Resolution {
     const fresh = resolveFresh(g, false);
     const why = g.stored?.hold_reason ? { held_because: g.stored.hold_reason } : {};
-    if (fresh.kind === "review") return review(fresh.review, "held for an admin decision", fresh.candidates, { detail: fresh.reason, ...fresh.extra, ...why });
-    return review("ambiguous_patient", "held for an admin decision", fresh.kind === "linked" ? [fresh.patientId] : [], why);
+    // The deleted-patient evidence must survive the hold (Codex recheck on S1):
+    // applying the hold clears the link's patient_id, and name/DOB/phone matching
+    // cannot always find the deleted record again (the sheet row's DOB was edited,
+    // say). The hold op therefore persists the deleted id (held_patient_id, 0193)
+    // and this run reads it back. It is honoured only while that patient is STILL
+    // deleted: once staff restore it, the ordinary path below runs (a live
+    // candidate, a normal Link) — and only when the fresh answer has no live
+    // candidates of its own to show.
+    // The recorded patient may have been restored, merged into another and THAT
+    // one deleted: follow the same bounded merge chain a saved link uses, and
+    // report the deleted survivor (the hold op below re-persists its id).
+    const heldDeleted = g.stored?.hold_reason === DELETED_PATIENT_HOLD_REASON ? deletedEndOf(g.stored.held_patient_id) : null;
+    if (heldDeleted && (fresh.kind === "create" || (fresh.kind === "review" && fresh.candidates.length === 0 && !fresh.extra?.deleted_patient_id))) {
+      return review("possible_existing_patient", "held for an admin decision", [],
+        { held_because: DELETED_PATIENT_HOLD_REASON, deleted_patient_id: heldDeleted });
+    }
+    // The recorded patient is LIVE again (restored, or merged into a live survivor):
+    // offer it as a candidate even when the sheet row's name/DOB no longer finds it,
+    // so Link is always there. Candidate only — a hold never auto-links or creates.
+    // (A HARD-deleted held patient resolves to neither branch and falls back to the
+    // generic admin-decision hold below: safe, it never auto-creates.)
+    const heldLive = g.stored?.hold_reason === DELETED_PATIENT_HOLD_REASON && g.stored.held_patient_id
+      ? index.survivor(g.stored.held_patient_id) : null;
+    const liveCand = heldLive ? [heldLive] : [];
+    if (fresh.kind === "review") return review(fresh.review, "held for an admin decision", [...fresh.candidates, ...liveCand], { detail: fresh.reason, ...fresh.extra, ...why });
+    return review("ambiguous_patient", "held for an admin decision", [...(fresh.kind === "linked" ? [fresh.patientId] : []), ...liveCand], why);
   }
 
   // ---- Pass 1: one resolution per key group. ----
@@ -343,8 +399,17 @@ export function planCustomers(input: Input): CustomerPlan {
       // that name too (an admin said "the undated rows with this name are this
       // patient"); a DATED key only ever covers rows carrying that DOB.
       const s = link.patient_id ? index.survivor(link.patient_id) : null;
+      // A deleted chosen patient (or a survivor deleted after a merge) gets the
+      // same deleted-patient review as an auto link (S1, owner rule: never
+      // re-create a deleted person silently). No hold op follows — an admin
+      // row is never overwritten by the sync — so Keep deleted is a plain
+      // dismiss of the item. A truly missing patient keeps the generic hold.
+      const deletedChosen = s ? null : savedLinkDeletedPatient(g);
       g.res = s ? { kind: "linked", patientId: s, trusted: true, linkOp: null }
-        : review("ambiguous_patient", "the chosen patient no longer exists");
+        : deletedChosen
+          ? review("possible_existing_patient", DELETED_PATIENT_HOLD_REASON, [],
+            { held_because: DELETED_PATIENT_HOLD_REASON, deleted_patient_id: deletedChosen })
+          : review("ambiguous_patient", "the chosen patient no longer exists");
       continue;
     }
     if (link?.decision === "create") { g.res = { kind: "create" }; g.adminCreate = true; continue; }
@@ -588,9 +653,24 @@ export function planCustomers(input: Input): CustomerPlan {
   for (const g of groups) {
     if (g.res.kind !== "review") continue;
     const s = g.stored;
+    // A deleted-patient hold whose deleted target moved (restored, merged, the
+    // survivor deleted) is re-sent once so held_patient_id names the CURRENT
+    // deleted record; every other held key stays untouched.
+    if (s?.decision === "review" && s.hold_reason === DELETED_PATIENT_HOLD_REASON && s.method !== "admin") {
+      const cur = g.res.extra?.deleted_patient_id;
+      if (typeof cur === "string" && cur !== s.held_patient_id) {
+        ops.push({ op: "hold", link_key: g.key, reason: DELETED_PATIENT_HOLD_REASON, deleted_patient_id: cur });
+        holds++;
+      }
+      continue;
+    }
     if (s && (s.decision !== "link" || s.method === "admin")) continue;
     const settled = g.res.nameOnly && !createdNames.has(g.nameNorm) && s?.decision !== "link" && !g.collision;
-    if (!settled) { ops.push({ op: "hold", link_key: g.key, reason: g.res.reason }); holds++; }
+    if (!settled) {
+      const deletedId = typeof g.res.extra?.deleted_patient_id === "string" ? g.res.extra.deleted_patient_id : undefined;
+      ops.push({ op: "hold", link_key: g.key, reason: g.res.reason, ...(deletedId ? { deleted_patient_id: deletedId } : {}) });
+      holds++;
+    }
   }
 
   let fills = 0;
@@ -606,7 +686,12 @@ export function planCustomers(input: Input): CustomerPlan {
     // deleted above would otherwise re-send facts for thousands of patients.
     const have = input.facts.get(pid);
     if (!have || have.registered_on !== want.registered_on || have.sheet_new_repeat !== want.new_repeat) {
-      ops.push({ op: "facts", patient_id: pid, ...want }); factsOps++;
+      // S2: carries the SAME read version as the patient's link/fill ops. A
+      // fill earlier in the batch bumps row_version by one; 0193's facts guard
+      // accepts that (and only that) self-inflicted bump, so a stale identity
+      // rejects the facts write while a successful fill+facts batch — in one
+      // chunk or across two — still writes them.
+      ops.push({ op: "facts", patient_id: pid, ...want, expected_row_version: p.row_version }); factsOps++;
     }
   }
 

@@ -219,7 +219,7 @@ export function IdentityItemControls({
 //     (Admin Tools › Deleted Patients) lets an admin Link normally afterward.
 // ---------------------------------------------------------------------------
 
-export function DeletedPatientMatchControls({ itemId, rowLabel }: { itemId: string; rowLabel: string }) {
+export function DeletedPatientMatchControls({ itemId, rowLabel, handled = false }: { itemId: string; rowLabel: string; handled?: boolean }) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
   const [err, setErr] = useState<string | null>(null);
@@ -253,15 +253,18 @@ export function DeletedPatientMatchControls({ itemId, rowLabel }: { itemId: stri
         >
           {pending ? "Working…" : "Create a new patient"}
         </button>
-        <button
-          type="button"
-          disabled={pending}
-          onClick={() => resolve("dismiss")}
-          aria-label={`Keep ${rowLabel} deleted`}
-          className={quietBtn}
-        >
-          {pending ? "Working…" : "Keep deleted"}
-        </button>
+        {/* A handled item was already "kept deleted": sheet_review_resolve accepts only link / create on it and refuses a second dismiss (P0064). */}
+        {!handled && (
+          <button
+            type="button"
+            disabled={pending}
+            onClick={() => resolve("dismiss")}
+            aria-label={`Keep ${rowLabel} deleted`}
+            className={quietBtn}
+          >
+            {pending ? "Working…" : "Keep deleted"}
+          </button>
+        )}
         <Link
           href="/staff/admin/deleted-patients"
           target="_blank"

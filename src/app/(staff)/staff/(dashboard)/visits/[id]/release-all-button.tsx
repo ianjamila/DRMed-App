@@ -2,7 +2,10 @@
 
 import { useState, useTransition } from "react";
 import { Button } from "@/components/ui/button";
-import { releaseAllReadyComponentsAction, type ReleaseMedium } from "./actions";
+import { releaseOutcomeText, useReleaseOutcome } from "@/components/staff/release/release-outcome";
+import { releaseAllReadyComponentsAction } from "./actions";
+import type { ReleaseMedium } from "@/lib/visits/release-media";
+import { RELEASE_BLOCKED_CONSENT, RELEASE_BLOCKED_UNPAID } from "@/lib/visits/release-messages";
 
 interface Props {
   headerId: string;
@@ -39,6 +42,7 @@ export function ReleaseAllButton({
   gateRequired,
   readyCount,
 }: Props) {
+  const outcome = useReleaseOutcome();
   const [pending, start] = useTransition();
   const [medium, setMedium] = useState<ReleaseMedium>(
     preferredMedium ?? "physical",
@@ -47,9 +51,9 @@ export function ReleaseAllButton({
   const blockedForConsent = gateRequired && !consentOnFile;
   const disabled = pending || !moneySettled || blockedForConsent;
   const title = !moneySettled
-    ? "Visit must be paid, waived, or HMO-covered before release"
+    ? RELEASE_BLOCKED_UNPAID
     : blockedForConsent
-      ? "Patient consent not on file — capture consent first"
+      ? RELEASE_BLOCKED_CONSENT
       : undefined;
 
   return (
@@ -83,7 +87,21 @@ export function ReleaseAllButton({
               visitId,
               medium,
             );
-            if (!result.ok) alert(result.error);
+            // Counts come from the write (changedCount), never the render-time
+            // readyCount: a component on a combined report may be refused, and
+            // report members outside the package may be pulled in.
+            const text = result.ok
+              ? releaseOutcomeText({
+                  changedCount: result.changedCount,
+                  alsoReleasedCount: result.alsoReleasedCount,
+                  skipped: result.skipped,
+                  warnings: result.warnings,
+                })
+              : result.error;
+            if (text) {
+              if (outcome) outcome.show(text);
+              else alert(text);
+            }
           })
         }
       >

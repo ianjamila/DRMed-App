@@ -188,9 +188,13 @@ const SURFACES: Record<string, Surface> = {
     meaning: "structural",
     why: "Scoped by services.report_group_id. Report groups are the consolidated chemistry panels; a doctor service carries no report_group_id, so it cannot appear in one.",
   },
-  "app/(staff)/staff/(dashboard)/queue/consolidated/[visitId]/[groupId]/actions.ts": {
+  "lib/actions/queue/panel-writes.ts": {
     meaning: "structural",
-    why: "Acts on ids sourced only from the report-group-scoped page above, which no doctor line can reach.",
+    why: "Claims a consolidated panel's members by id. The ids come only from the report-group-scoped panel page or from panel-members.ts (report-group scoped, doctor kinds excluded) — no doctor line can reach it.",
+  },
+  "lib/queue/panel-members.ts": {
+    meaning: "lab",
+    why: "The whole membership of a chemistry panel for the lab queue's Claim / Unclaim / Delete. Scoped by services.report_group_id, and excludes doctor kinds explicitly.",
   },
   "lib/actions/results/finalise-consolidated.ts": {
     meaning: "structural",
@@ -259,6 +263,10 @@ const SURFACES: Record<string, Surface> = {
   "lib/visits/archive-query.ts": {
     meaning: "all",
     why: "The Visits archive shows and filter-chips all three classes (Lab / Doctor Consults / Doctor Procedures) — classifying them is its whole job.",
+  },
+  "lib/actions/visits/release-rows.ts": {
+    meaning: "lab",
+    why: "The one ready_for_release → released write for the visit page and the lab queue. Doctor lines never reach ready_for_release by design; the candidate read excludes them by kind anyway.",
   },
   "lib/actions/visits/queue-deletion.ts": {
     meaning: "all",
@@ -434,6 +442,10 @@ const LIFECYCLES: Record<string, LifecycleSurface> = {
     lifecycle: "any",
     why: "The Visits archive has a Live / Deleted / All view toggle; applyView() applies is-null, not-is-null or nothing per view. Filtering here would delete the Deleted view.",
   },
+  "lib/actions/visits/release-rows.ts": {
+    lifecycle: "live",
+    why: "The release write. The candidate read pins deleted_at and visits!inner deleted_at, so a deleted line or visit is never released.",
+  },
   "lib/actions/visits/queue-deletion.ts": {
     lifecycle: "any",
     why: "Delete and restore. The restore path reads with .not('deleted_at','is',null) on purpose — it is looking for exactly the rows every other surface hides.",
@@ -483,9 +495,13 @@ const LIFECYCLES: Record<string, LifecycleSurface> = {
     lifecycle: "live",
     why: "The consolidated chemistry panel's entry screen — bench work, same rule as the queue it belongs to.",
   },
-  "app/(staff)/staff/(dashboard)/queue/consolidated/[visitId]/[groupId]/actions.ts": {
+  "lib/actions/queue/panel-writes.ts": {
     lifecycle: "live",
-    why: "Writes the consolidated panel's results. Same rule as the page that feeds it.",
+    why: "Claims a consolidated panel. A deleted line (or a line on a deleted visit) must not be claimed — the pre-read refuses both, and claim_panel_members (0191) re-checks deleted_at.",
+  },
+  "lib/queue/panel-members.ts": {
+    lifecycle: "live",
+    why: "Bench work on the lab queue. Deleted lines and every line of a deleted visit are out of a panel.",
   },
   "lib/actions/results/finalise-consolidated.ts": {
     lifecycle: "live",
@@ -626,6 +642,10 @@ const LIFECYCLES: Record<string, LifecycleSurface> = {
   "lib/reports/lab-tat.ts": {
     lifecycle: "live",
     why: "Turnaround time. This is one of the two surfaces that had reasoned P0043 made the filter a no-op; see the note at the top of this section for why that did not hold.",
+  },
+  "lib/notifications/release-staff-alert.ts": {
+    lifecycle: "live",
+    why: "Emails reception about results released on a visit. The alert runs after the response, so it re-proves the visit live at query level; a deleted visit has nothing to print.",
   },
   "lib/visits/released-payment-alert.ts": {
     lifecycle: "live",
@@ -846,8 +866,12 @@ function scanSource(text: string, full: string): Chain[] {
       const identifiers: string[] = [];
       const selectLiterals: string[] = [];
       const conditionalSelects: string[][] = [];
+      // `(cond ? A : B) as typeof A` is still a conditional: the queue page casts
+      // its two-literal select to keep supabase-js from failing to parse the union.
+      const unwrap = (a: ts.Expression): ts.Expression =>
+        ts.isParenthesizedExpression(a) || ts.isAsExpression(a) ? unwrap(a.expression) : a;
       const leaves = (a: ts.Expression): string[] => {
-        const e = ts.isParenthesizedExpression(a) ? a.expression : a;
+        const e = unwrap(a);
         if (ts.isConditionalExpression(e)) return [...leaves(e.whenTrue), ...leaves(e.whenFalse)];
         if (ts.isStringLiteralLike(e)) return [e.text];
         if (ts.isIdentifier(e)) return [consts.get(e.text) ?? ""];
@@ -858,7 +882,7 @@ function scanSource(text: string, full: string): Chain[] {
         const isSelect = methods[i] === "select";
         for (const arg of call.arguments) {
           if (isSelect) {
-            const inner = ts.isParenthesizedExpression(arg) ? arg.expression : arg;
+            const inner = unwrap(arg);
             if (ts.isConditionalExpression(inner)) conditionalSelects.push(leaves(inner));
           }
           const collectArg = (a: ts.Node) => {
@@ -1387,6 +1411,38 @@ describe("the lifecycle predicates reject what they should", () => {
 
     const leftServices = oneChain(source("id, visits!inner ( id ), services ( kind )"));
     expect(hasInnerServicesEmbed(leftServices)).toBe(false);
+  });
+
+  it("still reads every branch through a type cast on the ternary", () => {
+    // The queue page shape: `(searching ? SEARCH : BASE) as typeof BASE`, a
+    // cast supabase-js needs to type the union. The cast must not hide the
+    // branches from the guard.
+    const source = (search: string) => `
+      const BASE = "id, visits!inner ( id ), services!inner ( kind )";
+      const SEARCH = "${search}";
+      async function queue() {
+        const { data } = await db
+          .from("test_requests")
+          .select((searching ? SEARCH : BASE) as typeof BASE, { count: "exact" })
+          .is("deleted_at", null)
+          .is("visits.deleted_at", null)
+          .neq("services.kind", "doctor_consultation");
+      }
+    `;
+    const good = oneChain(
+      source("id, visits!inner ( id ), services!inner ( kind ), lab_search!inner ( )"),
+    );
+    expect(good.conditionalSelects).toHaveLength(1);
+    expect(good.conditionalSelects[0]).toHaveLength(2);
+    expect(hasInnerVisitsEmbed(good)).toBe(true);
+
+    const leftVisits = oneChain(
+      source("id, visits ( id ), services!inner ( kind ), lab_search!inner ( )"),
+    );
+    expect(
+      hasInnerVisitsEmbed(leftVisits),
+      "A cast hid the search branch, which drops visits!inner.",
+    ).toBe(false);
   });
 
   it("does not let a filtered query in the same function vouch for an unfiltered one", () => {

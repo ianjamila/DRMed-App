@@ -11,6 +11,8 @@ import { isSectionAllowed } from "@/lib/auth/section-access";
 import { deriveEnabledParamIds } from "@/lib/results/enabled-params";
 import {
   partitionConsolidatedMembers,
+  reportActionKind,
+  reportUndoTargetId,
   REPORT_VALUES_LOAD_FAILED,
   reportEditLoadState,
 } from "@/lib/results/consolidated-reports";
@@ -31,6 +33,17 @@ import { shouldOfferNotify } from "@/lib/results/copy-followups";
 import { fetchCopyStates } from "@/lib/results/copy-followups.server";
 import { fetchVersionDiff } from "@/lib/results/version-diff.server";
 import type { AmendmentChanges } from "@/lib/results/version-diff";
+import { ReleaseOutcomeProvider } from "@/components/staff/release/release-outcome";
+import { QueueReleaseButton } from "@/components/staff/release/queue-release-button";
+import { UndoReleaseDialog } from "@/components/staff/release/undo-release-dialog";
+import { loadRowUndoContext } from "@/lib/visits/undo-scope.server";
+import { evaluateRelease } from "@/lib/queue/release-eligibility";
+import { isConsentGateRequired, getPatientConsentState } from "@/lib/consent/gate";
+import { canActOnResult } from "@/lib/visits/line-visibility";
+import { isDoctorKind } from "@/lib/visits/order-lines";
+import { isActivePatient } from "@/lib/patients/active";
+import type { ReleaseMedium } from "@/lib/visits/release-media";
+import { reportReleaseBlock } from "@/lib/queue/report-release-scope";
 
 type One<T> = T | T[] | null;
 const one = <T,>(v: One<T>): T | null => (Array.isArray(v) ? (v[0] ?? null) : v);
@@ -40,8 +53,8 @@ interface MemberRow {
   status: string;
   assigned_to: string | null;
   released_at: string | null;
-  services: One<{ id: string; code: string; name: string; section: string | null; report_group_id: string | null }>;
-  visits: One<ConsolidatedFormVisit & { payment_status: string; hmo_provider_id: string | null }>;
+  services: One<{ id: string; code: string; name: string; section: string | null; kind: string; report_group_id: string | null }>;
+  visits: One<ConsolidatedFormVisit>;
   result_test_requests: One<{
     result_id: string;
     results: One<{
@@ -84,9 +97,9 @@ const loadConsolidatedDetail = cache(async (visitId: string, groupId: string) =>
     .select(
       `
       id, status, assigned_to, released_at,
-      services!inner(id, code, name, section, report_group_id),
+      services!inner(id, code, name, section, kind, report_group_id),
       visits!inner(id, visit_number, patient_id, payment_status, hmo_provider_id,
-                   patients!inner(drm_id, last_name, first_name, sex, birthdate)),
+                   patients!inner(drm_id, last_name, first_name, sex, birthdate, deleted_at, merged_into_id, preferred_release_medium)),
       result_test_requests(result_id,
         results(id, storage_path, finalised_at, finalised_by_staff_id, amended_at, amendment_count))
     `,
@@ -300,6 +313,69 @@ export default async function ConsolidatedQueuePage({
     };
   });
 
+  // ---- Release / Undo per finished report --------------------------------
+  // Whole-report controls: releaseTestsAction releases a combined report whole
+  // or not at all, and Undo expands to the whole report. Every member of a
+  // report group shares one lab section, so the first member's decides.
+  // visitDeleted is false by construction (the load pins visits.deleted_at).
+  // Reception gets neither control: canActOnResult denies it.
+  const patientActive = isActivePatient(visit.patients);
+  const groupSection = one(byId.get(partition.reports[0]?.memberIds[0] ?? "")?.services ?? null)?.section ?? null;
+  const mayAct = canActOnResult(session.role, groupSection);
+  const anyReady = reports.some((rep) => reportActionKind(rep.members) === "release");
+  const [gateRequired, consentState] =
+    mayAct && patientActive && anyReady
+      ? await Promise.all([isConsentGateRequired(), getPatientConsentState(visit.patient_id)])
+      : [false, { current: true }];
+  const actionsFor: Record<string, ReactNode> = {};
+  if (mayAct && patientActive) {
+    for (const rep of reports) {
+      const kind = reportActionKind(rep.members);
+      if (kind === "release") {
+        const ready = rep.members.filter((m) => m.status === "ready_for_release").map((m) => m.id);
+        const first = one(byId.get(ready[0])!.services);
+        const verdict = evaluateRelease(
+          {
+            status: "ready_for_release",
+            isPackageHeader: false,
+            isDoctorLine: isDoctorKind(first?.kind ?? ""),
+            section: first?.section ?? groupSection,
+            visitDeleted: false,
+            patientActive,
+            visit,
+            consentOnFile: consentState.current,
+            gateRequired,
+          },
+          session.role,
+        );
+        // Mirror the visit page: a half-finished report disables Release with the reason.
+        // Deleted members are filtered out by this page's load; the server still refuses that case.
+        const mixed = reportReleaseBlock(rep.members.map((m) => ({ status: m.status, deleted: false })));
+        actionsFor[rep.resultId] = (
+          <QueueReleaseButton
+            testRequestIds={ready}
+            label="Release report"
+            preferredMedium={(visit.patients.preferred_release_medium ?? null) as ReleaseMedium | null}
+            blockReason={mixed ?? (verdict.ok ? null : verdict.error)}
+            consentWarning={!consentState.current && !gateRequired}
+          />
+        );
+      } else if (kind === "undo") {
+        const undoId = reportUndoTargetId(rep.members);
+        if (!undoId) continue;
+        const ctx = await loadRowUndoContext(supabase, undoId);
+        actionsFor[rep.resultId] = (
+          <UndoReleaseDialog
+            testRequestId={undoId}
+            visitId={visit.id}
+            viewedCount={ctx.viewedCount}
+            reportScope={ctx.reportScope}
+          />
+        );
+      }
+    }
+  }
+
   // ---- Edit form for one finished report (?edit=<resultId>) -------------
   let editForm: { resultId: string; node: ReactNode } | null = null;
   const editing = editResultId ? reports.find((r) => r.resultId === editResultId) : undefined;
@@ -510,7 +586,11 @@ export default async function ConsolidatedQueuePage({
             <div className="mt-4 flex flex-wrap items-start justify-between gap-4 rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white p-5">
               <ClaimHistory remarks={history} />
               {canUnclaim ? (
-                <QueueUnclaimButton testRequestIds={testRequestIds} entryLabel={group.name} />
+                <QueueUnclaimButton
+                  testRequestIds={testRequestIds}
+                  holders={encodeRows.map((r) => r.assigned_to)}
+                  entryLabel={group.name}
+                />
               ) : null}
             </div>
           }
@@ -525,6 +605,7 @@ export default async function ConsolidatedQueuePage({
 
   return (
     <div className="px-4 py-8 sm:px-6 lg:px-8">
+      <ReleaseOutcomeProvider>
       <Link
         href="/staff/queue"
         className="text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-cyan)] hover:underline"
@@ -559,6 +640,7 @@ export default async function ConsolidatedQueuePage({
           groupName={group.name}
           awaitingPaymentHint={gate.ok ? null : gate.hint}
           editForm={editForm}
+          actionsFor={actionsFor}
         />
       ) : null}
 
@@ -570,6 +652,7 @@ export default async function ConsolidatedQueuePage({
       >
         Open visit →
       </Link>
+      </ReleaseOutcomeProvider>
     </div>
   );
 }
@@ -604,5 +687,10 @@ export interface ConsolidatedFormVisit {
     // shape here; the client form normalises via normalisePatientSex().
     sex: string | null;
     birthdate: string | null;
+    deleted_at: string | null;
+    merged_into_id: string | null;
+    preferred_release_medium: string | null;
   };
+  payment_status: string;
+  hmo_provider_id: string | null;
 }

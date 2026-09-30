@@ -4,7 +4,8 @@ import { PageHeader } from "@/components/staff/page-header";
 import { createClient } from "@/lib/supabase/server";
 import { fetchAllRows, REPORT_EXPORT_MAX_ROWS } from "@/lib/reports/paging";
 import { manilaRangeUtc, todayManilaISODate } from "@/lib/dates/manila";
-import { firstParam, resolvePeriod } from "@/lib/marketing/period";
+import { firstParam, PATIENT_SOURCES_MIN_DATE, resolvePeriod } from "@/lib/marketing/period";
+import { newPatientsTile } from "@/lib/marketing/patient-sources";
 import { loadPatientSourcesSummary } from "@/lib/marketing/patient-sources.server";
 import { StatCard } from "../../_dashboards/_components/stat-card";
 import { PeriodControls } from "../_components/period-controls";
@@ -68,8 +69,10 @@ export default async function BookingSourcesReportPage({ searchParams }: SearchP
       },
       REPORT_EXPORT_MAX_ROWS,
     ),
-    loadPatientSourcesSummary(supabase, period.from, period.to),
+    // Patient Sources refuses a start before Dec 2023: skip the call, the tile says so.
+    period.from < PATIENT_SOURCES_MIN_DATE ? Promise.resolve(null) : loadPatientSourcesSummary(supabase, period.from, period.to),
   ]);
+  const newTile = newPatientsTile(summary);
 
   const bookings = summarizeBookings(apptRows);
   const messages = summarizeMessages(msgRows);
@@ -126,14 +129,10 @@ export default async function BookingSourcesReportPage({ searchParams }: SearchP
         />
         <StatCard
           label="New patients"
-          value={
-            summary.ok
-              ? `${summary.data.new_confirmed.toLocaleString("en-PH")} confirmed · ${summary.data.new_unconfirmed.toLocaleString("en-PH")} unconfirmed`
-              : "—"
-          }
+          value={newTile.value}
           hint="First visit recorded, same count as Patient Sources. See by channel →"
-          href={`/staff/marketing/patients?from=${period.from}&to=${period.to}`}
-          error={!summary.ok}
+          href={newTile.linked ? `/staff/marketing/patients?from=${period.from}&to=${period.to}` : undefined}
+          error={newTile.error}
         />
       </div>
 

@@ -31,19 +31,24 @@
  * - hold: upsert (patient_id null, decision 'review', method 'auto_exact',
  *   hold_reason = the op reason); an existing non-admin row becomes decision
  *   'review', patient_id null, with that reason.
- * - fill: skipped for a missing, deleted (0167) or merged patient
- *   (`skipped`), or (when the op carries `expected_row_version`, counted
+ * - fill: `stale` (0193 S3; id reported) for a missing, deleted (0167) or merged patient,
+ *   or (when the op carries `expected_row_version`, counted
  *   `stale`, reported in `stalePatientIds`) a patient whose row_version has
  *   since moved — staff changed it after the planner read it; coalesce per
  *   column; the senior/PWD pair only when both are blank; referral_source
  *   only when the patient has none or the sheet owns it (unknown id →
  *   null), and the origin follows the patients_referral_origin_guard
  *   trigger.
+ * - fill bumps the patient's row_version by one when it changes a column
+ *   (trg_patients_referral_origin) and records that version as this run's
+ *   own (`ownFills`); a fill that changes nothing is `skipped` and bumps nothing.
  * - facts: SKIPPED and counted `stale` (patient id reported in
  *   `stalePatientIds`) when the patient is gone/deleted/merged, or (review
- *   fix D) the op carries `expected_row_version` and it no longer matches —
- *   the same stale-read guard as its sibling link/fill ops, since the
- *   planner plans all three from one read. Otherwise upsert.
+ *   fix D + S2) the op carries `expected_row_version` and the patient's
+ *   version is neither that nor the one this run's OWN fill produced from it
+ *   (current = own fill's version AND expected = current - 1) — a stale
+ *   identity rejects facts, a self-inflicted bump does not, in any chunk.
+ *   Otherwise upsert.
  */
 import { isReferralSource } from "../../patients/referral-sources";
 import { nameNormOf, phone10 } from "../names";
@@ -53,6 +58,13 @@ export interface World {
   patients: PatientRecord[];
   links: Map<string, LinkRecord>;
   facts: Map<string, FactsRecord>;
+  /**
+   * patient id -> the row_version THIS RUN's own fill produced (SQL: the
+   * run's `sheet_sync_changes.row_version_after`). Carried across applyOps
+   * calls (chunks) like the SQL carries it in a table keyed by run id; a
+   * fresh World is a fresh run. Optional: absent = no fill yet this run.
+   */
+  ownFills?: Map<string, number>;
 }
 
 /**
@@ -74,7 +86,7 @@ export interface ApplyOpsResult extends World {
 }
 
 export const world = (patients: PatientRecord[], links: LinkRecord[] = []): World =>
-  ({ patients, links: new Map(links.map((l) => [l.link_key, l])), facts: new Map() });
+  ({ patients, links: new Map(links.map((l) => [l.link_key, l])), facts: new Map(), ownFills: new Map() });
 
 const knownSource = (v: string | null | undefined): string | null => (v && isReferralSource(v) ? v : null);
 
@@ -85,6 +97,7 @@ export function applyOps(ops: readonly CustomerOp[], w: World): ApplyOpsResult {
   const byId = new Map(patients.map((p) => [p.id, p]));
   const links = new Map(w.links);
   const facts = new Map(w.facts);
+  const ownFills = new Map(w.ownFills ?? []);
   const created: Record<string, string> = {};
   const skippedCreateKeys: string[] = [];
   const stalePatientIdSet = new Set<string>();
@@ -147,16 +160,20 @@ export function applyOps(ops: readonly CustomerOp[], w: World): ApplyOpsResult {
       const ex = links.get(o.link_key);
       if (ex && ex.method === "admin") { counts.skipped++; continue; }
       const hold_reason = o.reason ? o.reason.slice(0, 400) : null;
-      links.set(o.link_key, ex ? { ...ex, patient_id: null, decision: "review", hold_reason }
-        : { link_key: o.link_key, patient_id: null, decision: "review", method: "auto_exact", hold_reason });
+      // 0193: a deleted-patient hold also records the deleted id (held_patient_id); any other hold clears it.
+      const held_patient_id = o.reason === "matches_deleted_patient" ? (o.deleted_patient_id ?? null) : null;
+      links.set(o.link_key, ex ? { ...ex, patient_id: null, decision: "review", hold_reason, held_patient_id }
+        : { link_key: o.link_key, patient_id: null, decision: "review", method: "auto_exact", hold_reason, held_patient_id });
       counts.held++;
     } else if (o.op === "fill") {
       const p = byId.get(o.patient_id);
-      if (!p || p.deleted_at || p.merged_into_id) { counts.skipped++; continue; }
+      // 0193 (S3): a deleted / merged / missing target is `stale` (id reported), like link and facts.
+      if (!p || p.deleted_at || p.merged_into_id) { counts.stale++; stalePatientIdSet.add(o.patient_id); continue; }
       if (o.expected_row_version !== undefined && p.row_version !== o.expected_row_version) { // stale read
         counts.stale++; stalePatientIdSet.add(o.patient_id); continue;
       }
       const f = o.fields;
+      const before = JSON.stringify(p);
       for (const c of COALESCE) if (p[c] === null && f[c] !== undefined) p[c] = f[c] || null;
       // the pair: only when both are blank on the patient AND both are in the op
       if (p.senior_pwd_id_kind === null && p.senior_pwd_id_number === null && f.senior_pwd_id_kind && f.senior_pwd_id_number) {
@@ -167,17 +184,23 @@ export function applyOps(ops: readonly CustomerOp[], w: World): ApplyOpsResult {
         const v = knownSource(f.referral_source);
         if (v !== p.referral_source) { p.referral_source = v; p.referral_source_origin = v ? "sheet" : null; }
       }
+      if (JSON.stringify(p) === before) { counts.skipped++; continue; }
+      p.row_version = (p.row_version ?? 0) + 1;
+      ownFills.set(p.id, p.row_version);
       counts.filled++;
     } else {
       // facts
       const p = byId.get(o.patient_id);
       if (!p || p.deleted_at || p.merged_into_id) { counts.stale++; stalePatientIdSet.add(o.patient_id); continue; } // 0170 counts it `stale`
-      if (o.expected_row_version !== undefined && p.row_version !== o.expected_row_version) { // review fix D: same stale-read guard as link/fill
-        counts.stale++; stalePatientIdSet.add(o.patient_id); continue;
+      if (o.expected_row_version !== undefined && p.row_version !== o.expected_row_version) { // review fix D: same stale-read guard as link/fill…
+        // …except S2: the bump this run's OWN fill made is not staleness.
+        const own = ownFills.get(p.id);
+        const selfInflicted = own !== undefined && own === p.row_version && o.expected_row_version === (p.row_version ?? 0) - 1;
+        if (!selfInflicted) { counts.stale++; stalePatientIdSet.add(o.patient_id); continue; }
       }
       facts.set(o.patient_id, { patient_id: o.patient_id, registered_on: o.registered_on, sheet_new_repeat: o.new_repeat, source_ref: o.source_ref });
       counts.facts++;
     }
   }
-  return { patients, links, facts, created, skippedCreateKeys, stalePatientIds: [...stalePatientIdSet], counts };
+  return { patients, links, facts, ownFills, created, skippedCreateKeys, stalePatientIds: [...stalePatientIdSet], counts };
 }

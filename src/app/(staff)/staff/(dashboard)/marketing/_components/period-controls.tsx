@@ -22,6 +22,7 @@ export function PeriodControls({
   presetKey,
   error,
   params,
+  min,
 }: {
   pathname: string;
   todayISO: string;
@@ -31,8 +32,10 @@ export function PeriodControls({
   error: string | null;
   /** The page's other params to keep (mode, grain, channel…). */
   params: Readonly<Record<string, string | undefined>>;
+  /** Earliest selectable date (Patient Sources: 2023-12-01). Presets are clamped to it. */
+  min?: string;
 }) {
-  const presets = buildMarketingPresets(todayISO);
+  const presets = buildMarketingPresets(todayISO, min ? { min } : {});
   const hidden = Object.entries(params).filter(([k, v]) => k !== "from" && k !== "to" && k !== "page" && v);
   return (
     <div className="mb-4 space-y-2">
@@ -57,11 +60,11 @@ export function PeriodControls({
         ))}
         <label className="flex flex-col text-xs font-bold text-[color:var(--color-brand-text-soft)]">
           From
-          <input type="date" name="from" defaultValue={from} required className="rounded border px-2 py-1 text-sm" />
+          <input type="date" name="from" defaultValue={from} min={min} required className="rounded border px-2 py-1 text-sm" />
         </label>
         <label className="flex flex-col text-xs font-bold text-[color:var(--color-brand-text-soft)]">
           To
-          <input type="date" name="to" defaultValue={to} required className="rounded border px-2 py-1 text-sm" />
+          <input type="date" name="to" defaultValue={to} min={min} required className="rounded border px-2 py-1 text-sm" />
         </label>
         <button type="submit" className={`${pill} ${pillOff}`}>
           Show

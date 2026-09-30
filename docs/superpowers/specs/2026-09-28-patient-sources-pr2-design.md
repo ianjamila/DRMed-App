@@ -76,7 +76,7 @@ Confirmed → the survivor's `referral_source` (NULL → "Not recorded"). Name i
 ### 1.6 Revenue (channel revenue)
 
 As §6: `test_requests.final_price_php` for (a) (live rows: `test_requests.deleted_at is null` and
-`visits.deleted_at is null`; consult lines are the clinic fee), `revenue_php` for (b). Mirror lines for a
+`visits.deleted_at is null`; a consult/procedure line's clinic share is `clinic_fee_php` — `coalesce(clinic_fee_php, final_price_php)` since 0193; `final_price_php` there is the doctor's whole fee), `revenue_php` for (b). Mirror lines for a
 (survivor, date) that also has an app visit are excluded from revenue and listed in the reconciliation panel.
 Labelled "billed (clinic share)", never "collected".
 

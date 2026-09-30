@@ -24,7 +24,8 @@ export const DASHBOARD_CARDS: readonly CardDef[] = [
   // ---- Reception ----------------------------------------------------------
   { id: "reception.visits_today",      label: "Visits today",      roles: ["reception"], group: "snapshot" },
   { id: "reception.unpaid_balance",    label: "Unpaid balance",    roles: ["reception"], group: "snapshot", sensitive: true },
-  { id: "reception.pending_release",   label: "Pending release",   roles: ["reception"], group: "snapshot" },
+  { id: "reception.pending_release",   label: "Waiting for the lab to release", roles: ["reception"], group: "snapshot" },
+  { id: "reception.released_today",   label: "Released today",    roles: ["reception"], group: "snapshot" },
   // Id kept from when the card was called "Walk-ins waiting"; renaming the id
   // would drop saved preferences.
   { id: "reception.walk_ins_waiting",  label: "Arrivals awaiting registration", roles: ["reception"], group: "snapshot" },
@@ -54,6 +55,7 @@ export const DASHBOARD_CARDS: readonly CardDef[] = [
   { id: "lab.critical_alerts",      label: "Critical alerts unacked",  roles: ["pathologist"], group: "snapshot" },
   { id: "lab.send_out_awaiting",    label: "Send-out awaiting result", roles: ["medtech"], group: "snapshot" },
   { id: "lab.released_today",       label: "Released today",           roles: ["medtech", "xray_technician", "pathologist"], group: "snapshot" },
+  { id: "lab.ready_for_release",   label: "Ready for release",        roles: ["medtech", "xray_technician", "pathologist"], group: "snapshot" },
   { id: "lab.strip_oldest_unclaimed", label: "Strip: oldest unclaimed", roles: ["medtech", "xray_technician"], group: "attention" },
   { id: "lab.strip_pending_signoff",  label: "Strip: pending sign-off", roles: ["pathologist"], group: "attention", defaultHidden: true },
   { id: "lab.strip_recent_criticals", label: "Strip: recent criticals", roles: ["medtech", "pathologist"], group: "attention" },
@@ -70,6 +72,7 @@ export const DASHBOARD_CARDS: readonly CardDef[] = [
   // so Dashboard settings can bring it back. Visits today and Queue stay ON —
   // the owner deferred those two to a later re-review.
   { id: "admin.released_today",    label: "Released today (plain count)",  roles: ["admin"], group: "operations", defaultHidden: true },
+  { id: "admin.ready_for_release", label: "Ready for release", roles: ["admin"], group: "operations" },
   { id: "admin.dup_candidates",    label: "Possible duplicates", roles: ["admin"], group: "operations" },
   { id: "admin.new_messages",      label: "Website messages",    roles: ["admin"], group: "operations" },
   { id: "admin.result_followups",  label: "Result follow-ups",   roles: ["admin"], group: "attention" },

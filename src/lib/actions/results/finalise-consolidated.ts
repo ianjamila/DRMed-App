@@ -25,6 +25,7 @@ import {
   type ValueRow,
 } from "@/lib/results/value-rows";
 import { commitResultFinalise } from "@/lib/actions/results/result-edit-core";
+import { announceFinaliseRelease } from "@/lib/actions/results/finalise-release-alert";
 
 export interface FinaliseInput {
   visitId: string;
@@ -529,6 +530,16 @@ export async function finaliseConsolidatedReport(
       user_agent: ua,
     });
   }
+
+  // Tell reception only when the whole report went out in this one write (a
+  // deferral or sign-off partial is announced later by the release that
+  // finishes it) — see finalise-release-alert.ts.
+  announceFinaliseRelease({
+    visitId: input.visitId,
+    releaseDeferred,
+    requestedIds: input.testRequestIds,
+    releasedCount: (releasedRows ?? []).length,
+  });
 
   return {
     ok: true,

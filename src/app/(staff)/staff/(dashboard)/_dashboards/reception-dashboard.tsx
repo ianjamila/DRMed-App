@@ -257,6 +257,7 @@ async function loadReceptionStats(userId: string, show: (id: string) => boolean)
     visitsToday,
     unpaidRows,
     pendingRelease,
+    releasedToday,
     walkInsRows,
     newMessagesCount,
     newCorporateMessagesCount,
@@ -319,6 +320,23 @@ async function loadReceptionStats(userId: string, show: (id: string) => boolean)
           // tile as work nobody owes. Same reasoning lab-tat.ts applies to
           // its own Pending tile.
           .not("services.kind", "in", DOCTOR_KINDS_PG_LIST)
+      : SKIP_COUNT,
+    // Released since Manila midnight — what's ready to print at the counter.
+    // The window is Manila-day-correct (todayManilaWindow), never a naive date.
+    show("reception.released_today")
+      ? supabase
+          .from("test_requests")
+          .select("id, services!inner ( kind ), visits!inner ( id )", {
+            count: "exact",
+            head: true,
+          })
+          .eq("status", "released")
+          .gte("released_at", todayFromIso)
+          .lt("released_at", todayToIso)
+          .eq("is_package_header", false)
+          .not("services.kind", "in", DOCTOR_KINDS_PG_LIST)
+          .is("deleted_at", null)
+          .is("visits.deleted_at", null)
       : SKIP_COUNT,
     // Selected (not head-count) so distinct BOOKINGS can be grouped in JS —
     // a single multi-service booking is several `appointments` rows sharing
@@ -482,6 +500,7 @@ async function loadReceptionStats(userId: string, show: (id: string) => boolean)
     { scope: "visits_today", error: visitsToday.error },
     { scope: "unpaid_balance", error: unpaidRows.error },
     { scope: "pending_release", error: pendingRelease.error },
+    { scope: "released_today", error: releasedToday.error },
     { scope: "walk_ins_waiting", error: walkInsRows.error },
     { scope: "new_messages", error: newMessagesCount.error },
     { scope: "new_messages_corporate", error: newCorporateMessagesCount.error },
@@ -521,6 +540,9 @@ async function loadReceptionStats(userId: string, show: (id: string) => boolean)
 
     pendingRelease: pendingRelease.count ?? 0,
     pendingReleaseError: !!pendingRelease.error,
+
+    releasedToday: releasedToday.count ?? 0,
+    releasedTodayError: !!releasedToday.error,
 
     walkInsWaiting,
     walkInsError: !!walkInsRows.error,
@@ -656,6 +678,7 @@ export async function ReceptionDashboard({
     "reception.visits_today",
     "reception.unpaid_balance",
     "reception.pending_release",
+    "reception.released_today",
     "reception.walk_ins_waiting",
     "reception.likely_no_shows",
     "reception.new_messages",
@@ -712,11 +735,21 @@ export async function ReceptionDashboard({
             )}
             {show("reception.pending_release") && (
               <StatCard
-                label="Waiting to be released"
+                label="Waiting for the lab to release"
                 value={stats.pendingRelease}
-                hint="All dates — results ready, awaiting release"
+                hint="All dates — finished results; the lab releases them"
                 href="/staff/visits/queue?stage=processing"
                 error={stats.pendingReleaseError}
+              />
+            )}
+            {show("reception.released_today") && (
+              <StatCard
+                label="Released today"
+                value={stats.releasedToday}
+                hint="Ready to print at the counter"
+                href="/staff/queue?filter=released_today"
+                accent="good"
+                error={stats.releasedTodayError}
               />
             )}
             {show("reception.walk_ins_waiting") && (

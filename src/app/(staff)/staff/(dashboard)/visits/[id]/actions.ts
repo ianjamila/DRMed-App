@@ -16,21 +16,25 @@ import {
 import { WAIVE_CLOSED_MONTH_MESSAGE } from "@/lib/visits/payment-edit";
 import { deleteVisitAction } from "@/lib/actions/visits/queue-deletion";
 import {
+  releaseVisitSelection,
+  type VisitReleaseOutcome,
+} from "@/lib/actions/visits/release-reports";
+import { RELEASE_REFUSAL } from "@/lib/queue/release-eligibility";
+import type { SkippedRow } from "@/lib/queue/bulk-queue";
+import {
   hasOpenHmoClaim,
   visitDeletability,
   withoutReleased,
 } from "@/lib/visits/deletion";
 import { sectionsForRole } from "@/lib/auth/role-sections";
-import { notifyResultReleased } from "@/lib/notifications/notify-released";
-import { notifyResultsReleasedBulk } from "@/lib/notifications/notify-released-bulk";
 import { translatePgError } from "@/lib/accounting/pg-errors";
-import { reportError } from "@/lib/observability/report-error";
 import {
   MAX_BULK_SELECTION,
   scopeToAllowedSections,
 } from "@/lib/visits/bulk-selection";
 import { countResultViews } from "@/lib/results/viewed-count";
 import { canManuallyReleasePackageHeader } from "@/lib/visits/package-header-release";
+import { isReleaseMedium, type ReleaseMedium } from "@/lib/visits/release-media";
 import {
   expandUndoReleaseScope,
   undoUpdateIds,
@@ -38,13 +42,6 @@ import {
   type UndoScopeRejectionReason,
 } from "@/lib/visits/undo-release-scope";
 
-export type ReleaseMedium =
-  | "physical"
-  | "email"
-  | "viber"
-  | "gcash"
-  | "pickup"
-  | "other";
 
 export type ReleaseResult =
   | { ok: true }
@@ -59,15 +56,6 @@ export type ReleaseResult =
 export type BulkSelectionResult =
   | { ok: true; count: number }
   | { ok: false; error: string };
-
-const VALID_MEDIA: readonly ReleaseMedium[] = [
-  "physical",
-  "email",
-  "viber",
-  "gcash",
-  "pickup",
-  "other",
-];
 
 // User-facing text for expandUndoReleaseScope's rejections (0172). The whole
 // request is refused — no partial undo — so each message explains why
@@ -123,12 +111,36 @@ async function refuseIfVisitDeleted(
   return null;
 }
 
+// Every surface that shows a line's release state. A TYPED revalidatePath
+// must name the route FILE path, route groups included — "/staff/queue" +
+// "layout" matches no tag (next/…/revalidate.js). The layout revalidation
+// covers /staff/queue, /staff/queue/[id] and the consolidated report page;
+// "/staff" (untyped, a concrete URL) is the dashboard.
+function revalidateReleaseSurfaces(visitId: string) {
+  revalidatePath(`/staff/visits/${visitId}`);
+  revalidatePath("/(staff)/staff/(dashboard)/queue", "layout");
+  revalidatePath("/staff");
+}
+
+/** The three visit-page lab release actions (rev 5: new names — `ReleaseResult` / `BulkSelectionResult` are NOT widened). */
+export type VisitReleaseResult =
+  | { ok: true; changedCount: number; alsoReleasedCount: number; skipped: SkippedRow[]; warnings: string[] }
+  | { ok: false; error: string };
+export type VisitBulkReleaseResult =
+  | { ok: true; count: number; alsoReleasedCount: number; skipped: SkippedRow[]; warnings: string[] }
+  | { ok: false; error: string };
+
+/**
+ * Releases one test. A test on a combined chemistry report releases the whole
+ * report or nothing (releaseVisitSelection): the portal only serves a report
+ * once every linked test is released.
+ */
 export async function releaseTestAction(
   testRequestId: string,
   visitId: string,
   releaseMedium: ReleaseMedium,
-): Promise<ReleaseResult> {
-  if (!VALID_MEDIA.includes(releaseMedium)) {
+): Promise<VisitReleaseResult> {
+  if (!isReleaseMedium(releaseMedium)) {
     return { ok: false, error: "Invalid release medium." };
   }
   const session = await requireActiveStaff();
@@ -152,90 +164,54 @@ export async function releaseTestAction(
     .is("deleted_at", null)
     .maybeSingle();
   if (!candidate) {
-    revalidatePath(`/staff/visits/${visitId}`);
-    return { ok: false, error: "This result is no longer ready to release." };
+    revalidateReleaseSurfaces(visitId);
+    return { ok: false, error: RELEASE_REFUSAL.notReady };
   }
   if (scopeToAllowedSections([candidate], allowedSections).length === 0) {
-    return {
-      ok: false,
-      error: "This test is outside the sections you can release.",
-    };
+    revalidateReleaseSurfaces(visitId);
+    return { ok: false, error: RELEASE_REFUSAL.section };
   }
 
-  const now = new Date().toISOString();
-
-  const { data: updated, error } = await supabase
-    .from("test_requests")
-    .update({
-      status: "released",
-      released_at: now,
-      released_by: session.user_id,
-      release_medium: releaseMedium,
-    })
-    .eq("id", testRequestId)
-    .eq("visit_id", visitId)
-    .eq("status", "ready_for_release")
-    .select("id");
-
-  if (error) {
-    // The payment-gating and consent-gating triggers raise check_violation
-    // (23514). translatePgError turns both into friendly, gate-specific text.
-    return { ok: false, error: translatePgError(error) };
-  }
-  if (!updated || updated.length === 0) {
-    // 0 rows matched — a concurrent action (e.g. a bulk package release)
-    // already released it. Never audit or notify a write that didn't happen.
-    revalidatePath(`/staff/visits/${visitId}`);
-    return { ok: false, error: "This result is no longer ready to release." };
-  }
-
-  const h = await headers();
-  await audit({
-    actor_id: session.user_id,
-    actor_type: "staff",
-    action: "test_request.released",
-    resource_type: "test_request",
-    resource_id: testRequestId,
-    metadata: { visit_id: visitId, release_medium: releaseMedium },
-    ip_address: h.get("x-forwarded-for")?.split(",")[0]?.trim() ?? null,
-    user_agent: h.get("user-agent"),
+  const out = await releaseVisitSelection({
+    supabase,
+    session,
+    visitId,
+    selectedIds: [testRequestId],
+    medium: releaseMedium,
+    auditMeta: { source: "visit_page", bulk: false, selection: false },
   });
-
-  // Fire-and-forget notification. Failures are audit-logged inside, never
-  // bubble up — release is the source of truth.
-  try {
-    await notifyResultReleased({ testRequestId, visitId, releaseMedium });
-  } catch (err) {
-    await reportError({
-      scope: "notify/result-released",
-      error: err,
-      metadata: { test_request_id: testRequestId },
-    });
-  }
-
-  revalidatePath(`/staff/visits/${visitId}`);
-  return { ok: true };
+  revalidateReleaseSurfaces(visitId);
+  return visitReleaseResult(out);
 }
 
-// Flattens the `services ( name )` embed (Supabase returns an array or a
-// single object depending on the join shape) into the plain service name.
-function serviceName(
-  services: { name: string } | { name: string }[] | null,
-): string | null {
-  const svc = Array.isArray(services) ? services[0] : services;
-  return svc?.name ?? null;
+// A write happened if EITHER list has rows (a pulled-in sibling can release
+// even when the selected row raced away) — then report it, never a bare error.
+function visitReleaseResult(out: VisitReleaseOutcome): VisitReleaseResult {
+  if (out.changedIds.length === 0 && out.alsoReleasedIds.length === 0) {
+    return { ok: false, error: out.skipped[0]?.reason ?? RELEASE_REFUSAL.notReady };
+  }
+  return {
+    ok: true,
+    changedCount: out.changedIds.length,
+    alsoReleasedCount: out.alsoReleasedIds.length,
+    skipped: out.skipped,
+    warnings: out.warnings,
+  };
 }
 
 // Releases every component of a package that's ready (payment + consent
-// gates already cleared per-row) in a single UPDATE. The package header is
-// NOT touched here — migration 0109's Leg A trigger auto-releases it once
-// the last component goes terminal on a paid visit.
+// gates already cleared per-row). The package header is NOT touched here —
+// migration 0109's Leg A trigger auto-releases it once the last component
+// goes terminal on a paid visit. A component on a combined chemistry report
+// pulls in (or is refused with) the rest of that report, exactly like the
+// queue: `changedCount` is what this write released of the package,
+// `alsoReleasedCount` the report members outside it.
 export async function releaseAllReadyComponentsAction(
   headerId: string,
   visitId: string,
   releaseMedium: ReleaseMedium,
-): Promise<ReleaseResult> {
-  if (!VALID_MEDIA.includes(releaseMedium)) {
+): Promise<VisitReleaseResult> {
+  if (!isReleaseMedium(releaseMedium)) {
     return { ok: false, error: "Invalid release medium." };
   }
   const session = await requireActiveStaff();
@@ -266,92 +242,29 @@ export async function releaseAllReadyComponentsAction(
   // (admin/pathologist), `[]` = no sections (reception), otherwise only
   // components whose service section is in the allowed set.
   const allowedSections = sectionsForRole(session.role);
-  let scopedIds: string[] | null = null;
-  if (allowedSections !== null) {
-    const { data: readyRows } = await supabase
-      .from("test_requests")
-      .select("id, services!inner ( section )")
-      .eq("parent_id", headerId)
-      .eq("visit_id", visitId)
-      .eq("status", "ready_for_release")
-      .is("deleted_at", null);
-    scopedIds = (readyRows ?? [])
-      .filter((r) => {
-        const svc = Array.isArray(r.services) ? r.services[0] : r.services;
-        const sect = svc?.section ?? null;
-        return sect != null && allowedSections.includes(sect as never);
-      })
-      .map((r) => r.id);
-    if (scopedIds.length === 0) {
-      revalidatePath(`/staff/visits/${visitId}`);
-      return { ok: false, error: "No components are ready to release." };
-    }
-  }
-
-  const now = new Date().toISOString();
-  // Single user-scoped UPDATE: per-row payment/consent triggers still enforce
-  // the gates; the header then auto-releases via the Leg A trigger. The
-  // parent_id/visit_id/status filters stay on even when section-scoped by
-  // id — they keep the update race-safe against concurrent releases.
-  let updateQuery = supabase
+  const { data: readyRows } = await supabase
     .from("test_requests")
-    .update({
-      status: "released",
-      released_at: now,
-      released_by: session.user_id,
-      release_medium: releaseMedium,
-    })
+    .select("id, services!inner ( section, name )")
     .eq("parent_id", headerId)
     .eq("visit_id", visitId)
-    .eq("status", "ready_for_release");
-  if (scopedIds !== null) {
-    updateQuery = updateQuery.in("id", scopedIds);
-  }
-  const { data: released, error } = await updateQuery.select(
-    "id, services ( name )",
-  );
-
-  if (error) return { ok: false, error: translatePgError(error) };
-  if (!released || released.length === 0) {
-    revalidatePath(`/staff/visits/${visitId}`);
+    .eq("status", "ready_for_release")
+    .is("deleted_at", null);
+  const componentIds = scopeToAllowedSections(readyRows ?? [], allowedSections).map((r) => r.id);
+  if (componentIds.length === 0) {
+    revalidateReleaseSurfaces(visitId);
     return { ok: false, error: "No components are ready to release." };
   }
 
-  const h = await headers();
-  const ip = h.get("x-forwarded-for")?.split(",")[0]?.trim() ?? null;
-  const ua = h.get("user-agent");
-  // One audit row per released component (per-release convention), bulk-tagged.
-  for (const row of released) {
-    await audit({
-      actor_id: session.user_id,
-      actor_type: "staff",
-      action: "test_request.released",
-      resource_type: "test_request",
-      resource_id: row.id,
-      metadata: { visit_id: visitId, release_medium: releaseMedium, bulk: true },
-      ip_address: ip,
-      user_agent: ua,
-    });
-  }
-
-  // S2: ONE consolidated notification for the whole bulk action.
-  try {
-    await notifyResultsReleasedBulk({
-      visitId,
-      testRequestIds: released.map((r) => r.id),
-      testNames: released.map((r) => serviceName(r.services) ?? "Result"),
-      releaseMedium,
-    });
-  } catch (err) {
-    await reportError({
-      scope: "notify/result-released-bulk",
-      error: err,
-      metadata: { visit_id: visitId, header_id: headerId },
-    });
-  }
-
-  revalidatePath(`/staff/visits/${visitId}`);
-  return { ok: true };
+  const out = await releaseVisitSelection({
+    supabase,
+    session,
+    visitId,
+    selectedIds: componentIds,
+    medium: releaseMedium,
+    auditMeta: { source: "visit_page", bulk: true, package_header_id: headerId },
+  });
+  revalidateReleaseSurfaces(visitId);
+  return visitReleaseResult(out);
 }
 
 // A3 (go-live): admin-only escape hatch for a package header stuck at
@@ -425,7 +338,7 @@ export async function releasePackageHeaderAction(
   if (!updated || updated.length === 0) {
     // A concurrent action (or the Leg A trigger itself, on the read above)
     // already released it. Never audit a write that didn't happen.
-    revalidatePath(`/staff/visits/${visitId}`);
+    revalidateReleaseSurfaces(visitId);
     return { ok: false, error: "This package is no longer ready to release." };
   }
 
@@ -445,24 +358,24 @@ export async function releasePackageHeaderAction(
     user_agent: h.get("user-agent"),
   });
 
-  revalidatePath(`/staff/visits/${visitId}`);
+  revalidateReleaseSurfaces(visitId);
   return { ok: true };
 }
 
-// Releases a hand-picked selection of ready components/standalone tests in a
-// single UPDATE. Mirrors releaseAllReadyComponentsAction's hardening but
-// operates over an arbitrary caller-supplied id list instead of "all
-// components under one header." Package headers are never included in the
-// selection (is_package_header = false is part of the pre-SELECT filter) —
-// if a selection happens to complete a package, migration 0109's Leg A
-// trigger auto-releases the header exactly as it does for the existing bulk
-// action.
+// Releases a hand-picked selection of ready components/standalone tests.
+// Package headers are never included in the selection (is_package_header =
+// false is part of the pre-SELECT filter) — if a selection happens to
+// complete a package, migration 0109's Leg A trigger auto-releases the header
+// exactly as it does for the package bulk action. A test on a combined
+// chemistry report releases with the rest of its report or is skipped with
+// the reason (releaseVisitSelection); ids that were not ready candidates are
+// skipped too, so the caller can say why fewer were released.
 export async function releaseSelectedAction(
   visitId: string,
   testRequestIds: string[],
   releaseMedium: ReleaseMedium,
-): Promise<BulkSelectionResult> {
-  if (!VALID_MEDIA.includes(releaseMedium)) {
+): Promise<VisitBulkReleaseResult> {
+  if (!isReleaseMedium(releaseMedium)) {
     return { ok: false, error: "Invalid release medium." };
   }
   if (testRequestIds.length === 0) {
@@ -481,89 +394,58 @@ export async function releaseSelectedAction(
   const visitDeleted = await refuseIfVisitDeleted(supabase, visitId);
   if (visitDeleted) return visitDeleted;
 
-  const allowedSections = sectionsForRole(session.role);
-  const { data: candidates } = await supabase
+  // Section-scoped candidates (RLS is role-only): live, ready, non-header
+  // lines of this visit that this role may release (releaseRows also refuses
+  // doctor lines; they never reach ready_for_release).
+  const { data: readyRows, error: readErr } = await supabase
     .from("test_requests")
-    .select("id, services!inner ( section, name )")
+    .select("id, services!inner ( section, name, kind )")
     .in("id", testRequestIds)
     .eq("visit_id", visitId)
     .eq("status", "ready_for_release")
     .eq("is_package_header", false)
     .is("deleted_at", null);
-
-  const scoped = scopeToAllowedSections(candidates ?? [], allowedSections);
-  if (scoped.length === 0) {
-    revalidatePath(`/staff/visits/${visitId}`);
+  if (readErr) {
+    revalidateReleaseSurfaces(visitId);
+    return { ok: false, error: translatePgError(readErr) };
+  }
+  const scoped = new Set(
+    scopeToAllowedSections(readyRows ?? [], sectionsForRole(session.role)).map((r) => r.id),
+  );
+  if (scoped.size === 0) {
+    revalidateReleaseSurfaces(visitId);
     return { ok: false, error: "None of the selected tests are ready to release." };
   }
-  const scopedIds = scoped.map((r) => r.id);
+  const requested = Array.from(new Set(testRequestIds));
+  const scopedIds = requested.filter((id) => scoped.has(id));
 
-  const now = new Date().toISOString();
-  const { data: released, error } = await supabase
-    .from("test_requests")
-    .update({
-      status: "released",
-      released_at: now,
-      released_by: session.user_id,
-      release_medium: releaseMedium,
-    })
-    .in("id", scopedIds)
-    .eq("visit_id", visitId)
-    .eq("status", "ready_for_release")
-    .select("id, services ( name )");
+  const out = await releaseVisitSelection({
+    supabase,
+    session,
+    visitId,
+    selectedIds: scopedIds,
+    medium: releaseMedium,
+    auditMeta: { source: "visit_page", bulk: true, selection: true },
+  });
+  revalidateReleaseSurfaces(visitId);
 
-  if (error) return { ok: false, error: translatePgError(error) };
-  if (!released || released.length === 0) {
-    revalidatePath(`/staff/visits/${visitId}`);
-    return { ok: false, error: "None of the selected tests are ready to release." };
+  // Ids the caller sent that were not candidates, merged into request order.
+  const reasonOf = new Map(out.skipped.map((s) => [s.id, s.reason]));
+  const skipped: SkippedRow[] = [];
+  for (const id of requested) {
+    if (!scoped.has(id)) skipped.push({ id, reason: RELEASE_REFUSAL.notReady });
+    else if (reasonOf.has(id)) skipped.push({ id, reason: reasonOf.get(id)! });
   }
-
-  const h = await headers();
-  const ip = h.get("x-forwarded-for")?.split(",")[0]?.trim() ?? null;
-  const ua = h.get("user-agent");
-  for (const row of released) {
-    await audit({
-      actor_id: session.user_id,
-      actor_type: "staff",
-      action: "test_request.released",
-      resource_type: "test_request",
-      resource_id: row.id,
-      metadata: {
-        visit_id: visitId,
-        release_medium: releaseMedium,
-        bulk: true,
-        selection: true,
-      },
-      ip_address: ip,
-      user_agent: ua,
-    });
+  if (out.changedIds.length === 0 && out.alsoReleasedIds.length === 0) {
+    return { ok: false, error: skipped[0]?.reason ?? RELEASE_REFUSAL.notReady };
   }
-
-  try {
-    if (released.length === 1) {
-      await notifyResultReleased({
-        testRequestId: released[0].id,
-        visitId,
-        releaseMedium,
-      });
-    } else {
-      await notifyResultsReleasedBulk({
-        visitId,
-        testRequestIds: released.map((r) => r.id),
-        testNames: released.map((r) => serviceName(r.services) ?? "Result"),
-        releaseMedium,
-      });
-    }
-  } catch (err) {
-    await reportError({
-      scope: "notify/result-released-selection",
-      error: err,
-      metadata: { visit_id: visitId, test_request_ids: released.map((r) => r.id) },
-    });
-  }
-
-  revalidatePath(`/staff/visits/${visitId}`);
-  return { ok: true, count: released.length };
+  return {
+    ok: true,
+    count: out.changedIds.length,
+    alsoReleasedCount: out.alsoReleasedIds.length,
+    skipped,
+    warnings: out.warnings,
+  };
 }
 
 // Undoes a hand-picked selection of released rows back to ready_for_release.
@@ -602,7 +484,7 @@ export async function undoReleaseSelectedAction(
     trimmedReason,
     { bulk: true },
   );
-  revalidatePath(`/staff/visits/${visitId}`);
+  revalidateReleaseSurfaces(visitId);
   return result.ok ? { ok: true, count: result.undoneIds.length } : result;
 }
 
