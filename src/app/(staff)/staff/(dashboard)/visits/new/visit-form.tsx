@@ -21,6 +21,12 @@ import {
 } from "@/components/forms/stable-fields";
 import { formatPhp } from "@/lib/marketing/format";
 import {
+  PUBLIC_REFERRAL_QUESTION,
+  REFERRAL_SOURCE_IDS,
+  REFERRAL_SOURCE_LABEL,
+  type ReferralSourceId,
+} from "@/lib/patients/referral-sources";
+import {
   defaultClinicFee,
   doctorLineBase,
   zeroClinicFeeReason,
@@ -54,6 +60,7 @@ interface PatientLite {
   drm_id: string;
   first_name: string;
   last_name: string;
+  referral_source: string | null;
 }
 
 interface HmoProviderLite {
@@ -154,6 +161,10 @@ export function VisitForm({
   const router = useRouter();
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [doctorHmoProviderId, setDoctorHmoProviderId] = useState<string>("");
+  // Reset-safe like every other select in this form (#217): a failed submit
+  // (e.g. an invalid consult fee) must not snap reception's answer back to
+  // "— Skip —" via React 19's uncontrolled-field reset.
+  const [referralSource, setReferralSource] = useState<ReferralSourceId | "">("");
   const [labHmoProviderId, setLabHmoProviderId] = useState<string>("");
   const [lineState, setLineState] = useState<Record<string, LineState>>({});
   const [attendingPhysicianId, setAttendingPhysicianId] = useState<string>("");
@@ -1010,6 +1021,24 @@ export function VisitForm({
             })}
           </div>
         </fieldset>
+      ) : null}
+
+      {patient.referral_source === null ? (
+        <label className="block text-sm">
+          <span className="font-bold">{PUBLIC_REFERRAL_QUESTION}</span>{" "}
+          <span className="text-[color:var(--color-brand-text-soft)]">(optional — ask the patient; skip if they don&apos;t say)</span>
+          <ResetSafeSelect
+            name="referral_source"
+            value={referralSource}
+            onChange={(e) => setReferralSource(e.target.value as ReferralSourceId | "")}
+            className="mt-1 block w-full rounded border px-2 py-2"
+          >
+            <option value="">— Skip —</option>
+            {REFERRAL_SOURCE_IDS.map((id) => (
+              <option key={id} value={id}>{REFERRAL_SOURCE_LABEL[id]}</option>
+            ))}
+          </ResetSafeSelect>
+        </label>
       ) : null}
 
       <div className="grid gap-3 sm:grid-cols-2">

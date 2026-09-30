@@ -41,6 +41,7 @@ type DashboardData = {
   upcoming_recurring: UpcomingTemplate[];
   top_vendors_by_outstanding: TopVendor[];
   wt_accumulated_this_month_php: number;
+  voided: { bills: number; payments: number };
 };
 
 export function APDashboardClient({ data }: { data: DashboardData }) {
@@ -199,6 +200,44 @@ export function APDashboardClient({ data }: { data: DashboardData }) {
           </p>
         </CardContent>
       </Card>
+
+      {/* Voided — the lists hide these by default, so say they exist */}
+      {(data.voided.bills > 0 || data.voided.payments > 0) && (
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="font-heading text-lg font-bold">Voided entries</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-2 text-sm">
+            <p>
+              {data.voided.bills} voided bill{data.voided.bills !== 1 ? "s" : ""} ·{" "}
+              {data.voided.payments} voided payment{data.voided.payments !== 1 ? "s" : ""}
+            </p>
+            <p className="text-xs text-[color:var(--color-brand-text-soft)]">
+              Kept for the record; each void already posted its reversal, so none of these count
+              in the totals above. The Vendor Bills and Bill Payments lists hide them unless you
+              tick <b>Show voided</b>.
+            </p>
+            <div className="flex flex-wrap gap-4 pt-1">
+              {data.voided.bills > 0 && (
+                <Link
+                  href="/staff/admin/accounting/ap/bills?status=voided"
+                  className="text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-navy)] hover:underline"
+                >
+                  View voided bills →
+                </Link>
+              )}
+              {data.voided.payments > 0 && (
+                <Link
+                  href="/staff/admin/accounting/ap/payments?voided=1"
+                  className="text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-navy)] hover:underline"
+                >
+                  View voided payments →
+                </Link>
+              )}
+            </div>
+          </CardContent>
+        </Card>
+      )}
     </div>
   );
 }

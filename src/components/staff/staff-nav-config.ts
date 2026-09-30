@@ -127,9 +127,10 @@ export const STAFF_NAV: StaffNavSection[] = [
     ],
   },
   {
-    // Patients first, then the Reception Queue (owner request 2026-09-24).
-    // The old Billing section's items follow below a divider (merged in
-    // 2026-09-24): Visit Records, Cash Drawer.
+    // Patients, then Visit Records, then the Reception Queue (owner request
+    // 2026-09-28: Visit Records moved up from below the queue). Cash Drawer
+    // and Result Follow-ups follow below a divider (the old Billing section
+    // was merged in 2026-09-24).
     heading: "Front Desk",
     items: [
       {
@@ -145,16 +146,8 @@ export const STAFF_NAV: StaffNavSection[] = [
         roles: ["reception", "admin"],
       },
       {
-        href: "/staff/visits/queue",
-        quicklink: {"reception":{"order":5,"group":"Front Desk"}},
-        label: ROUTE_NAME["/staff/visits/queue"],
-        description: "Today's live front-desk worklist in three stages: Waiting for payment (record the payment), Processing (lab/imaging still working on results) and Completed (paid, nothing outstanding — print the patient's billing). Updates on its own as payments come in and tests finish.",
-        roles: ["reception", "admin"],
-      },
-      {
         href: "/staff/visits",
-        quicklink: {"reception":{"order":6,"group":"Front Desk"}},
-        dividerBefore: true,
+        quicklink: {"reception":{"order":5,"group":"Front Desk"}},
         label: ROUTE_NAME["/staff/visits"],
         // /staff/visits is the visit records page (every visit ever); each
         // visit opens to its printable A5 billing. "Visit Records" is the one
@@ -169,8 +162,16 @@ export const STAFF_NAV: StaffNavSection[] = [
         roles: ["reception", "admin"],
       },
       {
+        href: "/staff/visits/queue",
+        quicklink: {"reception":{"order":6,"group":"Front Desk"}},
+        label: ROUTE_NAME["/staff/visits/queue"],
+        description: "Today's live front-desk worklist in three stages: Waiting for payment (record the payment), Processing (lab/imaging still working on results) and Completed (paid, nothing outstanding — print the patient's billing). Updates on its own as payments come in and tests finish.",
+        roles: ["reception", "admin"],
+      },
+      {
         href: "/staff/payments/cash-drawer",
         quicklink: {"reception":{"order":7,"group":"Front Desk"}},
+        dividerBefore: true,
         // Dashboard action/view owned here without adding a sidebar row.
         shortcuts: [{ href: "/staff/payments/petty-cash", label: ROUTE_NAME["/staff/payments/petty-cash"], roles: ["reception","admin"], quicklink: {"reception":{"order":8,"group":"Front Desk"}} }],
         // An umbrella: "Cash Drawer" names the whole till, while the landing tab

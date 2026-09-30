@@ -6,6 +6,7 @@ import { Card } from "@/components/ui/card";
 import { buildMonthlyPnl } from "@/lib/operations/trends";
 import { fetchAllRows, REPORT_EXPORT_MAX_ROWS } from "@/lib/reports/paging";
 import { PnlTrendChart } from "./_components/pnl-trend-chart";
+import { RevenueTrend } from "@/components/staff/revenue-trend";
 
 interface TotalsRow {
   business_date: string | null;
@@ -87,6 +88,21 @@ export default async function OperationsTrendsPage() {
       ) : null}
 
       <PnlTrendChart data={data} />
+
+      <section aria-labelledby="revenue-by-class-trend" className="rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white p-4">
+        <h2
+          id="revenue-by-class-trend"
+          className="font-heading text-lg font-bold text-[color:var(--color-brand-navy)]"
+        >
+          Revenue by classification
+        </h2>
+        <p className="mt-0.5 text-xs text-[color:var(--color-brand-text-soft)]">
+          Billed lines by visit date, as on Visit Records. The gross profit above
+          comes from released work after discounts, so the two can differ. Click a
+          month to open its visits.
+        </p>
+        <RevenueTrend />
+      </section>
     </div>
   );
 }

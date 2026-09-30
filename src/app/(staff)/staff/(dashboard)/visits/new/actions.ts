@@ -16,6 +16,7 @@ import { isConsultOnlyOrder } from "@/lib/visits/receipt-policy";
 import { isSeniorPwdEligible } from "@/lib/pricing/senior";
 import { lineDiscount } from "@/lib/pricing/discounts";
 import { assertPatientActive } from "@/lib/patients/require-active";
+import { parseReferralAnswer } from "@/lib/patients/referral-sources";
 import {
   completeAppointmentFromVisitAction,
   completeArrivedAppointmentsForPatientAction,
@@ -440,6 +441,36 @@ export async function createVisitAction(
       ip_address: ip,
       user_agent: ua,
     });
+  }
+
+  // Patient Sources (spec §3.7): reception answered "How did you hear about
+  // us?" for a patient with no source yet. Conditional on it still being empty,
+  // so a value set meanwhile is never overwritten. RLS client with no
+  // app.referral_origin → 0170's trigger records origin 'staff'. Optional:
+  // a failure here never undoes the visit.
+  const referralAnswer = parseReferralAnswer(formData.get("referral_source"));
+  if (referralAnswer) {
+    const { data: sourced, error: sourceErr } = await supabase
+      .from("patients")
+      .update({ referral_source: referralAnswer })
+      .eq("id", parsed.data.patient_id)
+      .is("referral_source", null)
+      .select("id");
+    if (sourceErr) {
+      console.error("[visits/new] referral source not saved", sourceErr.code);
+    } else if (sourced && sourced.length > 0) {
+      await audit({
+        actor_id: session.user_id,
+        actor_type: "staff",
+        patient_id: parsed.data.patient_id,
+        action: "patient.referral_source_recorded",
+        resource_type: "patient",
+        resource_id: parsed.data.patient_id,
+        metadata: { referral_source: referralAnswer, via: "new_visit" },
+        ip_address: ip,
+        user_agent: ua,
+      });
+    }
   }
 
   for (const c of created) {

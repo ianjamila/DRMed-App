@@ -94,6 +94,11 @@ export function isReferralSource(value: unknown): value is ReferralSourceId {
   return typeof value === "string" && (REFERRAL_SOURCE_IDS as ReadonlyArray<string>).includes(value);
 }
 
+/** A form's optional "How did you hear about us?" answer: a known id, or null for skipped/unknown. */
+export function parseReferralAnswer(value: FormDataEntryValue | null | undefined): ReferralSourceId | null {
+  return typeof value === "string" && isReferralSource(value) ? value : null;
+}
+
 // Staff label for a stored value. An id this list does not know (a row added
 // straight to the lookup) is shown raw rather than hidden; NULL is null so the
 // caller picks its own "—" / "Not recorded".

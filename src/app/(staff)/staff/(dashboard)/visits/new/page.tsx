@@ -46,7 +46,7 @@ export default async function NewVisitPage({ searchParams }: Props) {
     { data: physicians },
     { data: discountTypes },
   ] = await Promise.all([
-    activePatients(supabase.from("patients").select("id, drm_id, first_name, last_name"))
+    activePatients(supabase.from("patients").select("id, drm_id, first_name, last_name, referral_source"))
       .eq("id", patient_id)
       .maybeSingle(),
     supabase
