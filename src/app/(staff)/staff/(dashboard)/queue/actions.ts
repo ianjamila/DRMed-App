@@ -35,13 +35,16 @@ import {
   UNDO_EXPIRED,
   groupUndoSteps,
   planQueueUndo,
+  holderByMember,
   sameInstant,
+  unclaimStepStillHeld,
   type BulkUndoResult,
   type QueueUndoStep,
 } from "@/lib/ui/bulk-undo";
 
 // Shared shape for the fresh re-read after a failed panel-write compensation
-// (Undo reclaim and restore — the only two branches that call it): whatever is STILL in the state this call put
+// (Undo reclaim — the only branch that calls it now that un-claiming a panel
+// is atomic in unclaim_panel_members): whatever is STILL in the state this call put
 // it in must be audited, never dropped silently (P1). Takes the rows the
 // compensation attempt targeted (not just their ids) so a failed
 // verification read still has enough (visit_id) to audit them by (finding 7).
@@ -454,8 +457,13 @@ export async function reassignTestAction(
 // own bulk Claim / Unclaim / Delete for 10 minutes, read back from that
 // call's audit rows (bulk_batch_id). Each test is reversed only while it is
 // still exactly as the action left it; a chemistry panel reverses all-or-
-// nothing (compensating a partial write like claimTestsAction does).
-//   claimed   → unclaim  (still in progress, held by the caller, no result yet)
+// nothing. Un-claiming a panel is atomic in the database
+// (unclaim_panel_members, 0191: every member or none, P0077 on a lost race),
+// so it needs no compensation. Reclaim and restore are still per-row
+// conditional writes: a partial write is compensated back, and anything the
+// compensation could not revert is audited (auditLeftoverPanelRows).
+//   claimed   → unclaim  (still in progress, held by the caller, at the exact
+//                         started_at the claim stamped)
 //   unclaimed → reclaim  (still requested and unheld; the old holder is still
 //                         an active lab worker allowed that section)
 //   deleted   → restore  (restoreTestRequestsForVisit — same rules as Restore)
@@ -522,39 +530,61 @@ export async function undoBulkQueueAction(input: unknown): Promise<BulkUndoResul
           continue;
         }
         const ids = group.steps.map((s) => s.id);
-        const panel = group.steps[0]!.panelKey !== null;
-        // The exact started_at THIS batch's claim wrote — the write below
-        // predicates on it so it can only reverse THAT claim, never a
-        // same-holder reclaim that happened since (P1: exact predicates).
-        const expectedStartedAtOf = new Map(group.steps.map((s) => [s.id, s.startedAt]));
+        const panelKey = group.steps[0]!.panelKey;
+        const stepOf = new Map(group.steps.map((s) => [s.id, s]));
 
+        // ONE read validates every member. unclaimStepStillHeld pins the exact
+        // started_at THIS batch's claim wrote, so Undo can only reverse THAT
+        // claim, never a same-holder reclaim that happened since (P1: exact
+        // predicates) — and a step with a null startedAt (a claim whose
+        // read-back failed: outcome_unverified) is never eligible.
         const { data: before, error: readError } = await supabase
           .from("test_requests")
-          .select("id, status, assigned_to, started_at, deleted_at, visits!inner ( deleted_at )")
+          .select("id, visit_id, status, assigned_to, started_at, deleted_at, visits!inner ( deleted_at )")
           .in("id", ids);
         const beforeRows = before ?? [];
         const eligible =
           !readError &&
           beforeRows.length === ids.length &&
           beforeRows.every((r) => {
-            const expectedStartedAt = expectedStartedAtOf.get(r.id) ?? null;
-            return (
-              r.status === "in_progress" &&
-              r.assigned_to === session.user_id &&
-              r.deleted_at === null &&
-              r.visits.deleted_at === null &&
-              expectedStartedAt !== null &&
-              sameInstant(r.started_at, expectedStartedAt)
-            );
+            const step = stepOf.get(r.id);
+            return step !== undefined && unclaimStepStillHeld(r, step, session.user_id);
           });
         if (!eligible) {
           notRestored.push({ id: group.key, reason: UNCLAIM_UNDO_MOVED_ON });
           continue;
         }
-        // All rows just proved to share one recorded started_at (they came
-        // from one claim call) — safe as a single predicate on the bulk write.
-        const startedAtValue = expectedStartedAtOf.get(ids[0]!)!;
 
+        if (panelKey !== null) {
+          // A chemistry panel goes back through unclaim_panel_members (0191):
+          // one statement, every member or none (P0077) — so there is nothing
+          // to compensate, and a lost race changes nothing.
+          const visitOf = new Map(beforeRows.map((r) => [r.id, r.visit_id]));
+          const result = await unclaimPanelMembers(session, supabase, {
+            members: ids.map((id) => ({ id, holder: session.user_id })),
+            visitIdOf: (id) => stepOf.get(id)?.visitId ?? visitOf.get(id) ?? null,
+            reason: "Undo of a bulk claim",
+            selfService: session.role !== "admin",
+            auditExtra: {
+              via: BULK_UNDO_VIA,
+              undo_of_batch: parsed.data.batchId,
+              bulk_batch_id: undoBatchId,
+              panel_key: panelKey,
+            },
+          });
+          if (!result.ok) {
+            notRestored.push({ id: group.key, reason: result.error });
+            continue;
+          }
+          for (const id of ids) touchedTestPages.add(id);
+          trackPanel(group.key);
+          restoredIds.push(group.key);
+          anyChanged = true;
+          continue;
+        }
+
+        // A single row: today's exact-predicate write.
+        const startedAtValue = stepOf.get(ids[0]!)!.startedAt!;
         const { data, error } = await supabase
           .from("test_requests")
           .update({ status: "requested", assigned_to: null, started_at: null })
@@ -565,71 +595,8 @@ export async function undoBulkQueueAction(input: unknown): Promise<BulkUndoResul
           .is("deleted_at", null)
           .select("id, visit_id");
         const got = error ? [] : (data ?? []);
-        let leftoverIds: string[] = [];
-        if (error || got.length !== ids.length) {
-          if (got.length > 0) {
-            let compensatedCount = 0;
-            let compensateError: unknown = null;
-            for (const row of got) {
-              const { data: restoredRow, error: cErr } = await supabase
-                .from("test_requests")
-                .update({
-                  status: "in_progress",
-                  assigned_to: session.user_id,
-                  started_at: expectedStartedAtOf.get(row.id) ?? null,
-                })
-                .eq("id", row.id)
-                .eq("status", "requested")
-                .is("assigned_to", null)
-                .select("id");
-              if (cErr) compensateError ??= cErr;
-              else if ((restoredRow ?? []).length > 0) compensatedCount += 1;
-            }
-            if (compensateError || compensatedCount !== got.length) {
-              console.error("bulk undo unclaim compensation failed", {
-                key: group.key,
-                ids: got.map((r) => r.id),
-                error: compensateError ?? `expected to restore ${got.length} rows, restored ${compensatedCount}`,
-              });
-            }
-            // Compensation didn't (fully) revert — anything still exactly as
-            // THIS Undo left it (requested, unassigned) really did get
-            // unclaimed and must be audited, never dropped silently (P1).
-            leftoverIds = await auditLeftoverPanelRows(
-              supabase,
-              got,
-              (r) => r.status === "requested" && r.assigned_to === null,
-              (row) => ({
-                actor_id: session.user_id,
-                actor_type: "staff",
-                action: "test_request.unclaimed",
-                resource_type: "test_request",
-                resource_id: row.id,
-                metadata: {
-                  visit_id: row.visit_id,
-                  previous_assignee: session.user_id,
-                  reason: "Undo of a bulk claim",
-                  self_service: true,
-                  via: BULK_UNDO_VIA,
-                  undo_of_batch: parsed.data.batchId,
-                  bulk_batch_id: undoBatchId,
-                  ...(panel ? { panel_key: group.key } : {}),
-                  partial_panel: true,
-                },
-                ip_address: ip,
-                user_agent: ua,
-              }),
-            );
-            for (const id of leftoverIds) touchedTestPages.add(id);
-            if (leftoverIds.length > 0) {
-              if (panel) trackPanel(group.key);
-              anyChanged = true;
-            }
-          }
-          notRestored.push({
-            id: group.key,
-            reason: leftoverIds.length > 0 ? PARTIAL_PANEL_LEFTOVER_REASON : UNCLAIM_UNDO_MOVED_ON,
-          });
+        if (got.length !== ids.length) {
+          notRestored.push({ id: group.key, reason: UNCLAIM_UNDO_MOVED_ON });
           continue;
         }
         for (const row of got) {
@@ -647,14 +614,12 @@ export async function undoBulkQueueAction(input: unknown): Promise<BulkUndoResul
               via: BULK_UNDO_VIA,
               undo_of_batch: parsed.data.batchId,
               bulk_batch_id: undoBatchId,
-              ...(panel ? { panel_key: group.key } : {}),
             },
             ip_address: ip,
             user_agent: ua,
           });
           touchedTestPages.add(row.id);
         }
-        if (panel) trackPanel(group.key);
         restoredIds.push(group.key);
         anyChanged = true;
       }
@@ -673,20 +638,25 @@ export async function undoBulkQueueAction(input: unknown): Promise<BulkUndoResul
           continue;
         }
         const steps = group.steps;
-        const holder = steps[0]!.holder;
         const panel = steps[0]!.panelKey !== null;
+        // Each member goes back to ITS OWN holder: an admin's hand-back of a
+        // panel split between two people recorded a previous_assignee per
+        // member, so the members must not all land under the first one's name.
+        const holderOf = holderByMember(steps);
+        const distinctHolders = [...new Set(holderOf.values())];
 
-        const { data: holderProfile } = await supabase
+        const { data: holderProfileRows } = await supabase
           .from("staff_profiles")
           .select("id, role, is_active, deleted_at")
-          .eq("id", holder)
-          .maybeSingle();
-        if (
-          !holderProfile ||
-          !holderProfile.is_active ||
-          holderProfile.deleted_at !== null ||
-          !(LAB_CAPABLE_ROLES as readonly string[]).includes(holderProfile.role)
-        ) {
+          .in("id", distinctHolders);
+        const holderProfileOf = new Map((holderProfileRows ?? []).map((p) => [p.id, p]));
+        const everyHolderUsable = distinctHolders.every((h) => {
+          const p = holderProfileOf.get(h);
+          return (
+            !!p && p.is_active && p.deleted_at === null && (LAB_CAPABLE_ROLES as readonly string[]).includes(p.role)
+          );
+        });
+        if (!everyHolderUsable) {
           notRestored.push({ id: group.key, reason: RECLAIM_HOLDER_UNUSABLE });
           continue;
         }
@@ -709,7 +679,7 @@ export async function undoBulkQueueAction(input: unknown): Promise<BulkUndoResul
               r.assigned_to === null &&
               r.deleted_at === null &&
               r.visits.deleted_at === null &&
-              canClaimSection(holderProfile.role as StaffSession["role"], r.services.section),
+              canClaimSection(holderProfileOf.get(holderOf.get(r.id)!)!.role as StaffSession["role"], r.services.section),
           );
         if (!structurallyEligible) {
           notRestored.push({ id: group.key, reason: RECLAIM_STATE_MOVED });
@@ -732,7 +702,7 @@ export async function undoBulkQueueAction(input: unknown): Promise<BulkUndoResul
             .from("test_requests")
             .update({
               status: "in_progress",
-              assigned_to: holder,
+              assigned_to: holderOf.get(id)!,
               started_at: startedAtOf.get(id) ?? new Date().toISOString(),
             })
             .eq("id", id)
@@ -755,7 +725,7 @@ export async function undoBulkQueueAction(input: unknown): Promise<BulkUndoResul
                 .update({ status: "requested", assigned_to: null, started_at: null })
                 .eq("id", row.id)
                 .eq("status", "in_progress")
-                .eq("assigned_to", holder)
+                .eq("assigned_to", holderOf.get(row.id)!)
                 .select("id");
               if (cErr) compensateError ??= cErr;
               else if ((reverted ?? []).length > 0) compensatedCount += 1;
@@ -773,7 +743,7 @@ export async function undoBulkQueueAction(input: unknown): Promise<BulkUndoResul
             leftoverIds = await auditLeftoverPanelRows(
               supabase,
               got,
-              (r) => r.status === "in_progress" && r.assigned_to === holder,
+              (r) => r.status === "in_progress" && r.assigned_to === holderOf.get(r.id),
               (row) => ({
                 actor_id: session.user_id,
                 actor_type: "staff",
@@ -783,7 +753,7 @@ export async function undoBulkQueueAction(input: unknown): Promise<BulkUndoResul
                 metadata: {
                   visit_id: row.visit_id,
                   from: null,
-                  to: holder,
+                  to: holderOf.get(row.id) ?? null,
                   via: BULK_UNDO_VIA,
                   undo_of_batch: parsed.data.batchId,
                   bulk_batch_id: undoBatchId,
@@ -815,7 +785,7 @@ export async function undoBulkQueueAction(input: unknown): Promise<BulkUndoResul
             metadata: {
               visit_id: row.visit_id,
               from: null,
-              to: holder,
+              to: holderOf.get(row.id) ?? null,
               via: BULK_UNDO_VIA,
               undo_of_batch: parsed.data.batchId,
               bulk_batch_id: undoBatchId,

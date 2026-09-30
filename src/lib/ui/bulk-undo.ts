@@ -147,6 +147,45 @@ export function groupUndoSteps(steps: readonly QueueUndoStep[]): Array<{ key: st
 }
 
 /**
+ * Is a claimed test still EXACTLY as the bulk claim left it: in progress,
+ * held by `holderId`, live (not deleted, visit not deleted), and carrying the
+ * very started_at that claim stamped? A step with a null startedAt (a claim
+ * whose read-back failed: metadata `outcome_unverified`, or an audit row from
+ * before the exact-predicate fix) can never prove that, so it is never
+ * eligible — Undo must not un-claim on a predicate that could match something
+ * else (P1: exact predicates).
+ */
+export function unclaimStepStillHeld(
+  row: {
+    status: string;
+    assigned_to: string | null;
+    started_at: string | null;
+    deleted_at: string | null;
+    visits: { deleted_at: string | null };
+  },
+  step: { startedAt: string | null },
+  holderId: string,
+): boolean {
+  return (
+    row.status === "in_progress" &&
+    row.assigned_to === holderId &&
+    row.deleted_at === null &&
+    row.visits.deleted_at === null &&
+    step.startedAt !== null &&
+    sameInstant(row.started_at, step.startedAt)
+  );
+}
+
+/**
+ * Each reclaim step's OWN holder. An admin's hand-back of a panel split
+ * between two people leaves per-member previous_assignee values; Undo puts
+ * every member back under its own holder, never the first member's.
+ */
+export function holderByMember(steps: readonly { id: string; holder: string }[]): Map<string, string> {
+  return new Map(steps.map((s) => [s.id, s.holder]));
+}
+
+/**
  * The message a bulk bar shows once an Undo finishes: how many rows came
  * back, and every row that did not, named with why. Mirrors
  * `formatBulkOutcome`'s "every skipped row is named" rule, for the reverse

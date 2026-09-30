@@ -3,10 +3,12 @@ import {
   UNDO_WINDOW_MS,
   bucketAppointmentUndo,
   groupUndoSteps,
+  holderByMember,
   planAppointmentUndo,
   planHistoricHmoUndo,
   planQueueUndo,
   sameInstant,
+  unclaimStepStillHeld,
   undoOutcomeMessage,
   undoWindowStartIso,
 } from "./bulk-undo";
@@ -144,6 +146,116 @@ describe("planQueueUndo", () => {
       [P, ["t1", "t2"]],
       ["t3", ["t3"]],
     ]);
+  });
+});
+
+// The per-member audit rows a panel bulk write leaves (Task 3): one row per
+// member, all sharing panel_key + bulk_batch_id.
+describe("planQueueUndo over a panel bulk write's per-member rows", () => {
+  const P = "panel:v1:g1";
+  const B = "batch-1";
+  it("three claimed members with one panel_key become ONE group of three unclaim steps carrying their started_at", () => {
+    const claimed = (id: string, startedAt: string | null) => ({
+      resource_id: id,
+      action: "test_request.claimed",
+      metadata: {
+        visit_id: "v1",
+        started_at: startedAt,
+        panel_key: P,
+        bulk_batch_id: B,
+        bulk_batch_size: 3,
+        grouped: true,
+        report_group_id: "g1",
+      },
+    });
+    const groups = groupUndoSteps(
+      planQueueUndo([
+        claimed("t1", "2026-09-30T01:00:00.000Z"),
+        claimed("t2", "2026-09-30T01:00:00.000Z"),
+        claimed("t3", "2026-09-30T01:00:00.000Z"),
+      ]),
+    );
+    expect(groups).toHaveLength(1);
+    expect(groups[0]!.key).toBe(P);
+    expect(groups[0]!.steps).toEqual(
+      ["t1", "t2", "t3"].map((id) => ({
+        kind: "unclaim",
+        id,
+        visitId: "v1",
+        panelKey: P,
+        startedAt: "2026-09-30T01:00:00.000Z",
+      })),
+    );
+  });
+
+  it("three unclaimed members with TWO different previous_assignee values become one group of three reclaim steps, each with its own holder", () => {
+    const unclaimed = (id: string, holder: string) => ({
+      resource_id: id,
+      action: "test_request.unclaimed",
+      metadata: {
+        visit_id: "v1",
+        previous_assignee: holder,
+        previous_started_at: "2026-09-30T00:50:00.000Z",
+        reason: "x",
+        self_service: false,
+        grouped: true,
+        panel_key: P,
+        bulk_batch_id: B,
+        bulk_batch_size: 3,
+      },
+    });
+    const groups = groupUndoSteps(planQueueUndo([unclaimed("t1", "uA"), unclaimed("t2", "uA"), unclaimed("t3", "uB")]));
+    expect(groups).toHaveLength(1);
+    const steps = groups[0]!.steps;
+    expect(steps.map((s) => s.kind)).toEqual(["reclaim", "reclaim", "reclaim"]);
+    const holders = holderByMember(steps.filter((s): s is Extract<typeof s, { kind: "reclaim" }> => s.kind === "reclaim"));
+    expect(Object.fromEntries(holders)).toEqual({ t1: "uA", t2: "uA", t3: "uB" });
+  });
+
+  it("an outcome_unverified claim row (started_at null) plans an unclaim step with startedAt null", () => {
+    const [step] = planQueueUndo([
+      {
+        resource_id: "t1",
+        action: "test_request.claimed",
+        metadata: { visit_id: "v1", started_at: null, panel_key: P, bulk_batch_id: B, grouped: true, outcome_unverified: true },
+      },
+    ]);
+    expect(step).toEqual({ kind: "unclaim", id: "t1", visitId: "v1", panelKey: P, startedAt: null });
+  });
+});
+
+describe("unclaimStepStillHeld", () => {
+  const T = "2026-09-30T01:00:00.000Z";
+  const row = (over: Partial<Parameters<typeof unclaimStepStillHeld>[0]> = {}) => ({
+    status: "in_progress",
+    assigned_to: "me",
+    started_at: "2026-09-30T01:00:00.000+00:00",
+    deleted_at: null,
+    visits: { deleted_at: null },
+    ...over,
+  });
+  it("accepts a member still held by the caller at the exact started_at (Z vs +00:00 read-back)", () => {
+    expect(unclaimStepStillHeld(row(), { startedAt: T }, "me")).toBe(true);
+  });
+  it("refuses a step with a null startedAt even when the row also has a null started_at (outcome_unverified)", () => {
+    expect(unclaimStepStillHeld(row(), { startedAt: null }, "me")).toBe(false);
+    expect(unclaimStepStillHeld(row({ started_at: null }), { startedAt: null }, "me")).toBe(false);
+  });
+  it("refuses a member that moved on: another holder, another status, another started_at, deleted, or visit deleted", () => {
+    expect(unclaimStepStillHeld(row({ assigned_to: "other" }), { startedAt: T }, "me")).toBe(false);
+    expect(unclaimStepStillHeld(row({ status: "completed" }), { startedAt: T }, "me")).toBe(false);
+    expect(unclaimStepStillHeld(row({ started_at: "2026-09-30T01:05:00.000Z" }), { startedAt: T }, "me")).toBe(false);
+    expect(unclaimStepStillHeld(row({ deleted_at: T }), { startedAt: T }, "me")).toBe(false);
+    expect(unclaimStepStillHeld(row({ visits: { deleted_at: T } }), { startedAt: T }, "me")).toBe(false);
+  });
+});
+
+describe("holderByMember", () => {
+  it("keeps each member's own holder", () => {
+    expect(Object.fromEntries(holderByMember([{ id: "a", holder: "u1" }, { id: "b", holder: "u2" }]))).toEqual({
+      a: "u1",
+      b: "u2",
+    });
   });
 });
 

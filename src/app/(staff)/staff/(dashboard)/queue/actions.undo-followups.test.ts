@@ -92,15 +92,62 @@ describe("finding 7: auditLeftoverPanelRows fails CLOSED when its verification r
   });
 
   it("every call site passes the full row (id + visit_id), not a bare id array, so fail-closed has what it needs", () => {
-    // Only undoBulkQueueAction's unclaim and reclaim compensation branches
-    // call this now — the bulk claim/unclaim panel loops that used to call
-    // it from claimTestsAction/unclaimTestsAction moved to panel-actions.ts
-    // (claim_panel_members / unclaim_panel_members, 0191's own atomicity, no
-    // app-level compensation left to audit).
+    // Only undoBulkQueueAction's reclaim compensation branch calls this now —
+    // the bulk claim/unclaim panel loops moved to panel-actions.ts and the
+    // Undo's panel un-claim goes through unclaim_panel_members (0191's own
+    // atomicity, no app-level compensation left to audit).
     const calls = [...src.matchAll(/auditLeftoverPanelRows\(\s*supabase,\s*([a-zA-Z.()=> ]+),/g)];
-    expect(calls.length).toBeGreaterThanOrEqual(2);
+    expect(calls.length).toBeGreaterThanOrEqual(1);
     for (const m of calls) {
       expect(m[1].trim()).toBe("got");
     }
+  });
+});
+
+describe("Task 5: panel Undo un-claims through unclaim_panel_members; reclaim restores each member's own holder", () => {
+  const body = bodyOf("undoBulkQueueAction");
+  const unclaimBranch = body.slice(body.indexOf('if (kind === "unclaim") {'), body.indexOf('} else if (kind === "reclaim") {'));
+  const reclaimBranch = body.slice(body.indexOf('} else if (kind === "reclaim") {'), body.indexOf("// restore"));
+
+  it("the un-claim branch hands a panel group (panelKey !== null) to unclaimPanelMembers, tagged as an Undo of this batch", () => {
+    expect(unclaimBranch.length).toBeGreaterThan(0);
+    const at = unclaimBranch.indexOf("if (panelKey !== null) {");
+    expect(at, "panel gate not found").toBeGreaterThan(-1);
+    const panelPath = unclaimBranch.slice(at, unclaimBranch.indexOf("continue;\n        }\n\n        // A single row", at));
+    expect(panelPath).toMatch(/await unclaimPanelMembers\(session, supabase, \{/);
+    expect(panelPath).toMatch(/holder:\s*session\.user_id/);
+    expect(panelPath).toMatch(/via:\s*BULK_UNDO_VIA/);
+    expect(panelPath).toMatch(/undo_of_batch:\s*parsed\.data\.batchId/);
+    expect(panelPath).toMatch(/bulk_batch_id:\s*undoBatchId/);
+    expect(panelPath).toMatch(/panel_key:\s*panelKey/);
+    // A refusal (P0077 race) sends the whole panel to notRestored.
+    expect(panelPath).toMatch(/if \(!result\.ok\) \{\s*notRestored\.push\(\{ id: group\.key, reason: result\.error \}\)/);
+  });
+
+  it("the un-claim branch no longer compensates or audits leftovers (the RPC is all-or-nothing)", () => {
+    expect(unclaimBranch).not.toMatch(/auditLeftoverPanelRows/);
+    expect(unclaimBranch).not.toMatch(/compensatedCount/);
+    expect(unclaimBranch).not.toMatch(/partial_panel/);
+  });
+
+  it("the un-claim pre-validation goes through unclaimStepStillHeld, which refuses a null startedAt", () => {
+    expect(unclaimBranch).toMatch(/unclaimStepStillHeld\(r, step, session\.user_id\)/);
+  });
+
+  it("reclaim writes each member's OWN holder — never the first member's", () => {
+    expect(reclaimBranch.length).toBeGreaterThan(0);
+    expect(reclaimBranch).not.toMatch(/steps\[0\]!\.holder/);
+    expect(reclaimBranch).toMatch(/const holderOf = holderByMember\(steps\)/);
+    expect(reclaimBranch).toMatch(/assigned_to:\s*holderOf\.get\(id\)!/);
+    expect(reclaimBranch).toMatch(/\.eq\("assigned_to",\s*holderOf\.get\(row\.id\)!\)/);
+    expect(reclaimBranch).toMatch(/r\.assigned_to === holderOf\.get\(r\.id\)/);
+    expect(reclaimBranch).toMatch(/to:\s*holderOf\.get\(row\.id\) \?\? null/);
+  });
+
+  it("reclaim validates every distinct holder's profile and refuses the whole panel with RECLAIM_HOLDER_UNUSABLE", () => {
+    expect(reclaimBranch).toMatch(/\.in\("id", distinctHolders\)/);
+    expect(reclaimBranch).toMatch(/distinctHolders\.every\(/);
+    expect(reclaimBranch).toMatch(/reason: RECLAIM_HOLDER_UNUSABLE/);
+    expect(reclaimBranch).toMatch(/canClaimSection\(holderProfileOf\.get\(holderOf\.get\(r\.id\)!\)!\.role/);
   });
 });
