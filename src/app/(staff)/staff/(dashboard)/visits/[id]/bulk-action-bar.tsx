@@ -27,8 +27,18 @@ import { RELEASE_BLOCKED_CONSENT, RELEASE_BLOCKED_UNPAID } from "@/lib/visits/re
 // outcome with it — see the render branch below).
 interface ReleaseOutcome {
   message: string;
-  undo: { batchId: string; doneAt: number } | null;
+  undo: ReleaseUndo | null;
 }
+
+// `notified`: the release sent the patient a notice (notifiedCount > 0) —
+// only then does the Undo message warn that it cannot be taken back.
+interface ReleaseUndo {
+  batchId: string;
+  doneAt: number;
+  notified: boolean;
+}
+
+const ALREADY_NOTIFIED = "The patient was already notified that results are ready — tell them if needed.";
 
 interface Props {
   visitId: string;
@@ -208,12 +218,11 @@ export function BulkActionBar({
         }) ?? "",
       ];
       // Undo does not un-notify: say so only when a notice actually went out.
-      if ((result.notifiedCount ?? 0) > 0) {
-        lines.push("The patient was already notified that results are ready — tell them if needed.");
-      }
+      const notified = (result.notifiedCount ?? 0) > 0;
+      if (notified) lines.push(ALREADY_NOTIFIED);
       setOutcome({
         message: lines.filter(Boolean).join("\n"),
-        undo: result.batchId ? { batchId: result.batchId, doneAt: Date.now() } : null,
+        undo: result.batchId ? { batchId: result.batchId, doneAt: Date.now(), notified } : null,
       });
     });
   }
@@ -247,7 +256,7 @@ export function BulkActionBar({
   }
 
   // ↶ Undo for a "Release selected" batch (server-checked 10-minute window).
-  function runUndo(undo: { batchId: string; doneAt: number }) {
+  function runUndo(undo: ReleaseUndo) {
     if (undoPending) return;
     startUndo(async () => {
       const result = await undoReleaseBatchAction({ batchId: undo.batchId });
@@ -259,7 +268,7 @@ export function BulkActionBar({
       const restored = result.restoredIds.length;
       let message =
         restored > 0
-          ? `Undone — ${restored} test${restored === 1 ? " is" : "s are"} back to Ready for release. The patient was already notified that results are ready — tell them if needed.`
+          ? `Undone — ${restored} test${restored === 1 ? " is" : "s are"} back to Ready for release.${undo.notified ? ` ${ALREADY_NOTIFIED}` : ""}`
           : "Nothing was undone.";
       if (result.notRestored.length > 0) {
         message += `\nNot undone (${result.notRestored.length}): ${result.notRestored
@@ -270,7 +279,7 @@ export function BulkActionBar({
     });
   }
 
-  function undoProp(undo: { batchId: string; doneAt: number } | null) {
+  function undoProp(undo: ReleaseUndo | null) {
     return undo
       ? { doneAt: undo.doneAt, windowMs: UNDO_WINDOW_MS, pending: undoPending, onUndo: () => runUndo(undo) }
       : null;

@@ -62,11 +62,11 @@ export type ReleaseResult =
 // Bulk-selection actions additionally report how many rows the UPDATE
 // actually touched, so the UI can tell the user when part of the selection
 // was skipped (already handled by a concurrent action, or outside the
-// caller's section scope). Local to releaseSelectedAction /
-// undoReleaseSelectedAction — the older per-row/per-package actions keep the
+// caller's section scope). Used by undoReleaseSelectedAction and
+// deleteSampleVisitAction — the older per-row/per-package actions keep the
 // plain ReleaseResult shape.
 export type BulkSelectionResult =
-  | { ok: true; count: number; batchId?: string }
+  | { ok: true; count: number }
   | { ok: false; error: string };
 
 // User-facing text for expandUndoReleaseScope's rejections (0172). The whole
@@ -477,12 +477,30 @@ export async function releaseSelectedAction(
     skipped,
     warnings: out.warnings,
     batchId,
-    // How many released tests the patient was sent a notice about — 0 for a
-    // report withheld as unverified, and for a physical / pickup hand-off,
-    // which sends no message (notify-released M7).
-    notifiedCount:
-      releaseMedium === "physical" || releaseMedium === "pickup" ? 0 : out.announced.length,
+    notifiedCount: await notifiedCount(supabase, visitId, releaseMedium, out.announced.length),
   };
+}
+
+// How many released tests the patient was actually sent a notice about, for
+// the bar's "already notified" line. 0 for a report withheld as unverified
+// (not in `announced`), for a physical / pickup hand-off (notify-released
+// M7) and for a sample visit (SAMPLE_SKIP_REASON) — none of those message the
+// patient. A failed sample read counts as notified: the line then errs on
+// telling staff to inform the patient.
+async function notifiedCount(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  visitId: string,
+  medium: ReleaseMedium,
+  announced: number,
+): Promise<number> {
+  if (announced === 0 || medium === "physical" || medium === "pickup") return 0;
+  const { data } = await supabase
+    .from("visits")
+    .select("is_sample")
+    .eq("id", visitId)
+    .is("deleted_at", null)
+    .maybeSingle();
+  return data?.is_sample === true ? 0 : announced;
 }
 
 // Server-checked 10-minute Undo for releaseSelectedAction (owner 2026-09-28):
@@ -637,7 +655,9 @@ export async function undoReleaseBatchAction(
     },
     expectedReleasedAtOf,
   );
-  revalidatePath(`/staff/visits/${visitId}`);
+  // The Queue's Pending release tab and the dashboard cards list ready
+  // work too (#261), so refresh every release surface, as Unrelease does.
+  revalidateReleaseSurfaces(visitId);
   if (!result.ok) return { ok: false, error: result.error };
 
   const restoredSet = new Set(result.undoneIds);
@@ -860,7 +880,7 @@ async function undoReleasedRows(
     // not merely "still released" — a row unreleased and re-released by
     // someone else inside the Undo window must not come back. Group by
     // distinct released_at (a report's members share one, since
-    // releaseSelectedAction stamps them all from the same `now`) and issue
+    // releaseRows stamps every row of one release with the same `releasedAt`) and issue
     // one UPDATE per group; ids with no recorded released_at are refused
     // (excluded from every write, never matched) rather than restored on a
     // guess.

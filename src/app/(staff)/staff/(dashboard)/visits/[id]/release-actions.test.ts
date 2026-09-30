@@ -58,7 +58,7 @@ function setup(rows: FakeTestRow[], links: FakeLink[] = []) {
     from(table: string) {
       if (table === "visits") {
         const q: Record<string, unknown> = {};
-        for (const m of ["select", "eq"]) q[m] = () => q;
+        for (const m of ["select", "eq", "is"]) q[m] = () => q;
         q.maybeSingle = async () => ({ data: { deleted_at: null }, error: null });
         return q;
       }
@@ -307,6 +307,28 @@ describe("releaseSelectedAction — Undo handle (bulk-select follow-ups)", () =>
     // read as a later, unrelated change that blocks the Undo.
     expect(fx.notifyBulk).toHaveLength(1);
     expect((fx.notifyBulk[0] as { bulkBatchId?: string }).bulkBatchId).toBe(res.batchId);
+  });
+
+  it("counts nothing as notified on a physical hand-off or a sample visit", async () => {
+    seed();
+    const physical = await releaseSelectedAction("v1", ["x"], "physical");
+    if (!physical.ok) throw new Error(physical.error);
+    expect(physical.notifiedCount).toBe(0);
+
+    seed();
+    // A sample visit: notify-released skips the message (SAMPLE_SKIP_REASON).
+    const wrapped = fx.db as { from: (t: string) => Record<string, unknown> };
+    fx.db = {
+      from(table: string) {
+        const q = wrapped.from(table);
+        if (table === "visits") q.maybeSingle = async () => ({ data: { deleted_at: null, is_sample: true }, error: null });
+        return q;
+      },
+    };
+    const sample = await releaseSelectedAction("v1", ["x"], "email");
+    if (!sample.ok) throw new Error(sample.error);
+    expect(sample.count).toBe(1);
+    expect(sample.notifiedCount).toBe(0);
   });
 
   it("mints a fresh batch id per call", async () => {

@@ -195,6 +195,16 @@ describe("Release selected -> outcome + Undo", () => {
     expect(await screen.findByText(/Released 1 test\./)).toBeTruthy();
     expect(screen.queryByText(/already notified/)).toBeNull();
     expect(screen.getByRole("button", { name: "↶ Undo" })).toBeTruthy();
+
+    // …and the Undo that follows does not claim it either.
+    vi.mocked(undoReleaseBatchAction).mockResolvedValue({
+      ok: true,
+      restoredIds: [TR_1],
+      notRestored: [],
+    });
+    await user.click(screen.getByRole("button", { name: "↶ Undo" }));
+    expect(await screen.findByText(/Undone — 1 test is back to Ready for release\./)).toBeTruthy();
+    expect(screen.queryByText(/already notified/)).toBeNull();
   });
 });
 
