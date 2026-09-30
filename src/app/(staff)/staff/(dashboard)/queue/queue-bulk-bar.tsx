@@ -65,8 +65,8 @@ export function QueueBulkBar({ rowsByKey }: Props) {
     (keys ?? []).filter((key) => rowsByKey[key] !== undefined);
   const claimKeys = known(keysByKind[QUEUE_KIND.claim]);
   // A single test sends the holder the operator saw, so it needs one. A
-  // panel may be split between holders (an admin recovering it): null is
-  // then what was seen, and the server compares it the same way.
+  // panel sends each bench member's holder as seen (it may be split between
+  // holders — an admin recovering it), and the server compares them all.
   const unclaimKeys = known(keysByKind[QUEUE_KIND.unclaim]).filter(
     (key) => parsePanelRowKey(key) !== null || rowsByKey[key]!.assignedTo !== null,
   );
@@ -125,7 +125,7 @@ export function QueueBulkBar({ rowsByKey }: Props) {
     }));
     const heldPanels = panels.map((p) => ({
       ...p,
-      assignedTo: rowsByKey[p.key]!.assignedTo,
+      members: rowsByKey[p.key]!.bench ?? [],
     }));
     setRunning("unclaim");
     start(async () =>
@@ -134,7 +134,7 @@ export function QueueBulkBar({ rowsByKey }: Props) {
         keys,
         await unclaimQueueSelectionAction({
           items,
-          panels: heldPanels.map(({ visitId, groupId, assignedTo }) => ({ visitId, groupId, assignedTo })),
+          panels: heldPanels.map(({ visitId, groupId, members }) => ({ visitId, groupId, members })),
           reason: reason.trim() || undefined,
         }),
         true,

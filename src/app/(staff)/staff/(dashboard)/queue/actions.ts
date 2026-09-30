@@ -24,6 +24,8 @@ import { unclaimPanelMembers } from "@/lib/actions/queue/panel-writes";
 
 export type ClaimResult = { ok: true } | { ok: false; error: string };
 
+const HOLDER_CHANGED = "Someone else holds this now — refresh the queue.";
+
 export async function claimTestAction(
   testRequestId: string,
 ): Promise<ClaimResult> {
@@ -121,6 +123,10 @@ async function performUnclaim(
   testRequestIds: string[],
   reason: string | undefined,
   ownerId: string | null,
+  // Each test's holder as the operator SAW it (the queue list and panel page
+  // send it). When given, a test held by anyone else now is refused — an
+  // admin may release anyone's claim, but never one taken over since.
+  seenHolders?: ReadonlyMap<string, string>,
 ): Promise<ClaimResult> {
   if (testRequestIds.length === 0) {
     return { ok: false, error: "Nothing to unclaim." };
@@ -145,6 +151,9 @@ async function performUnclaim(
       error:
         "This entry was deleted from the queue. Restore it before unclaiming it.",
     };
+  }
+  if (seenHolders && before.some((r) => r.assigned_to !== seenHolders.get(r.id))) {
+    return { ok: false, error: HOLDER_CHANGED };
   }
   // All-or-nothing for a group: refuse up front rather than hand back half a
   // chemistry panel. The UPDATE below re-proves the same predicate.
@@ -248,10 +257,14 @@ export async function unclaimOwnTestAction(
   return performUnclaim(session, [testRequestId], reason, session.user_id);
 }
 
-const QueueUnclaimSchema = z.object({
-  testRequestIds: z.array(z.string().uuid()).min(1).max(MAX_BULK_SELECTION),
-  reason: z.string().max(500).optional(),
-});
+const QueueUnclaimSchema = z
+  .object({
+    testRequestIds: z.array(z.string().uuid()).min(1).max(MAX_BULK_SELECTION),
+    // Parallel to testRequestIds: each test's holder as the operator saw it.
+    holders: z.array(z.string().uuid()).min(1).max(MAX_BULK_SELECTION),
+    reason: z.string().max(500).optional(),
+  })
+  .refine((v) => v.holders.length === v.testRequestIds.length);
 
 // The queue LIST's Unclaim: one entry point for a single test or a
 // consolidated chemistry card. An admin may hand back anyone's claim (same
@@ -264,12 +277,13 @@ export async function unclaimFromQueueAction(
     return { ok: false, error: "Could not unclaim — refresh the queue and try again." };
   }
   const session = await requireActiveStaff();
-  const { testRequestIds, reason } = parsed.data;
+  const { testRequestIds, holders, reason } = parsed.data;
   return performUnclaim(
     session,
     testRequestIds,
     reason,
     session.role === "admin" ? null : session.user_id,
+    new Map(testRequestIds.map((id, i) => [id, holders[i]!])),
   );
 }
 

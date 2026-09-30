@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { summarizePanel, type PanelMember } from "./panel-members";
+import {
+  benchHeldAsSeen,
+  panelActionLabel,
+  seenBench,
+  summarizePanel,
+  type PanelMember,
+} from "./panel-members";
 
 const ME = "11111111-1111-4111-8111-111111111111";
 const OTHER = "22222222-2222-4222-8222-222222222222";
@@ -145,5 +151,49 @@ describe("summarizePanel — delete", () => {
         sharedReportIds: new Set(["b"]),
       }).deletable,
     ).toBe(false);
+  });
+});
+
+describe("benchHeldAsSeen — Unclaim acts only on the bench the operator saw", () => {
+  const C = "33333333-3333-4333-8333-333333333333";
+  const split = { benchIds: ["a", "b"], benchHolders: [ME, OTHER] };
+
+  it("accepts the exact members and holders the page rendered", () => {
+    expect(benchHeldAsSeen(split, seenBench(split))).toBe(true);
+  });
+
+  it("refuses a split panel reassigned to a third holder — the summary holder is null both times", () => {
+    const now = { benchIds: ["a", "b"], benchHolders: [ME, C] };
+    expect(benchHeldAsSeen(now, seenBench(split))).toBe(false);
+  });
+
+  it("refuses when a member joined or left the bench since the page rendered", () => {
+    expect(benchHeldAsSeen({ benchIds: ["a", "b", "c"], benchHolders: [ME, OTHER, null] }, seenBench(split))).toBe(false);
+    expect(benchHeldAsSeen({ benchIds: ["a"], benchHolders: [ME] }, seenBench(split))).toBe(false);
+  });
+
+  it("refuses a seen list that repeats a member to pad the count", () => {
+    const now = { benchIds: ["a", "b"], benchHolders: [ME, ME] };
+    expect(benchHeldAsSeen(now, [{ id: "a", holder: ME }, { id: "a", holder: ME }])).toBe(false);
+  });
+});
+
+describe("panelActionLabel — confirmations name the whole panel", () => {
+  it("counts every test the action touches", () => {
+    expect(panelActionLabel("Chemistry", ["a", "b", "c"], ["a", "b", "c"])).toBe("Chemistry (3 tests)");
+    expect(panelActionLabel("Chemistry", ["a"], ["a"])).toBe("Chemistry (1 test)");
+  });
+
+  it("says when some of those tests are on another page", () => {
+    expect(panelActionLabel("Chemistry", ["a", "b", "c"], ["a"])).toBe(
+      "Chemistry (3 tests), including 2 not shown on this page",
+    );
+  });
+
+  it("does not count a shown member the action leaves alone as hidden", () => {
+    // A finished-report member is on the page but not on the bench.
+    expect(panelActionLabel("Chemistry", ["a", "b"], ["a", "done"])).toBe(
+      "Chemistry (2 tests), including 1 not shown on this page",
+    );
   });
 });

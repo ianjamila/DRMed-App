@@ -26,7 +26,13 @@ import {
   type BulkQueueResult,
   type SkippedRow,
 } from "@/lib/queue/bulk-queue";
-import { fetchPanelMembers, summarizePanel, type PanelRef, type PanelState } from "@/lib/queue/panel-members";
+import {
+  benchHeldAsSeen,
+  fetchPanelMembers,
+  summarizePanel,
+  type PanelRef,
+  type PanelState,
+} from "@/lib/queue/panel-members";
 import {
   claimPanelMembers,
   unclaimPanelMembers,
@@ -45,10 +51,14 @@ const PanelSchema = z.object({
   groupId: z.string().uuid(),
 });
 const HeldPanelSchema = PanelSchema.extend({
-  // The single holder the operator SAW, or null when they saw the panel split
-  // between people (an admin recovering it). The hand-back only lands while
-  // every member is still held as it was when this action read the panel.
-  assignedTo: z.string().uuid().nullable(),
+  // Every bench member and its holder as the operator SAW them (seenBench).
+  // Per member, not one summary holder: a panel seen split between A and B
+  // and reassigned to C since is still "split", and must not hand back C's
+  // work. The hand-back lands only while the bench is exactly this.
+  members: z
+    .array(z.object({ id: z.string().uuid(), holder: z.string().uuid().nullable() }))
+    .min(1)
+    .max(MAX_BULK_RECORDS),
 });
 
 const rowsWithin = (n: number) => n > 0 && n <= MAX_BULK_ROWS;
@@ -186,7 +196,7 @@ const UnclaimSelectionSchema = z
 /**
  * The bulk bar's Unclaim. Single tests go through unclaimTestsAction
  * unchanged; each panel is handed back whole (unclaim_panel_members) while
- * every bench member is still in progress under the holder the operator saw.
+ * its bench is still exactly the members and holders the operator saw.
  */
 export async function unclaimQueueSelectionAction(input: unknown): Promise<BulkQueueResult> {
   const parsed = UnclaimSelectionSchema.safeParse(input);
@@ -218,7 +228,7 @@ export async function unclaimQueueSelectionAction(input: unknown): Promise<BulkQ
       skipped.push({ id: panel.key, reason: NOTHING_ON_BENCH });
       continue;
     }
-    if (state.holder !== panel.assignedTo) {
+    if (!benchHeldAsSeen(state, panel.members)) {
       skipped.push({ id: panel.key, reason: "Someone else holds this report now — refresh the queue." });
       continue;
     }

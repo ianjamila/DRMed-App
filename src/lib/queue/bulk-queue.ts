@@ -44,6 +44,8 @@ export interface QueueRowInfo {
   testCount?: number;
   /** Tests Claim / Unclaim act on — a panel's members still on the bench. testCount when absent. */
   benchCount?: number;
+  /** A panel row's bench members and holders as rendered — what its Unclaim sends as "what I saw". */
+  bench?: Array<{ id: string; holder: string | null }>;
 }
 
 // A chemistry panel row is selected as ONE row but claimed server-side by

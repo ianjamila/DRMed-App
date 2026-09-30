@@ -120,6 +120,52 @@ export function summarizePanel(
   };
 }
 
+/** A bench member and its holder, as the operator's page rendered it. */
+export interface SeenBenchMember {
+  id: string;
+  holder: string | null;
+}
+
+/** The (member, holder) pairs a page sends with Unclaim — parallel to benchIds. */
+export function seenBench(state: Pick<PanelState, "benchIds" | "benchHolders">): SeenBenchMember[] {
+  return state.benchIds.map((id, i) => ({ id, holder: state.benchHolders[i] ?? null }));
+}
+
+/**
+ * Pure: is the panel's bench still exactly what the operator saw — the same
+ * members, each under the same holder? Unclaim hands back only then. Comparing
+ * the one summary holder is not enough: a panel an admin saw split between A
+ * and B that is reassigned to C in between is STILL split (holder null both
+ * times), and would hand back C's work.
+ */
+export function benchHeldAsSeen(
+  state: Pick<PanelState, "benchIds" | "benchHolders">,
+  seen: readonly SeenBenchMember[],
+): boolean {
+  if (seen.length !== state.benchIds.length) return false;
+  const current = new Map(seenBench(state).map((m) => [m.id, m.holder]));
+  const ids = new Set(seen.map((m) => m.id));
+  if (ids.size !== seen.length) return false;
+  return seen.every((m) => current.has(m.id) && current.get(m.id) === m.holder);
+}
+
+/**
+ * Pure: how an Unclaim / Delete confirmation names a panel — by the tests the
+ * action will touch (the WHOLE panel), not the members this page shows. The
+ * list pages before it folds, so say so when some are on another page.
+ */
+export function panelActionLabel(
+  groupName: string,
+  actionIds: readonly string[],
+  shownIds: readonly string[],
+): string {
+  const n = actionIds.length;
+  const tests = `${groupName} (${n} ${n === 1 ? "test" : "tests"})`;
+  const shown = new Set(shownIds);
+  const hidden = actionIds.filter((id) => !shown.has(id)).length;
+  return hidden > 0 ? `${tests}, including ${hidden} not shown on this page` : tests;
+}
+
 const PAGE = 1000;
 
 /**

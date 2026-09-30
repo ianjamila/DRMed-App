@@ -8,12 +8,17 @@ import { unclaimFromQueueAction } from "./actions";
 // detail page's UnclaimOwnButton / ReassignPanel so the three read as one
 // feature. Takes every member id so a consolidated chemistry card hands back
 // its whole panel at once. The server action decides whose claim the caller
-// may release (admin: anyone's; everyone else: their own).
+// may release (admin: anyone's; everyone else: their own), and hands back
+// only while each test is still held by the holder sent here — the one the
+// operator saw — so a claim taken over in between is never released.
 export function QueueUnclaimButton({
   testRequestIds,
+  holders,
   entryLabel,
 }: {
   testRequestIds: string[];
+  /** Each test's holder as rendered, parallel to testRequestIds. */
+  holders: ReadonlyArray<string | null>;
   entryLabel: string;
 }) {
   const router = useRouter();
@@ -27,6 +32,7 @@ export function QueueUnclaimButton({
       setErr(null);
       const result = await unclaimFromQueueAction({
         testRequestIds,
+        holders,
         reason: reason.trim() || undefined,
       });
       if (!result.ok) {

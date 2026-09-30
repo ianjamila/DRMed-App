@@ -66,7 +66,13 @@ import { RowSelectCheckbox } from "@/components/staff/row-selection/row-select-c
 import { SelectAllCheckbox } from "@/components/staff/row-selection/select-all-checkbox";
 import type { SelectionEntry } from "@/lib/ui/bulk-selection";
 import { panelRowKey, queueRowKinds, type QueueRowInfo } from "@/lib/queue/bulk-queue";
-import { fetchPanelMembers, summarizePanel, type PanelState } from "@/lib/queue/panel-members";
+import {
+  fetchPanelMembers,
+  panelActionLabel,
+  seenBench,
+  summarizePanel,
+  type PanelState,
+} from "@/lib/queue/panel-members";
 import { QueueBulkBar } from "./queue-bulk-bar";
 
 const LAB_QUEUE_SUBSCRIPTIONS = [
@@ -111,6 +117,9 @@ type QueueCardGrouped = {
   visitId: string;
   groupId: string;
   groupCode: string;
+  // The report group's own name — panel confirmations count the WHOLE panel
+  // (panelActionLabel), while `label` counts the members on this page.
+  groupName: string;
   label: string;
   orderedTests: Array<{ code: string; name: string }>;
   requestedAt: string;
@@ -511,6 +520,7 @@ export default async function QueuePage({ searchParams }: SearchProps) {
           visitId: r.visit_id,
           groupId: svc.report_group_id,
           groupCode: rg.code,
+          groupName: rg.name,
           label: `${rg.name} (1 test)`,
           orderedTests: [test],
           requestedAt: r.requested_at,
@@ -676,6 +686,7 @@ export default async function QueuePage({ searchParams }: SearchProps) {
           assignedTo: state.holder,
           testCount: state.allIds.length,
           benchCount: state.benchIds.length,
+          bench: seenBench(state),
         };
         continue;
       }
@@ -1147,6 +1158,7 @@ export default async function QueuePage({ searchParams }: SearchProps) {
                           <div className="mt-1 flex justify-end">
                             <QueueUnclaimButton
                               testRequestIds={[card.testRequestId]}
+                              holders={[card.claimedBy]}
                               entryLabel={card.label}
                             />
                           </div>
@@ -1273,7 +1285,12 @@ export default async function QueuePage({ searchParams }: SearchProps) {
                         <div className="mt-1 flex justify-end">
                           <QueueUnclaimButton
                             testRequestIds={panelStateOf(card)!.benchIds}
-                            entryLabel={card.label}
+                            holders={panelStateOf(card)!.benchHolders}
+                            entryLabel={panelActionLabel(
+                              card.groupName,
+                              panelStateOf(card)!.benchIds,
+                              card.memberIds,
+                            )}
                           />
                         </div>
                       ) : null}
@@ -1283,7 +1300,11 @@ export default async function QueuePage({ searchParams }: SearchProps) {
                             visitId={card.visitId}
                             testRequestIds={panelStateOf(card)!.allIds}
                             mode="delete"
-                            entryLabel={card.label}
+                            entryLabel={panelActionLabel(
+                              card.groupName,
+                              panelStateOf(card)!.allIds,
+                              card.memberIds,
+                            )}
                           />
                         </div>
                       ) : null}
