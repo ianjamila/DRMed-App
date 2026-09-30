@@ -66,6 +66,8 @@ export function ConsolidatedForm(props: Props) {
 
   function handleFinalise() {
     setError(null);
+    setReleaseNote(null);
+    setDeferredReason(null);
     const payload = buildPayload(params, enabledParamIds);
 
     startTransition(async () => {

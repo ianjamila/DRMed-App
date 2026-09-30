@@ -47,6 +47,8 @@ src/lib/results/
 src/lib/actions/results/
 ├── result-edit-core.ts     ← server-only commit protocol: commitResultFinalise / commitResultEdit (upload → RPC → classify), auditAlertChanges
 ├── finalise-consolidated.ts ← chemistry finalise (+ release)
+├── finalise-release.ts     ← its step 9: releases the report WHOLE or not at all via releaseVisitSelection (patient notice + reception alert); a member at result_uploaded (sign-off) → nothing released
+├── finalise-release-outcome.ts ← pure: folds the release outcome into the form's payment / consent / signoff / other deferral + note
 └── amend-consolidated.ts   ← chemistry "Edit results" on a finished report
 
 src/app/(staff)/staff/(dashboard)/

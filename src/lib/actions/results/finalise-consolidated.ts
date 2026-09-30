@@ -25,11 +25,8 @@ import {
   type ValueRow,
 } from "@/lib/results/value-rows";
 import { commitResultFinalise } from "@/lib/actions/results/result-edit-core";
-import { releaseVisitSelection } from "@/lib/actions/visits/release-reports";
-import {
-  classifyFinaliseRelease,
-  type FinaliseDeferral,
-} from "@/lib/actions/results/finalise-release-outcome";
+import { releaseFinalisedReport } from "@/lib/actions/results/finalise-release";
+import type { FinaliseDeferral } from "@/lib/actions/results/finalise-release-outcome";
 
 export interface FinaliseInput {
   visitId: string;
@@ -437,40 +434,32 @@ export async function finaliseConsolidatedReport(
 
   // ---------------------------------------------------------------------
   // 9) Release the report — WHOLE or not at all — through the same path as
-  // the lab queue and the visit page (releaseVisitSelection, #261).
+  // the lab queue and the visit page (see finalise-release.ts).
   //
   // Every member of this report is in input.testRequestIds (step 1 + the
-  // resume check), so the planner sees the whole report. A member whose
+  // resume check), so the release sees the whole report. A member whose
   // service needs pathologist sign-off was left at 'result_uploaded' by the
-  // step-8 trigger; the planner then refuses the report as unfinished and
-  // NOTHING is released — never the ready members alone, which used to leave
-  // the patient with a report the portal would not open (it serves the PDF
-  // only once every member is released). The sign-off, then a release from
-  // the queue, finishes it later.
+  // step-8 trigger; then NOTHING is released — never the ready members alone,
+  // which used to leave the patient with a report the portal would not open
+  // (it serves the PDF only once every member is released). The sign-off,
+  // then a release from the queue, finishes it later.
   //
   // The payment gate (enforce_payment_before_release, 0133) and the consent
   // gate (ships OFF) still fire on the write and come back as a deferral:
-  // the result stays finalised and is released once they're settled.
-  //
-  // releaseVisitSelection also sends the patient's "result ready" notice and
-  // reception's alert — only for a report verified fully released after the
-  // write — and audits each released line. There is no release-medium picker
-  // on this form, so "other" is used (markDoctorLineDoneAction's convention
-  // for non-interactive releases).
+  // the result stays finalised and is released once they're settled. The
+  // shared path also sends the patient's "result ready" notice and
+  // reception's alert — only for a report verified fully released — and
+  // audits each released line.
   // ---------------------------------------------------------------------
-  const releaseOut = await releaseVisitSelection({
-    supabase: admin,
-    session,
-    visitId: input.visitId,
-    selectedIds: input.testRequestIds,
-    medium: "other",
-    auditMeta: { source: "finalise_consolidated", result_id: resultId },
-  });
-  const { releaseDeferred, deferredReason, releaseNote } = classifyFinaliseRelease(
-    releaseOut,
-    input.testRequestIds,
-  );
-  const releasedIds = [...releaseOut.changedIds, ...releaseOut.alsoReleasedIds];
+  const { releaseDeferred, deferredReason, releaseNote, outcome: releaseOut } =
+    await releaseFinalisedReport({
+      supabase: admin,
+      session,
+      visitId: input.visitId,
+      resultId,
+      testRequestIds: input.testRequestIds,
+    });
+  const releasedIds = releaseOut ? [...releaseOut.changedIds, ...releaseOut.alsoReleasedIds] : [];
 
   // 10) Audit.
   await audit({
@@ -504,7 +493,7 @@ export async function finaliseConsolidatedReport(
         report_group_id: input.groupId,
         visit_id: input.visitId,
         release_medium: "other",
-        patient_notified: releaseOut.announced.length > 0,
+        patient_notified: (releaseOut?.announced.length ?? 0) > 0,
       },
       ip_address: ip,
       user_agent: ua,

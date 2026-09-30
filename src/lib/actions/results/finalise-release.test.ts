@@ -1,7 +1,6 @@
-// finalise-consolidated step 9 end to end over the fake release DB: the shared
-// whole-report release (releaseVisitSelection) folded by classifyFinaliseRelease,
-// exactly as the action calls them. The action itself also renders a PDF and
-// commits values, so the release half is exercised here on its own.
+// finalise-consolidated step 9 (releaseFinalisedReport) end to end over the
+// fake release DB. The action around it renders a PDF and commits values; the
+// release half is exercised here on its own, through the function it calls.
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("server-only", () => ({}));
@@ -10,7 +9,10 @@ const fx = vi.hoisted(() => ({
   notified: [] as Array<{ testRequestIds?: string[]; testRequestId?: string; releaseMedium?: string }>,
   alerts: [] as Array<[string, number]>,
 }));
-vi.mock("@/lib/audit/log", () => ({ audit: async () => {} }));
+const audits = vi.hoisted(() => [] as Array<{ action: string; metadata: Record<string, unknown> }>);
+vi.mock("@/lib/audit/log", () => ({
+  audit: async (a: { action: string; metadata: Record<string, unknown> }) => void audits.push(a),
+}));
 vi.mock("@/lib/notifications/notify-released", () => ({
   notifyResultReleased: async (a: { testRequestId: string }) => void fx.notified.push(a),
 }));
@@ -23,29 +25,32 @@ vi.mock("@/lib/notifications/release-staff-alert", () => ({
 vi.mock("@/lib/observability/report-error", () => ({ reportError: async () => {} }));
 
 import { makeFakeReleaseDb, type FakeTestRow } from "@/lib/actions/visits/fake-release-db";
-import { releaseVisitSelection } from "@/lib/actions/visits/release-reports";
-import { classifyFinaliseRelease } from "./finalise-release-outcome";
+import { releaseFinalisedReport } from "./finalise-release";
 
 const session = { user_id: "u1", role: "medtech" } as never;
 const ids = ["a", "b", "c"];
 
-async function finaliseRelease(rows: FakeTestRow[], prep?: (fake: ReturnType<typeof makeFakeReleaseDb>) => void) {
-  const fake = makeFakeReleaseDb({ rows, links: ids.map((id) => ({ testRequestId: id, resultId: "r1" })) });
+async function finaliseRelease(
+  rows: FakeTestRow[],
+  prep?: (fake: ReturnType<typeof makeFakeReleaseDb>) => void,
+  members: string[] = ids,
+) {
+  const fake = makeFakeReleaseDb({ rows, links: members.map((id) => ({ testRequestId: id, resultId: "r1" })) });
   prep?.(fake);
-  const out = await releaseVisitSelection({
+  const { outcome, ...summary } = await releaseFinalisedReport({
     supabase: fake.client,
     session,
     visitId: "v1",
-    selectedIds: ids,
-    medium: "other",
-    auditMeta: { source: "finalise_consolidated", result_id: "r1" },
+    resultId: "r1",
+    testRequestIds: members,
   });
-  return { fake, out, summary: classifyFinaliseRelease(out, ids) };
+  return { fake, outcome, summary };
 }
 const released = (fake: ReturnType<typeof makeFakeReleaseDb>) =>
   fake.rows.filter((r) => r.status === "released").map((r) => r.id);
 
 beforeEach(() => {
+  audits.length = 0;
   fx.notified.length = 0;
   fx.alerts.length = 0;
 });
@@ -59,6 +64,28 @@ describe("finalise-consolidated release (step 9)", () => {
     expect(fx.notified[0].testRequestIds?.slice().sort()).toEqual(ids);
     expect(fx.notified[0].releaseMedium).toBe("other");
     expect(fx.alerts).toEqual([["v1", 3]]);
+    const written = fake.calls.find((c) => c.table === "test_requests" && c.op === "update");
+    expect(written?.patch?.release_medium).toBe("other");
+    const lineAudits = audits.filter((a) => a.action === "test_request.released");
+    expect(lineAudits).toHaveLength(3);
+    for (const a of lineAudits) {
+      expect(a.metadata).toMatchObject({ source: "finalise_consolidated", result_id: "r1", release_medium: "other" });
+    }
+  });
+
+  it("a ONE-test report awaiting sign-off reads as sign-off, not a raced release", async () => {
+    const { fake, summary, outcome } = await finaliseRelease([{ id: "a", status: "result_uploaded" }], undefined, ["a"]);
+    expect(summary).toEqual({ releaseDeferred: true, deferredReason: "signoff", releaseNote: null });
+    expect(outcome).toBeNull();
+    expect(fake.calls.some((c) => c.op === "update")).toBe(false);
+    expect(fx.notified).toHaveLength(0);
+  });
+
+  it("a one-test report that is ready releases and tells the patient", async () => {
+    const { fake, summary } = await finaliseRelease([{ id: "a" }], undefined, ["a"]);
+    expect(released(fake)).toEqual(["a"]);
+    expect(summary.releaseDeferred).toBe(false);
+    expect(fx.notified).toEqual([expect.objectContaining({ testRequestId: "a" })]);
   });
 
   it("releases NOTHING while one member awaits sign-off — no part-report, no notice", async () => {
