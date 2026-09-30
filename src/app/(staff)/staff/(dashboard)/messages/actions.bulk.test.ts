@@ -1,9 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-// updateMessageStatusManyAction end to end against the in-memory fake
-// client: the real zod parsing, matrix check and guarded writes run; only the
+// updateMessageStatusManyAction and undoMessageStatusManyAction end to end
+// against the in-memory fake client: the real zod parsing, matrix check,
+// batch-row loading (loadOwnBatchRows) and guarded writes run; only the
 // session, audit writer, headers and cache are stubbed. A predicate dropped
-// from a write changes the rows these tests read back.
+// from a forward or Undo write changes the rows these tests read back.
 vi.mock("server-only", () => ({}));
 vi.mock("next/headers", () => ({
   headers: async () => new Headers({ "x-forwarded-for": "9.9.9.9", "user-agent": "vitest" }),
@@ -21,9 +22,10 @@ vi.mock("@/lib/supabase/admin", () => ({ createAdminClient: () => (h.db as FakeD
 vi.mock("@/lib/audit/log", () => ({ audit: h.audit }));
 
 import { revalidatePath } from "next/cache";
-import { updateMessageStatusManyAction } from "./actions";
+import { undoMessageStatusManyAction, updateMessageStatusManyAction } from "./actions";
 import { FakeDb, type Row } from "@/lib/testing/fake-db";
 import { MESSAGE_CHANGED_REASON, MESSAGE_GONE_REASON, MESSAGE_WRITE_FAILED_REASON } from "@/lib/contact-messages/bulk-status";
+import { BULK_UNDO_VIA, CHANGED_SINCE_REASON, UNDO_ALREADY, UNDO_EXPIRED } from "@/lib/ui/bulk-undo";
 
 const ME = h.session.user_id;
 const OTHER = "22222222-2222-4222-8222-222222222222";
@@ -205,6 +207,165 @@ describe("updateMessageStatusManyAction", () => {
     db.hooks.beforeWrite = (call) => (call.table === "contact_messages" ? { code: "XX000", message: "boom" } : undefined);
     const r = await updateMessageStatusManyAction({ entries: [{ id: id(1), from: "new" }], to: "closed" });
     expect(r.ok).toBe(false);
+    expect(audits()).toEqual([]);
+  });
+});
+
+const BATCH = "0b7c3d2e-1111-4111-8111-000000000009";
+const NOW = Date.parse("2026-09-30T12:00:00.000Z");
+const STAMP = new Date(NOW - 60_000).toISOString();
+/** The same instant as PostgREST reads it back ("+00:00"). */
+const pg = (isoZ: string) => isoZ.replace("Z", "+00:00");
+let seq = 0;
+function bulkAudit(n: number, m: Row, over: Row = {}): Row {
+  seq += 1;
+  return {
+    id: `a-${String(seq).padStart(5, "0")}`,
+    actor_id: ME,
+    resource_type: "contact_message",
+    resource_id: id(n),
+    action: "contact_message.status_changed",
+    metadata: { bulk_batch_id: BATCH, handled_at: STAMP, ...m },
+    created_at: new Date(NOW - 60_000 + seq * 10).toISOString(),
+    ...over,
+  };
+}
+
+describe("undoMessageStatusManyAction", () => {
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(NOW);
+  });
+
+  it("puts each message back to its status AND its previous handler, and audits the undo", async () => {
+    db.seed("contact_messages", [
+      msg(1, { status: "closed", handled_by: ME, handled_at: pg(STAMP) }),
+      msg(2, { status: "new", handled_by: ME, handled_at: pg(STAMP) }),
+    ]);
+    db.seed("audit_log", [
+      bulkAudit(1, { from: "new", to: "closed", previous_handled_by: null, previous_handled_at: null }),
+      bulkAudit(2, { from: "booked", to: "new", previous_handled_by: OTHER, previous_handled_at: "2026-09-29T01:00:00+00:00" }),
+    ]);
+    const r = await undoMessageStatusManyAction({ batchId: BATCH });
+    expect(r).toEqual({ ok: true, restoredIds: [id(1), id(2)], notRestored: [] });
+    expect(db.row("contact_messages", id(1))).toMatchObject({ status: "new", handled_by: null, handled_at: null });
+    expect(db.row("contact_messages", id(2))).toMatchObject({
+      status: "booked", handled_by: OTHER, handled_at: "2026-09-29T01:00:00+00:00",
+    });
+    const undoRows = audits().filter((a) => meta(a).via === BULK_UNDO_VIA);
+    expect(undoRows.map((a) => [a.resource_id, meta(a).from, meta(a).to, meta(a).undo_of_batch])).toEqual([
+      [id(1), "closed", "new", BATCH],
+      [id(2), "new", "booked", BATCH],
+    ]);
+  });
+
+  it("refuses a message someone changed since (newer audit row) and one whose row no longer matches", async () => {
+    db.seed("contact_messages", [
+      msg(1, { status: "closed", handled_by: ME, handled_at: pg(STAMP) }),
+      msg(2, { status: "replied", handled_by: OTHER, handled_at: "2026-09-30T11:59:30+00:00" }), // moved on, no audit row seen
+    ]);
+    db.seed("audit_log", [
+      bulkAudit(1, { from: "new", to: "closed", previous_handled_by: null, previous_handled_at: null }),
+      bulkAudit(2, { from: "new", to: "closed", previous_handled_by: null, previous_handled_at: null }),
+      { id: "a-99999", actor_id: OTHER, resource_type: "contact_message", resource_id: id(1),
+        action: "contact_message.notes_updated", metadata: { length: 4 }, created_at: new Date(NOW - 5_000).toISOString() },
+    ]);
+    const r = await undoMessageStatusManyAction({ batchId: BATCH });
+    expect(r).toEqual({
+      ok: true,
+      restoredIds: [],
+      notRestored: [
+        { id: id(1), reason: CHANGED_SINCE_REASON },
+        { id: id(2), reason: CHANGED_SINCE_REASON },
+      ],
+    });
+    expect(db.row("contact_messages", id(1)).status).toBe("closed");
+    expect(db.row("contact_messages", id(2)).status).toBe("replied");
+  });
+
+  it("is only for the same person, within 10 minutes, once", async () => {
+    db.seed("contact_messages", [msg(1, { status: "closed", handled_by: ME, handled_at: pg(STAMP) })]);
+    db.seed("audit_log", [bulkAudit(1, { from: "new", to: "closed", previous_handled_by: null, previous_handled_at: null })]);
+
+    h.session = { user_id: OTHER, role: "admin" };
+    expect(await undoMessageStatusManyAction({ batchId: BATCH })).toEqual({ ok: false, error: UNDO_EXPIRED });
+
+    h.session = { user_id: ME, role: "reception" };
+    vi.setSystemTime(NOW + 10 * 60_000);
+    expect(await undoMessageStatusManyAction({ batchId: BATCH })).toEqual({ ok: false, error: UNDO_EXPIRED });
+
+    vi.setSystemTime(NOW);
+    db.seed("audit_log", [{ id: "a-88888", actor_id: ME, resource_type: "contact_message", resource_id: id(1),
+      action: "contact_message.status_changed", metadata: { undo_of_batch: BATCH }, created_at: new Date(NOW - 1_000).toISOString() }]);
+    expect(await undoMessageStatusManyAction({ batchId: BATCH })).toEqual({ ok: false, error: UNDO_ALREADY });
+  });
+
+  it("refuses a non-inbox role before reading the batch", async () => {
+    h.session = { user_id: ME, role: "medtech" };
+    const r = await undoMessageStatusManyAction({ batchId: BATCH });
+    expect(r).toEqual({ ok: false, error: "Only reception or admin can manage website messages." });
+    expect(db.calls).toEqual([]);
+  });
+
+  // Each case flips exactly ONE column of message 1 between the bulk call and
+  // the Undo. No newer audit row exists, so only the Undo write's own
+  // predicate (status = current, handled_by = caller, handled_at = stamp) can
+  // refuse it; message 2 shares the bucket and must still be restored.
+  const undoRaces: Array<[string, Row]> = [
+    ["status", { status: "replied" }],
+    ["handled_by", { handled_by: OTHER }],
+    ["handled_at", { handled_at: "2026-09-30T11:59:59+00:00" }],
+  ];
+  it.each(undoRaces)("an Undo-time difference in only %s is refused by that predicate, its bucket-mate is restored", async (_col, flip) => {
+    const closedByMe = { status: "closed", handled_by: ME, handled_at: pg(STAMP) };
+    db.seed("contact_messages", [msg(1, { ...closedByMe, ...flip }), msg(2, closedByMe)]);
+    const undone = { from: "new", to: "closed", previous_handled_by: null, previous_handled_at: null };
+    db.seed("audit_log", [bulkAudit(1, undone), bulkAudit(2, undone)]);
+    const r = await undoMessageStatusManyAction({ batchId: BATCH });
+    expect(db.updates("contact_messages")).toHaveLength(1); // one bucket: only the predicates tell them apart
+    expect(r).toEqual({
+      ok: true,
+      restoredIds: [id(2)],
+      notRestored: [{ id: id(1), reason: CHANGED_SINCE_REASON }],
+    });
+    expect(db.row("contact_messages", id(1))).toMatchObject({ ...closedByMe, ...flip });
+    expect(db.row("contact_messages", id(2))).toMatchObject({ status: "new", handled_by: null, handled_at: null });
+    expect(audits().filter((a) => meta(a).via === BULK_UNDO_VIA).map((a) => a.resource_id)).toEqual([id(2)]);
+  });
+
+  it("one bucket's write error is named for retry; the other bucket is restored and audited once", async () => {
+    const err = vi.spyOn(console, "error").mockImplementation(() => {});
+    db.seed("contact_messages", [
+      msg(1, { status: "closed", handled_by: ME, handled_at: pg(STAMP) }),
+      msg(2, { status: "new", handled_by: ME, handled_at: pg(STAMP) }),
+    ]);
+    db.seed("audit_log", [
+      bulkAudit(1, { from: "new", to: "closed", previous_handled_by: null, previous_handled_at: null }),
+      bulkAudit(2, { from: "booked", to: "new", previous_handled_by: OTHER, previous_handled_at: "2026-09-29T01:00:00+00:00" }),
+    ]);
+    db.hooks.beforeWrite = (call) =>
+      call.table === "contact_messages" && call.patch?.status === "booked" ? { code: "XX000", message: "boom" } : undefined;
+    const r = await undoMessageStatusManyAction({ batchId: BATCH });
+    expect(db.updates("contact_messages")).toHaveLength(2);
+    expect(r).toEqual({
+      ok: true,
+      restoredIds: [id(1)],
+      notRestored: [{ id: id(2), reason: "could not be undone just now — try again" }],
+    });
+    expect(db.row("contact_messages", id(1))).toMatchObject({ status: "new", handled_by: null, handled_at: null });
+    expect(db.row("contact_messages", id(2))).toMatchObject({ status: "new", handled_by: ME });
+    expect(audits().filter((a) => meta(a).via === BULK_UNDO_VIA).map((a) => a.resource_id)).toEqual([id(1)]);
+    expect(err).toHaveBeenCalledWith("bulk message undo write failed", expect.objectContaining({ ids: [id(2)] }));
+    err.mockRestore();
+  });
+
+  it("reports an error when every bucket failed", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    db.seed("contact_messages", [msg(1, { status: "closed", handled_by: ME, handled_at: pg(STAMP) })]);
+    db.seed("audit_log", [bulkAudit(1, { from: "new", to: "closed", previous_handled_by: null, previous_handled_at: null })]);
+    db.hooks.beforeWrite = (call) => (call.table === "contact_messages" ? { code: "XX000", message: "boom" } : undefined);
+    const r = await undoMessageStatusManyAction({ batchId: BATCH });
+    expect(r).toEqual({ ok: false, error: "Could not undo — refresh the inbox and check the messages." });
     expect(audits()).toEqual([]);
   });
 });

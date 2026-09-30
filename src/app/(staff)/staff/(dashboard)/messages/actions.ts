@@ -33,12 +33,22 @@ import {
 import { firstNameOf } from "@/lib/contact-messages/first-name";
 import { STAFF_STATUS_TARGETS, canTransition, type StaffStatusTarget } from "@/lib/contact-messages/status-transitions";
 import { MAX_BULK_ROWS } from "@/lib/ui/bulk-selection";
+import { loadOwnBatchRows } from "@/lib/audit/bulk-batch";
+import {
+  BULK_UNDO_VIA,
+  CHANGED_SINCE_REASON,
+  UNDO_ALREADY,
+  UNDO_EXPIRED,
+  type BulkUndoResult,
+} from "@/lib/ui/bulk-undo";
 import {
   MESSAGE_CHANGED_REASON,
   MESSAGE_GONE_REASON,
   MESSAGE_WRITE_FAILED_REASON,
+  bucketMessageUndo,
   groupMessagesForWrite,
   notAllowedReason,
+  planMessageUndo,
   type BulkMessageResult,
   type MessageWriteRow,
 } from "@/lib/contact-messages/bulk-status";
@@ -257,6 +267,101 @@ export async function updateMessageStatusManyAction(input: unknown): Promise<Bul
     skipped: ids.filter((id) => reasonOf.has(id)).map((id) => ({ id, reason: reasonOf.get(id)! })),
     ...(changed.length > 0 ? { batchId } : {}),
   };
+}
+
+/**
+ * Undo for the inbox bulk bar: for 10 minutes, only for the person who ran
+ * it, puts every message that bulk call changed back to the status AND the
+ * handler it had — read from that call's own audit rows (bulk_batch_id),
+ * never from the browser. A message is reversed only while it is still
+ * exactly as the call left it (status, handler = caller, the call's own
+ * handled_at stamp) and nothing newer was logged for it.
+ */
+export async function undoMessageStatusManyAction(input: unknown): Promise<BulkUndoResult> {
+  const { session, error: roleError } = await requireInboxStaff();
+  if (!session) return { ok: false, error: roleError };
+  const parsed = z.object({ batchId: z.string().uuid() }).safeParse(input);
+  if (!parsed.success) return { ok: false, error: UNDO_EXPIRED };
+
+  const loaded = await loadOwnBatchRows({
+    actorId: session.user_id,
+    batchId: parsed.data.batchId,
+    resourceType: "contact_message",
+    nowMs: Date.now(),
+  });
+  if (!loaded.ok) return { ok: false, error: loaded.error };
+  if (loaded.alreadyUndone) return { ok: false, error: UNDO_ALREADY };
+  const entries = planMessageUndo(loaded.rows);
+  if (entries.length === 0) return { ok: false, error: UNDO_EXPIRED };
+
+  const notRestored: Array<{ id: string; reason: string }> = [];
+  const toWrite = entries.filter((e) => {
+    if (!loaded.changedSince.has(e.id)) return true;
+    notRestored.push({ id: e.id, reason: CHANGED_SINCE_REASON });
+    return false;
+  });
+
+  const supabase = await createClient();
+  const undoBatchId = crypto.randomUUID();
+  const moved: Array<{ id: string; current: string; restoreTo: string }> = [];
+  const erroredIds = new Set<string>();
+  for (const bucket of bucketMessageUndo(toWrite)) {
+    const { data, error } = await supabase
+      .from("contact_messages")
+      .update({ status: bucket.restoreTo, handled_by: bucket.previousHandledBy, handled_at: bucket.previousHandledAt })
+      .in("id", bucket.ids)
+      .eq("status", bucket.current)
+      .eq("handled_by", session.user_id)
+      .eq("handled_at", bucket.stamp)
+      .select("id");
+    if (error) {
+      console.error("bulk message undo write failed", { ids: bucket.ids, error });
+      for (const id of bucket.ids) erroredIds.add(id);
+      continue;
+    }
+    for (const row of data ?? []) moved.push({ id: row.id, current: bucket.current, restoreTo: bucket.restoreTo });
+  }
+  const movedIds = new Set(moved.map((m) => m.id));
+  for (const e of toWrite) {
+    if (movedIds.has(e.id)) continue;
+    notRestored.push({
+      id: e.id,
+      reason: erroredIds.has(e.id) ? "could not be undone just now — try again" : CHANGED_SINCE_REASON,
+    });
+  }
+
+  if (moved.length > 0) {
+    const { ip, ua } = await ipAndAgent();
+    await Promise.all(
+      moved.map((row) =>
+        audit({
+          actor_id: session.user_id,
+          actor_type: "staff",
+          action: "contact_message.status_changed",
+          resource_type: "contact_message",
+          resource_id: row.id,
+          metadata: {
+            from: row.current,
+            to: row.restoreTo,
+            via: BULK_UNDO_VIA,
+            undo_of_batch: parsed.data.batchId,
+            bulk_batch_id: undoBatchId,
+            bulk_batch_size: moved.length,
+          },
+          ip_address: ip,
+          user_agent: ua,
+        }),
+      ),
+    );
+    revalidatePath("/staff/messages");
+    for (const row of moved) revalidatePath(`/staff/messages/${row.id}`);
+    revalidatePath("/staff", "layout");
+  }
+  if (erroredIds.size > 0 && moved.length === 0) {
+    return { ok: false, error: "Could not undo — refresh the inbox and check the messages." };
+  }
+  // Input order (the audit order), so the bar's "not undone" list is stable.
+  return { ok: true, restoredIds: entries.map((e) => e.id).filter((id) => movedIds.has(id)), notRestored };
 }
 
 export async function updateMessageNotesAction(
