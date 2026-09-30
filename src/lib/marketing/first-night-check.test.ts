@@ -127,7 +127,7 @@ describe("evaluateCheck", () => {
     expect(r.mismatches.map((m) => m.kind).sort()).toEqual(["dashboard_total", "day_dashboard"]);
     const d = r.mismatches.find((m) => m.kind === "day_dashboard")!;
     expect(d).toMatchObject({ date: "2026-09-29", expected: "6 confirmed · 0 unconfirmed", actual: "5 confirmed · 0 unconfirmed" });
-    expect(d.message).toContain("29 Sep 2026");
+    expect(d.message).toContain("Sep 29, 2026");
     expect(r.days[1].mismatch).toBe(true);
     expect(r.days[0].mismatch).toBe(false);
   });

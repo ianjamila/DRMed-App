@@ -8,7 +8,7 @@
  * A "mismatch" is never smoothed over: if two screens genuinely differ, the
  * check reports both numbers and which screens they came from.
  */
-import { daysBetweenISO, daysInMonth, isISODate, isoDateParts, shiftISODate } from "@/lib/dates/manila";
+import { daysBetweenISO, daysInMonth, isISODate, isoDateParts, manilaDate, shiftISODate } from "@/lib/dates/manila";
 import { PATIENT_SOURCES_MIN_DATE } from "./period";
 import { formatNewCounts } from "./patient-sources";
 
@@ -193,10 +193,7 @@ function median(nums: number[]): number {
   return s.length % 2 ? s[mid] : (s[mid - 1] + s[mid]) / 2;
 }
 
-const dayLabel = (iso: string) => {
-  const { year, month, day } = isoDateParts(iso);
-  return `${day} ${["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"][month - 1]} ${year}`;
-};
+const dayLabel = (iso: string) => manilaDate(iso);
 
 export function evaluateCheck(input: CheckInput): CheckReport {
   const { params } = input;
