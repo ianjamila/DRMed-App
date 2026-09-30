@@ -7568,6 +7568,19 @@ export type Database = {
       has_role: { Args: { roles: string[] }; Returns: boolean }
       is_staff: { Args: never; Returns: boolean }
       je_next_number: { Args: { p_fiscal_year: number }; Returns: string }
+      lab_search: {
+        Args: { "": Database["public"]["Tables"]["test_requests"]["Row"] }
+        Returns: {
+          search_text: string | null
+          test_request_id: string | null
+        }
+        SetofOptions: {
+          from: "test_requests"
+          to: "lab_search_rows"
+          isOneToOne: true
+          isSetofReturn: true
+        }
+      }
       lab_sections_for_role: { Args: { p_role: string }; Returns: string[] }
       next_pf_disbursement_batch_number: {
         Args: { p_year: number }
@@ -7613,19 +7626,6 @@ export type Database = {
         Returns: {
           display_name: string
           drm_id: string
-      lab_search: {
-        Args: { "": Database["public"]["Tables"]["test_requests"]["Row"] }
-        Returns: {
-          search_text: string | null
-          test_request_id: string | null
-        }
-        SetofOptions: {
-          from: "test_requests"
-          to: "lab_search_rows"
-          isOneToOne: true
-          isSetofReturn: true
-        }
-      }
           first_date: string
           identity: string
           identity_kind: string

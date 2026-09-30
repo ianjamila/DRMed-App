@@ -184,7 +184,6 @@ const ARCHIVE_SELECT_UPDATED_MINE_SEARCH = `
   result_test_requests!inner ( results!inner ( result_amendments!inner ( amended_by ) ) ),
   lab_search!inner ( )`;
 
-
 interface SearchProps {
   searchParams: Promise<{
     status?: string;

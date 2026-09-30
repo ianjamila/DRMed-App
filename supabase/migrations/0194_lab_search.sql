@@ -28,7 +28,10 @@ select
     rg.code, rg.name,
     -- The other live members of the same chemistry panel on the same tab, so
     -- one member's code finds the whole panel card (the queue folds a panel
-    -- into one card; before this, the search ran after that fold).
+    -- into one card; before this, the search ran after that fold). Siblings
+    -- are not narrowed by the page's date / Mine / section / money filters: a
+    -- panel shares one visit, section and payment state, so at most a card is
+    -- found by a member it is not showing (say, one claimed by someone else).
     case when s.report_group_id is not null then (
       select string_agg(concat_ws(' ', s2.code, s2.name), ' ')
       from public.test_requests t2
@@ -39,6 +42,28 @@ select
         and t2.deleted_at is null
         and (case when t2.status in ('requested', 'in_progress') then 'bench' else t2.status end)
           = (case when tr.status in ('requested', 'in_progress') then 'bench' else tr.status end)
+        -- Released panels are split into one card PER RESULT FILE on the
+        -- queue's Released today tab (reportCardKey), so a released sibling
+        -- only counts when it sits on the same file as this row: each test's
+        -- NEWEST result link, and only when that result has a stored PDF —
+        -- the same rule as newestLinkWithPdf in src/lib/results/pdf-availability.ts
+        -- (no file on either side matches no file). Otherwise one report's
+        -- code would find a different report's card.
+        and (tr.status <> 'released' or (
+          select case when r2.storage_path is not null then l2.result_id end
+          from public.result_test_requests l2
+          join public.results r2 on r2.id = l2.result_id
+          where l2.test_request_id = t2.id
+          order by l2.created_at desc, l2.result_id
+          limit 1
+        ) is not distinct from (
+          select case when r1.storage_path is not null then l1.result_id end
+          from public.result_test_requests l1
+          join public.results r1 on r1.id = l1.result_id
+          where l1.test_request_id = tr.id
+          order by l1.created_at desc, l1.result_id
+          limit 1
+        ))
     ) end
   ) as search_text
 from public.test_requests tr

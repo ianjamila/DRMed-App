@@ -52,6 +52,19 @@ describe("0194_lab_search.sql", () => {
     );
   });
 
+  it("(c2) a released sibling counts only on the same result file as the row", () => {
+    // Mirrors newestLinkWithPdf (src/lib/results/pdf-availability.ts): the
+    // Released tab splits a panel into one card per file (reportCardKey).
+    expect(view).toContain("tr.status <> 'released' or (");
+    expect(view).toContain("where l2.test_request_id = t2.id");
+    expect(view).toContain("where l1.test_request_id = tr.id");
+    expect(view).toContain("order by l2.created_at desc, l2.result_id");
+    expect(view).toContain("order by l1.created_at desc, l1.result_id");
+    expect(view).toContain("case when r2.storage_path is not null then l2.result_id end");
+    expect(view).toContain("case when r1.storage_path is not null then l1.result_id end");
+    expect(view).toContain(") is not distinct from (");
+  });
+
   it("(d) the relationship is an inlinable sql function over the view", () => {
     expect(fn).toContain("returns setof public.lab_search_rows");
     expect(fn).toContain("rows 1");
