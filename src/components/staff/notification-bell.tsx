@@ -269,8 +269,11 @@ export function NotificationBell({ role }: Props) {
             status: string;
             released_at: string | null;
             deleted_at?: string | null;
+            is_package_header?: boolean;
           };
-          if (row.deleted_at) return;
+          // A package header closes itself once its tests are out (0109) —
+          // the tests already rang; the header is not a result to print.
+          if (row.deleted_at || row.is_package_header) return;
           if (!row.released_at || !isFreshRelease(row, Date.now())) return;
           const key = releaseEventKey({
             testRequestId: row.id,
