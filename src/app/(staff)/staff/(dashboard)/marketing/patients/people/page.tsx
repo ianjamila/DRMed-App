@@ -7,7 +7,7 @@ import { createClient } from "@/lib/supabase/server";
 import { audit } from "@/lib/audit/log";
 import { ipAndAgent } from "@/lib/server/action-helpers";
 import { manilaDate, todayManilaISODate } from "@/lib/dates/manila";
-import { firstParam, periodHref, resolvePeriod } from "@/lib/marketing/period";
+import { firstParam, PATIENT_SOURCES_MIN_DATE, periodHref, resolvePeriod } from "@/lib/marketing/period";
 import { channelLabel } from "@/lib/marketing/patient-sources";
 import { loadPeoplePage, type PeopleQuery } from "@/lib/marketing/patient-sources.server";
 import { PeriodControls } from "../../_components/period-controls";
@@ -27,7 +27,7 @@ export default async function PatientSourcesPeoplePage({
   const staff = await requireAdminStaff();
   const sp = await searchParams;
   const todayISO = todayManilaISODate();
-  const period = resolvePeriod({ from: firstParam(sp.from), to: firstParam(sp.to) }, todayISO);
+  const period = resolvePeriod({ from: firstParam(sp.from), to: firstParam(sp.to) }, todayISO, { min: PATIENT_SOURCES_MIN_DATE });
   const rawMode = firstParam(sp.mode);
   const mode: PeopleQuery["mode"] = rawMode === "served" || rawMode === "returning" ? rawMode : "new";
   const channel = firstParam(sp.channel) || null;
@@ -65,7 +65,7 @@ export default async function PatientSourcesPeoplePage({
         </a>
       </p>
       <PeriodControls pathname={PATHNAME} todayISO={todayISO} from={period.from} to={period.to}
-        presetKey={period.presetKey} error={period.error} params={params} />
+        presetKey={period.presetKey} error={period.error} params={params} min={PATIENT_SOURCES_MIN_DATE} />
       {!res.ok ? (
         <p className="rounded border border-amber-300 bg-amber-50 p-4 text-sm text-amber-900" role="alert">{res.message}</p>
       ) : (

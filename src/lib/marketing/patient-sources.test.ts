@@ -36,6 +36,13 @@ describe("previousPeriod", () => {
   });
 });
 
+describe("channelTable without a previous period", () => {
+  it("reports no comparison (null) instead of a change against zero", () => {
+    const t = channelTable([{ bucket_start: "2024-01-01", channel: "walk_in", confirmed: 2, unconfirmed: 1 }], null);
+    expect(t[0]).toMatchObject({ total: 3, previousTotal: null, change: null });
+  });
+});
+
 describe("channelTable", () => {
   it("adds share and change, keeps channels that only existed before, sorts by total", () => {
     const t = channelTable(

@@ -12,19 +12,37 @@ import { daysBetweenISO, daysInMonth, isISODate, isoDateParts, shiftISODate } fr
 /** The report functions refuse longer periods (0189 _ps_check_period). */
 export const MAX_PERIOD_DAYS = 400;
 
-const PERIOD_ERROR =
-  "That period can't be shown — pick a start on or before the end, at most 400 days apart. Showing this month instead.";
+/**
+ * Patient Sources reads visit history from this date (0189 windows every
+ * encounter at 2023-12-01); 0193 makes _ps_check_period refuse an earlier
+ * start, so the pages, presets and CSV routes clamp / refuse to match.
+ */
+export const PATIENT_SOURCES_MIN_DATE = "2023-12-01";
 
-export function buildMarketingPresets(todayISO: string): PeriodPreset[] {
+const PERIOD_PROBLEM = "That period can't be shown — pick a start on or before the end, at most 400 days apart.";
+const TOO_EARLY_PROBLEM =
+  "That period can't be shown — Patient Sources starts on 1 December 2023, so pick a start on or after that date.";
+const INSTEAD = " Showing this month instead.";
+
+export interface PeriodOptions {
+  /** Earliest allowed start (YYYY-MM-DD). Presets are clamped to it; an earlier custom start is refused. */
+  min?: string;
+}
+
+export function buildMarketingPresets(todayISO: string, opts: PeriodOptions = {}): PeriodPreset[] {
   const base = new Map(buildPeriodPresets(todayISO).map((p) => [p.key, p]));
   const yesterday = shiftISODate(todayISO, -1);
   const keep = ["this-month", "last-month", "ytd", "12m", "last-year"].map((k) => base.get(k)!);
-  return [
+  const all = [
     { key: "today", label: "Today", start: todayISO, end: todayISO },
     { key: "yesterday", label: "Yesterday", start: yesterday, end: yesterday },
     { key: "last-7", label: "Last 7 days", start: shiftISODate(todayISO, -6), end: todayISO },
     ...keep,
   ];
+  const min = opts.min;
+  if (!min) return all;
+  // Clamp a start before `min`; drop a preset that ends before it.
+  return all.filter((p) => p.end >= min).map((p) => (p.start < min ? { ...p, start: min } : p));
 }
 
 export interface ResolvedPeriod {
@@ -32,17 +50,20 @@ export interface ResolvedPeriod {
   to: string;
   /** The matching preset, or null for a custom range. */
   presetKey: string | null;
+  /** Page message (says the month is shown instead); null when the period is fine. */
   error: string | null;
+  /** The same problem without the "showing this month" tail — what a CSV route answers with (400). */
+  problem: string | null;
 }
 
-export function resolvePeriod(sp: { from?: string; to?: string }, todayISO: string): ResolvedPeriod {
-  const presets = buildMarketingPresets(todayISO);
+export function resolvePeriod(sp: { from?: string; to?: string }, todayISO: string, opts: PeriodOptions = {}): ResolvedPeriod {
+  const presets = buildMarketingPresets(todayISO, opts);
   const thisMonth = presets.find((p) => p.key === "this-month")!;
   const match = (from: string, to: string) =>
     presets.find((p) => p.start === from && p.end === to)?.key ?? null;
 
   if (sp.from === undefined && sp.to === undefined) {
-    return { from: thisMonth.start, to: thisMonth.end, presetKey: "this-month", error: null };
+    return { from: thisMonth.start, to: thisMonth.end, presetKey: "this-month", error: null, problem: null };
   }
   const valid =
     isCalendarDate(sp.from) &&
@@ -50,9 +71,12 @@ export function resolvePeriod(sp: { from?: string; to?: string }, todayISO: stri
     sp.from <= sp.to &&
     daysBetweenISO(sp.from, sp.to) <= MAX_PERIOD_DAYS;
   if (!valid) {
-    return { from: thisMonth.start, to: thisMonth.end, presetKey: "this-month", error: PERIOD_ERROR };
+    return { from: thisMonth.start, to: thisMonth.end, presetKey: "this-month", error: PERIOD_PROBLEM + INSTEAD, problem: PERIOD_PROBLEM };
   }
-  return { from: sp.from!, to: sp.to!, presetKey: match(sp.from!, sp.to!), error: null };
+  if (opts.min && sp.from! < opts.min) {
+    return { from: thisMonth.start, to: thisMonth.end, presetKey: "this-month", error: TOO_EARLY_PROBLEM + INSTEAD, problem: TOO_EARLY_PROBLEM };
+  }
+  return { from: sp.from!, to: sp.to!, presetKey: match(sp.from!, sp.to!), error: null, problem: null };
 }
 
 /** A YYYY-MM-DD that is also a real day — isISODate checks the shape only (P21). */

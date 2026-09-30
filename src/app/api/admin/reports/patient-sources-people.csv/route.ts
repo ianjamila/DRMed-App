@@ -3,7 +3,7 @@ import { requireAdminStaff } from "@/lib/auth/require-admin";
 import { createClient } from "@/lib/supabase/server";
 import { todayManilaISODate } from "@/lib/dates/manila";
 import { reportCsvResponse } from "@/lib/reports/csv-response";
-import { resolvePeriod } from "@/lib/marketing/period";
+import { PATIENT_SOURCES_MIN_DATE, resolvePeriod } from "@/lib/marketing/period";
 import { channelLabel } from "@/lib/marketing/patient-sources";
 import { loadAllPeople, type PeopleQuery } from "@/lib/marketing/patient-sources.server";
 
@@ -13,7 +13,9 @@ export const maxDuration = 60;
 export async function GET(req: NextRequest) {
   const staff = await requireAdminStaff();
   const sp = req.nextUrl.searchParams;
-  const period = resolvePeriod({ from: sp.get("from") ?? undefined, to: sp.get("to") ?? undefined }, todayManilaISODate());
+  const period = resolvePeriod({ from: sp.get("from") ?? undefined, to: sp.get("to") ?? undefined }, todayManilaISODate(), { min: PATIENT_SOURCES_MIN_DATE });
+  // An unusable period is a 400, never a silent export of this month.
+  if (period.problem) return new Response(period.problem, { status: 400 });
   const raw = sp.get("mode");
   const mode: PeopleQuery["mode"] = raw === "served" || raw === "returning" ? raw : "new";
   const channel = sp.get("channel") || null;

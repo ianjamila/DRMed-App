@@ -6,7 +6,7 @@ import { createClient } from "@/lib/supabase/server";
 import { audit } from "@/lib/audit/log";
 import { ipAndAgent } from "@/lib/server/action-helpers";
 import { manilaDate, manilaDateTime, todayManilaISODate } from "@/lib/dates/manila";
-import { firstParam, periodHref, resolvePeriod } from "@/lib/marketing/period";
+import { firstParam, PATIENT_SOURCES_MIN_DATE, periodHref, resolvePeriod } from "@/lib/marketing/period";
 import {
   GRAIN_LABEL, MODE_LABEL, channelTable, chartData, costPerNewPatient, parseGrain, parseMode, previousPeriod,
   sheetBanner, type Grain, type Mode,
@@ -34,7 +34,7 @@ export default async function PatientSourcesPage({
   const staff = await requireAdminStaff();
   const sp = await searchParams;
   const todayISO = todayManilaISODate();
-  const period = resolvePeriod({ from: firstParam(sp.from), to: firstParam(sp.to) }, todayISO);
+  const period = resolvePeriod({ from: firstParam(sp.from), to: firstParam(sp.to) }, todayISO, { min: PATIENT_SOURCES_MIN_DATE });
   const mode: Mode = parseMode(firstParam(sp.mode));
   const grain: Grain = parseGrain(firstParam(sp.grain));
   const params = { from: period.from, to: period.to, mode, grain };
@@ -45,7 +45,11 @@ export default async function PatientSourcesPage({
     loadPatientSourcesSummary(supabase, period.from, period.to),
     loadPatientSourcesSeries(supabase, period.from, period.to, grain, mode),
     loadPatientSourcesSeries(supabase, period.from, period.to, "period", mode),
-    loadPatientSourcesSeries(supabase, prev.from, prev.to, "period", mode),
+    // The previous period may start before Patient Sources' first date (the
+    // database refuses that): skip the query, the table shows no comparison.
+    prev.from < PATIENT_SOURCES_MIN_DATE
+      ? Promise.resolve(null)
+      : loadPatientSourcesSeries(supabase, prev.from, prev.to, "period", mode),
     loadPatientSourcesSeries(supabase, period.from, period.to, "day", "new"),
     loadPatientSourcesRevenue(supabase, period.from, period.to),
     loadPatientSourcesOverlaps(supabase, period.from, period.to),
@@ -88,7 +92,11 @@ export default async function PatientSourcesPage({
   }
   const s = summary.data;
   const banner = sheetBanner(s);
+  // "customers" is the latest REGISTRATION date, not a sync or upload time (0189
+  // names it sheet_last_dates.customers); lab/consult are the latest service dates.
   const lastDates = Object.entries(s.sheet_last_dates ?? {}).filter(([, d]) => d);
+  const serviceDates = lastDates.filter(([tab]) => tab !== "customers");
+  const registrationDate = lastDates.find(([tab]) => tab === "customers")?.[1];
   const toggle = (patch: Record<string, string>, label: string, on: boolean) => (
     <Link
       key={label}
@@ -104,14 +112,16 @@ export default async function PatientSourcesPage({
   const peopleHref = (m: "new" | "returning" | "served", channel?: string) =>
     periodHref(`${PATHNAME}/people`, { from: period.from, to: period.to }, { mode: m, channel });
   const chart = series.ok ? chartData(series.data.rows, grain) : null;
-  const table = current.ok && previous.ok ? channelTable(current.data.rows, previous.data.rows) : null;
+  const table = current.ok && (previous === null || previous.ok)
+    ? channelTable(current.data.rows, previous === null ? null : previous.data.rows)
+    : null;
   const costs = spend.ok && newByDay.ok ? costPerNewPatient(spend.data.rows, newByDay.data.rows) : null;
 
   return (
     <div>
       {header}
       <PeriodControls pathname={PATHNAME} todayISO={todayISO} from={period.from} to={period.to}
-        presetKey={period.presetKey} error={period.error} params={params} />
+        presetKey={period.presetKey} error={period.error} params={params} min={PATIENT_SOURCES_MIN_DATE} />
       <div className="mb-4 flex flex-wrap gap-2">
         {toggle({ mode: "new" }, MODE_LABEL.new, mode === "new")}
         {toggle({ mode: "served" }, MODE_LABEL.served, mode === "served")}
@@ -141,8 +151,11 @@ export default async function PatientSourcesPage({
       </div>
       <p className="mt-2 text-xs text-[color:var(--color-brand-text-soft)]">
         {s.undated_registrations.toLocaleString("en-PH")} people registered with no date and no recorded visit — not on any day.
-        {lastDates.length > 0
-          ? ` Sheet last updated: ${lastDates.map(([tab, d]) => `${SHEET_TABS[tab] ?? tab} ${manilaDate(d as string)}`).join(" · ")}.`
+        {serviceDates.length > 0
+          ? ` Latest service date in the sheet: ${serviceDates.map(([tab, d]) => `${SHEET_TABS[tab] ?? tab} ${manilaDate(d as string)}`).join(" · ")}.`
+          : ""}
+        {registrationDate
+          ? ` Latest registration date in the sheet: ${manilaDate(registrationDate as string)}.`
           : ""}
         {s.last_synced_at ? ` Last sync: ${manilaDateTime(s.last_synced_at)}.` : ""}
       </p>
