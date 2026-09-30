@@ -17,6 +17,7 @@ const fx = vi.hoisted(() => ({
   fromCalls: [] as string[],
   audits: [] as Record<string, unknown>[],
   emails: [] as Record<string, unknown>[],
+  reported: [] as Record<string, unknown>[],
   recipient: { kind: "active", patient: { email: "ana@example.com" } } as Record<string, unknown>,
 }));
 
@@ -26,7 +27,9 @@ vi.mock("@/lib/auth/require-admin", () => ({
   requireAdminStaff: async () => ({ user_id: "admin-1", email: "", full_name: "Admin", role: "admin" }),
 }));
 vi.mock("@/lib/audit/log", () => ({ audit: async (e: Record<string, unknown>) => void fx.audits.push(e) }));
-vi.mock("@/lib/observability/report-error", () => ({ reportError: async () => {} }));
+vi.mock("@/lib/observability/report-error", () => ({
+  reportError: async (e: Record<string, unknown>) => void fx.reported.push(e),
+}));
 vi.mock("@/lib/notifications/email", () => ({
   sendEmail: async (e: Record<string, unknown>) => {
     fx.emails.push(e);
@@ -72,7 +75,7 @@ function form(entries: Record<string, string>): FormData {
 }
 
 beforeEach(() => {
-  fx.rpcCalls = []; fx.rpcResults = []; fx.fromCalls = []; fx.audits = []; fx.emails = [];
+  fx.rpcCalls = []; fx.rpcResults = []; fx.fromCalls = []; fx.audits = []; fx.emails = []; fx.reported = [];
   fx.recipient = { kind: "active", patient: { email: "ana@example.com" } };
 });
 
@@ -133,6 +136,18 @@ describe("mergePatientsAction", () => {
     expect(fx.emails).toEqual([]);
     expect(fx.audits[0]).toMatchObject({ action: "patient.merge.notified", metadata: expect.objectContaining({ recipient: "inactive" }) });
   });
+
+  it("reports and returns a generic message when the RPC result can't be parsed, sending no email and writing no audit row", async () => {
+    fx.rpcResults.push({ data: { garbage: true }, error: null });
+    const res = await mergePatientsAction(null, form({ keep_id: K, source_id: S, confirm: "MERGE" }));
+    expect(res).toEqual({
+      ok: false,
+      error: "The records were merged, but the result could not be read. Refresh the page.",
+    });
+    expect(fx.reported).toEqual([expect.objectContaining({ scope: "mergePatientsAction:result" })]);
+    expect(fx.emails).toEqual([]);
+    expect(fx.audits).toEqual([]);
+  });
 });
 
 describe("undoMergeAction", () => {
@@ -168,5 +183,15 @@ describe("undoMergeAction", () => {
   it("rejects a malformed id without calling the database", async () => {
     expect((await undoMergeAction(null, form({ merge_id: "nope" }))).ok).toBe(false);
     expect(fx.rpcCalls).toEqual([]);
+  });
+
+  it("reports and returns a generic message when the RPC report can't be parsed", async () => {
+    fx.rpcResults.push({ data: { garbage: true }, error: null });
+    const res = await undoMergeAction(null, form({ merge_id: M }));
+    expect(res).toEqual({
+      ok: false,
+      error: "The merge was undone, but the report could not be read. Refresh the page.",
+    });
+    expect(fx.reported).toEqual([expect.objectContaining({ scope: "undoMergeAction:result" })]);
   });
 });
