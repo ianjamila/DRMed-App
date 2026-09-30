@@ -69,8 +69,10 @@ export function MessageActionsPanel({
         alert(result.error);
         return;
       }
-      setNotesSaved(true);
-      setTimeout(() => setNotesSaved(false), 1500);
+      startNotes(() => {
+        setNotesSaved(true);
+        setTimeout(() => setNotesSaved(false), 1500);
+      });
       router.refresh();
     });
   }

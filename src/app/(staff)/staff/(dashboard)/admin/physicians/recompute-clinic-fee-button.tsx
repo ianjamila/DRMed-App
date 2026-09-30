@@ -11,9 +11,13 @@ export function RecomputeClinicFeeButton() {
     startTransition(async () => {
       const res = await recomputeClinicFeeForUnreleased();
       if (res.ok) {
-        setResult(`Done. ${res.data.rows_affected} test${res.data.rows_affected === 1 ? "" : "s"} updated.`);
+        startTransition(() => {
+          setResult(`Done. ${res.data.rows_affected} test${res.data.rows_affected === 1 ? "" : "s"} updated.`);
+        });
       } else {
-        setResult(`Error: ${res.error}`);
+        startTransition(() => {
+          setResult(`Error: ${res.error}`);
+        });
       }
     });
   }

@@ -300,7 +300,9 @@ export function NewAppointmentSheet({
         toast.success(
           wasFromMessage ? "Appointment created and the message marked booked." : "Appointment created.",
         );
-        setOpen(false);
+        startTransition(() => {
+          setOpen(false);
+        });
         resetAll();
         if (wasFromMessage) {
           router.push("/staff/appointments");
@@ -310,12 +312,16 @@ export function NewAppointmentSheet({
         return;
       }
       if ("code" in result && result.code === "conflict") {
-        setConflicts(result.data.conflicts);
-        setError(null);
+        startTransition(() => {
+          setConflicts(result.data.conflicts);
+          setError(null);
+        });
         return;
       }
-      setConflicts([]);
-      setError(result.error);
+      startTransition(() => {
+        setConflicts([]);
+        setError(result.error);
+      });
     });
   }
 

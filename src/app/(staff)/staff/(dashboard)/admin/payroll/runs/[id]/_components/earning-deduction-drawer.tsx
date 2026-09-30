@@ -305,7 +305,9 @@ function ManualEarningRow({
     startTransition(async () => {
       const result = await removeEarningLineAction(line.id);
       if (!result.ok) {
-        setError(result.error);
+        startTransition(() => {
+          setError(result.error);
+        });
         return;
       }
       router.refresh();
@@ -383,13 +385,17 @@ function AddEarningForm({ employeeRunId }: { employeeRunId: string }) {
         amount_php: amountN,
       });
       if (!result.ok) {
-        setError(result.error);
+        startTransition(() => {
+          setError(result.error);
+        });
         return;
       }
-      setKind("incentive");
-      setLabel("");
-      setAmount("");
-      setOpen(false);
+      startTransition(() => {
+        setKind("incentive");
+        setLabel("");
+        setAmount("");
+        setOpen(false);
+      });
       router.refresh();
     });
   };
@@ -547,7 +553,9 @@ function ManualDeductionRow({
     startTransition(async () => {
       const result = await removeDeductionLineAction(line.id);
       if (!result.ok) {
-        setError(result.error);
+        startTransition(() => {
+          setError(result.error);
+        });
         return;
       }
       router.refresh();
@@ -627,13 +635,17 @@ function AddDeductionForm({ employeeRunId }: { employeeRunId: string }) {
         amount_php: amountN,
       });
       if (!result.ok) {
-        setError(result.error);
+        startTransition(() => {
+          setError(result.error);
+        });
         return;
       }
-      setKind("manual_adjustment");
-      setLabel("");
-      setAmount("");
-      setOpen(false);
+      startTransition(() => {
+        setKind("manual_adjustment");
+        setLabel("");
+        setAmount("");
+        setOpen(false);
+      });
       router.refresh();
     });
   };

@@ -120,7 +120,9 @@ function RecordSettlementModalInner({
         items: itemList,
       });
       if (!res.ok) {
-        setErr(res.error);
+        startTransition(() => {
+          setErr(res.error);
+        });
         return;
       }
       onClose();

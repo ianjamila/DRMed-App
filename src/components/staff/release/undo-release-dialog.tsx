@@ -61,11 +61,15 @@ export function UndoReleaseDialog({
       setErr(null);
       const result = await undoReleaseSelectedAction(visitId, [testRequestId], reason.trim());
       if (!result.ok) {
-        setErr(result.error);
+        startTransition(() => {
+          setErr(result.error);
+        });
         return;
       }
-      setOpen(false);
-      setReason("");
+      startTransition(() => {
+        setOpen(false);
+        setReason("");
+      });
     });
   }
 

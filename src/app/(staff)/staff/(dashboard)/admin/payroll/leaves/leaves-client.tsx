@@ -131,14 +131,18 @@ export function LeavesClient({
         year: currentYear,
       });
       if (!result.ok) {
-        setActionError(result.error);
-        setActionOk(null);
+        startTransition(() => {
+          setActionError(result.error);
+          setActionOk(null);
+        });
         return;
       }
-      setActionError(null);
-      setActionOk(
-        `Applied entitlements for ${currentYear}: ${result.data.rows.length} row(s) inserted.`,
-      );
+      startTransition(() => {
+        setActionError(null);
+        setActionOk(
+          `Applied entitlements for ${currentYear}: ${result.data.rows.length} row(s) inserted.`,
+        );
+      });
       router.refresh();
     });
   }, [currentYear, router]);
@@ -153,14 +157,18 @@ export function LeavesClient({
       // bound the April 1st expiry cycle. Use current Manila year.
       const result = await applyLeaveExpiryAction({ year: currentYear });
       if (!result.ok) {
-        setActionError(result.error);
-        setActionOk(null);
+        startTransition(() => {
+          setActionError(result.error);
+          setActionOk(null);
+        });
         return;
       }
-      setActionError(null);
-      setActionOk(
-        `Applied VL expiry: ${result.data.rows.length} row(s) processed.`,
-      );
+      startTransition(() => {
+        setActionError(null);
+        setActionOk(
+          `Applied VL expiry: ${result.data.rows.length} row(s) processed.`,
+        );
+      });
       router.refresh();
     });
   }, [currentYear, router, todayManila]);
@@ -578,7 +586,9 @@ function GrantForm({
         reason: reason.trim(),
       });
       if (!result.ok) {
-        setError(result.error);
+        startTransition(() => {
+          setError(result.error);
+        });
         return;
       }
       onSuccess();
@@ -678,7 +688,9 @@ function UsageForm({
         reason: reason.trim() || null,
       });
       if (!result.ok) {
-        setError(result.error);
+        startTransition(() => {
+          setError(result.error);
+        });
         return;
       }
       onSuccess();
@@ -770,7 +782,9 @@ function CashForm({
         reason: reason.trim() || null,
       });
       if (!result.ok) {
-        setError(result.error);
+        startTransition(() => {
+          setError(result.error);
+        });
         return;
       }
       onSuccess();

@@ -35,14 +35,18 @@ export function OnlineBookingSettings({
     start(async () => {
       const res = await updateOnlineBookingSettingsAction({ paused: nextPaused, message });
       if (!res.ok) {
-        setErr(res.error ?? "Could not update the setting. Try again.");
+        start(() => {
+          setErr(res.error ?? "Could not update the setting. Try again.");
+        });
         return;
       }
-      setPaused(nextPaused);
-      setSavedMessage(message ?? "");
-      setDraft(message ?? "");
-      setConfirming(false);
-      setNotice(successNotice);
+      start(() => {
+        setPaused(nextPaused);
+        setSavedMessage(message ?? "");
+        setDraft(message ?? "");
+        setConfirming(false);
+        setNotice(successNotice);
+      });
     });
   }
 

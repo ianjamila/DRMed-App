@@ -85,11 +85,15 @@ function PettyCashItem({ row }: { row: PettyCashRow }) {
     startTransition(async () => {
       const r = await voidPettyCashExpenseAction(row.id, reason.trim());
       if (!r.ok) {
-        setErr(r.error);
+        startTransition(() => {
+          setErr(r.error);
+        });
         return;
       }
-      setConfirming(false);
-      setReason("");
+      startTransition(() => {
+        setConfirming(false);
+        setReason("");
+      });
       router.refresh();
     });
   }

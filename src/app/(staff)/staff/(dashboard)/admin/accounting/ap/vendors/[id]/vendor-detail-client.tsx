@@ -126,7 +126,9 @@ export function VendorDetailClient({ vendor, bills, payments, showVoided }: Prop
       if (r.ok) {
         router.refresh();
       } else {
-        setError(r.error);
+        startTransition(() => {
+          setError(r.error);
+        });
       }
     });
   };

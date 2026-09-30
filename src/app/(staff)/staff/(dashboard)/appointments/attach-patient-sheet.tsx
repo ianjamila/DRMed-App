@@ -152,11 +152,15 @@ export function AttachPatientSheet({
     startTransition(async () => {
       const result = await attachPatientToAppointmentAction(appointmentId, patient);
       if (!result.ok) {
-        setError(result.error);
+        startTransition(() => {
+          setError(result.error);
+        });
         return;
       }
       toast.success("Patient attached. “+ Start visit” is now available on this row.");
-      setOpen(false);
+      startTransition(() => {
+        setOpen(false);
+      });
       reset();
       router.refresh();
     });

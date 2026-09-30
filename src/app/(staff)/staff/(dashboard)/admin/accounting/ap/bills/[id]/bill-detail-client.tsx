@@ -129,7 +129,7 @@ export function BillDetailClient({
     startTransition(async () => {
       const r = await postBillAction(bill.id);
       if (r.ok) router.refresh();
-      else setError(r.error);
+      else startTransition(() => setError(r.error));
     });
   }
 
@@ -139,7 +139,7 @@ export function BillDetailClient({
     startTransition(async () => {
       const r = await deleteBillDraftAction(bill.id);
       if (r.ok) router.push("/staff/admin/accounting/ap/bills");
-      else setError(r.error);
+      else startTransition(() => setError(r.error));
     });
   }
 
@@ -148,11 +148,15 @@ export function BillDetailClient({
     startTransition(async () => {
       const r = await voidBillAction(bill.id, voidReason.trim());
       if (r.ok) {
-        setShowVoidConfirm(false);
-        setVoidReason("");
+        startTransition(() => {
+          setShowVoidConfirm(false);
+          setVoidReason("");
+        });
         router.refresh();
       } else {
-        setError(r.error);
+        startTransition(() => {
+          setError(r.error);
+        });
       }
     });
   }

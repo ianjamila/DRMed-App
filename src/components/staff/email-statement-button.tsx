@@ -96,11 +96,15 @@ export function EmailStatementButton({
       setErr(null);
       const result = await emailStatementAction(visitId);
       if (!result.ok) {
-        setErr(result.error);
+        startTransition(() => {
+          setErr(result.error);
+        });
         return;
       }
       toast.success(`Statement emailed to ${result.data.to}`);
-      setOpen(false);
+      startTransition(() => {
+        setOpen(false);
+      });
     });
   }
 

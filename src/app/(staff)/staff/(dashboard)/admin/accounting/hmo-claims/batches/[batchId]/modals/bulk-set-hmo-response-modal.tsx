@@ -72,7 +72,9 @@ function BulkSetHmoResponseModalInner({
         notes: notes.trim() || null,
       });
       if (!res.ok) {
-        setErr(res.error);
+        startTransition(() => {
+          setErr(res.error);
+        });
         return;
       }
       // An inactive (deleted/merged) patient's item is skipped rather than
@@ -86,7 +88,9 @@ function BulkSetHmoResponseModalInner({
       const skippedInactive = res.data?.items_skipped_inactive ?? 0;
       const skippedChanged = res.data?.items_skipped_changed ?? 0;
       if (skippedInactive > 0 || skippedChanged > 0) {
-        setResult({ updated: res.data?.items_updated ?? 0, skippedInactive, skippedChanged });
+        startTransition(() => {
+          setResult({ updated: res.data?.items_updated ?? 0, skippedInactive, skippedChanged });
+        });
         return;
       }
       onClose();
