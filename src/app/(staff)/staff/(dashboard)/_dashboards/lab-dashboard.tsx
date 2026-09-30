@@ -1,4 +1,5 @@
 import { quickLinksFor } from "@/components/staff/staff-nav-config";
+import { activeEmbeddedPatients } from "@/lib/patients/active";
 import type { StaffSession } from "@/lib/auth/require-staff";
 import { createClient } from "@/lib/supabase/server";
 import { sectionsForRole, type ServiceSection } from "@/lib/auth/role-sections";
@@ -123,15 +124,18 @@ async function loadLabStats(
 
   const sectionList = (sections ?? []) as ServiceSection[];
 
+  // Deleted and merged-away patients are hidden from the queue and results
+  // pages (owner decision 2026-09-30), so every worklist card below applies
+  // activeEmbeddedPatients too — a card must count what its page lists.
   // Mirrors /staff/queue's worklist gate ("all"/"mine" tabs): a visit whose
   // money isn't settled (fully paid, waived, or HMO-billed) isn't claimable,
   // so it must not inflate this count either — the queue page would show
   // "empty" while this card claimed otherwise.
   const myUnclaimedPromise =
     show("lab.my_unclaimed") && (role === "medtech" || role === "xray_technician")
-      ? supabase
+      ? activeEmbeddedPatients(supabase
           .from("test_requests")
-          .select("id, services!inner(section), visits!inner(id)", { count: "exact", head: true })
+          .select("id, services!inner(section), visits!inner(id, patients!inner(id))", { count: "exact", head: true })
           .in("status", ["requested", "in_progress"])
           .is("assigned_to", null)
           .eq("is_package_header", false)
@@ -139,7 +143,8 @@ async function loadLabStats(
           .not("services.kind", "in", DOCTOR_KINDS_PG_LIST)
           .is("deleted_at", null)
           .is("visits.deleted_at", null)
-          .or(LAB_QUEUE_GATE_VISITS_OR, { foreignTable: "visits" })
+          .or(LAB_QUEUE_GATE_VISITS_OR, { foreignTable: "visits" }),
+        "visits.patients")
       : SKIP_COUNT;
 
   // The doctor-kind exclusion on this and the tiles below is deliberate
@@ -156,16 +161,17 @@ async function loadLabStats(
   // Mine tab it links to.
   const myClaimedPromise =
     show("lab.my_claimed") && (role === "medtech" || role === "xray_technician")
-      ? supabase
+      ? activeEmbeddedPatients(supabase
           .from("test_requests")
-          .select("id, services!inner(section), visits!inner(id)", { count: "exact", head: true })
+          .select("id, services!inner(section), visits!inner(id, patients!inner(id))", { count: "exact", head: true })
           .eq("assigned_to", userId)
           .in("status", ["requested", "in_progress"])
           .is("deleted_at", null)
           .is("visits.deleted_at", null)
           .in("services.section", sectionList)
           .not("services.kind", "in", DOCTOR_KINDS_PG_LIST)
-          .or(LAB_QUEUE_GATE_VISITS_OR, { foreignTable: "visits" })
+          .or(LAB_QUEUE_GATE_VISITS_OR, { foreignTable: "visits" }),
+        "visits.patients")
       : SKIP_COUNT;
 
   // "Ready for sign-off" surfaces results the pathologist hasn't looked at
@@ -178,13 +184,14 @@ async function loadLabStats(
   // list instead of the placeholder.
   const readyForSignoffPromise =
     show("lab.ready_for_signoff") && role === "pathologist"
-      ? supabase
+      ? activeEmbeddedPatients(supabase
           .from("test_requests")
-          .select("id, services!inner(id), visits!inner(id)", { count: "exact", head: true })
+          .select("id, services!inner(id), visits!inner(id, patients!inner(id))", { count: "exact", head: true })
           .eq("status", "result_uploaded")
           .is("deleted_at", null)
           .is("visits.deleted_at", null)
-          .not("services.kind", "in", DOCTOR_KINDS_PG_LIST)
+          .not("services.kind", "in", DOCTOR_KINDS_PG_LIST),
+        "visits.patients")
       : SKIP_COUNT;
 
   const criticalAlertsPromise =
@@ -203,27 +210,47 @@ async function loadLabStats(
   // filter + package-header exclusion added to match the queue's own
   // predicate set; the label says "tests" now (not "external labs still
   // processing"), because `requested` rows haven't even left the building.
-  // "Updated (last 7 days)": corrections to results this role can read — RLS
-  // on the signed-in client scopes it the same way the archive/queue already
-  // do, so no explicit section filter is needed here.
+  // "Updated (last 7 days)": exactly the rows /staff/results?updated=7d lists
+  // for this role (the archive reads with the service-role client and gates
+  // sections itself, so the section filter is explicit here too).
   // R7: same rolling window updatedSinceIso() uses for the archive's
   // ?updated=7d filter (src/lib/results/updated-filter.ts) — reusing it
   // means the card's count and the filter it links to can't drift apart.
+  //
+  // It counts TESTS with the archive's own predicates (live line + visit,
+  // lab kinds only, this role's sections, active patient, result corrected
+  // within the window), not result_amendments rows: counting corrections
+  // counted a test edited twice as 2 while the archive lists it once, and
+  // counted corrections on deleted visits the archive hides.
   const since7d = updatedSinceIso();
+  let updated7dQuery = supabase
+    .from("test_requests")
+    .select(
+      "id, services!inner(id, section, kind), visits!inner(id, patients!inner(id)), result_test_requests!inner(results!inner(amended_at))",
+      { count: "exact", head: true },
+    )
+    .is("deleted_at", null)
+    .is("visits.deleted_at", null)
+    .not("services.kind", "in", DOCTOR_KINDS_PG_LIST)
+    .gte("result_test_requests.results.amended_at", since7d);
+  updated7dQuery = activeEmbeddedPatients(updated7dQuery, "visits.patients");
+  if (sections !== null) {
+    updated7dQuery =
+      sections.length === 0
+        ? updated7dQuery.eq("id", "00000000-0000-0000-0000-000000000000")
+        : updated7dQuery.in("services.section", sections);
+  }
   const updated7dPromise =
     show("lab.updated_7d") &&
     (role === "medtech" || role === "pathologist" || role === "xray_technician")
-      ? supabase
-          .from("result_amendments")
-          .select("id", { count: "exact", head: true })
-          .gte("amended_at", since7d)
+      ? updated7dQuery
       : SKIP_COUNT;
 
   const sendOutAwaitingPromise =
     show("lab.send_out_awaiting") && role === "medtech"
-      ? supabase
+      ? activeEmbeddedPatients(supabase
           .from("test_requests")
-          .select("id, services!inner(is_send_out, section), visits!inner(id)", { count: "exact", head: true })
+          .select("id, services!inner(is_send_out, section), visits!inner(id, patients!inner(id))", { count: "exact", head: true })
           .in("status", ["requested", "in_progress"])
           .eq("services.is_send_out", true)
           .eq("is_package_header", false)
@@ -231,7 +258,8 @@ async function loadLabStats(
           .is("deleted_at", null)
           .is("visits.deleted_at", null)
           .or(LAB_QUEUE_GATE_VISITS_OR, { foreignTable: "visits" })
-          .not("services.kind", "in", DOCTOR_KINDS_PG_LIST)
+          .not("services.kind", "in", DOCTOR_KINDS_PG_LIST),
+        "visits.patients")
       : SKIP_COUNT;
 
   // Shown to medtech, xray_technician AND pathologist (LAB_CAPABLE_ROLES —
@@ -241,7 +269,7 @@ async function loadLabStats(
   // — coercing null to `[]` here would wrongly deny pathologist every row.
   let releasedTodayQuery = supabase
     .from("test_requests")
-    .select("id, services!inner(id, section), visits!inner(id)", {
+    .select("id, services!inner(id, section), visits!inner(id, patients!inner(id))", {
       count: "exact",
       head: true,
     })
@@ -256,6 +284,7 @@ async function loadLabStats(
     .is("deleted_at", null)
     .is("visits.deleted_at", null)
     .not("services.kind", "in", DOCTOR_KINDS_PG_LIST);
+  releasedTodayQuery = activeEmbeddedPatients(releasedTodayQuery, "visits.patients");
   if (sections !== null) {
     releasedTodayQuery =
       sections.length === 0
@@ -270,7 +299,7 @@ async function loadLabStats(
   // the reason.
   let readyForReleaseQuery = supabase
     .from("test_requests")
-    .select("id, services!inner(id, section, kind), visits!inner(id)", {
+    .select("id, services!inner(id, section, kind), visits!inner(id, patients!inner(id))", {
       count: "exact",
       head: true,
     })
@@ -279,6 +308,7 @@ async function loadLabStats(
     .not("services.kind", "in", DOCTOR_KINDS_PG_LIST)
     .is("deleted_at", null)
     .is("visits.deleted_at", null);
+  readyForReleaseQuery = activeEmbeddedPatients(readyForReleaseQuery, "visits.patients");
   if (sections !== null) {
     readyForReleaseQuery =
       sections.length === 0
@@ -295,10 +325,10 @@ async function loadLabStats(
   const oldestUnclaimedPromise =
     show("lab.strip_oldest_unclaimed") &&
     (role === "medtech" || role === "xray_technician")
-      ? supabase
+      ? activeEmbeddedPatients(supabase
           .from("test_requests")
           .select(
-            "id, status, requested_at, visits!inner ( id, patients ( first_name, last_name ) ), services!inner ( name, section )",
+            "id, status, requested_at, visits!inner ( id, patients!inner ( first_name, last_name ) ), services!inner ( name, section )",
           )
           .in("status", ["requested", "in_progress"])
           .is("assigned_to", null)
@@ -310,7 +340,8 @@ async function loadLabStats(
           .or(LAB_QUEUE_GATE_VISITS_OR, { foreignTable: "visits" })
           .order("requested_at", { ascending: true })
           .limit(5)
-          .returns<QueueRow[]>()
+          .returns<QueueRow[]>(),
+        "visits.patients")
       : SKIP_DATA;
 
   // Medtech: alerts on tests CURRENTLY assigned to them, any ack status —
@@ -364,14 +395,14 @@ async function loadLabStats(
   // visits, never embedded directly on test_requests.
   const pendingSignoffPromise =
     show("lab.strip_pending_signoff") && role === "pathologist"
-      ? supabase
+      ? activeEmbeddedPatients(supabase
           .from("test_requests")
           .select(
             // `services!inner`, not `services` — a filter on a LEFT-joined
             // embed is silently ignored by PostgREST, so the doctor-kind
             // exclusion below would compile, run, and return the unfiltered
             // rows while looking like a working filter.
-            "id, services!inner ( name ), visits!inner ( id, patients ( first_name, last_name ) )",
+            "id, services!inner ( name ), visits!inner ( id, patients!inner ( first_name, last_name ) )",
           )
           .eq("status", "result_uploaded")
           .is("deleted_at", null)
@@ -379,7 +410,8 @@ async function loadLabStats(
           .not("services.kind", "in", DOCTOR_KINDS_PG_LIST)
           .order("requested_at", { ascending: true })
           .limit(5)
-          .returns<SignoffRow[]>()
+          .returns<SignoffRow[]>(),
+        "visits.patients")
       : SKIP_DATA;
 
   const [

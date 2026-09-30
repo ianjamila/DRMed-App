@@ -11,7 +11,7 @@ import {
  * finalise-consolidated step 9: release the report just finalised — WHOLE or
  * not at all — through the path the lab queue and the visit page use
  * (releaseVisitSelection, #261), which also sends the patient's "result
- * ready" notice and reception's alert for a report verified fully released.
+ * ready" notice and reception's alert once it is released.
  *
  * A member whose service needs pathologist sign-off is left at
  * 'result_uploaded' by the finalise trigger. That is checked here first, so a

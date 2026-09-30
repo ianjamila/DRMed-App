@@ -6,6 +6,7 @@ import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { audit } from "@/lib/audit/log";
+import { reportError } from "@/lib/observability/report-error";
 import { requireActiveStaff } from "@/lib/auth/require-staff";
 import { requireAdminStaff } from "@/lib/auth/require-admin";
 import { assertVisitPatientActive } from "@/lib/patients/require-active";
@@ -45,15 +46,7 @@ import {
 import { countResultViews } from "@/lib/results/viewed-count";
 import { canManuallyReleasePackageHeader } from "@/lib/visits/package-header-release";
 import { isReleaseMedium, type ReleaseMedium } from "@/lib/visits/release-media";
-import {
-  expandUndoReleaseScope,
-  groupIdsByExpectedReleasedAt,
-  reportsToRefuse,
-  undoUpdateIds,
-  type UndoReleaseScopeExpansion,
-  type UndoScopeMemberRow,
-  type UndoScopeRejectionReason,
-} from "@/lib/visits/undo-release-scope";
+
 
 
 export type ReleaseResult =
@@ -69,18 +62,6 @@ export type ReleaseResult =
 export type BulkSelectionResult =
   | { ok: true; count: number }
   | { ok: false; error: string };
-
-// User-facing text for expandUndoReleaseScope's rejections (0172). The whole
-// request is refused — no partial undo — so each message explains why
-// nothing happened rather than which row was the problem.
-const UNDO_SCOPE_REJECTION_MESSAGE: Record<UndoScopeRejectionReason, string> = {
-  outside_sections:
-    "This report has tests outside the sections you can act on, so it can't be undone from here — ask an admin.",
-  package_header:
-    "This report includes a package header, which shouldn't happen — ask an admin to check it.",
-  other_visit:
-    "This report spans more than one visit, which shouldn't happen — ask an admin to check it.",
-};
 
 /**
  * Refuse to act on a soft-deleted visit (0125).
@@ -167,6 +148,9 @@ export async function releaseTestAction(
     return { ok: false, error: "Invalid release medium." };
   }
   const session = await requireActiveStaff();
+  // The lab releases results, never reception (owner rule 2026-09-15) — the
+  // same refusal the Queue gives (evaluateRelease), not a misleading "not ready".
+  if (session.role === "reception") return { ok: false, error: RELEASE_REFUSAL.reception };
   const supabase = await createClient();
 
   const visitDeleted = await refuseIfVisitDeleted(supabase, visitId);
@@ -238,6 +222,9 @@ export async function releaseAllReadyComponentsAction(
     return { ok: false, error: "Invalid release medium." };
   }
   const session = await requireActiveStaff();
+  // The lab releases results, never reception (owner rule 2026-09-15) — the
+  // same refusal the Queue gives (evaluateRelease), not a misleading "not ready".
+  if (session.role === "reception") return { ok: false, error: RELEASE_REFUSAL.reception };
   const supabase = await createClient();
 
   const visitDeleted = await refuseIfVisitDeleted(supabase, visitId);
@@ -275,7 +262,10 @@ export async function releaseAllReadyComponentsAction(
   const componentIds = scopeToAllowedSections(readyRows ?? [], allowedSections).map((r) => r.id);
   if (componentIds.length === 0) {
     revalidateReleaseSurfaces(visitId);
-    return { ok: false, error: "No components are ready to release." };
+    return {
+      ok: false,
+      error: (readyRows ?? []).length > 0 ? RELEASE_REFUSAL.section : "No components are ready to release.",
+    };
   }
 
   const out = await releaseVisitSelection({
@@ -412,6 +402,9 @@ export async function releaseSelectedAction(
   }
 
   const session = await requireActiveStaff();
+  // The lab releases results, never reception (owner rule 2026-09-15) — the
+  // same refusal the Queue gives (evaluateRelease), not a misleading "not ready".
+  if (session.role === "reception") return { ok: false, error: RELEASE_REFUSAL.reception };
   const supabase = await createClient();
 
   const visitDeleted = await refuseIfVisitDeleted(supabase, visitId);
@@ -437,7 +430,13 @@ export async function releaseSelectedAction(
   );
   if (scoped.size === 0) {
     revalidateReleaseSurfaces(visitId);
-    return { ok: false, error: "None of the selected tests are ready to release." };
+    return {
+      ok: false,
+      // Ready rows the role may not release get the section reason, not "not ready".
+      error: (readyRows ?? []).length > 0
+        ? RELEASE_REFUSAL.section
+        : "None of the selected tests are ready to release.",
+    };
   }
   const requested = Array.from(new Set(testRequestIds));
   const scopedIds = requested.filter((id) => scoped.has(id));
@@ -542,9 +541,8 @@ export async function undoReleaseBatchAction(
   const notRestored: Array<{ id: string; reason: string }> = [];
   const candidateIds: string[] = [];
   // Every id THIS batch released (has its own test_request.released audit row
-  // in it), regardless of changedSince — reportsToRefuse needs the full set
-  // to tell "a report member this batch never released" apart from "one of
-  // ours that changed since" (Finding 4, P1).
+  // in it), regardless of changedSince — only these are ever named in
+  // notRestored, never a report-mate released separately (Finding 4, P1).
   const batchReleasedIds = new Set<string>();
   // testRequestId -> the exact released_at this batch's audit row recorded —
   // the release identity undoReleasedRows' write is predicated on below.
@@ -568,7 +566,7 @@ export async function undoReleaseBatchAction(
     }
     candidateIds.push(id);
   }
-  // releaseRows always stamps visit_id — a batch with none of its
+  // releaseVisitSelection always stamps visit_id — a batch with none of its
   // rows carrying it is not a batch this action wrote.
   if (!visitId) return { ok: false, error: UNDO_EXPIRED };
   if (candidateIds.length === 0) {
@@ -579,74 +577,25 @@ export async function undoReleaseBatchAction(
 
   const supabase = await createClient();
 
-  // Finding 4 (P1): combined reports are all-or-nothing (owner rule), but the
-  // shared core (undoReleasedRows) expands ANY selected member to the WHOLE
-  // report regardless of the other members' provenance — so a member this
-  // batch never released, or one already rejected above as changed-since,
-  // would otherwise be pulled back in by the expansion, and its warning would
-  // be silently dropped by the restoredSet filter below. So: before handing
-  // candidateIds to the core, expand them to whole-report membership
-  // ourselves (same reads/expandUndoReleaseScope the core uses, via the
-  // shared loadReportExpansion) and refuse the WHOLE report — every member
-  // added to notRestored, none passed to the core — when any member is
-  // changed-since or was not released by this exact batch. Standalone
-  // (non-report) ids are untouched by this and keep today's per-row rule.
-  // A read/validation failure here fails CLOSED (refuses the whole undo)
-  // rather than silently falling through to the core's unfiltered expansion.
-  const allowedSections = sectionsForRole(session.role);
-  const expansionResult = await loadReportExpansion(
-    supabase,
-    candidateIds,
-    visitId,
-    allowedSections,
+  // Finding 4 (P1), 0198: combined reports come back whole or not at all, and
+  // only as THIS batch released them. The rule is decided by undo_visit_release
+  // under its locks, from the identity map: a member changed since this batch
+  // (by audit) is left out of it, and the database restores a report only when
+  // EVERY member is in the map and still carries that exact release — so a
+  // member this batch never released, or one changed since, keeps its whole
+  // report released, and a line re-released by someone else inside the window
+  // never comes back. A row whose audit row lacks released_at is not in the
+  // map either, so it is refused rather than restored on a guess.
+  const expectedForUndo = new Map(
+    [...expectedReleasedAtOf].filter(([id]) => !loaded.changedSince.has(id)),
   );
-  if (!expansionResult.ok) return { ok: false, error: expansionResult.error };
-
-  const refusedReportIds = reportsToRefuse({
-    reportResultIdByTestRequestId: expansionResult.expansion.reportResultIdByTestRequestId,
-    batchReleasedIds,
-    changedSinceIds: loaded.changedSince,
-  });
-  let scopedCandidateIds = candidateIds;
-  if (refusedReportIds.size > 0) {
-    scopedCandidateIds = candidateIds.filter((id) => !refusedReportIds.has(id));
-    for (const id of refusedReportIds) {
-      // Name only tests THIS batch released — a report member released
-      // separately is why the report was refused, not one of the actor's own
-      // rows, and counting it would inflate "Not undone (N)".
-      if (!batchReleasedIds.has(id)) continue;
-      if (!notRestored.some((n) => n.id === id)) {
-        notRestored.push({ id, reason: CHANGED_SINCE_REASON });
-      }
-    }
-  }
-  // Defensive: every id reaching here came from a `test_request.released` row
-  // this SAME batch wrote, which always stamps `released_at` (see
-  // releaseRows) — so this only fires for a row whose audit row somehow
-  // lacks it. Refuse it rather
-  // than silently drop it from both restoredIds and notRestored (rule: a
-  // rejected member's warning must never be dropped).
-  const withoutReleaseIdentity = scopedCandidateIds.filter((id) => !expectedReleasedAtOf.has(id));
-  if (withoutReleaseIdentity.length > 0) {
-    scopedCandidateIds = scopedCandidateIds.filter((id) => expectedReleasedAtOf.has(id));
-    for (const id of withoutReleaseIdentity) {
-      if (!notRestored.some((n) => n.id === id)) {
-        notRestored.push({ id, reason: CHANGED_SINCE_REASON });
-      }
-    }
-  }
-  if (scopedCandidateIds.length === 0) {
-    return notRestored.length > 0
-      ? { ok: true, restoredIds: [], notRestored }
-      : { ok: false, error: UNDO_EXPIRED };
-  }
 
   const undoBatchId = crypto.randomUUID();
   const result = await undoReleasedRows(
     supabase,
     session,
     visitId,
-    scopedCandidateIds,
+    candidateIds,
     "Undone within 10 minutes of release",
     {
       bulk: true,
@@ -654,13 +603,20 @@ export async function undoReleaseBatchAction(
       undo_of_batch: parsed.data.batchId,
       bulk_batch_id: undoBatchId,
     },
-    expectedReleasedAtOf,
+    expectedForUndo,
   );
   // The Queue's Pending release tab and the dashboard cards list ready
   // work too (#261), so refresh every release surface, as Unrelease does.
   revalidateReleaseSurfaces(visitId);
   if (!result.ok) return { ok: false, error: result.error };
 
+  // Name only tests THIS batch released — a report-mate released separately is
+  // why its report stayed, not one of the actor's own rows.
+  for (const id of result.skippedIds) {
+    if (batchReleasedIds.has(id) && !notRestored.some((n) => n.id === id)) {
+      notRestored.push({ id, reason: CHANGED_SINCE_REASON });
+    }
+  }
   const restoredSet = new Set(result.undoneIds);
   return {
     ok: true,
@@ -710,86 +666,49 @@ export async function undoReleaseSelectedAction(
 }
 
 type UndoRowsResult =
-  | { ok: true; undoneIds: string[] }
+  | { ok: true; undoneIds: string[]; skippedIds: string[] }
   | { ok: false; error: string };
 
-type ReportExpansionResult =
-  | { ok: true; expansion: UndoReleaseScopeExpansion }
-  | { ok: false; error: string };
+const COULDNT_CONFIRM_UNDO =
+  "Couldn't confirm what was undone — check the visit page.";
 
-// 0172 / PR 2 §5, §9 R4: undo-release is WHOLE-REPORT. Expand a selection to
-// every member of any combined (chemistry) result it touches — regardless of
-// that member's own status — before scoping/updating, so a partially-released
-// or legacy report is undone as a whole rather than splitting one report
-// across two statuses. Two batched queries, no N+1: which results the
-// selection links to, then every member of those results.
-// expandUndoReleaseScope rejects the WHOLE request (no partial undo) when a
-// member is outside the caller's sections, a package header, or on another
-// visit — the server expansion is authoritative; any client wording of the
-// scope is display only. Fail closed: a read error must not silently shrink
-// the undo to a partial report. Shared by undoReleasedRows (below) and
-// undoReleaseBatchAction's Finding-4 pre-check, so both see the SAME
-// membership for the same ids rather than two independently-drifting reads.
-async function loadReportExpansion(
-  supabase: Awaited<ReturnType<typeof createClient>>,
-  testRequestIds: string[],
-  visitId: string,
-  allowedSections: readonly string[] | null,
-): Promise<ReportExpansionResult> {
-  const { data: initialLinks, error: linkErr } = await supabase
-    .from("result_test_requests")
-    .select("test_request_id, result_id")
-    .in("test_request_id", testRequestIds);
-  if (linkErr) return { ok: false, error: translatePgError(linkErr) };
-  const touchedResultIds = Array.from(
-    new Set((initialLinks ?? []).map((l) => l.result_id)),
-  );
-
-  let scopeMembers: UndoScopeMemberRow[] = [];
-  if (touchedResultIds.length > 0) {
-    const { data: memberLinks, error: memberErr } = await supabase
-      .from("result_test_requests")
-      .select(
-        "test_request_id, result_id, test_requests!inner ( visit_id, is_package_header, services!inner ( section ) )",
-      )
-      .in("result_id", touchedResultIds);
-    if (memberErr) return { ok: false, error: translatePgError(memberErr) };
-    scopeMembers = (memberLinks ?? []).map((l) => {
-      const tr = Array.isArray(l.test_requests) ? l.test_requests[0] : l.test_requests;
-      const svc = tr ? (Array.isArray(tr.services) ? tr.services[0] : tr.services) : null;
-      return {
-        testRequestId: l.test_request_id,
-        resultId: l.result_id,
-        visitId: tr?.visit_id ?? "",
-        isPackageHeader: tr?.is_package_header ?? false,
-        section: svc?.section ?? null,
-      };
-    });
-  }
-
-  const expansion = expandUndoReleaseScope({
-    selectedIds: testRequestIds,
-    members: scopeMembers,
-    visitId,
-    allowedSections,
-  });
-  if (!expansion.ok) {
-    return { ok: false, error: UNDO_SCOPE_REJECTION_MESSAGE[expansion.reason] };
-  }
-  return { ok: true, expansion };
+interface UndoneRow {
+  id: string;
+  prior_release_medium: string | null;
+  prior_released_at: string | null;
+  report_id: string | null;
 }
 
-// The body of undo-release, shared by undoReleaseSelectedAction and
-// deleteSampleVisitAction so a sample-visit delete reverts results through
-// exactly the same scope expansion, status-filtered UPDATE (and so the same
-// 0110 accounting reversal) and per-row audit as a hand-picked undo. The
-// caller has already validated input and owns revalidation; the deleted-visit
-// check lives HERE, next to the line reads it protects (query-surfaces.test.ts
-// looks for it in this function). `auditExtra` is merged into each row's
-// audit metadata. `expectedReleasedAtOf` (undoReleaseBatchAction only) scopes
-// the final UPDATE to the EXACT release each id's audit row recorded — see
-// the write below; when omitted (every other caller), behaviour is
-// byte-for-byte what it was before Finding 4's fix.
+/** Hand-checks undo_visit_release's jsonb ({ undone: [...], skipped: [...] }); null when malformed. */
+function parseUndoResult(data: unknown): { undone: UndoneRow[]; skippedIds: string[] } | null {
+  if (typeof data !== "object" || data === null || Array.isArray(data)) return null;
+  const { undone: list, skipped } = data as { undone?: unknown; skipped?: unknown };
+  if (!Array.isArray(list) || !Array.isArray(skipped)) return null;
+  const strOrNull = (v: unknown) => v === null || typeof v === "string";
+  const ok = list.every(
+    (r) =>
+      typeof r === "object" && r !== null &&
+      typeof (r as UndoneRow).id === "string" &&
+      strOrNull((r as UndoneRow).prior_release_medium) &&
+      strOrNull((r as UndoneRow).prior_released_at) &&
+      strOrNull((r as UndoneRow).report_id),
+  );
+  const skippedOk = skipped.every(
+    (r) => typeof r === "object" && r !== null && typeof (r as { id?: unknown }).id === "string",
+  );
+  if (!ok || !skippedOk) return null;
+  return { undone: list as UndoneRow[], skippedIds: (skipped as Array<{ id: string }>).map((r) => r.id) };
+}
+
+// The body of undo-release, shared by undoReleaseSelectedAction,
+// undoReleaseBatchAction and deleteSampleVisitAction so every undo reverts
+// results through the same database function (and so the same 0110
+// accounting reversal) and per-row audit. The caller has already validated
+// input and owns revalidation; the deleted-visit check lives HERE
+// (query-surfaces.test.ts looks for it in this function). `auditExtra` is
+// merged into each row's audit metadata. `expectedReleasedAtOf`
+// (undoReleaseBatchAction only) limits the undo to the EXACT release each id's
+// audit row recorded, whole reports included; every other caller omits it.
 async function undoReleasedRows(
   supabase: Awaited<ReturnType<typeof createClient>>,
   session: Awaited<ReturnType<typeof requireActiveStaff>>,
@@ -802,140 +721,55 @@ async function undoReleasedRows(
   const visitDeleted = await refuseIfVisitDeleted(supabase, visitId);
   if (visitDeleted) return visitDeleted;
 
-  const allowedSections = sectionsForRole(session.role);
-
-  const expansionResult = await loadReportExpansion(
-    supabase,
-    testRequestIds,
-    visitId,
-    allowedSections,
+  // 0172 / 0198: undo-release is WHOLE-REPORT, decided by the database.
+  // undo_visit_release expands the selection to every member of any combined
+  // (chemistry) result it touches, refuses the WHOLE request (P0081, message
+  // passes through translatePgError) when a member is outside the caller's
+  // sections, a package header or on another visit, and reverts only live,
+  // released, non-header lines — under the same locks as release, so a
+  // concurrent release can never leave one report half undone. Headers only
+  // ever flip through the 0110 cascade, never directly. The release times
+  // are compared in SQL: a JavaScript Date would drop their microseconds.
+  const { data, error } = await withLifecycleRetry(() =>
+    supabase.rpc("undo_visit_release", {
+      p_visit_id: visitId,
+      p_test_request_ids: testRequestIds,
+      p_actor: session.user_id,
+      p_expected_released_at: expectedReleasedAtOf
+        ? Object.fromEntries(expectedReleasedAtOf)
+        : null,
+    }),
   );
-  if (!expansionResult.ok) return { ok: false, error: expansionResult.error };
-  const expandedIds = expansionResult.expansion.expandedIds;
-  const reportResultIdByTestRequestId =
-    expansionResult.expansion.reportResultIdByTestRequestId;
-
-  // is_package_header = false is LOAD-BEARING, not a convenience filter:
-  // nothing at the DB layer blocks a direct header released→ready_for_release
-  // transition, and that state (header ready, components released) would let
-  // a later payment-status change silently re-release the header with a
-  // fresh JE. Headers must only ever flip via the 0110 cascade (triggered by
-  // undoing their last released component), never by being selected here
-  // directly.
-  const { data: candidates } = await supabase
-    .from("test_requests")
-    .select("id, release_medium, released_at, services!inner ( section, name )")
-    .in("id", expandedIds)
-    .eq("visit_id", visitId)
-    .eq("status", "released")
-    .eq("is_package_header", false)
-    .is("deleted_at", null);
-
-  const scoped = scopeToAllowedSections(candidates ?? [], allowedSections);
-  if (scoped.length === 0) {
+  if (error) return { ok: false, error: translatePgError(error) };
+  const parsed = parseUndoResult(data);
+  if (parsed === null) {
+    // The call may have committed: don't guess, send the operator to the page.
+    await reportError({
+      scope: "release/undo-visit-release-malformed",
+      error: new Error("undo_visit_release returned an unexpected shape"),
+      metadata: { visit_id: visitId, test_request_ids: testRequestIds },
+    });
+    return { ok: false, error: COULDNT_CONFIRM_UNDO };
+  }
+  const { undone, skippedIds } = parsed;
+  // A batch Undo may legitimately restore nothing (every report changed since).
+  if (undone.length === 0 && !expectedReleasedAtOf) {
     return { ok: false, error: "None of the selected tests can be unreleased." };
   }
-  const scopedIds = scoped.map((r) => r.id);
-  // TOCTOU note: prior_release_medium / prior_released_at are read one
-  // round-trip before the UPDATE below. If another actor undoes AND
-  // re-releases a row inside that window, these audit metadata fields record
-  // the earlier release. Accepted trade-off — the undo event itself is always
-  // real (the UPDATE is status-filtered) and the DB trigger's accounting
-  // reversal is transaction-correct; closing it fully would need an atomic
-  // RPC.
-  const priorById = new Map(
-    (candidates ?? []).map((r) => [
-      r.id,
-      { release_medium: r.release_medium, released_at: r.released_at },
-    ]),
-  );
+
   // Snapshot how often the patient had already viewed/downloaded each result
   // at the moment of undo — the undone-releases report surfaces this (RA
   // 10173: undoing does not un-see a result the patient already opened).
   const viewedCountById = new Map<string, number>(
     await Promise.all(
-      scopedIds.map(
-        async (trId) => [trId, await countResultViews(trId)] as const,
-      ),
+      undone.map(async (row) => [row.id, await countResultViews(row.id)] as const),
     ),
   );
-
-  // Whole-report undo [R4]: every member of an expanded report goes to the
-  // UPDATE, not only the ones observed as released a round trip ago — a
-  // member released in between would otherwise stay released while the rest
-  // of its report is undone. The expansion above already proved every such
-  // member is in the caller's sections, on this visit and not a header; the
-  // status filter decides which rows actually revert.
-  const updateIds = undoUpdateIds(scopedIds, reportResultIdByTestRequestId.keys());
-
-  const UNRELEASE_PATCH = {
-    status: "ready_for_release" as const,
-    released_at: null,
-    released_by: null,
-    release_medium: null,
-  };
-  let undone: Array<{ id: string }> | null;
-  let error: { code?: string; message?: string; details?: string } | null;
-  if (expectedReleasedAtOf && expectedReleasedAtOf.size > 0) {
-    // Finding 4 (P1): scope the write to the EXACT release this batch wrote,
-    // not merely "still released" — a row unreleased and re-released by
-    // someone else inside the Undo window must not come back. Group by
-    // distinct released_at (a report's members share one, since
-    // releaseRows stamps every row of one release with the same `releasedAt`) and issue
-    // one UPDATE per group; ids with no recorded released_at are refused
-    // (excluded from every write, never matched) rather than restored on a
-    // guess.
-    const { groups } = groupIdsByExpectedReleasedAt(updateIds, expectedReleasedAtOf);
-    const rows: Array<{ id: string }> = [];
-    error = null;
-    for (const group of groups) {
-      const { data, error: groupError } = await supabase
-        .from("test_requests")
-        .update(UNRELEASE_PATCH)
-        .in("id", group.ids)
-        .eq("visit_id", visitId)
-        .eq("status", "released")
-        .eq("is_package_header", false)
-        .is("deleted_at", null)
-        .eq("released_at", group.releasedAt)
-        .select("id");
-      if (groupError) {
-        error = groupError;
-        break;
-      }
-      rows.push(...(data ?? []));
-    }
-    undone = error ? null : rows;
-  } else {
-    const result = await supabase
-      .from("test_requests")
-      .update(UNRELEASE_PATCH)
-      .in("id", updateIds)
-      .eq("visit_id", visitId)
-      .eq("status", "released")
-      .eq("is_package_header", false)
-      .is("deleted_at", null)
-      .select("id");
-    undone = result.data;
-    error = result.error;
-  }
-
-  if (error) return { ok: false, error: translatePgError(error) };
-  if (!undone || undone.length === 0) {
-    return { ok: false, error: "None of the selected tests can be unreleased." };
-  }
 
   const h = await headers();
   const ip = h.get("x-forwarded-for")?.split(",")[0]?.trim() ?? null;
   const ua = h.get("user-agent");
-  // A member released after the candidate read has no snapshot yet.
   for (const row of undone) {
-    if (!viewedCountById.has(row.id)) {
-      viewedCountById.set(row.id, await countResultViews(row.id));
-    }
-  }
-  for (const row of undone) {
-    const prior = priorById.get(row.id);
     await audit({
       actor_id: session.user_id,
       actor_type: "staff",
@@ -945,20 +779,21 @@ async function undoReleasedRows(
       metadata: {
         visit_id: visitId,
         reason: trimmedReason,
-        prior_release_medium: prior?.release_medium ?? null,
-        prior_released_at: prior?.released_at ?? null,
+        // Read under the row lock by the RPC, so they describe the release actually undone.
+        prior_release_medium: row.prior_release_medium,
+        prior_released_at: row.prior_released_at,
         viewed_count: viewedCountById.get(row.id) ?? 0,
         ...auditExtra,
         // Present only when this row was reverted as part of a whole-report
         // undo (0172) — the combined result every member shares.
-        report_result_id: reportResultIdByTestRequestId.get(row.id) ?? null,
+        report_result_id: row.report_id,
       },
       ip_address: ip,
       user_agent: ua,
     });
   }
 
-  return { ok: true, undoneIds: undone.map((r) => r.id) };
+  return { ok: true, undoneIds: undone.map((r) => r.id), skippedIds };
 }
 
 // Admin-only: delete a visit that was only ever a sample/test entry, even
@@ -1036,7 +871,7 @@ export async function deleteSampleVisitAction(
       { bulk: true, sample_visit_delete: true },
     );
     if (!undo.ok) {
-      revalidatePath(`/staff/visits/${visitId}`);
+      revalidateReleaseSurfaces(visitId);
       return { ok: false, error: undo.error };
     }
     unreleased = undo.undoneIds.length;
@@ -1047,7 +882,7 @@ export async function deleteSampleVisitAction(
     `Sample visit: ${trimmedReason}`.slice(0, 500),
   );
   if (!deleted.ok) {
-    revalidatePath(`/staff/visits/${visitId}`);
+    revalidateReleaseSurfaces(visitId);
     return {
       ok: false,
       error:
@@ -1056,6 +891,10 @@ export async function deleteSampleVisitAction(
           : deleted.error,
     };
   }
+  // deleteVisitAction refreshes the queue lists; the deleted visit (and any
+  // release undone above) also changes the dashboard tiles and the queue
+  // report pages, even when nothing had been released.
+  revalidateReleaseSurfaces(visitId);
   return { ok: true, count: unreleased };
 }
 
@@ -1094,7 +933,7 @@ export async function waiveVisitBalanceAction(
     }),
   );
   if (error) {
-    revalidatePath(`/staff/visits/${visitId}`);
+    revalidateReleaseSurfaces(visitId);
     return {
       ok: false,
       error: error.code === "P0002" ? WAIVE_CLOSED_MONTH_MESSAGE : translatePgError(error),
@@ -1132,7 +971,7 @@ export async function waiveVisitBalanceAction(
     user_agent: ua,
   });
 
-  revalidatePath(`/staff/visits/${visitId}`);
+  revalidateReleaseSurfaces(visitId);
   return { ok: true };
 }
 
@@ -1233,7 +1072,7 @@ async function markDoctorLineDoneAction(
   if (!updated || updated.length === 0) {
     // 0 rows matched — a concurrent action (e.g. a bulk package release)
     // already completed it. Never audit a write that didn't happen.
-    revalidatePath(`/staff/visits/${visitId}`);
+    revalidateReleaseSurfaces(visitId);
     return { ok: false, error: notPendingError };
   }
 
@@ -1249,7 +1088,7 @@ async function markDoctorLineDoneAction(
     user_agent: h.get("user-agent"),
   });
 
-  revalidatePath(`/staff/visits/${visitId}`);
+  revalidateReleaseSurfaces(visitId);
   return { ok: true };
 }
 

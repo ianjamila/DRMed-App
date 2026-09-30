@@ -179,9 +179,20 @@ describe("single-test Edit result — replace the PDF", () => {
       new File(["%PDF-1.4"], "corrected.pdf", { type: "application/pdf" }),
     );
     await user.type(reasonBox(), "Wrong unit on glucose");
+    // Record every committed screen from submit to the refusal. The refusal
+    // once committed one render before the button left "Amending…", so under
+    // full-suite load the button query below could land in that gap (flake).
+    const screens: string[] = [];
+    const observer = new MutationObserver(() => {
+      const shown = document.querySelector("[role=alert]") ? "refusal" : "no refusal";
+      screens.push(`${shown} / ${document.querySelector("button[type=submit]")?.textContent}`);
+    });
+    observer.observe(document.body, { subtree: true, childList: true, characterData: true });
     replaceResult();
 
     expect((await screen.findByRole("alert")).textContent).toBe("Someone else edited this result.");
+    observer.disconnect();
+    expect(screens).not.toContain("refusal / Amending…");
     expect(screen.getByRole("button", { name: "Replace result" })).toBeTruthy();
     expect(screen.queryByRole("status")).toBeNull();
   });

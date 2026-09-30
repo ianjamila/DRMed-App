@@ -188,7 +188,11 @@ function ReplacePdfForm({
             onReplaced(result.notify);
             return;
           }
-          setState(result);
+          // A state update after an await leaves the transition, so a bare
+          // setState commits the error while `pending` is still true — one
+          // frame showing the refusal beside a disabled "Amending…" button.
+          // Marking it as part of the transition commits both together.
+          start(() => setState(result));
         });
       }}
       className="grid gap-3 rounded-md border border-amber-300 bg-amber-50/60 p-4"

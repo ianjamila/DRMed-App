@@ -18,12 +18,17 @@ import { useFocusTrap } from "@/lib/a11y/use-focus-trap";
 // - Backdrop click + ESC both call onCancel.
 // - Body scroll is locked while open.
 // - Focus is trapped inside the inner panel.
-// - When reasonRequired is true, the confirm button is disabled until the
-//   caller-managed reasonValue has non-whitespace text (caller can disable
-//   further via isPending).
-// - confirmDisabled lets the caller keep confirm disabled for its own reason
+// - When reasonRequired is true, the confirm button is blocked until the
+//   caller-managed reasonValue has non-whitespace text.
+// - confirmDisabled lets the caller keep confirm blocked for its own reason
 //   (e.g. a reason picker not yet chosen, or open blockers) — OR'd with the
 //   built-in checks below.
+// - A BLOCKED confirm is aria-disabled, not natively disabled: it stays in the
+//   tab order so a screen reader reaches it and reads confirmDescribedBy (the
+//   "why", e.g. the patient-delete blocker list). A natively disabled button is
+//   skipped by Tab and its description is never announced. Clicks on a blocked
+//   button are ignored. Only an in-flight action (isPending) uses native
+//   `disabled`, to stop a double submit.
 
 type ConfirmVariant = "primary" | "danger" | "success";
 
@@ -93,14 +98,15 @@ export function ConfirmDialog({
 
   const reasonBlocks =
     reasonRequired && reasonValue.trim().length === 0;
-  const confirmDisabled = isPending || reasonBlocks || confirmDisabledProp;
+  const confirmBlocked = reasonBlocks || confirmDisabledProp;
 
+  // No hover colour on a blocked button — it should not look pressable.
   const confirmClass =
     confirmVariant === "danger"
-      ? "bg-rose-700 text-white hover:bg-rose-800"
+      ? `bg-rose-700 text-white ${confirmBlocked ? "" : "hover:bg-rose-800"}`
       : confirmVariant === "success"
-        ? "bg-emerald-700 text-white hover:bg-emerald-800"
-        : "bg-[color:var(--color-brand-navy)] text-white hover:bg-[color:var(--color-brand-cyan)]";
+        ? `bg-emerald-700 text-white ${confirmBlocked ? "" : "hover:bg-emerald-800"}`
+        : `bg-[color:var(--color-brand-navy)] text-white ${confirmBlocked ? "" : "hover:bg-[color:var(--color-brand-cyan)]"}`;
 
   return (
     <div className="fixed inset-0 z-[70] flex items-center justify-center p-4">
@@ -170,11 +176,13 @@ export function ConfirmDialog({
           <button
             type="button"
             onClick={() => {
+              if (confirmBlocked || isPending) return;
               void onConfirm();
             }}
-            disabled={confirmDisabled}
+            disabled={isPending}
+            aria-disabled={confirmBlocked || undefined}
             aria-describedby={confirmDescribedBy}
-            className={`min-h-[44px] rounded-md px-4 py-2 text-sm font-bold disabled:opacity-50 ${confirmClass}`}
+            className={`min-h-[44px] rounded-md px-4 py-2 text-sm font-bold disabled:opacity-50 aria-disabled:cursor-not-allowed aria-disabled:opacity-50 ${confirmClass}`}
           >
             {isPending ? "Working..." : confirmLabel}
           </button>

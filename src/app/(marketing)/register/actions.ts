@@ -6,6 +6,7 @@ import { checkRateLimit, RATE_LIMITS } from "@/lib/rate-limit/check";
 import { ipAndAgent } from "@/lib/server/action-helpers";
 import { reportError } from "@/lib/observability/report-error";
 import { resolvePatient } from "@/lib/patients/resolve";
+import { publicDbError } from "@/lib/patients/public-db-error";
 import { findCandidatesForInput } from "@/lib/patients/find-duplicates";
 import { sendEmail } from "@/lib/notifications/email";
 import { checkPatientRecipient } from "@/lib/notifications/active-patient-recipient";
@@ -149,7 +150,7 @@ export async function submitRegistrationAction(
     address: d.address,
     // Saved only if this registration creates the patient (0158).
     referral_source: d.referral_source,
-  });
+  }, publicDbError);
   if (!res.ok) return { ok: false, error: res.error };
 
   // Dedup match: do NOT reveal the DRM-ID on a public page (enumeration safety).
