@@ -205,9 +205,26 @@
 //   mutate sheet_sync_revert_run "if v_del_at is not null then" "if false then"
 //   npm run sheet-sync:db-proof          # expect exactly that one FAIL
 //   /opt/homebrew/bin/supabase db reset  # undo round G, then re-run: all PASS
+//
+//   ## 0193 rounds (sync review gaps; check 38 — REAL planCustomers output through the RPC) ##
+//   # 0193 re-creates sheet_sync_apply_customer_ops, so mutate it from the 0193 file
+//   # (same helper, swap the file name), one mutation per round, restoring between rounds
+//   # by re-applying the unmutated body (or db reset). Each round expects exactly the
+//   # check-38 FAIL named (the sub-assertion is in its detail):
+//   #  H  "if not ((v_op->>'expected_row_version')::bigint = v_facts_ver - 1" -> "if not (false and (v_op->>'expected_row_version')::bigint = v_facts_ver - 1"   (a) one chunk
+//   #  I  "c.run_id = v_run and" -> "true and"                                                                                     (e) a later run gets no credit
+//   #  J  "(v_op->>'expected_row_version')::bigint = v_facts_ver - 1\n and exists" -> "true and exists"                          (f) version one below the fill
+//   #  K  "if v_op ? 'expected_row_version' and v_facts_ver is distinct from" -> "if false and v_facts_ver is distinct from"   (c) stale identity (+ the older stale-facts check)
+//   #  L  the fill's not-found branch back to "n_skipped := n_skipped + 1; continue;"                                               (g) deleted target (+ check 36)
+//   # (S1 and S4 are pinned by customer-plan.test.ts and review-queue.test.tsx.)
 import "./lib/load-env";
 import { requireLocalOrExplicitProd } from "./lib/env-guard";
 import { Client, type QueryResult, type QueryResultRow } from "pg";
+import { planCustomers } from "../src/lib/sheet-sync/customer-plan";
+import { buildPatientIndex } from "../src/lib/sheet-sync/patient-index";
+import { parseCustomersTab } from "../src/lib/sheet-sync/tabs/customers";
+import { CUST_HEADER } from "../src/lib/sheet-sync/__fixtures__/tab-headers";
+import type { CustomerOp, PatientRecord } from "../src/lib/sheet-sync/types";
 
 requireLocalOrExplicitProd("sheet-sync:db-proof", {
   writes: "nothing — every check runs in one transaction that is rolled back",
@@ -3267,8 +3284,9 @@ async function main() {
         lease1.token, JSON.stringify(linkFillOps),
       ]);
       assert(
-        lf.rows[0].j.counts.stale === 2 && lf.rows[0].j.counts.skipped === 1 && lf.rows[0].j.counts.facts === 0,
-        `link/fill/facts over a deleted patient: expected stale=2 skipped=1 facts=0, got ${JSON.stringify(lf.rows[0].j.counts)}`,
+        // 0193 (S3): the fill counts `stale` too now (it used to be `skipped`).
+        lf.rows[0].j.counts.stale === 3 && (lf.rows[0].j.counts.skipped ?? 0) === 0 && lf.rows[0].j.counts.facts === 0,
+        `link/fill/facts over a deleted patient: expected stale=3 skipped=0 facts=0, got ${JSON.stringify(lf.rows[0].j.counts)}`,
       );
       const linkRow = await q<{ n: string }>(`select count(*)::text as n from public.sheet_patient_links where link_key = 'deleted-link:1'`);
       assert(linkRow.rows[0].n === "0", "link over a deleted patient must write no link row");
@@ -3449,6 +3467,147 @@ async function main() {
       await finish(leaseR2.token);
       const stillThere = await q<{ n: string }>(`select count(*)::text as n from public.patients where id = $1`, [createdId]);
       assert(stillThere.rows[0].n === "1", "a gone (soft-deleted) created patient must never be hard-deleted");
+    });
+
+    // 38. 0193 (sync review gaps): S2 facts stale guard + S3 fill on an inactive target,
+    //     driven by the REAL planner's output through the real RPC -----------------------
+    await check("0193 S2/S3: planner ops through SQL — facts survive their own fill (one chunk, two chunks, replay), stale identity rejects facts, a later run gets no credit, a fill on a deleted target is stale", async () => {
+      const PATIENT_COLS = `id, drm_id, first_name, middle_name, last_name, to_char(birthdate, 'YYYY-MM-DD') as birthdate, phone, phone_normalized,
+        email, sex, address, referred_by_doctor, preferred_release_medium, senior_pwd_id_kind, senior_pwd_id_number,
+        referral_source, referral_source_origin, merged_into_id, row_version::int as row_version`;
+      const readPatients = async (ids: string[]): Promise<PatientRecord[]> => {
+        await setRole("postgres", null);
+        const r = await q<PatientRecord>(`select ${PATIENT_COLS} from public.patients where deleted_at is null and id = any($1::uuid[])`, [ids]);
+        return r.rows;
+      };
+      // 32874 = 1990-01-01 in the sheet's serial-date form
+      const sheetRow = (name: string, ts: number) => {
+        const r: unknown[] = new Array(22).fill("");
+        r[4] = name; r[6] = 32874; r[11] = "09171230000"; r[12] = "planner@example.test"; r[19] = "NEW"; r[20] = ts;
+        return parseCustomersTab([CUST_HEADER, r] as never, { today: "2026-09-24", aliases: new Map() }).rows;
+      };
+      const newPatient = async (last: string): Promise<string> => {
+        await setRole("postgres", null);
+        const p = await q<{ id: string }>(
+          `insert into public.patients (first_name, last_name, birthdate) values ('Zeta', $1, '1990-01-01') returning id`, [last]);
+        return p.rows[0].id;
+      };
+      const planFor = async (pid: string, last: string): Promise<CustomerOp[]> => {
+        const out = planCustomers({ rows: sheetRow(`${last}, Zeta`, 46000), index: buildPatientIndex(await readPatients([pid])),
+          links: new Map(), facts: new Map(), prevRows: [] });
+        const kinds = out.ops.map((o) => o.op).sort().join(",");
+        assert(kinds === "facts,fill,link", `fixture: expected the planner to emit link+fill+facts, got ${kinds}`);
+        for (const o of out.ops) if (o.op !== "hold" && o.op !== "create") {
+          assert(o.expected_row_version !== undefined, `planner: ${o.op} op carries no expected_row_version`);
+        }
+        return out.ops;
+      };
+      const ofKind = (ops: CustomerOp[], k: string) => ops.filter((o) => o.op === k);
+      const apply = async (token: string, ops: unknown[]) => {
+        await setRole("service_role", null);
+        return (await q<{ j: Json }>(`select public.sheet_sync_apply_customer_ops($1::uuid, $2::jsonb) as j`, [token, JSON.stringify(ops)])).rows[0].j;
+      };
+      const factsRow = async (pid: string) => {
+        await setRole("postgres", null);
+        return (await q<{ source_ref: string | null }>(`select source_ref from public.patient_acquisition_facts where patient_id = $1`, [pid])).rows;
+      };
+      const staffEdit = async (pid: string) => {
+        await setRole("postgres", null);
+        await q(`update public.patients set address = coalesce(address, '') || 'x' where id = $1`, [pid]);
+      };
+
+      // (a) fill + facts in ONE chunk
+      let pid = await newPatient("PlannerOne");
+      let ops = await planFor(pid, "PlannerOne");
+      let lease = await acquire("manual", false);
+      let j = await apply(lease.token, ops);
+      assert(j.counts.filled === 1 && j.counts.facts === 1 && j.counts.stale === 0 && j.stale_patient_ids.length === 0,
+        `(a) one chunk: expected filled=1 facts=1 stale=0, got ${JSON.stringify(j)}`);
+      assert((await factsRow(pid)).length === 1, "(a) one chunk: the facts row must be written");
+      await finish(lease.token);
+
+      // (b) fill in one call, facts in the NEXT call (a chunk boundary), same run
+      pid = await newPatient("PlannerTwo");
+      ops = await planFor(pid, "PlannerTwo");
+      lease = await acquire("manual", false);
+      j = await apply(lease.token, ops.filter((o) => o.op !== "facts"));
+      assert(j.counts.filled === 1, `(b) chunk 1: expected filled=1, got ${JSON.stringify(j.counts)}`);
+      j = await apply(lease.token, ofKind(ops, "facts"));
+      assert(j.counts.facts === 1 && j.counts.stale === 0, `(b) chunk 2: expected facts=1 stale=0, got ${JSON.stringify(j)}`);
+      assert((await factsRow(pid)).length === 1, "(b) chunk boundary: the facts row must be written");
+      // (b2) lost response: the facts chunk is retried after it already committed
+      j = await apply(lease.token, ofKind(ops, "facts"));
+      assert(j.counts.facts === 1 && j.counts.stale === 0, `(b2) retried facts chunk: expected an idempotent facts=1 stale=0, got ${JSON.stringify(j)}`);
+      // (b3) …and the fill chunk retried: the patient moved on, so it is stale (conservative, no double write, no error)
+      j = await apply(lease.token, ops.filter((o) => o.op === "fill"));
+      assert(j.counts.filled === 0 && j.counts.stale === 1 && j.stale_patient_ids.includes(pid),
+        `(b3) retried fill chunk: expected filled=0 stale=1 (id reported), got ${JSON.stringify(j)}`);
+      await finish(lease.token);
+
+      // (c) stale identity: staff edited the patient after the planner read it
+      pid = await newPatient("PlannerThree");
+      ops = await planFor(pid, "PlannerThree");
+      await staffEdit(pid);
+      lease = await acquire("manual", false);
+      j = await apply(lease.token, ops);
+      assert(j.counts.filled === 0 && j.counts.facts === 0 && j.counts.linked === 0 && j.counts.stale === 3 && j.stale_patient_ids.includes(pid),
+        `(c) stale identity: expected link/fill/facts all stale and the id reported, got ${JSON.stringify(j)}`);
+      assert((await factsRow(pid)).length === 0, "(c) stale identity: no facts row may be written");
+      await finish(lease.token);
+
+      // (d) staff edit AFTER our fill but BEFORE the facts chunk: only our own bump is forgiven
+      pid = await newPatient("PlannerFour");
+      ops = await planFor(pid, "PlannerFour");
+      lease = await acquire("manual", false);
+      j = await apply(lease.token, ops.filter((o) => o.op !== "facts"));
+      assert(j.counts.filled === 1, `(d) chunk 1: expected filled=1, got ${JSON.stringify(j.counts)}`);
+      await staffEdit(pid);
+      j = await apply(lease.token, ofKind(ops, "facts"));
+      assert(j.counts.facts === 0 && j.counts.stale === 1 && j.stale_patient_ids.includes(pid),
+        `(d) staff edit between chunks: expected facts=0 stale=1, got ${JSON.stringify(j)}`);
+      assert((await factsRow(pid)).length === 0, "(d) staff edit between chunks: no facts row may be written");
+      await finish(lease.token);
+
+      // (e) a LATER run gets no credit for an earlier run's fill: run 1 fills, run 2 replays the old plan's facts
+      pid = await newPatient("PlannerFive");
+      ops = await planFor(pid, "PlannerFive");
+      lease = await acquire("manual", false);
+      j = await apply(lease.token, ops.filter((o) => o.op !== "facts"));
+      assert(j.counts.filled === 1, `(e) run 1: expected filled=1, got ${JSON.stringify(j.counts)}`);
+      await finish(lease.token);
+      const lease2 = await acquire("manual", false);
+      j = await apply(lease2.token, ofKind(ops, "facts"));
+      assert(j.counts.facts === 0 && j.counts.stale === 1, `(e) next run: expected the old plan's facts to be stale, got ${JSON.stringify(j)}`);
+      await finish(lease2.token);
+
+      // (f) the forgiveness needs the fill's own version: a fill with NO expected version bumps the row,
+      //     and a facts op whose expected version is not the version just below it is still stale
+      pid = await newPatient("PlannerSix");
+      ops = await planFor(pid, "PlannerSix");
+      lease = await acquire("manual", false);
+      const bare = ops.filter((o) => o.op === "fill").map((o) => { const { expected_row_version: _drop, ...rest } = o as never as Record<string, unknown>; void _drop; return rest; });
+      j = await apply(lease.token, bare);
+      assert(j.counts.filled === 1, `(f) bare fill: expected filled=1, got ${JSON.stringify(j.counts)}`);
+      const wrongVersionFacts = ofKind(ops, "facts").map((o) => ({ ...o, expected_row_version: (o as { expected_row_version: number }).expected_row_version - 5 }));
+      j = await apply(lease.token, wrongVersionFacts);
+      assert(j.counts.facts === 0 && j.counts.stale === 1, `(f) expected version not one below the fill's: expected stale, got ${JSON.stringify(j)}`);
+      await finish(lease.token);
+
+      // (g) S3: the planner read a live patient, staff deleted it, then the ops arrive — the FILL is stale too
+      pid = await newPatient("PlannerSeven");
+      ops = await planFor(pid, "PlannerSeven");
+      await setRole("postgres", null);
+      await q(`select public.delete_patient($1::uuid, 'test_record', null, $2::uuid, null)`, [pid, fx.adminId]);
+      lease = await acquire("manual", false);
+      j = await apply(lease.token, ops);
+      assert(j.counts.stale === 3 && (j.counts.skipped ?? 0) === 0 && j.counts.filled === 0 && j.stale_patient_ids.includes(pid),
+        `(g) deleted target: expected link, fill AND facts stale (fill not skipped) with the id reported, got ${JSON.stringify(j)}`);
+      const fillOnly = await apply(lease.token, ofKind(ops, "fill"));
+      assert(fillOnly.counts.stale === 1 && (fillOnly.counts.skipped ?? 0) === 0 && fillOnly.stale_patient_ids.includes(pid),
+        `(g) a lone fill on a deleted target must be stale with its id reported, got ${JSON.stringify(fillOnly)}`);
+      const ghost = await apply(lease.token, [{ op: "fill", patient_id: "00000000-0000-4000-8000-00000000dead", fields: { email: "x@example.test" } }]);
+      assert(ghost.counts.stale === 1 && (ghost.counts.skipped ?? 0) === 0, `(g) a fill on a missing patient: expected stale, got ${JSON.stringify(ghost)}`);
+      await finish(lease.token);
     });
   } finally {
     // Never persisted. This proof never writes anything real.
