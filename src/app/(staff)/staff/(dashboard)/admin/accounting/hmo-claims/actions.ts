@@ -584,7 +584,9 @@ export async function bulkSetHmoResponseAction(
   // appends a Prefer header, so re-awaiting one builder on a retry would
   // send it twice).
   let items_updated = 0;
-  for (const idsChunk of chunkIds(activeItemIds, HMO_BULK_CHUNK)) {
+  const idChunks = chunkIds(activeItemIds, HMO_BULK_CHUNK);
+  for (let chunkIndex = 0; chunkIndex < idChunks.length; chunkIndex++) {
+    const idsChunk = idChunks[chunkIndex]!;
     const { data: updatedRows, error } = await withLifecycleRetry(() => {
       let q = admin
         .from("hmo_claim_items")
@@ -600,7 +602,52 @@ export async function bulkSetHmoResponseAction(
       }
       return q.select("id");
     });
-    if (error) return { ok: false, error: translatePgError(error) };
+    if (error) {
+      if (items_updated === 0) {
+        // Nothing committed yet (this is the first chunk, or every earlier
+        // chunk updated zero rows) — behave exactly as the single atomic
+        // UPDATE used to: a clean failure, nothing to audit or revalidate.
+        return { ok: false, error: translatePgError(error) };
+      }
+      // Unlike the old single-statement UPDATE, a later chunk failing here
+      // leaves real, already-committed work behind (0184 review follow-up,
+      // HMO P2): a bare error would leave it unaudited and unrevalidated,
+      // and the message would understate what actually happened. Audit what
+      // WAS updated, revalidate so the batch page reflects it, and report
+      // the partial result rather than a bare failure.
+      const meta = await auditMeta();
+      await audit({
+        actor_id: session.user_id,
+        actor_type: "staff",
+        action: "hmo_claim_batch.bulk_hmo_response_set",
+        resource_type: "hmo_claim_batch",
+        resource_id: parsed.data.batch_id,
+        metadata: {
+          response: parsed.data.response,
+          response_date: parsed.data.response_date,
+          scope: parsed.data.scope,
+          items_updated,
+          failed_after_chunk: chunkIndex,
+          error_code: error.code ?? null,
+          error_message: error.message,
+        },
+        ...meta,
+      });
+      revalidatePath(`${BASE_PATH}/batches/${parsed.data.batch_id}`);
+      // A re-run's own predicates make this safe either way: pending_only's
+      // `.eq("hmo_response", "pending")` naturally excludes the items this
+      // pass already updated (they're no longer pending); the "all" scope
+      // has no such predicate, so a re-run just re-applies the same values
+      // to them — harmless.
+      const rerunNote =
+        parsed.data.scope === "pending_only"
+          ? "Run it again — items already updated are skipped automatically (no longer pending)."
+          : "Run it again to update the rest — items already updated are simply set to the same response again.";
+      return {
+        ok: false,
+        error: `Updated ${items_updated} of ${activeItemIds.length} items, then stopped: ${translatePgError(error)} ${rerunNote}`,
+      };
+    }
     items_updated += updatedRows?.length ?? 0;
   }
 
