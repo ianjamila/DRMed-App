@@ -12,7 +12,7 @@ import { PAGE_SIZE, REPORT_EXPORT_MAX_ROWS } from "@/lib/reports/paging";
 import {
   classifyReportError,
   type Grain, type Mode, type OverlapRow, type PeopleRow, type ReferrerRow, type ReportResult,
-  type RevenueRow, type SeriesRow, type SpendTotalRow, type SummaryRow,
+  type RevenueRow, type SeriesRow, type SpendTotalRow, type SummaryRow, type AdSpendDbRow,
 } from "./patient-sources";
 
 type Db = SupabaseClient<Database>;
@@ -129,6 +129,24 @@ export function loadAdSpendTotals(supabase: Db, from: string, to: string) {
       .order("spend_date")
       .order("platform")
       .range(a, b) as unknown as PromiseLike<{ data: SpendTotalRow[] | null; error: PgErr }>,
+  );
+}
+
+/**
+ * Every saved ad row in [from, to] (at most 400 days - the RPC refuses more), for the Ad Performance
+ * screen. The RPC orders by its unique key (date, platform, campaign_key, ad_key), a TOTAL order, so
+ * .range() paging past PostgREST's 1,000-row cap cannot drop or repeat a row; the caller must show
+ * `truncated` in-band.
+ */
+export function loadAdSpendRows(supabase: Db, from: string, to: string) {
+  return pageAll<AdSpendDbRow>("ad spend rows", (a, b) =>
+    supabase
+      .rpc("ad_spend_rows", { p_from: from, p_to: to })
+      .order("spend_date")
+      .order("platform")
+      .order("campaign_key")
+      .order("ad_key")
+      .range(a, b) as unknown as PromiseLike<{ data: AdSpendDbRow[] | null; error: PgErr }>,
   );
 }
 
