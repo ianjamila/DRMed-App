@@ -52,7 +52,9 @@ begin
 end
 $$;
 
-create extension if not exists dblink;
+-- In `extensions`, not `public`: an extension installed in public shows up as
+-- app functions in the generated types (scripts/db-types.mjs refuses them).
+create extension if not exists dblink schema extensions;
 
 -- ---- Helpers (pg_temp: vanish with the session) -----------------------------
 
