@@ -17,6 +17,7 @@ import "server-only";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { sendEmail } from "@/lib/notifications/email";
 import { resolveStaffAlertRecipients } from "@/lib/notifications/staff-alert-recipients";
+import { alertSkipReason } from "@/lib/notifications/staff-alerts";
 import { audit } from "@/lib/audit/log";
 import { reportError } from "@/lib/observability/report-error";
 import { SITE } from "@/lib/marketing/site";
@@ -75,9 +76,7 @@ export async function sendReleasedPaymentRemovedAlert(input: ReleasedPaymentRemo
     let failed = 0;
     let skipped: string | null = null;
     if (recipients.emails.length === 0) {
-      skipped = recipients.enabled
-        ? "nobody is switched on for this alert in Email Alerts"
-        : "turned off in Email Alerts";
+      skipped = alertSkipReason(recipients);
     } else {
       for (const to of recipients.emails) {
         const result = await sendEmail({ to, subject: content.subject, text: content.text, html: content.html });
@@ -102,7 +101,7 @@ export async function sendReleasedPaymentRemovedAlert(input: ReleasedPaymentRemo
         recipients: recipients.emails.length,
         sent,
         failed,
-        ...(skipped ? { skipped } : {}),
+        ...(skipped ? { skipped } : {}), ...(recipients.loadError ? { recipients_error: recipients.loadError } : {}),
       },
     });
   } catch (error) {

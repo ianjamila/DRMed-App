@@ -5,6 +5,7 @@ import { reportError } from "@/lib/observability/report-error";
 import { audit } from "@/lib/audit/log";
 import { sendEmail } from "@/lib/notifications/email";
 import { resolveStaffAlertRecipients } from "@/lib/notifications/staff-alert-recipients";
+import { alertSkipReason } from "@/lib/notifications/staff-alerts";
 import { renderEmailShell, emailParagraph, emailButton, escapeHtml } from "@/lib/notifications/branded-email";
 import { isTemplateHealthStale, shouldEmailTemplateHealth } from "@/lib/results/template-health";
 import { collectTemplateHealthFindings, getLastTemplateHealthDailyRun } from "@/lib/results/collect-template-health";
@@ -84,6 +85,7 @@ export async function GET(request: Request) {
       // switch people on/off or turn the alert off entirely.
       const alert = await resolveStaffAlertRecipients("template_health", admin);
       const recipients = alert.emails;
+      const skipReason = alertSkipReason(alert);
 
       const base = process.env.NEXT_PUBLIC_SITE_URL ?? "https://drmed.ph";
       const reviewUrl = `${base}/staff/admin/result-templates/health`;
@@ -131,7 +133,8 @@ export async function GET(request: Request) {
           findings: findings.length,
           recipients: recipients.length,
           emailed,
-          ...(alert.enabled ? {} : { skipped: "turned off in Email Alerts" }),
+          ...(skipReason ? { skipped: skipReason } : {}),
+          ...(alert.loadError ? { recipients_error: alert.loadError } : {}),
         },
       });
 

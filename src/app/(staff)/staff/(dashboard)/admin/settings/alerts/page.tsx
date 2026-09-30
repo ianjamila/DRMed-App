@@ -22,7 +22,7 @@ export default async function EmailAlertsPage() {
   const admin = createAdminClient();
   const supabase = await createClient();
 
-  const [staff, settingsRes, recipientsRes, lastSentRows] = await Promise.all([
+  const [staffRes, settingsRes, recipientsRes, lastSentRows] = await Promise.all([
     loadActiveStaffForAlerts(admin),
     supabase.from("staff_alert_settings").select("alert_key, enabled"),
     supabase.from("staff_alert_recipients").select("id, alert_key, staff_id, email, subscribed"),
@@ -38,6 +38,16 @@ export default async function EmailAlertsPage() {
       ),
     ),
   ]);
+
+  const staff = staffRes.staff;
+  // Any failed read here would otherwise render as a real setting — staff with
+  // "no email on file", every alert switched on, nobody picked — and an admin
+  // saving from that screen would write it back.
+  const loadProblems = [
+    staffRes.loadError,
+    settingsRes.error ? `alert settings: ${settingsRes.error.message}` : null,
+    recipientsRes.error ? `alert recipients: ${recipientsRes.error.message}` : null,
+  ].filter((p): p is string => p !== null);
 
   const enabledByKey = new Map<StaffAlertKey, boolean>(
     (settingsRes.data ?? []).map((r) => [r.alert_key as StaffAlertKey, r.enabled]),
@@ -73,6 +83,16 @@ export default async function EmailAlertsPage() {
       />
 
       <NoticeChannelsPanel email={emailStatus()} sms={smsStatus()} />
+
+      {loadProblems.length > 0 ? (
+        <p
+          role="alert"
+          className="mb-6 rounded-lg border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-900"
+        >
+          <b>Some of this page couldn&apos;t be loaded</b>, so the switches and email addresses below may be wrong —
+          reload before changing anything. ({loadProblems.join("; ")})
+        </p>
+      ) : null}
 
       <div className="space-y-6">
         {STAFF_ALERT_LIST.map((def, i) => {
