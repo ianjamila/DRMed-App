@@ -115,8 +115,10 @@ const EXEMPT: Record<string, string> = {
     "Bulk form of the queue list's Unclaim (the bulk bar's single-test Unclaim body, called by unclaimQueueSelectionAction) — handing a claim back reduces work, same reasoning as performUnclaim.",
   [`src/app/(staff)/staff/(dashboard)/queue/actions.ts:reassignTestAction`]:
     "Reassigning an already-claimed line does not put new work or money on the record.",
-  [`src/app/(staff)/staff/(dashboard)/queue/actions.ts:undoBulkQueueAction`]:
-    "Undo of a bulk claim (unclaim) or a bulk unclaim (reclaim) — same reasoning as performUnclaim/claimTestsCore: neither bills nor releases. The restore branch calls restoreTestRequestsForVisit (queue-restore-core.ts), which guards itself with assertVisitPatientActive.",
+  // undoBulkQueueAction has NO entry any more: its restore branch now calls assertVisitPatientActive(admin, visitId)
+  // itself, right before restorePanelMembers (the promise that function's entry below makes), so the walk credits the
+  // whole function. Its claim/unclaim/reclaim writes still neither bill nor release (same reasoning as performUnclaim);
+  // actions.undo-behaviour.test.ts pins that an inactive patient's panel is refused with no rpc and no write.
   [`src/lib/actions/queue/panel-writes.ts:claimPanelMembers`]:
     "Same as claimTestAction, for a consolidated report (the panel page's Claim and the queue list's panel Claim / bulk Claim) — claiming does not bill.",
   [`src/lib/actions/queue/panel-writes.ts:unclaimPanelMembers`]:
