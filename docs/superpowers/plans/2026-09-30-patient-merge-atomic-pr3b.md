@@ -4337,10 +4337,19 @@ end $b$;
 --   re-parent (X, t)       -> (Y, t)   (chain flattening / restore)
 -- A merged row refuses every other change except bookkeeping (P0058, like
 -- 0167 does for deleted rows). INSERT of an already-merged row is refused.
--- Rollback: drop trigger trg_patients_merge_marker_guard (app unaffected).
+-- This migration SUPERSEDES 0196's narrower rollback guard (section 5): this
+-- trigger covers every merged_into_id/merged_at change, writer or not, so
+-- 0196's guard_live_merge_marker + patient_has_live_v2_merge become redundant.
+-- Rollback: drop trigger trg_patients_merge_marker_guard (app unaffected);
+-- reverting 0197 = re-run 0196 section 5 to restore the narrower guard.
 -- =============================================================================
 
 set lock_timeout = '5s';
+
+-- Superseded by the trigger below (Opus SQL review fix round 1, F8).
+drop trigger if exists trg_patients_live_merge_guard on public.patients;
+drop function if exists public.guard_live_merge_marker();
+drop function if exists public.patient_has_live_v2_merge(uuid);
 
 create or replace function public.enforce_merge_marker()
 returns trigger

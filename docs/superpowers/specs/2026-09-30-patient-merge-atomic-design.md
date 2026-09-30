@@ -264,14 +264,21 @@ an INSERT carries `merged_into_id`/`merged_at`; an UPDATE changes either column.
 writer, only two transitions are legal: `(null, null) → (X, t)` on a row with `deleted_at is
 null`, and `(X, t) → (null, null)`; plus chain re-parenting `X → Y` (merged_at unchanged).
 Additionally, a row that is merged (before and after) refuses any other column change
-(P0058, like 0167's rule for deleted rows) except bookkeeping (`updated_at`, `row_version`)
-and the consent-cache columns when written by the writer. Fixtures that set
+(P0058, like 0167's rule for deleted rows) except bookkeeping (`updated_at`, `row_version`) —
+nothing needs a wider exception: merge re-syncs the source's consent cache BEFORE tombstoning
+it, and undo clears the marker FIRST, so the consent-cache columns are never written on a row
+that is (before and after) merged. Fixtures that set
 `merged_into_id` directly (`supabase/tests/0167_*_smoke.sql`, `0184_*_smoke.sql`,
 `scripts/patient-sources-db-proof.ts`) switch in **this PR (3b)** to a helper that runs
 `set local role patient_merge_writer` and writes **both** `merged_into_id` and `merged_at`
 (several fixtures set only `merged_into_id` today, which 0197's transition rule refuses), so
 they already pass under 0197.
-Rollback: drop the trigger (app unaffected).
+0197 SUPERSEDES this PR's rollback guard (section 5 of 0196): its migration also drops
+`trg_patients_live_merge_guard`, `guard_live_merge_marker()` and `patient_has_live_v2_merge(uuid)`
+— its own trigger covers every `merged_into_id`/`merged_at` change, writer or not, so the
+narrower 0196 guard becomes redundant weight once 0197 is live.
+Rollback: drop the trigger (app unaffected; reverting 0197 = re-run 0196 section 5 to
+restore the narrower guard).
 
 ## Proofs
 
@@ -373,3 +380,30 @@ new issues from the revisions, all verified and closed above: R1' legacy-resume 
 rollback (merge freeze in "Deploy order"), R4' legacy-resume fill evidence (undo step 7),
 R5' empty attachment groups (undo step 6). The one-recheck limit is used; remaining assurance
 comes from the smokes, the two-session proofs and the Opus review of the SQL.
+
+## Opus SQL review (2026-09-30)
+
+A follow-up SQL-focused review of 0196 (Opus 5.5, 1M context) found 3 Important issues (I1–I3)
+and 10 Minor ones (M1–M10). Round 1 (this fix batch) closed I1–I3 and the four Minor findings
+that were genuine, cheap-to-fix behavioural or hardening gaps (M1, M3, M5, M6); the rest are
+noted below as either deferred with a reason, or out of scope for a round-1 fix.
+
+| # | Finding | What was done |
+|---|---|---|
+| I1 | An interrupted legacy (pre-3b) undo could get stuck behind the 30-day window, and re-merging its now-active source hit a raw `23505` (`uq_patient_merges_live_source`) instead of a worded refusal | `undo_patient_merge_guarded`: `v_resume` is now decided BEFORE the 30-day check, and that check is skipped when resuming — an interrupted undo is completable at any age. `merge_patients_guarded`: refuses (P0079) if either side is the SOURCE of a live (`undone_at is null`) ledger row, pointing the admin at Recently merged first. `undoableState` (TS) mirrors the same reordering |
+| I2 | A `critical_alerts` row's `patient_id` could in principle predate 0184's consistency check and drift from its own test's visit | Section 9 post-condition: fails the push if any alert names a patient other than its test's visit's patient (no function change — prod already has 0 alerts) |
+| I3 | Nothing re-asserted, inside 0196 itself, that 0202's service_role-only invariant still holds for `patient_merges` / `patient_consents` once they carry writer-only policies | Section 9 post-condition: anon/authenticated hold no table/column/sequence privilege on either table, and every policy on both names only `patient_merge_writer`. `0151_rls_initplan_smoke.sql`'s third assertion now also scans these two tables even though they carry policies |
+| M1 | `patient_has_live_v2_merge` needed EXECUTE granted to the writer role for an arm of the guard's `AND` it never actually needed to run, because Postgres checks EXECUTE when it initialises a plan node, not lazily as `AND` short-circuits | `guard_live_merge_marker` rewritten as a nested `IF` (the inner call is its own statement, only planned once reached) instead of one `AND`; the writer's EXECUTE grant is revoked instead of held |
+| M2 | (not detailed in the controller's round-1 brief) | Not itemized for this round — no fix made; flag if it should be pulled into round 2 |
+| M3 | The repeat flag a merge sets (`is_repeat_patient = true`) was never reverted by undo | Merge records `repeat_flag_set: true` in `patient_merges.context` (and so in the audit row) only when its `UPDATE` actually flips the flag. Undo reverts it (and reports `repeat_flag_reverted`) only when that context key is set AND the keep's own visit count (post move-back) is ≤ 1 |
+| M4 | A legacy revert can write `NULL` into a field the keep held as `''` before the merge (the pre-3b app never distinguished blank from absent) | Deferred — pre-existing legacy-fill behaviour, not part of this round's approved change list |
+| M5 | Undo's report never said which older chain members (`patient_merges.rechained`) could NOT be re-pointed back (e.g. edited elsewhere after the merge) | Report now includes `rechained_not_restored` (the ids in `m.rechained` not covered by the actual re-point); `undoReportLines` adds a singular/plural line naming the count |
+| M6 | Undo's parsing of `patient_merges.moved` assumed every one of the six keys is always a JSON array; a hand-edited or otherwise malformed row would raise a raw `22023` instead of failing gracefully | Each of the six keys is now read through `case jsonb_typeof(...) when 'array' then … else '[]'::jsonb end` — anything that is not actually an array is treated as empty |
+| M7 | A writer racing 0184/0198 for the same lock can surface P0058 (record inactive) rather than the more specific P0072 (record changed while waiting) | Deferred — pre-existing lock-order interaction between 0184/0198 and this migration, follow-up not scoped for round 1 |
+| M8 | Sheet Sync's patient-row locking (no advisory lock) can `40P01` (deadlock) against a concurrent merge | Deferred — Sheet Sync already retries on `40P01`, and the sync ships PAUSED on prod, so this has no live blast radius today |
+| M9 | (not detailed in the controller's round-1 brief) | Not itemized for this round — no fix made; flag if it should be pulled into round 2 |
+| M10 | Merge takes one membership lock per RESULT of the source, not one lock for the whole merge, so a source with many results takes many locks | Deferred — fine at clinic scale (a merge's source rarely has more than a handful of live results); revisit only if a real merge is ever slow |
+
+M2 and M9 are not itemized in the controller's approved round-1 change list (`fix1.md`) beyond
+their numbers, so no fix was invented for either here — surfaced as a gap for the controller to
+resolve in a follow-up round rather than guessed at.
