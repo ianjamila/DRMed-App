@@ -1401,6 +1401,38 @@ describe("the lifecycle predicates reject what they should", () => {
     expect(hasInnerServicesEmbed(leftServices)).toBe(false);
   });
 
+  it("still reads every branch through a type cast on the ternary", () => {
+    // The queue page shape: `(searching ? SEARCH : BASE) as typeof BASE`, a
+    // cast supabase-js needs to type the union. The cast must not hide the
+    // branches from the guard.
+    const source = (search: string) => `
+      const BASE = "id, visits!inner ( id ), services!inner ( kind )";
+      const SEARCH = "${search}";
+      async function queue() {
+        const { data } = await db
+          .from("test_requests")
+          .select((searching ? SEARCH : BASE) as typeof BASE, { count: "exact" })
+          .is("deleted_at", null)
+          .is("visits.deleted_at", null)
+          .neq("services.kind", "doctor_consultation");
+      }
+    `;
+    const good = oneChain(
+      source("id, visits!inner ( id ), services!inner ( kind ), lab_search!inner ( )"),
+    );
+    expect(good.conditionalSelects).toHaveLength(1);
+    expect(good.conditionalSelects[0]).toHaveLength(2);
+    expect(hasInnerVisitsEmbed(good)).toBe(true);
+
+    const leftVisits = oneChain(
+      source("id, visits ( id ), services!inner ( kind ), lab_search!inner ( )"),
+    );
+    expect(
+      hasInnerVisitsEmbed(leftVisits),
+      "A cast hid the search branch, which drops visits!inner.",
+    ).toBe(false);
+  });
+
   it("does not let a filtered query in the same function vouch for an unfiltered one", () => {
     // The Lab TAT shape exactly: a released query that filters both halves,
     // and a pending count over a DISJOINT set of statuses that filters

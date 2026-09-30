@@ -96,9 +96,11 @@ revoke all on public.v_ops_daily_hmo_received     from anon, authenticated;
 revoke all on public.v_ops_daily_pnl              from anon, authenticated;
 revoke all on public.v_ops_daily_totals           from anon, authenticated;
 
--- 0194: the lab search view is authenticated + service_role only; the blanket
--- table grant above would hand anon SELECT back on a fresh local database.
-revoke all on public.lab_search_rows from anon;
+-- 0194: the lab search view is SELECT-only for authenticated + service_role;
+-- the blanket table grants above would hand anon (and authenticated write
+-- privileges) back on a fresh local database. Same shape as 0150 below.
+revoke all on public.lab_search_rows from public, anon, authenticated;
+grant select on public.lab_search_rows to authenticated;
 
 -- 0150: preserve the consent report's authenticated-SELECT-only ACL after the
 -- blanket local grants above, matching the migration and production.
