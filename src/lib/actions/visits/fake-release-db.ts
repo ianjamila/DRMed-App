@@ -17,6 +17,8 @@ export interface FakeTestRow {
   name?: string;
   deleted?: boolean;
   isPackageHeader?: boolean;
+  /** Package component → its header row (the package release reads by parent_id). */
+  parentId?: string | null;
   visitDeleted?: boolean;
   paymentStatus?: string;
   hmoProviderId?: string | null;
@@ -25,7 +27,8 @@ export interface FakeTestRow {
   releasedAt?: string | null;
 }
 
-export type FakeRow = Required<Omit<FakeTestRow, "hmoProviderId" | "releasedAt">> & {
+export type FakeRow = Required<Omit<FakeTestRow, "hmoProviderId" | "releasedAt" | "parentId">> & {
+  parentId: string | null;
   hmoProviderId: string | null;
   releasedAt: string | null;
 };
@@ -71,6 +74,7 @@ export function makeFakeReleaseDb(seed: { rows: FakeTestRow[]; links?: FakeLink[
     name: r.id.toUpperCase(),
     deleted: false,
     isPackageHeader: false,
+    parentId: null,
     visitDeleted: false,
     paymentStatus: "paid",
     hmoProviderId: null,
@@ -99,6 +103,7 @@ export function makeFakeReleaseDb(seed: { rows: FakeTestRow[]; links?: FakeLink[
     status: r.status,
     deleted_at: r.deleted ? "2026-01-01T00:00:00Z" : null,
     is_package_header: r.isPackageHeader,
+    parent_id: r.parentId,
     released_at: r.releasedAt,
     services: { section: r.section, kind: r.kind, name: r.name },
     visits: {
