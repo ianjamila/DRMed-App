@@ -5,6 +5,7 @@ import {
   reportEditLoadState,
   reportActionKind,
   reportHeadlineStatus,
+  reportUndoTargetId,
   type ConsolidatedMemberRow,
 } from "./consolidated-reports";
 
@@ -138,5 +139,25 @@ describe("reportActionKind — Release / Undo on a finished report", () => {
   it("offers nothing while the report still awaits sign-off, or is empty", () => {
     expect(reportActionKind([{ status: "result_uploaded" }])).toBeNull();
     expect(reportActionKind([])).toBeNull();
+  });
+});
+
+describe("reportUndoTargetId", () => {
+  it("targets the released member, not the first member", () => {
+    expect(
+      reportUndoTargetId([
+        { id: "a", status: "result_uploaded" },
+        { id: "b", status: "released" },
+      ]),
+    ).toBe("b");
+    expect(
+      reportUndoTargetId([
+        { id: "a", status: "released" },
+        { id: "b", status: "released" },
+      ]),
+    ).toBe("a");
+  });
+  it("is null when nothing is released", () => {
+    expect(reportUndoTargetId([{ id: "a", status: "ready_for_release" }])).toBeNull();
   });
 });

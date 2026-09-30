@@ -428,8 +428,8 @@ export default async function QueueTestDetailPage({ params, searchParams }: Prop
   // them so the button says why it is disabled. Doctor lines never reach here
   // (notFound above), and the deleted-row/visit case returned early.
   const mayActOnResult = canActOnResult(session.role, svc.section);
-  const releaseMode =
-    mayActOnResult && (test.status === "ready_for_release" || test.status === "released");
+  // Consent only matters for the Release button (ready_for_release).
+  const releaseMode = mayActOnResult && test.status === "ready_for_release";
   const [gateRequired, consentState] = releaseMode
     ? await Promise.all([isConsentGateRequired(), getPatientConsentState(patient.id)])
     : [false, { current: true }];

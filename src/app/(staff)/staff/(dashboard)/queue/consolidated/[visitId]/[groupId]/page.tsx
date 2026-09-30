@@ -12,6 +12,7 @@ import { deriveEnabledParamIds } from "@/lib/results/enabled-params";
 import {
   partitionConsolidatedMembers,
   reportActionKind,
+  reportUndoTargetId,
   REPORT_VALUES_LOAD_FAILED,
   reportEditLoadState,
 } from "@/lib/results/consolidated-reports";
@@ -42,6 +43,7 @@ import { canActOnResult } from "@/lib/visits/line-visibility";
 import { isDoctorKind } from "@/lib/visits/order-lines";
 import { isActivePatient } from "@/lib/patients/active";
 import type { ReleaseMedium } from "@/lib/visits/release-media";
+import { reportReleaseBlock } from "@/lib/queue/report-release-scope";
 
 type One<T> = T | T[] | null;
 const one = <T,>(v: One<T>): T | null => (Array.isArray(v) ? (v[0] ?? null) : v);
@@ -346,20 +348,25 @@ export default async function ConsolidatedQueuePage({
           },
           session.role,
         );
+        // Mirror the visit page: a half-finished report disables Release with the reason.
+        // Deleted members are filtered out by this page's load; the server still refuses that case.
+        const mixed = reportReleaseBlock(rep.members.map((m) => ({ status: m.status, deleted: false })));
         actionsFor[rep.resultId] = (
           <QueueReleaseButton
             testRequestIds={ready}
             label="Release report"
             preferredMedium={(visit.patients.preferred_release_medium ?? null) as ReleaseMedium | null}
-            blockReason={verdict.ok ? null : verdict.error}
+            blockReason={mixed ?? (verdict.ok ? null : verdict.error)}
             consentWarning={!consentState.current && !gateRequired}
           />
         );
       } else if (kind === "undo") {
-        const ctx = await loadRowUndoContext(supabase, rep.pdfTestRequestId);
+        const undoId = reportUndoTargetId(rep.members);
+        if (!undoId) continue;
+        const ctx = await loadRowUndoContext(supabase, undoId);
         actionsFor[rep.resultId] = (
           <UndoReleaseDialog
-            testRequestId={rep.pdfTestRequestId}
+            testRequestId={undoId}
             visitId={visit.id}
             viewedCount={ctx.viewedCount}
             reportScope={ctx.reportScope}

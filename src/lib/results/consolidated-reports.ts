@@ -132,3 +132,12 @@ export function reportActionKind(members: readonly { status: string }[]): "relea
   if (members.some((m) => m.status === "released")) return "undo";
   return null;
 }
+
+/**
+ * The member Undo should target: the first one that is actually `released`.
+ * `memberIds[0]` (the PDF link target) may be unreleased when a report is
+ * half-released after finalisation. Null when nothing is released.
+ */
+export function reportUndoTargetId(members: readonly { id: string; status: string }[]): string | null {
+  return members.find((m) => m.status === "released")?.id ?? null;
+}
