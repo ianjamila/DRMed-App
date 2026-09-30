@@ -137,6 +137,8 @@ const EXEMPT: Record<string, string> = {
     "Task 15 merge — inline-checks deleted_at/merged_into_id on both rows before writing; the merge/undo-merge lifecycle path is reviewed separately from Task 22/23's active-patient rule.",
   [`src/app/(staff)/staff/(dashboard)/admin/patient-merge/actions.ts:undoMergeAction`]:
     "Task 15 undo-merge — the paired lifecycle RPC-equivalent caller to mergePatientsAction above.",
+  [`src/app/(staff)/staff/(dashboard)/admin/patient-merge/actions.ts:revertFillFields`]:
+    "0184 review follow-up — only called by mergePatientsAction's own tombstone-failure branch, to undo a fill that already landed while the merge itself is being abandoned; same reviewed-separately reasoning as mergePatientsAction/undoMergeAction above, not a live merge write.",
   [`src/lib/actions/visits/queue-deletion.ts:deleteVisitAction`]:
     "Deletes stay unguarded by design (Task 23) — they remove work, never put it back.",
   [`src/lib/actions/visits/queue-deletion.ts:deleteTestRequestsForVisit`]:

@@ -48,11 +48,16 @@ export function mergeMoveSteps(): MergeMoveStep[] {
 }
 
 export interface MergeRollbackFailure {
-  table: MergeMoveTable;
+  // One of the six FK move tables, or "patients" — mergePatientsAction also
+  // reports a failed fill-field revert (source→keep contact-field copy,
+  // undone on a tombstone failure) through this same shape, so a caller
+  // combining both kinds of failure has one list to report.
+  table: MergeMoveTable | "patients";
   error: string;
-  // The exact ids this rollback attempt tried to move back to source_id —
-  // reported by the caller as "stranded" when the rollback itself fails, so
-  // a manual fix has something precise to act on.
+  // The exact ids (or, for a "patients" fill-field revert, field names) this
+  // rollback attempt tried to move/clear — reported by the caller as
+  // "stranded" when the rollback itself fails, so a manual fix has something
+  // precise to act on.
   ids: unknown[];
 }
 
@@ -86,9 +91,15 @@ function uniqueIds(ids: readonly unknown[]): unknown[] {
  * see mergePatientsAction) covers the case a move actually committed but its
  * HTTP response was lost: PostgREST then reports an error with `data: null`,
  * so the row is on keep_id even though it was never added to `moved`. The
- * union is exact and safe either way — `rollback`'s own
- * `.eq("patient_id", keepId)` predicate makes moving an id that never left
- * source_id a no-op. A rollback failure on one table does not stop the
+ * union covers that case and is a no-op for anything that never moved —
+ * `rollback`'s own `.eq("patient_id", keepId)` predicate makes moving an id
+ * that never left source_id a no-op. It is NOT exhaustive: a row attached to
+ * source_id AFTER the snapshot was taken (a brand-new row created mid-merge —
+ * narrow, since the merge runs in seconds) whose OWN move then also loses its
+ * response is moved but never rolled back — the snapshot can't have seen it,
+ * and it has no `moved` entry either. This residual double-race is left for
+ * the atomic merge RPC (PR 3b), which removes the whole multi-statement
+ * window it depends on. A rollback failure on one table does not stop the
  * rest — every step still gets an attempt, and every failure is collected
  * (with the exact ids that attempt used) so the caller can report precisely
  * what's stranded.

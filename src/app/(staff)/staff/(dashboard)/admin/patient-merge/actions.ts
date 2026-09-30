@@ -186,6 +186,54 @@ async function rollbackMergeMoveStep(
   return failures.length > 0 ? { error: { message: failures.join("; ") } } : { error: null };
 }
 
+// The five contact fields `fill` (below) can copy from source onto keep.
+const FILL_FIELDS = ["middle_name", "sex", "phone", "email", "address"] as const;
+type FillField = (typeof FILL_FIELDS)[number];
+
+// Undoes the fill (0184 review follow-up): only called when the merge is
+// abandoned AFTER the fill already landed (the tombstone write failed). Each
+// field is cleared with its OWN `.eq(field, value)` guard — one UPDATE per
+// field, retried once on a lock race — so a field is only nulled back out if
+// it still holds exactly the value this merge copied in; if some OTHER write
+// changed it in the meantime (unlikely — keep_id is still active and this
+// runs within seconds of the fill), that field is left alone rather than
+// clobbered. Returns which fields (if any) could not be reverted, for the
+// caller to fold into its own rollback-failure accounting.
+async function revertFillFields(
+  admin: ReturnType<typeof createAdminClient>,
+  keepId: string,
+  fill: Partial<Record<FillField, string>>,
+): Promise<{ error: { message: string } | null; failedFields: FillField[] }> {
+  const failedFields: FillField[] = [];
+  const errors: string[] = [];
+  for (const field of FILL_FIELDS) {
+    const value = fill[field];
+    if (value === undefined) continue;
+    // A pre-typed variable, not an inline object literal — Supabase's
+    // `.update()` overload excess-property-checks a literal against the
+    // full Patients Update type, which a computed `{ [field]: null }` key
+    // (field: FillField, a union) can't satisfy even with a cast; assigning
+    // through the index signature on an already `Partial<Record<...>>`-typed
+    // variable sidesteps that (same pattern undoMergeAction's `clear` uses).
+    const payload: Partial<Record<FillField, null>> = {};
+    payload[field] = null;
+    const { error } = await withLifecycleRetry(() =>
+      admin
+        .from("patients")
+        .update(payload)
+        .eq("id", keepId)
+        .eq(field, value),
+    );
+    if (error) {
+      failedFields.push(field);
+      errors.push(`${field}: ${error.message}`);
+    }
+  }
+  return errors.length > 0
+    ? { error: { message: errors.join("; ") }, failedFields }
+    : { error: null, failedFields: [] };
+}
+
 // Reads every id currently on source_id for one FK table, BEFORE any move
 // (0184 review follow-up, unknown-outcome case). Paged/complete — a batch
 // could exceed PostgREST's 1000-row cap — with a total order (`id`) so
@@ -410,26 +458,68 @@ export async function mergePatientsAction(
     }
   }
 
-  // Tombstone the source row.
+  // Tombstone the source row. Retried once on a lock race (P0072/40P01),
+  // same as every move and the fill, with a fresh query per attempt (the
+  // Prefer-header trap). Two extra predicates make the retry ITSELF
+  // idempotent: if the first attempt actually committed but its response was
+  // lost (reported as a retryable error), the retry's own UPDATE now matches
+  // ZERO rows (merged_into_id is no longer null) instead of re-stamping a
+  // second merged_at over the first. A zero-row result isn't necessarily a
+  // failure, though — it's also what a genuinely stale source (deleted or
+  // merged elsewhere between the pre-merge check and here) would produce —
+  // so it's resolved by re-reading source_id: merged_into_id already equal to
+  // keep_id means THIS merge's own earlier attempt is the one that landed,
+  // and the tombstone counts as done.
   const mergedAt = new Date().toISOString();
-  const { error: tombErr } = await admin
-    .from("patients")
-    .update({ merged_into_id: keep_id, merged_at: mergedAt })
-    .eq("id", source_id);
-  if (tombErr) {
-    // Same reasoning as the fill-failure branch above: the six moves already
-    // landed, so a bare retry would write an empty ledger. Roll them back
-    // first (0184 review follow-up). This does NOT undo the `fill` update
-    // above (if it ran) — that only copies previously-NULL fields from
-    // source onto keep and is harmless to leave in place; the fields it
-    // touched are re-derived the same way on any later merge attempt.
-    const { rolledBack, rollbackFailures } = await rollbackMergeMoves(
+  const { data: tombRows, error: tombErr } = await withLifecycleRetry(() =>
+    admin
+      .from("patients")
+      .update({ merged_into_id: keep_id, merged_at: mergedAt })
+      .eq("id", source_id)
+      .is("merged_into_id", null)
+      .is("deleted_at", null)
+      .select("id"),
+  );
+  let tombstoneDone = !tombErr && (tombRows?.length ?? 0) > 0;
+  if (!tombErr && !tombstoneDone) {
+    // A lifecycle read (deciding what to do next from the row's current
+    // state) — selects both lifecycle columns per convention, even though
+    // only merged_into_id is checked below.
+    const { data: recheck } = await admin
+      .from("patients")
+      .select("merged_into_id, deleted_at")
+      .eq("id", source_id)
+      .maybeSingle();
+    tombstoneDone = recheck?.merged_into_id === keep_id;
+  }
+  if (tombErr || !tombstoneDone) {
+    // The six moves already landed, so a bare retry would write an EMPTY
+    // ledger on the re-run (the moves are no-ops the second time) and Undo
+    // would have nothing to restore. Roll them back first (0184 review
+    // follow-up) — AND, unlike the fill-failure branch above, revert the
+    // fill too: by this point it already landed, so leaving it in place
+    // would contradict the "nothing was changed" message this reports.
+    // Fold both outcomes into one rollback-failure list so a partial
+    // failure on either side is reported together.
+    const fillRevert =
+      Object.keys(fill).length > 0
+        ? await revertFillFields(admin, keep_id, fill)
+        : { error: null, failedFields: [] as string[] };
+    const { rolledBack: movesRolledBack, rollbackFailures: moveFailures } = await rollbackMergeMoves(
       mergeMoveSteps(),
       moveOutcome.moved,
       snapshot,
       (step, ids) => rollbackMergeMoveStep(admin, step, ids, keep_id, source_id),
     );
-    return reportMergeStopped(rolledBack, rollbackFailures, "mergePatientsAction:tombstone", tombErr.message, {
+    const rollbackFailures: MergeRollbackFailure[] = [...moveFailures];
+    if (fillRevert.error) {
+      rollbackFailures.push({ table: "patients", error: fillRevert.error.message, ids: fillRevert.failedFields });
+    }
+    const rolledBack = movesRolledBack && !fillRevert.error;
+    const message =
+      tombErr?.message ??
+      "the source patient could no longer be tombstoned (already merged or deleted elsewhere)";
+    return reportMergeStopped(rolledBack, rollbackFailures, "mergePatientsAction:tombstone", message, {
       keep_id,
       source_id,
     });
