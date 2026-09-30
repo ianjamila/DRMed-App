@@ -10,21 +10,40 @@ import { deleteTestRequestsManyAction } from "@/lib/actions/visits/queue-deletio
 import {
   QUEUE_KIND,
   bulkQueueMessage,
-  parsePanelKey,
-  splitQueueKeys,
+  parsePanelRowKey,
+  rowTestCount,
+  sentTestCount,
   type BulkQueueResult,
   type QueueRowInfo,
 } from "@/lib/queue/bulk-queue";
 import { UNDO_ALREADY, UNDO_EXPIRED, UNDO_WINDOW_MS, undoOutcomeMessage } from "@/lib/ui/bulk-undo";
 import { claimTestsAction, unclaimTestsAction, undoBulkQueueAction } from "./actions";
+import {
+  claimQueueSelectionAction,
+  deleteQueueSelectionAction,
+  unclaimQueueSelectionAction,
+} from "./panel-actions";
 
 interface Props {
-  // Every selectable row the page rendered, keyed by test id OR panel key
-  // (owner 2026-09-28: chemistry panel cards are selectable as whole panels).
+  // Every selectable row the page rendered: single tests keyed by test id,
+  // chemistry panels by panelRowKey(visit, report group). A panel is acted on
+  // WHOLE — the server resolves its full membership (panel-actions.ts).
   rowsByKey: Record<string, QueueRowInfo>;
 }
 
 type Panel = null | "unclaim" | "delete";
+
+// Selected keys → single test ids and chemistry panels (panelRowKey).
+function splitKeys(keys: readonly string[]) {
+  const singleIds: string[] = [];
+  const panels: Array<{ key: string; visitId: string; groupId: string }> = [];
+  for (const key of keys) {
+    const panel = parsePanelRowKey(key);
+    if (panel) panels.push({ key, ...panel });
+    else singleIds.push(key);
+  }
+  return { singleIds, panels };
+}
 
 interface OutcomeUndo {
   batchId: string;
@@ -71,8 +90,11 @@ export function QueueBulkBar({ rowsByKey }: Props) {
   const known = (keys: string[] | undefined) =>
     (keys ?? []).filter((key) => rowsByKey[key] !== undefined);
   const claimKeys = known(keysByKind[QUEUE_KIND.claim]);
+  // A single test sends the holder the operator saw, so it needs one. A
+  // panel sends each bench member's holder as seen (it may be split between
+  // holders — an admin recovering it), and the server compares them all.
   const unclaimKeys = known(keysByKind[QUEUE_KIND.unclaim]).filter(
-    (key) => rowsByKey[key]!.assignedTo !== null,
+    (key) => parsePanelRowKey(key) !== null || rowsByKey[key]!.assignedTo !== null,
   );
   const deleteKeys = known(keysByKind[QUEUE_KIND.delete]);
 
@@ -90,7 +112,9 @@ export function QueueBulkBar({ rowsByKey }: Props) {
       return;
     }
     // Claim, Unclaim and Delete all get Undo — only when the server gave us
-    // a batch id and at least one row actually changed.
+    // a batch id and at least one row actually changed. A selection that
+    // included a chemistry panel never gets one yet (panel-actions.ts has no
+    // Undo of its own): see claim()/unclaim()/remove() below.
     const undo: OutcomeUndo | null =
       result.batchId && result.changedIds.length > 0
         ? {
@@ -99,7 +123,14 @@ export function QueueBulkBar({ rowsByKey }: Props) {
             labelOf: Object.fromEntries(keys.map((key) => [key, rowsByKey[key]?.label ?? "A test"])),
           }
         : null;
-    setOutcome({ message: bulkQueueMessage(verb, keys.length, result, rowsByKey), edits: selectionEdits, undo });
+    // Counted in TESTS: a panel row stands for several (sentTestCount) — its
+    // bench members for Claim / Unclaim, all of them for Delete.
+    const scope = verb === "Deleted" ? "all" : "bench";
+    setOutcome({
+      message: bulkQueueMessage(verb, sentTestCount(result, rowsByKey, scope), result, rowsByKey),
+      edits: selectionEdits,
+      undo,
+    });
     // Pruning wins (spec §4): clear everything sent; the outcome panel is the record.
     clearKeys(keys);
     closePanel();
@@ -155,16 +186,23 @@ export function QueueBulkBar({ rowsByKey }: Props) {
   function claim() {
     if (pending || claimKeys.length === 0) return;
     const keys = claimKeys;
-    const { testIds, panels } = splitQueueKeys(keys);
+    const { singleIds, panels } = splitKeys(keys);
     setRunning("claim");
     start(async () =>
       done(
         "Claimed",
         keys,
-        await claimTestsAction({
-          testIds,
-          panels: panels.map(({ visitId, groupId }) => ({ visitId, groupId })),
-        }),
+        // A selection with no chemistry panel goes straight to the
+        // single-test action — it alone stamps a batch id, so only a
+        // panel-free Claim offers Undo. A selection with a panel goes
+        // through panel-actions.ts, which checks the record budget with
+        // every panel counted in full before claiming anything.
+        panels.length === 0
+          ? await claimTestsAction(singleIds)
+          : await claimQueueSelectionAction({
+              testRequestIds: singleIds,
+              panels: panels.map(({ visitId, groupId }) => ({ visitId, groupId })),
+            }),
         false,
         Date.now(),
       ),
@@ -174,25 +212,27 @@ export function QueueBulkBar({ rowsByKey }: Props) {
   function unclaim() {
     if (pending || unclaimKeys.length === 0) return;
     const keys = unclaimKeys;
-    const { testIds, panels } = splitQueueKeys(keys);
-    const items = testIds.map((key) => ({
+    const { singleIds, panels } = splitKeys(keys);
+    const items = singleIds.map((key) => ({
       testRequestId: key,
       assignedTo: rowsByKey[key]!.assignedTo!,
+    }));
+    const heldPanels = panels.map((p) => ({
+      ...p,
+      members: rowsByKey[p.key]!.bench ?? [],
     }));
     setRunning("unclaim");
     start(async () =>
       done(
         "Unclaimed",
         keys,
-        await unclaimTestsAction({
-          items,
-          panels: panels.map((p) => ({
-            visitId: p.visitId,
-            groupId: p.groupId,
-            assignedTo: rowsByKey[p.key]!.assignedTo!,
-          })),
-          reason: reason.trim() || undefined,
-        }),
+        panels.length === 0
+          ? await unclaimTestsAction({ items, reason: reason.trim() || undefined })
+          : await unclaimQueueSelectionAction({
+              items,
+              panels: heldPanels.map(({ visitId, groupId, members }) => ({ visitId, groupId, members })),
+              reason: reason.trim() || undefined,
+            }),
         true,
         Date.now(),
       ),
@@ -206,24 +246,34 @@ export function QueueBulkBar({ rowsByKey }: Props) {
       return;
     }
     const keys = deleteKeys;
-    const { testIds, panels } = splitQueueKeys(keys);
+    const { singleIds, panels } = splitKeys(keys);
     setRunning("delete");
     start(async () =>
       done(
         "Deleted",
         keys,
-        await deleteTestRequestsManyAction({
-          testRequestIds: testIds,
-          panels: panels.map(({ visitId, groupId }) => ({ visitId, groupId })),
-          reason: reason.trim(),
-        }),
+        panels.length === 0
+          ? await deleteTestRequestsManyAction({ testRequestIds: singleIds, reason: reason.trim() })
+          : await deleteQueueSelectionAction({
+              testRequestIds: singleIds,
+              panels: panels.map(({ visitId, groupId }) => ({ visitId, groupId })),
+              reason: reason.trim(),
+            }),
         true,
         Date.now(),
       ),
     );
   }
 
-  const panelCount = panel === "unclaim" ? unclaimKeys.length : panel === "delete" ? deleteKeys.length : 0;
+  // In TESTS, not rows: a chemistry panel row stands for all its members.
+  const testsIn = (keys: string[], scope: "bench" | "all") =>
+    keys.reduce((n, key) => n + rowTestCount(rowsByKey[key], scope), 0);
+  const panelCount =
+    panel === "unclaim"
+      ? testsIn(unclaimKeys, "bench")
+      : panel === "delete"
+        ? testsIn(deleteKeys, "all")
+        : 0;
   // The rows behind an open panel can vanish under it (a realtime refresh
   // prunes them). Close it then, so it never reopens by itself — with the old
   // reason — over a later, unrelated selection. Render-time adjustment, the
@@ -243,7 +293,7 @@ export function QueueBulkBar({ rowsByKey }: Props) {
   // server (weight, not 1), so "N tests" would undercount — say "N selected
   // rows" instead whenever the open panel's selection includes one.
   const panelSelection = panel === "unclaim" ? unclaimKeys : deleteKeys;
-  const panelCountLabel = panelSelection.some((key) => parsePanelKey(key) !== null)
+  const panelCountLabel = panelSelection.some((key) => parsePanelRowKey(key) !== null)
     ? `${panelCount} selected row${panelCount === 1 ? "" : "s"}`
     : n(panelCount);
 
@@ -266,7 +316,7 @@ export function QueueBulkBar({ rowsByKey }: Props) {
       ) : null}
       {claimKeys.length > 0 ? (
         <Button type="button" size="sm" variant="brand" disabled={pending} onClick={claim}>
-          {pending && running === "claim" ? "Claiming…" : `Claim (${claimKeys.length})`}
+          {pending && running === "claim" ? "Claiming…" : `Claim (${testsIn(claimKeys, "bench")})`}
         </Button>
       ) : null}
       {unclaimKeys.length > 0 ? (
@@ -281,7 +331,7 @@ export function QueueBulkBar({ rowsByKey }: Props) {
             setPanel(panel === "unclaim" ? null : "unclaim");
           }}
         >
-          Unclaim ({unclaimKeys.length})
+          Unclaim ({testsIn(unclaimKeys, "bench")})
         </Button>
       ) : null}
       {deleteKeys.length > 0 ? (
@@ -296,7 +346,7 @@ export function QueueBulkBar({ rowsByKey }: Props) {
             setPanel(panel === "delete" ? null : "delete");
           }}
         >
-          Delete ({deleteKeys.length})
+          Delete ({testsIn(deleteKeys, "all")})
         </Button>
       ) : null}
       {panel !== null && panelCount > 0 ? (

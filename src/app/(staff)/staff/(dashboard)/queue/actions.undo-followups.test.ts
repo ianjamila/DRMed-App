@@ -92,8 +92,13 @@ describe("finding 7: auditLeftoverPanelRows fails CLOSED when its verification r
   });
 
   it("every call site passes the full row (id + visit_id), not a bare id array, so fail-closed has what it needs", () => {
+    // Only undoBulkQueueAction's unclaim and reclaim compensation branches
+    // call this now — the bulk claim/unclaim panel loops that used to call
+    // it from claimTestsAction/unclaimTestsAction moved to panel-actions.ts
+    // (claim_panel_members / unclaim_panel_members, 0191's own atomicity, no
+    // app-level compensation left to audit).
     const calls = [...src.matchAll(/auditLeftoverPanelRows\(\s*supabase,\s*([a-zA-Z.()=> ]+),/g)];
-    expect(calls.length).toBeGreaterThanOrEqual(4);
+    expect(calls.length).toBeGreaterThanOrEqual(2);
     for (const m of calls) {
       expect(m[1].trim()).toBe("got");
     }

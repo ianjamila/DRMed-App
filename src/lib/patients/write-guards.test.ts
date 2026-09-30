@@ -57,6 +57,8 @@ const KNOWN_WRITER_RPCS = new Set<string>([
   // circular. See their EXEMPT entries below.
   "delete_patient",
   "restore_patient",
+  "claim_panel_members", // panel-writes.ts claimPanelMembers — all-or-nothing panel claim (0191).
+  "unclaim_panel_members", // panel-writes.ts unclaimPanelMembers — all-or-nothing panel hand-back (0191).
 ]);
 
 // Names that count as "this write is guarded" WHEN CALLED DIRECTLY from the
@@ -109,8 +111,10 @@ const EXEMPT: Record<string, string> = {
     "Reassigning an already-claimed line does not put new work or money on the record.",
   [`src/app/(staff)/staff/(dashboard)/queue/actions.ts:undoBulkQueueAction`]:
     "Undo of a bulk claim (unclaim) or a bulk unclaim (reclaim) — same reasoning as performUnclaim/claimTestsAction: neither bills nor releases. The restore branch calls restoreTestRequestsForVisit (queue-restore-core.ts), which guards itself with assertVisitPatientActive.",
-  [`src/app/(staff)/staff/(dashboard)/queue/consolidated/[visitId]/[groupId]/actions.ts:claimConsolidated`]:
-    "Same as claimTestAction, for a consolidated report — claiming does not bill.",
+  [`src/lib/actions/queue/panel-writes.ts:claimPanelMembers`]:
+    "Same as claimTestAction, for a consolidated report (the panel page's Claim and the queue list's panel Claim / bulk Claim) — claiming does not bill.",
+  [`src/lib/actions/queue/panel-writes.ts:unclaimPanelMembers`]:
+    "Handing a consolidated report back reduces work, same reasoning as performUnclaim (its group path and the queue's bulk Unclaim both call this).",
   [`src/app/(marketing)/appointments/cancel/[id]/actions.ts:cancelAppointmentAction`]:
     "Public cancel-by-link reduces work (cancels), same reasoning as staff cancel.",
   [`src/app/(marketing)/schedule/actions.ts:storeLabRequestFiles`]:

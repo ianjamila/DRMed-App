@@ -13,6 +13,15 @@ vi.mock("./actions", () => ({
 vi.mock("@/lib/actions/visits/queue-deletion", () => ({
   deleteTestRequestsManyAction: vi.fn(),
 }));
+// Not exercised here (no chemistry panel in these fixtures — see
+// panel-actions.test.ts / the queue's own tests for panel wiring), but the
+// bar imports these unconditionally, and the real module pulls in
+// server-only code that throws outside a Server Component.
+vi.mock("./panel-actions", () => ({
+  claimQueueSelectionAction: vi.fn(),
+  unclaimQueueSelectionAction: vi.fn(),
+  deleteQueueSelectionAction: vi.fn(),
+}));
 
 import { claimTestsAction, unclaimTestsAction, undoBulkQueueAction } from "./actions";
 import { deleteTestRequestsManyAction } from "@/lib/actions/visits/queue-deletion";
@@ -20,7 +29,7 @@ import { QueueBulkBar } from "./queue-bulk-bar";
 import { SelectionProvider } from "@/components/staff/row-selection/selection-context";
 import { RowSelectCheckbox } from "@/components/staff/row-selection/row-select-checkbox";
 import { SelectAllCheckbox } from "@/components/staff/row-selection/select-all-checkbox";
-import { QUEUE_KIND, bulkQueueMessage, panelKey, type QueueRowInfo } from "@/lib/queue/bulk-queue";
+import { QUEUE_KIND, bulkQueueMessage, type QueueRowInfo } from "@/lib/queue/bulk-queue";
 import { UNDO_EXPIRED, undoOutcomeMessage } from "@/lib/ui/bulk-undo";
 import type { SelectionEntry } from "@/lib/ui/bulk-selection";
 
@@ -29,18 +38,14 @@ import type { SelectionEntry } from "@/lib/ui/bulk-selection";
 // real here — only the three lab-queue server actions and next/navigation
 // are mocked, so this exercises the same wiring the queue page composes
 // (rowsByKey/QUEUE_KIND contract). Pins: which buttons a selection unlocks
-// per QUEUE_KIND, the testIds/panels split a button sends (splitQueueKeys),
-// that Unclaim carries the holder the row showed, that Delete requires a
-// reason, that the outcome panel names every skipped row and prunes every
-// sent key, that ineligible rows stay selected with the outcome inline, and
-// the ↶ Undo visibility/counting/retry/expiry rules.
+// per QUEUE_KIND, that Unclaim carries the holder the row showed, that
+// Delete requires a reason, that the outcome panel names every skipped row
+// and prunes every sent key, that ineligible rows stay selected with the
+// outcome inline, and the ↶ Undo visibility/counting/retry/expiry rules.
+// Chemistry panels are covered separately, through panel-actions.ts
+// (this bar routes a selection containing one there instead of here).
 
 const VISIT_1 = "11111111-1111-1111-1111-111111111111";
-const GROUP_1 = "22222222-2222-2222-2222-222222222222";
-const VISIT_2 = "33333333-3333-3333-3333-333333333333";
-const GROUP_2 = "44444444-4444-4444-4444-444444444444";
-const PANEL_1 = panelKey(VISIT_1, GROUP_1);
-const PANEL_2 = panelKey(VISIT_2, GROUP_2);
 
 interface Row {
   key: string;
@@ -146,10 +151,10 @@ it("an unclaimable row with no holder yet does not unlock Unclaim", async () => 
 });
 
 describe("Claim", () => {
-  it("splits a mixed selection into testIds and panels, in selection order", async () => {
+  it("sends a panel-free selection straight to claimTestsAction as a plain id array", async () => {
     vi.mocked(claimTestsAction).mockResolvedValue({
       ok: true,
-      changedIds: ["t1", "t2", PANEL_1],
+      changedIds: ["t1", "t2"],
       skipped: [],
       batchId: "b-claim",
     });
@@ -159,46 +164,34 @@ describe("Claim", () => {
         rows={[
           { key: "t1", kinds: [QUEUE_KIND.claim] },
           { key: "t2", kinds: [QUEUE_KIND.claim] },
-          { key: PANEL_1, kinds: [QUEUE_KIND.claim], weight: 2, visitId: VISIT_1 },
         ]}
       />,
     );
     await user.click(screen.getByRole("checkbox", { name: "Select all tests" }));
-    await user.click(screen.getByRole("button", { name: "Claim (3)" }));
+    await user.click(screen.getByRole("button", { name: "Claim (2)" }));
 
     expect(claimTestsAction).toHaveBeenCalledTimes(1);
-    expect(claimTestsAction).toHaveBeenCalledWith({
-      testIds: ["t1", "t2"],
-      panels: [{ visitId: VISIT_1, groupId: GROUP_1 }],
-    });
+    expect(claimTestsAction).toHaveBeenCalledWith(["t1", "t2"]);
   });
 });
 
 describe("Unclaim", () => {
-  it("opens a reason panel and carries the holder the row showed, for a single test and a panel", async () => {
+  it("opens a reason panel and carries the holder the row showed", async () => {
     vi.mocked(unclaimTestsAction).mockResolvedValue({
       ok: true,
-      changedIds: ["t2", PANEL_2],
+      changedIds: ["t2"],
       skipped: [],
       batchId: "b-unclaim",
     });
     const user = userEvent.setup();
-    render(
-      <Harness
-        rows={[
-          { key: "t2", kinds: [QUEUE_KIND.unclaim], assignedTo: "holder-a" },
-          { key: PANEL_2, kinds: [QUEUE_KIND.unclaim], assignedTo: "holder-b", weight: 2, visitId: VISIT_2 },
-        ]}
-      />,
-    );
+    render(<Harness rows={[{ key: "t2", kinds: [QUEUE_KIND.unclaim], assignedTo: "holder-a" }]} />);
     await user.click(screen.getByRole("checkbox", { name: "Select all tests" }));
-    await user.click(screen.getByRole("button", { name: "Unclaim (2)" }));
+    await user.click(screen.getByRole("button", { name: "Unclaim (1)" }));
     const confirm = await screen.findByRole("button", { name: /Confirm unclaim/ });
     await user.click(confirm);
 
     expect(unclaimTestsAction).toHaveBeenCalledWith({
       items: [{ testRequestId: "t2", assignedTo: "holder-a" }],
-      panels: [{ visitId: VISIT_2, groupId: GROUP_2, assignedTo: "holder-b" }],
       reason: undefined,
     });
   });
@@ -232,7 +225,6 @@ describe("Delete", () => {
 
     expect(deleteTestRequestsManyAction).toHaveBeenCalledWith({
       testRequestIds: ["t3"],
-      panels: [],
       reason: "Duplicate entry",
     });
   });

@@ -14,7 +14,6 @@
  * same shape as finalise-consolidated living under src/lib/actions.
  */
 
-import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { audit } from "@/lib/audit/log";
@@ -25,9 +24,7 @@ import { translatePgError } from "@/lib/accounting/pg-errors";
 import { QUEUE_DELETE_ROLES } from "@/lib/visits/deletion";
 import { MAX_BULK_SELECTION } from "@/lib/visits/bulk-selection";
 import { assertVisitPatientActive } from "@/lib/patients/require-active";
-import { panelKey, type BulkQueueResult, type PanelRef, type SkippedRow } from "@/lib/queue/bulk-queue";
-import { loadPanelMembers } from "@/lib/queue/panel-members";
-import { MAX_BULK_RECORDS } from "@/lib/ui/bulk-selection";
+import type { BulkQueueResult, SkippedRow } from "@/lib/queue/bulk-queue";
 import { revalidateQueueSurfaces, restoreTestRequestsForVisit } from "@/lib/actions/visits/queue-restore-core";
 
 export type QueueDeletionResult =
@@ -188,7 +185,7 @@ async function deleteTestRequestsForVisit(
   visitId: string,
   testRequestIds: string[],
   reason: string,
-  bulk?: { size: number; batchId?: string; panelKeyOf?: ReadonlyMap<string, string> },
+  bulk?: { size: number; batchId?: string },
 ): Promise<VisitDeleteOutcome> {
   const admin = createAdminClient();
   const { data: candidates } = await admin
@@ -257,7 +254,6 @@ async function deleteTestRequestsForVisit(
           ? {
               bulk_batch_size: bulk.size,
               ...(bulk.batchId ? { bulk_batch_id: bulk.batchId } : {}),
-              ...(bulk.panelKeyOf?.get(row.id) ? { panel_key: bulk.panelKeyOf.get(row.id) } : {}),
             }
           : {}),
       },
@@ -298,37 +294,25 @@ export async function deleteTestRequestsAction(
   return { ok: true, count: outcome.deletedIds.length };
 }
 
-const ManyDeleteSchema = z
-  .object({
-    testRequestIds: z
-      .array(z.string().uuid({ message: "Could not read the selection — refresh the queue and try again." }))
-      .max(MAX_BULK_SELECTION, {
-        message: `Too many tests selected — the limit is ${MAX_BULK_SELECTION} per action.`,
-      }),
-    panels: z
-      .array(z.object({ visitId: z.string().uuid(), groupId: z.string().uuid() }))
-      .max(MAX_BULK_SELECTION)
-      .default([]),
-    reason: z.string(),
-  })
-  .refine(
-    (v) =>
-      v.testRequestIds.length + v.panels.length >= 1 &&
-      v.testRequestIds.length + v.panels.length <= MAX_BULK_SELECTION,
-    { message: "Nothing to delete — no tests were selected." },
-  );
+const ManyDeleteSchema = z.object({
+  testRequestIds: z
+    .array(z.string().uuid({ message: "Could not read the selection — refresh the queue and try again." }))
+    .min(1, { message: "Nothing to delete — no tests were selected." })
+    .max(MAX_BULK_SELECTION, {
+      message: `Too many tests selected — the limit is ${MAX_BULK_SELECTION} per action.`,
+    }),
+  reason: z.string(),
+});
 
-// The lab queue's bulk Delete (spec §6): a selection that can span visits, and
-// may include whole chemistry panels (owner decision, item 10) resolved on
-// the server to every live bench member — never trusted from the page. Order
-// matters — role, then the input's shape and the reason, and only then the
-// service-role reads — so an empty or unknown-id batch from a caller without
-// the role gets the role error, never a candidate-dependent message. Each
-// VISIT is its own atomic statement (deleteTestRequestsForVisit, one UPDATE —
-// the 0125 guard raises for the whole statement on a single undeletable row),
-// so a panel's members (always one visit) are all-or-nothing by construction:
-// a panel key is only reported changed when every one of its members was
-// deleted.
+// The lab queue's bulk Delete (spec §6): a selection that can span visits —
+// never trusted from the page. Order matters — role, then the input's shape
+// and the reason, and only then the service-role reads — so an empty or
+// unknown-id batch from a caller without the role gets the role error, never
+// a candidate-dependent message. Each VISIT is its own atomic statement
+// (deleteTestRequestsForVisit, one UPDATE — the 0125 guard raises for the
+// whole statement on a single undeletable row). A chemistry panel is deleted
+// whole by panel-actions.ts, which calls this with the panel's full member
+// list as testRequestIds — one visit, so still one atomic statement.
 export async function deleteTestRequestsManyAction(input: unknown): Promise<BulkQueueResult> {
   const { session, error: roleError } = await requireQueueDeleteStaff();
   if (!session) return { ok: false, error: roleError };
@@ -345,24 +329,8 @@ export async function deleteTestRequestsManyAction(input: unknown): Promise<Bulk
   if (!parsed.ok) return { ok: false, error: parsed.error };
   const batchId = crypto.randomUUID();
   const ids = Array.from(new Set(shape.data.testRequestIds));
-  const panelsByKey = new Map<string, PanelRef>();
-  for (const p of shape.data.panels) {
-    const key = panelKey(p.visitId, p.groupId);
-    if (!panelsByKey.has(key)) panelsByKey.set(key, { key, visitId: p.visitId, groupId: p.groupId });
-  }
-  const panels = [...panelsByKey.values()];
 
   const admin = createAdminClient();
-
-  const loaded = await loadPanelMembers(admin, panels);
-  if (!loaded.ok) {
-    return { ok: false, error: "Could not load the chemistry panels — try again." };
-  }
-  const totalRecords =
-    ids.length + [...loaded.members.values()].reduce((n, list) => n + list.length, 0);
-  if (totalRecords > MAX_BULK_RECORDS) {
-    return { ok: false, error: "Too many tests in one go — select fewer panels." };
-  }
 
   const { data: candidates, error: readError } = await admin
     .from("test_requests")
@@ -372,13 +340,6 @@ export async function deleteTestRequestsManyAction(input: unknown): Promise<Bulk
   if (readError) return { ok: false, error: translatePgError(readError) };
   const visitOfSingle = new Map((candidates ?? []).map((c) => [c.id, c.visit_id]));
 
-  // Selection key each underlying test_request id reports back as — itself
-  // for a single, the panel key for every member of a panel.
-  const keyOf = new Map<string, string>();
-  const panelKeyOf = new Map<string, string>();
-  const panelMembersOf = new Map<string, string[]>();
-  const panelRefByKey = new Map<string, PanelRef>();
-  const panelKeysByVisit = new Map<string, Set<string>>();
   const byVisit = new Map<string, string[]>();
   const skipped: SkippedRow[] = [];
 
@@ -388,67 +349,25 @@ export async function deleteTestRequestsManyAction(input: unknown): Promise<Bulk
       skipped.push({ id, reason: "Already deleted or no longer exists." });
       continue;
     }
-    keyOf.set(id, id);
     const group = byVisit.get(visitId);
     if (group) group.push(id);
     else byVisit.set(visitId, [id]);
-  }
-  for (const panel of panels) {
-    const list = loaded.members.get(panel.key) ?? [];
-    if (list.length === 0) {
-      skipped.push({ id: panel.key, reason: "Nothing left to delete in this panel — refresh the queue." });
-      continue;
-    }
-    const memberIds = list.map((m) => m.id);
-    panelMembersOf.set(panel.key, memberIds);
-    const group = byVisit.get(panel.visitId);
-    if (group) group.push(...memberIds);
-    else byVisit.set(panel.visitId, [...memberIds]);
-    for (const mid of memberIds) {
-      keyOf.set(mid, panel.key);
-      panelKeyOf.set(mid, panel.key);
-    }
-    panelRefByKey.set(panel.key, panel);
-    const set = panelKeysByVisit.get(panel.visitId) ?? new Set<string>();
-    set.add(panel.key);
-    panelKeysByVisit.set(panel.visitId, set);
   }
 
   const changedIds: string[] = [];
   for (const [visitId, groupIds] of byVisit) {
     const outcome = await deleteTestRequestsForVisit(session, visitId, groupIds, parsed.reason, {
-      size: totalRecords,
+      size: ids.length,
       batchId,
-      panelKeyOf,
     });
     if (!outcome.ok) {
-      const keysHere = new Set(groupIds.map((id) => keyOf.get(id)!));
-      for (const key of keysHere) skipped.push({ id: key, reason: outcome.error });
+      for (const id of groupIds) skipped.push({ id, reason: outcome.error });
       continue;
     }
     const done = new Set(outcome.deletedIds);
     for (const id of groupIds) {
-      if (panelKeyOf.has(id)) continue; // panel members are reported per-panel below
       if (done.has(id)) changedIds.push(id);
       else skipped.push({ id, reason: "Already deleted or not deletable." });
-    }
-    for (const panelKeyHere of panelKeysByVisit.get(visitId) ?? []) {
-      const memberIds = panelMembersOf.get(panelKeyHere)!;
-      const anyDeleted = memberIds.some((mid) => done.has(mid));
-      if (memberIds.every((mid) => done.has(mid))) {
-        changedIds.push(panelKeyHere);
-      } else {
-        skipped.push({
-          id: panelKeyHere,
-          reason: "Part of this panel could not be deleted — open it to check.",
-        });
-      }
-      // Claim/unclaim already revalidate the panel's own page (Task 6); a
-      // fully- or partly-deleted panel changed what it shows too.
-      if (anyDeleted) {
-        const ref = panelRefByKey.get(panelKeyHere)!;
-        revalidatePath(`/staff/queue/consolidated/${ref.visitId}/${ref.groupId}`);
-      }
     }
   }
   return { ok: true, changedIds, skipped, batchId };
