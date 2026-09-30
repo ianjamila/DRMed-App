@@ -160,7 +160,7 @@ if (!/127\.0\.0\.1|localhost/.test(DB_URL)) {
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type Json = any;
 
-type DbRole = "postgres" | "anon" | "authenticated";
+type DbRole = "postgres" | "anon" | "authenticated" | "service_role";
 type Claims = Record<string, unknown> | null;
 
 interface Fixtures {
@@ -1512,6 +1512,167 @@ async function main() {
       const after = await summary();
       const d = delta(before, after);
       assert(allZero(d), `expected an all-zero delta (never New, never undated — an old customer), got ${JSON.stringify(d)}`);
+    }));
+
+    // 25. 0199: the service key reads summary + series ----------------------
+    // The CLI first-night check and the Phase 5 weekly cron call these with the
+    // service key and no signed-in user (has_role() is false). The gate is
+    // `has_role(admin) or auth.role() = 'service_role'`; the numbers must be
+    // the SAME ones an admin sees, and everyone else must still be refused.
+    await check("0199: service_role reads summary + series with the admin's numbers", () => scoped(async () => {
+      await setRole("postgres", null);
+      // Real rows so equal numbers are not equal zeros.
+      const a = await patient("Zzproof0199a", "App", { createdAt: "2026-06-05T02:00:00Z" });
+      await visit(a, "2026-06-06", 300);
+      const b = await patient("Zzproof0199b", "Second", { createdAt: "2026-06-12T02:00:00Z" });
+      await visit(b, "2026-06-13");
+      await sheetLine("2026-06-14", "zzproof0199sheet|n", null, 0);
+
+      const SUMMARY = `select ${COUNT_FIELDS.join(", ")}, sheet_last_dates::text as sheet_last_dates, sync_paused, sheet_rows_present, last_run_status from public.patient_sources_summary($1, $2)`;
+      const SERIES: [string, string][] = [["day", "new"], ["week", "served"], ["month", "new"], ["period", "served"]];
+      const SERIES_SQL = "select bucket_start::text as bucket_start, channel, confirmed, unconfirmed from public.patient_sources_series($1, $2, $3, $4)";
+
+      const readAll = async () => {
+        const s = await q(SUMMARY, [JUNE.from, JUNE.to]);
+        const series: unknown[] = [];
+        for (const [grain, mode] of SERIES) {
+          series.push((await q(SERIES_SQL, [JUNE.from, JUNE.to, grain, mode])).rows);
+        }
+        return { summary: s.rows, series };
+      };
+
+      await asAdmin();
+      const adminRead = await readAll();
+      await setRole("postgres", null);
+      const sm = adminRead.summary[0] as Record<string, number | string>;
+      const total = Number(sm.new_confirmed) + Number(sm.new_unconfirmed) + Number(sm.served_confirmed) + Number(sm.served_unconfirmed);
+      assert(total >= 3, `0199: the admin read must carry real numbers, got ${JSON.stringify(adminRead.summary)}`);
+      assert(adminRead.series.every((rows) => (rows as unknown[]).length > 0), "0199: every admin series read must return rows");
+
+      // service_role exactly as PostgREST sets it up: role claim only, no sub.
+      await setRole("service_role", { role: "service_role" });
+      const svcRead = await expectOk("0199 service_role read", readAll);
+      await setRole("postgres", null);
+      assert(JSON.stringify(svcRead) === JSON.stringify(adminRead),
+        `0199: service_role numbers differ from the admin's: svc=${JSON.stringify(svcRead)} admin=${JSON.stringify(adminRead)}`);
+
+      // Everyone else is still refused.
+      const SVC_FUNCS = [
+        `select public.patient_sources_summary('2026-06-01'::date,'2026-06-30'::date)`,
+        `select public.patient_sources_series('2026-06-01'::date,'2026-06-30'::date,'day'::text,'new'::text)`,
+      ];
+      for (const sql of SVC_FUNCS) {
+        await setRole("authenticated", { sub: fx.receptionId, role: "authenticated" });
+        await expectPgError("0199 authenticated non-admin refused", "42501", () => q(sql));
+        await setRole("authenticated", { sub: fx.inactiveAdminId, role: "authenticated" });
+        await expectPgError("0199 inactive admin refused", "42501", () => q(sql));
+        await setRole("anon", null);
+        await expectPgError("0199 anon refused", "42501", () => q(sql));
+        await setRole("anon", { role: "anon", patient_id: fx.patientPId });
+        await expectPgError("0199 portal patient refused", "42501", () => q(sql));
+        // An authenticated session cannot claim the service role through other claims.
+        await setRole("authenticated", { sub: fx.receptionId, role: "authenticated", app_metadata: { role: "service_role" } });
+        await expectPgError("0199 authenticated with a service_role app_metadata refused", "42501", () => q(sql));
+        // Admin viewing as reception is still refused (0182).
+        await setRole("postgres", null);
+        await q(`update public.staff_profiles set view_as_role = 'reception', view_as_until = now() + interval '1 hour' where id = $1`, [fx.adminId]);
+        try {
+          await setRole("authenticated", { sub: fx.adminId, role: "authenticated" });
+          await expectPgError("0199 admin viewing as reception refused", "42501", () => q(sql));
+        } finally {
+          await setRole("postgres", null);
+          await q(`update public.staff_profiles set view_as_role = null, view_as_until = null where id = $1`, [fx.adminId]);
+        }
+      }
+
+      // No role claim and no sub at all (empty, '{}' or a claim without "role"): auth.role() is
+      // NULL. The gate must be coalesced so NULL means "refuse", not "skip the raise".
+      for (const sql of SVC_FUNCS) {
+        for (const claims of [null, {}, { iss: "supabase" }] as Claims[]) {
+          await setRole("authenticated", claims);
+          await expectPgError(`0199 authenticated with no role claim (${JSON.stringify(claims)}) refused`, "42501", () => q(sql));
+        }
+      }
+      await setRole("postgres", null);
+
+      // Grants and bodies, as the migration's own post-condition states them.
+      for (const fn of ["public.patient_sources_summary(date,date)", "public.patient_sources_series(date,date,text,text)"]) {
+        const g = await q<{ anon: boolean; auth: boolean; svc: boolean; gate: boolean }>(
+          `select has_function_privilege('anon', $1, 'execute') as anon,
+                  has_function_privilege('authenticated', $1, 'execute') as auth,
+                  has_function_privilege('service_role', $1, 'execute') as svc,
+                  pg_get_functiondef($1::regprocedure) like '%coalesce((select auth.role()), '''') = ''service_role''%' as gate`, [fn]);
+        assert(!g.rows[0].anon && g.rows[0].auth && g.rows[0].svc && g.rows[0].gate, `0199: bad ACL/body for ${fn}: ${JSON.stringify(g.rows[0])}`);
+      }
+    }));
+
+    // Control (0199): prove the service_role case above can fail. The 0189
+    // bodies (gate = has_role only) are loaded under temp names inside this
+    // rolled-back savepoint, exactly like the M2 check does; with that gate
+    // the service key is refused (42501), while the live 0199 function answers.
+    await check("0199 control: with the 0189 gate the service_role case FAILS", () => scoped(async () => {
+      await setRole("postgres", null);
+      const oldSql = fs.readFileSync(path.resolve(process.cwd(), "supabase/migrations/0189_patient_sources.sql"), "utf8");
+      const load = (name: string, temp: string, argsSig: string) => {
+        const start = oldSql.indexOf(`create or replace function public.${name}(`);
+        const end = oldSql.indexOf("\n$$;\n", start) + 5;
+        assert(start > 0 && end > start, `could not extract the 0189 ${name}`);
+        const body = oldSql.slice(start, end).replace(`public.${name}(`, `public.${temp}(`);
+        assert(!body.includes("service_role"), "the 0189 body must not carry the service_role branch");
+        return { body, grant: `grant execute on function public.${temp}(${argsSig}) to service_role, authenticated` };
+      };
+      const s = load("patient_sources_summary", "_ps_summary_0189", "date, date");
+      const r = load("patient_sources_series", "_ps_series_0189", "date, date, text, text");
+      for (const x of [s, r]) { await q(x.body); await q(x.grant); }
+
+      await setRole("service_role", { role: "service_role" });
+      await expectPgError("control: 0189 summary refuses the service key", "42501", () =>
+        q(`select public._ps_summary_0189('2026-06-01'::date,'2026-06-30'::date)`));
+      await expectPgError("control: 0189 series refuses the service key", "42501", () =>
+        q(`select public._ps_series_0189('2026-06-01'::date,'2026-06-30'::date,'day'::text,'new'::text)`));
+      // ...and the live functions answer the same call.
+      await expectOk("control: live summary answers the service key", () =>
+        q(`select public.patient_sources_summary('2026-06-01'::date,'2026-06-30'::date)`));
+      await expectOk("control: live series answers the service key", () =>
+        q(`select public.patient_sources_series('2026-06-01'::date,'2026-06-30'::date,'day'::text,'new'::text)`));
+      // The 0189 copy still answers an admin, so the refusal above is the gate and not a broken copy.
+      await asAdmin();
+      await expectOk("control: 0189 summary still answers an admin", () =>
+        q(`select public._ps_summary_0189('2026-06-01'::date,'2026-06-30'::date)`));
+    }));
+
+    // Control (0199 coalesce): prove the no-claims refusal above can fail. The live
+    // 0199 bodies are loaded under temp names with the coalesce removed (the
+    // gate as first drafted); a session with no role claim then sails through.
+    await check("0199 control: without the coalesce a no-claims session gets through", () => scoped(async () => {
+      await setRole("postgres", null);
+      const src = fs.readFileSync(path.resolve(process.cwd(), "supabase/migrations/0199_patient_sources_service_read.sql"), "utf8");
+      const GATE = "coalesce((select auth.role()), '') = 'service_role'";
+      const load = (name: string, temp: string, argsSig: string) => {
+        const start = src.indexOf(`create or replace function public.${name}(`);
+        const end = src.indexOf("\n$$;\n", start) + 5;
+        assert(start > 0 && end > start, `could not extract the 0199 ${name}`);
+        const live = src.slice(start, end).replace(`public.${name}(`, `public.${temp}(`);
+        assert(live.includes(GATE), "the live 0199 body must carry the coalesced gate");
+        const body = live.replace(GATE, "(select auth.role()) = 'service_role'");
+        assert(body !== live && !body.includes("coalesce((select auth.role())"), "the uncoalesced copy must differ from the live body");
+        return { body, grant: `grant execute on function public.${temp}(${argsSig}) to service_role, authenticated` };
+      };
+      const s = load("patient_sources_summary", "_ps_summary_nocoalesce", "date, date");
+      const r = load("patient_sources_series", "_ps_series_nocoalesce", "date, date, text, text");
+      for (const x of [s, r]) { await q(x.body); await q(x.grant); }
+
+      // Session with no role claim and no sub: the uncoalesced gate lets it through...
+      await setRole("authenticated", null);
+      await expectOk("control: uncoalesced summary lets a no-claims session through", () =>
+        q(`select public._ps_summary_nocoalesce('2026-06-01'::date,'2026-06-30'::date)`));
+      await expectOk("control: uncoalesced series lets a no-claims session through", () =>
+        q(`select public._ps_series_nocoalesce('2026-06-01'::date,'2026-06-30'::date,'day'::text,'new'::text)`));
+      // ...and the live functions refuse the very same session.
+      await expectPgError("control: live summary refuses the no-claims session", "42501", () =>
+        q(`select public.patient_sources_summary('2026-06-01'::date,'2026-06-30'::date)`));
+      await expectPgError("control: live series refuses the no-claims session", "42501", () =>
+        q(`select public.patient_sources_series('2026-06-01'::date,'2026-06-30'::date,'day'::text,'new'::text)`));
     }));
   } finally {
     // Never persisted. This proof never writes anything real.

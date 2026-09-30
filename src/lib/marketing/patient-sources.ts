@@ -263,6 +263,11 @@ export function seriesCsvRows(
   ];
 }
 
+/** "6 confirmed · 0 unconfirmed" — the one wording the Patient Sources card, the Booking Sources tile and the first-night check share. */
+export function formatNewCounts(confirmed: number, unconfirmed: number): string {
+  return `${confirmed.toLocaleString("en-PH")} confirmed · ${unconfirmed.toLocaleString("en-PH")} unconfirmed`;
+}
+
 /**
  * The "New patients" tile on Booking Sources. Patient Sources refuses a period
  * that starts before PATIENT_SOURCES_MIN_DATE (0193), so that page skips the
@@ -274,7 +279,7 @@ export function newPatientsTile(
   if (summary === null) return { value: "Not available before Dec 2023", error: false, linked: false };
   if (!summary.ok) return { value: "—", error: true, linked: true };
   return {
-    value: `${summary.data.new_confirmed.toLocaleString("en-PH")} confirmed · ${summary.data.new_unconfirmed.toLocaleString("en-PH")} unconfirmed`,
+    value: formatNewCounts(summary.data.new_confirmed, summary.data.new_unconfirmed),
     error: false,
     linked: true,
   };

@@ -18,7 +18,7 @@ Key reference artifacts:
 - `IMPLEMENTATION_PLAN.md` — original phase plan (historical; cross-check before relying on it)
 - `README.md` — operational setup
 - `.env.example` — env-var inventory
-- `docs/drmed-user-guide.html` — the staff + patient user guide (v2.55, 30 Sep 2026): every
+- `docs/drmed-user-guide.html` — the staff + patient user guide (v2.56, 30 Sep 2026): every
   screen, label and blocked-message the app shows, checked against the code. Update its
   **content** in the PR that changes a flow it describes, but bump the **version and date**
   (the header line and this bullet) only at merge time, after merging `main` into the branch —
@@ -104,6 +104,7 @@ Compliance target: **Philippine Data Privacy Act (RA 10173)**. Locale: en-PH, As
 | `supabase start` | Run a local Supabase stack (needs Docker) — the only "staging" |
 | `npm run seed:test` / `seed:services` / `seed:physicians` / `seed:hmo` / `seed:templates` / `seed:signatures` / etc. | Idempotent seed scripts — target the **local** stack by default (see below) |
 | `npm run smoke:results` / `smoke:chemistry` / `smoke:dashboards` | Render-pipeline / consolidated-chemistry / dashboard smoke tests |
+| `npm run first-night:check` | Sheet Sync first-night check — same engine as Admin › Sheet Sync › First-night check. Local stack by default, `--prod` for the live database. Read-only. Flags `--from --to --days --threshold --json --yes`. Exit 0 pass, 1 mismatch or error, 2 spike only, 64 bad flags |
 | `npm run smoke:locks` | Two-connection races against the patient lifecycle lock (0184) — 29 races proving lock order, deadlock retry and the result-membership lock. Local stack only, needs `supabase start`; not run against prod |
 | `npm run smoke:print` | Every staff print surface in real Chrome with scrollbars on (local stack; needs a dev server — `APP_BASE=http://localhost:3007 npm run smoke:print`). Seeds and deletes its own data; checks clip, repeating `<tfoot>`, required text and PDF page count, plus the statement's Email-to-patient, Patient AR link, the patient's own portal statement, the waived amount on the Queue / patient Visits / Visit Records (+ CSV), the portal's Your visits list, and a mid-session consent withdrawal (client navigation, stale-tab email, data export and the page payload must all refuse) (start the dev server with `SUPABASE_JWT_SECRET` from `supabase status -o env`) |
 | `npm run seed:bulk-fixtures [-- --as=<role>]` | Local-only BSQ fixtures for the bulk-select checks (refuses any remote target, even with `--prod`) |
@@ -265,7 +266,7 @@ All Server Actions return `{ ok: true, data } | { ok: false, error }`. User-faci
 | Results-archive tab config and per-test status words (`testStatusLabel`, shared with the portal), template drift checks | `src/lib/results/{status-filter,template-health}.ts` |
 | Shared staff components (page header, section tabs, nav config, delete dialog, no-receipt notice, PIN re-issue button) | `src/components/staff/` |
 | Sheet Sync (reception Google Sheet → patients + reporting mirror): parsers, identity rules, lease-fenced runner, CLI — `src/lib/sheet-sync/`, `scripts/sheet-sync.ts`; admin page `/staff/admin/sheet-sync`; mirror tables readable only there (`mirror-readers.test.ts`) | `src/lib/sheet-sync/`, `src/app/(staff)/staff/(dashboard)/admin/sheet-sync/` |
-| Patient Sources (Marketing): SQL counting in 0189 (admin-gated report functions over an identity core); the one RPC caller `src/lib/marketing/patient-sources.server.ts`; pure helpers `patient-sources.ts`, `period.ts`, `ad-spend-import.ts`; pages `marketing/patients(/people)`; CSVs `/api/admin/reports/patient-sources*.csv` | `src/lib/marketing/`, `src/app/(staff)/staff/(dashboard)/marketing/patients/`, `src/app/api/admin/reports/patient-sources*.csv/` |
+| Patient Sources (Marketing): SQL counting in 0189 (admin-gated report functions over an identity core); the one RPC caller `src/lib/marketing/patient-sources.server.ts`; pure helpers `patient-sources.ts`, `period.ts`, `ad-spend-import.ts`; pages `marketing/patients(/people)`; first-night check `first-night-check.ts` + `.server.ts` (shared engine), panel `admin/sheet-sync/first-night-check.tsx`, CLI `scripts/first-night-check.ts` (0199 lets the service key read `patient_sources_summary`/`series`); CSVs `/api/admin/reports/patient-sources*.csv` | `src/lib/marketing/`, `src/app/(staff)/staff/(dashboard)/marketing/patients/`, `src/app/api/admin/reports/patient-sources*.csv/` |
 | Migrations (sequential numbering) | `supabase/migrations/` |
 | Script env guard (local by default, `--prod` opt-in, `--confirm=<target>`) | `scripts/lib/{load-env,env-guard}.ts` |
 
