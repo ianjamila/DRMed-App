@@ -10,6 +10,12 @@ import { requireAdminStaff } from "@/lib/auth/require-admin";
 import { translatePgError } from "@/lib/accounting/pg-errors";
 import { canClaimSection, claimOwnerLabel, claimOwnerRole } from "@/lib/auth/role-sections";
 import { MAX_BULK_SELECTION } from "@/lib/visits/bulk-selection";
+import { MAX_BULK_RECORDS } from "@/lib/ui/bulk-selection";
+import { RELEASE_MEDIA } from "@/lib/visits/release-media";
+import { evaluateRelease, RELEASE_REFUSAL } from "@/lib/queue/release-eligibility";
+import { isConsentGateRequired, getConsentCurrentByPatient } from "@/lib/consent/gate";
+import { isActivePatient } from "@/lib/patients/active";
+import { releaseVisitSelection } from "@/lib/actions/visits/release-reports";
 import { isDoctorKind } from "@/lib/visits/order-lines";
 import { DOCTOR_KINDS_PG_LIST } from "@/lib/visits/classification";
 import {
@@ -19,7 +25,7 @@ import {
   evaluateUnclaim,
 } from "@/lib/queue/claim-eligibility";
 import { ipAndAgent } from "@/lib/server/action-helpers";
-import type { BulkQueueResult, SkippedRow } from "@/lib/queue/bulk-queue";
+import type { BulkQueueResult, BulkReleaseResult, SkippedRow } from "@/lib/queue/bulk-queue";
 import { unclaimPanelMembers } from "@/lib/actions/queue/panel-writes";
 
 export type ClaimResult = { ok: true } | { ok: false; error: string };
@@ -384,6 +390,130 @@ export async function claimTestsAction(input: unknown): Promise<BulkQueueResult>
     for (const row of changed) revalidatePath(`/staff/queue/${row.id}`);
   }
   return { ok: true, changedIds: changed.map((r) => r.id), skipped };
+}
+
+// ---------------------------------------------------------------------------
+// Bulk release from the lab queue. A combined (chemistry) report is released
+// whole or not at all — the per-visit pipeline (releaseVisitSelection) owns
+// the membership reads, the fail-closed rules, the write, the completeness
+// check and the notices. This action owns the role gate, the selected-rows
+// read and per-row eligibility, and the revalidation.
+// ---------------------------------------------------------------------------
+
+const BulkReleaseSchema = z.object({
+  testRequestIds: z.array(z.string().uuid()).min(1).max(MAX_BULK_RECORDS),
+  medium: z.enum(RELEASE_MEDIA),
+});
+
+export async function releaseTestsAction(input: unknown): Promise<BulkReleaseResult> {
+  const session = await requireActiveStaff();
+  if (!(LAB_CAPABLE_ROLES as readonly string[]).includes(session.role)) {
+    return { ok: false, error: RELEASE_REFUSAL.reception };
+  }
+  const parsed = BulkReleaseSchema.safeParse(input);
+  if (!parsed.success) return { ok: false, error: BULK_INPUT_ERROR };
+  const ids = Array.from(new Set(parsed.data.testRequestIds));
+  const { medium } = parsed.data;
+
+  const supabase = await createClient();
+  const { data: rows, error: readError } = await supabase
+    .from("test_requests")
+    .select(
+      "id, status, visit_id, is_package_header, services!inner ( kind, section, name ), visits!inner ( deleted_at, payment_status, hmo_provider_id, patient_id, patients!inner ( deleted_at, merged_into_id ) )",
+    )
+    .in("id", ids)
+    // A queue-deleted line (0125) reads as not found.
+    .is("deleted_at", null);
+  if (readError) return { ok: false, error: translatePgError(readError) };
+  const byId = new Map((rows ?? []).map((r) => [r.id, r]));
+
+  const gateRequired = await isConsentGateRequired();
+  const consentByPatient = gateRequired
+    ? await getConsentCurrentByPatient((rows ?? []).map((r) => r.visits.patient_id))
+    : new Map<string, boolean>();
+
+  const skipped = new Map<string, string>();
+  const survivorsByVisit = new Map<string, string[]>();
+  for (const id of ids) {
+    const row = byId.get(id);
+    if (!row) {
+      skipped.set(id, "Deleted from the queue or no longer exists.");
+      continue;
+    }
+    const patient = row.visits.patients;
+    const verdict = evaluateRelease(
+      {
+        status: row.status,
+        isPackageHeader: row.is_package_header,
+        isDoctorLine: isDoctorKind(row.services.kind),
+        section: row.services.section,
+        visitDeleted: row.visits.deleted_at !== null,
+        patientActive: isActivePatient(patient ? { drm_id: "", ...patient } : null),
+        visit: row.visits,
+        consentOnFile: consentByPatient.get(row.visits.patient_id) ?? false,
+        gateRequired,
+      },
+      session.role,
+    );
+    if (!verdict.ok) {
+      skipped.set(id, verdict.error);
+      continue;
+    }
+    survivorsByVisit.set(row.visit_id, [...(survivorsByVisit.get(row.visit_id) ?? []), id]);
+  }
+
+  const changedIds: string[] = [];
+  const alsoReleasedIds: string[] = [];
+  const warnings: string[] = [];
+  // A few visits at a time; results are aggregated in order of first
+  // appearance in the input, whatever order the visits finish in.
+  const outcomes = await mapWithConcurrency([...survivorsByVisit], 4, ([visitId, selectedIds]) =>
+    releaseVisitSelection({
+      supabase,
+      session,
+      visitId,
+      selectedIds,
+      medium,
+      auditMeta: { source: "queue" },
+    }),
+  );
+  for (const out of outcomes) {
+    changedIds.push(...out.changedIds);
+    alsoReleasedIds.push(...out.alsoReleasedIds);
+    for (const w of out.warnings) if (!warnings.includes(w)) warnings.push(w);
+    for (const s of out.skipped) skipped.set(s.id, s.reason);
+  }
+
+  // Every id sent lands in exactly one of changedIds / skipped.
+  const changedSet = new Set(changedIds);
+  for (const id of ids) {
+    if (!changedSet.has(id) && !skipped.has(id)) skipped.set(id, "Released by someone else or changed just now.");
+  }
+
+  revalidatePath("/(staff)/staff/(dashboard)/queue", "layout");
+  revalidatePath("/staff");
+  for (const visitId of survivorsByVisit.keys()) revalidatePath(`/staff/visits/${visitId}`);
+  return {
+    ok: true,
+    changedIds,
+    alsoReleasedIds,
+    skipped: ids.filter((id) => skipped.has(id) && !changedSet.has(id)).map((id) => ({ id, reason: skipped.get(id)! })),
+    warnings,
+  };
+}
+
+/** Run `fn` over `items` with at most `limit` in flight; results keep input order. */
+async function mapWithConcurrency<T, R>(items: readonly T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> {
+  const results = new Array<R>(items.length);
+  let next = 0;
+  const worker = async () => {
+    while (next < items.length) {
+      const i = next++;
+      results[i] = await fn(items[i]);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+  return results;
 }
 
 const BulkUnclaimSchema = z.object({

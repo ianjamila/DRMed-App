@@ -33,6 +33,14 @@ describe("manilaDayWindowUtc", () => {
     expect(new Date(endIso).getTime() - new Date(startIso).getTime()).toBe(86_400_000);
   });
 
+  it("offset 0 flips at Manila midnight (23:59 vs 00:01)", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-06-16T15:59:00Z")); // 23:59 Manila on 06-16
+    expect(manilaDayWindowUtc(0).startIso).toBe("2026-06-15T16:00:00.000Z");
+    vi.setSystemTime(new Date("2026-06-16T16:01:00Z")); // 00:01 Manila on 06-17
+    expect(manilaDayWindowUtc(0).startIso).toBe("2026-06-16T16:00:00.000Z");
+  });
+
   it("crosses a month boundary correctly", () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-06-30T15:00:00Z")); // 23:00 Manila on 06-30

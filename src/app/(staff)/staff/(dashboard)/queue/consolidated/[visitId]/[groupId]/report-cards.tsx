@@ -57,11 +57,14 @@ export function ReportCards({
   groupName,
   awaitingPaymentHint,
   editForm,
+  actionsFor = {},
 }: {
   reports: ReportCardData[];
   groupName: string;
   awaitingPaymentHint: string | null;
   editForm: { resultId: string; node: ReactNode } | null;
+  /** Release report / Undo control per resultId — absent for viewers who may not act (reception). */
+  actionsFor?: Record<string, ReactNode>;
 }) {
   return (
     <div className="mt-6 space-y-4">
@@ -93,11 +96,14 @@ export function ReportCards({
                     : ""}
                 </p>
               </div>
-              <span
-                className={`inline-block rounded-md border px-2 py-0.5 text-xs font-semibold ${BADGE[headline] ?? "bg-slate-50 text-slate-700 border-slate-200"}`}
-              >
-                {testStatusLabel(headline)}
-              </span>
+              <div className="flex flex-col items-end gap-2">
+                <span
+                  className={`inline-block rounded-md border px-2 py-0.5 text-xs font-semibold ${BADGE[headline] ?? "bg-slate-50 text-slate-700 border-slate-200"}`}
+                >
+                  {testStatusLabel(headline)}
+                </span>
+                {actionsFor[rep.resultId] ?? null}
+              </div>
             </div>
 
             {headline === "ready_for_release" ? (
@@ -107,7 +113,7 @@ export function ReportCards({
               >
                 {awaitingPaymentHint
                   ? `Not released to the patient yet — ${awaitingPaymentHint}`
-                  : "Not released to the patient yet. Release it from the visit page."}
+                  : "Not released to the patient yet."}
               </p>
             ) : headline === "result_uploaded" ? (
               <p

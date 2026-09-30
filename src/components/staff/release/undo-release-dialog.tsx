@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import { undoReleaseSelectedAction } from "./actions";
+import { undoReleaseSelectedAction } from "@/app/(staff)/staff/(dashboard)/visits/[id]/actions";
 
 // The visible scope of an undo when this row is part of a FINISHED combined
 // report (0172, P0067) — server-computed display data, not authority. The
@@ -29,6 +29,7 @@ export function UndoReleaseDialog({
   viewedCount,
   reportScope = null,
   size = "default",
+  defaultOpen = false,
 }: {
   testRequestId: string;
   visitId: string;
@@ -41,8 +42,10 @@ export function UndoReleaseDialog({
   // "compact" is used inside package-component rows, which are denser than
   // the standalone tests table.
   size?: "default" | "compact";
+  // Start with the confirm panel expanded (tests, and callers that open it from a menu).
+  defaultOpen?: boolean;
 }) {
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(defaultOpen);
   const [reason, setReason] = useState("");
   const [err, setErr] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
