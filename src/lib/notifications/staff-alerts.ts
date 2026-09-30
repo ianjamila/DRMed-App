@@ -17,6 +17,7 @@ export const STAFF_ALERT_KEYS = [
   "template_health",
   "dedup_digest",
   "stale_bookings",
+  "result_released",
 ] as const;
 export type StaffAlertKey = (typeof STAFF_ALERT_KEYS)[number];
 
@@ -79,6 +80,14 @@ export const STAFF_ALERTS: Record<StaffAlertKey, StaffAlertDef> = {
       "A morning reminder listing bookings with no set time (diagnostic packages and lab requests, mostly booked online) that nobody has marked arrived, no-show or cancelled for 3 days or more. Sent only on days when there is at least one. It shows each patient’s first name, how long ago they booked, and which are now likely no-shows (7 days or more) — never contact details or which tests.",
     defaultRoles: ["reception", "admin"],
     sentAction: "system.stale_bookings.sent",
+  },
+  result_released: {
+    key: "result_released",
+    label: "Results released",
+    description:
+      "Sent when the lab releases results, so the counter can print them for a waiting patient. One email per release per visit. It shows the patient’s first name and last initial, the visit number and how many results — never which tests, the results themselves, or contact details.",
+    defaultRoles: ["reception"],
+    sentAction: "test_request.released.staff_alert_sent",
   },
 };
 

@@ -18,7 +18,7 @@ Key reference artifacts:
 - `IMPLEMENTATION_PLAN.md` — original phase plan (historical; cross-check before relying on it)
 - `README.md` — operational setup
 - `.env.example` — env-var inventory
-- `docs/drmed-user-guide.html` — the staff + patient user guide (v2.48, 30 Sep 2026): every
+- `docs/drmed-user-guide.html` — the staff + patient user guide (v2.50, 30 Sep 2026): every
   screen, label and blocked-message the app shows, checked against the code. Update its
   **content** in the PR that changes a flow it describes, but bump the **version and date**
   (the header line and this bullet) only at merge time, after merging `main` into the branch —
@@ -254,6 +254,7 @@ All Server Actions return `{ ok: true, data } | { ok: false, error }`. User-faci
 | Pure visit-domain rules (classification, deletability, lab payment gate, receipt policy, doctor-fee split, visit # search) | `src/lib/visits/{classification,deletion,lab-gate,receipt-policy,consultation-fee,visit-number-filter}.ts` |
 | Which `test_requests` surfaces mean "lab" vs "the whole bill" (`SURFACES`), and which `visits`/`test_requests` reads mean LIVE rows vs deleted ones (`LIFECYCLES`) — the canonical answer to both | `src/lib/visits/query-surfaces.test.ts` |
 | Discount arithmetic (form preview AND server recompute) | `src/lib/pricing/discounts.ts` |
+| Lab releases from the Queue: pure rules `evaluateRelease` (`src/lib/queue/release-eligibility.ts`) and whole-report scope (`report-release-scope.ts`); refusal strings `src/lib/visits/release-messages.ts`; write `src/lib/actions/visits/release-rows.ts`; whole-report pipeline `releaseVisitSelection` (`release-reports.ts`); `releaseTestsAction` (`queue/actions.ts`); staff alert `src/lib/notifications/release-staff-alert.ts` (0192); shared UI `src/components/staff/release/` |
 | Shared visit actions (queue delete/restore, PIN re-issue) | `src/lib/actions/visits/{queue-deletion,reissue-pin}.ts` |
 | Cash denominations, amount-in-words, PF labels, Expenses (AP) bill-status + payment-method labels, chart-of-accounts grouping + same-type parent rule | `src/lib/accounting/{cash-denominations,amount-in-words,pf-labels,ap-labels,account-groups}.ts` |
 | Send Out expenses and partner labs: the "Which lab?" rule (`sendOutLabRule`), `SEND_OUT_CATEGORY` / 6420, `loadPartnerLabs` / `verifyPartnerLab`; the Send-out Labs report pivots | `src/lib/accounting/partner-labs{,.server}.ts`, `src/lib/reports/send-out-labs.ts` |

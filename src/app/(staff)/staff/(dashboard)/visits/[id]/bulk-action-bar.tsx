@@ -8,13 +8,15 @@ import { isTextTarget, useBarFocus } from "@/components/staff/row-selection/bar-
 import { ShortcutsHelp } from "@/components/staff/row-selection/shortcuts-help";
 import { BulkOutcomePanel } from "@/components/staff/row-selection/bulk-outcome";
 import { UNDO_ALREADY, UNDO_EXPIRED, UNDO_WINDOW_MS } from "@/lib/ui/bulk-undo";
+import { RELEASE_MEDIUM_OPTIONS, type ReleaseMedium } from "@/lib/visits/release-media";
+import { releaseOutcomeText, useReleaseOutcome } from "@/components/staff/release/release-outcome";
 import {
   releaseSelectedAction,
   undoReleaseBatchAction,
   undoReleaseSelectedAction,
-  type ReleaseMedium,
 } from "./actions";
 import { useRowSelection } from "./selection-context";
+import { RELEASE_BLOCKED_CONSENT, RELEASE_BLOCKED_UNPAID } from "@/lib/visits/release-messages";
 
 // Undo state for a "Release selected" batch — server-checked, 10-minute
 // window (owner 2026-09-28). Kept as local state, not tied to
@@ -47,16 +49,10 @@ interface Props {
   // confirms. The server expansion in undoReleaseSelectedAction is what
   // actually decides what reverts.
   reportScopeByTrId: Record<string, { memberIds: string[]; label: string }>;
+  // Live ready-for-release ids on the visit — with reportScopeByTrId, lets the
+  // bar preview how many more tests a release pulls in (display only).
+  readyIds: string[];
 }
-
-const MEDIUM_OPTIONS: { value: ReleaseMedium; label: string }[] = [
-  { value: "physical", label: "Physical" },
-  { value: "email", label: "Email" },
-  { value: "viber", label: "Viber" },
-  { value: "gcash", label: "GCash" },
-  { value: "pickup", label: "Pickup" },
-  { value: "other", label: "Other" },
-];
 
 // Sticky bottom toolbar (same pattern as the hmo-claims bulk bars) that
 // appears once at least one row is selected in either bucket. Rendered as
@@ -75,7 +71,12 @@ export function BulkActionBar({
   gateRequired,
   viewedCountById,
   reportScopeByTrId,
+  readyIds,
 }: Props) {
+  // #261's page-level notice (survives the refresh that remounts rows):
+  // used here only for a release that released nothing — a successful one
+  // reports in this bar's own outcome panel, next to its Undo.
+  const releaseNotice = useReleaseOutcome();
   const {
     releaseIds,
     unreleaseIds,
@@ -134,9 +135,9 @@ export function BulkActionBar({
   const releaseDisabled =
     releasePending || releaseCount === 0 || !moneySettled || blockedForConsent;
   const releaseTitle = !moneySettled
-    ? "Visit must be paid, waived, or HMO-covered before release"
+    ? RELEASE_BLOCKED_UNPAID
     : blockedForConsent
-      ? "Patient consent not on file — capture consent first"
+      ? RELEASE_BLOCKED_CONSENT
       : undefined;
 
   // Undo is a corrective action, not a delivery event — it's never
@@ -161,6 +162,22 @@ export function BulkActionBar({
     (trId) => (viewedCountById[trId] ?? 0) > 0,
   ).length;
 
+  // Display-only preview of the release side of the whole-report rule:
+  // releasing one member of a combined report releases every ready member, so
+  // count the ready members the selection does not already include.
+  // releaseSelectedAction re-derives and enforces this itself.
+  const readySet = new Set(readyIds);
+  const selectedRelease = new Set<string>(releaseIds);
+  const alsoReleased = new Set<string>();
+  for (const trId of releaseIds) {
+    const scope = reportScopeByTrId[trId];
+    if (!scope) continue;
+    for (const id of scope.memberIds) {
+      if (readySet.has(id) && !selectedRelease.has(id)) alsoReleased.add(id);
+    }
+  }
+  const releaseExtra = alsoReleased.size;
+
   function onRelease() {
     // Snapshot the ids being sent so success only clears exactly this batch —
     // rows in the other bucket, or ticked while the action is in flight,
@@ -172,23 +189,32 @@ export function BulkActionBar({
     startRelease(async () => {
       const result = await releaseSelectedAction(visitId, sentIds, medium);
       if (!result.ok) {
-        alert(result.error);
+        // Nothing was released — keep the selection. #261's page-level
+        // notice carries the reason; alert is the no-provider fallback.
+        if (releaseNotice) releaseNotice.show(result.error);
+        else alert(result.error);
         return;
       }
-      if (result.count < sentIds.length) {
-        alert(
-          `Released ${result.count} of ${sentIds.length} selected — the rest were already handled or not yours to release.`,
-        );
-      }
       clearIds(sentIds);
-      if (result.count > 0) {
-        setOutcome({
-          message: `Released ${result.count} test${result.count === 1 ? "" : "s"}. The patient was already notified that results are ready — tell them if needed.`,
-          undo: result.batchId
-            ? { batchId: result.batchId, doneAt: Date.now() }
-            : null,
-        });
+      // #261's outcome text (count, the tests a combined report pulled in,
+      // each skipped reason, warnings) in this bar's own panel, with ↶ Undo.
+      // The bar is not remounted by the refresh, so the panel survives it.
+      const lines = [
+        releaseOutcomeText({
+          changedCount: result.count,
+          alsoReleasedCount: result.alsoReleasedCount,
+          skipped: result.skipped,
+          warnings: result.warnings,
+        }) ?? "",
+      ];
+      // Undo does not un-notify: say so only when a notice actually went out.
+      if ((result.notifiedCount ?? 0) > 0) {
+        lines.push("The patient was already notified that results are ready — tell them if needed.");
       }
+      setOutcome({
+        message: lines.filter(Boolean).join("\n"),
+        undo: result.batchId ? { batchId: result.batchId, doneAt: Date.now() } : null,
+      });
     });
   }
 
@@ -306,12 +332,18 @@ export function BulkActionBar({
                 title={releaseTitle ?? "Release medium"}
                 className="rounded-md border border-[color:var(--color-brand-bg-mid)] bg-white px-2 py-1 text-xs focus:border-[color:var(--color-brand-cyan)] focus:outline-none disabled:opacity-50"
               >
-                {MEDIUM_OPTIONS.map((o) => (
+                {RELEASE_MEDIUM_OPTIONS.map((o) => (
                   <option key={o.value} value={o.value}>
                     {o.label}
                   </option>
                 ))}
               </select>
+              {releaseExtra > 0 ? (
+                <span className="rounded-md border border-violet-300 bg-violet-50 px-2 py-1 text-[11px] font-semibold text-violet-900">
+                  Releasing these also releases {releaseExtra} other test
+                  {releaseExtra === 1 ? "" : "s"} on the same combined report.
+                </span>
+              ) : null}
               <Button
                 type="button"
                 size="sm"

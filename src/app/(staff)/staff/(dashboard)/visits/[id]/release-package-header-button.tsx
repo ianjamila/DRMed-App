@@ -3,6 +3,7 @@
 import { useState, useTransition } from "react";
 import { Button } from "@/components/ui/button";
 import { releasePackageHeaderAction } from "./actions";
+import { RELEASE_BLOCKED_UNPAID } from "@/lib/visits/release-messages";
 
 interface Props {
   headerId: string;
@@ -29,7 +30,7 @@ export function ReleasePackageHeaderButton({
 
   const disabled = pending || !moneySettled;
   const title = !moneySettled
-    ? "Visit must be paid, waived, or HMO-covered before release"
+    ? RELEASE_BLOCKED_UNPAID
     : "Admin override — releases this package header directly";
 
   return (

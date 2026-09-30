@@ -6,8 +6,10 @@ import { join } from "node:path";
 // could restore a member already rejected as changed-since, or a member this
 // batch never released, by pulling it back in through a sibling member's
 // combined-report expansion — silently dropping its warning. The fix:
-//   1. releaseSelectedAction now stamps the exact `released_at` it wrote into
-//      each release audit row's metadata.
+//   1. The release write (releaseRows, via releaseVisitSelection) stamps the
+//      exact `released_at` it wrote, and releaseSelectedAction's batch id,
+//      into every release audit row's metadata — report-mates included.
+//      Pinned behaviourally in release-actions.test.ts ("Undo handle").
 //   2. undoReleaseBatchAction expands candidateIds to whole-report membership
 //      BEFORE calling the shared core, and refuses (routes to notRestored)
 //      every member of a report where any member is changed-since or was not
@@ -43,17 +45,6 @@ function bodyOf(fnName: string): string {
   const nextOffset = rest.search(/\n(?:export )?async function /);
   return nextOffset === -1 ? src.slice(start) : src.slice(start, start + 1 + nextOffset);
 }
-
-describe("releaseSelectedAction stamps the release identity Undo later reads back", () => {
-  it("includes released_at: now in the test_request.released audit metadata", () => {
-    const body = bodyOf("releaseSelectedAction");
-    const auditAt = body.indexOf('action: "test_request.released"');
-    expect(auditAt).toBeGreaterThan(-1);
-    const metaSlice = body.slice(auditAt, auditAt + 600);
-    expect(metaSlice).toMatch(/bulk_batch_id:\s*batchId,/);
-    expect(metaSlice).toMatch(/released_at:\s*now,/);
-  });
-});
 
 describe("undoReleaseBatchAction refuses whole reports before calling the shared core", () => {
   const body = bodyOf("undoReleaseBatchAction");

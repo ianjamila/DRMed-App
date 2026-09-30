@@ -2,7 +2,9 @@ import { describe, expect, it } from "vitest";
 import {
   QUEUE_KIND,
   bulkQueueMessage,
+  bulkReleaseMessage,
   combineClaimResults,
+  labelsByTestId,
   panelRowKey,
   parsePanelRowKey,
   queueRowKinds,
@@ -19,11 +21,11 @@ const rows: Record<string, QueueRowInfo> = {
 
 describe("queueRowKinds", () => {
   it("lists only the true flags, in bar order", () => {
-    expect(queueRowKinds({ claimable: true, unclaimable: false, deletable: true })).toEqual([
+    expect(queueRowKinds({ claimable: true, unclaimable: false, releasable: false, deletable: true })).toEqual([
       QUEUE_KIND.claim,
       QUEUE_KIND.delete,
     ]);
-    expect(queueRowKinds({ claimable: false, unclaimable: false, deletable: false })).toEqual([]);
+    expect(queueRowKinds({ claimable: false, unclaimable: false, releasable: false, deletable: false })).toEqual([]);
   });
 });
 
@@ -229,5 +231,32 @@ describe("rowTestCount / sentTestCount scope", () => {
     const result = { changedIds: [], skipped: [{ id: key, reason: "x" }] };
     expect(sentTestCount(result, { [key]: panel }, "bench")).toBe(1);
     expect(sentTestCount(result, { [key]: panel }, "all")).toBe(11);
+  });
+});
+
+describe("release kinds and messages", () => {
+  it("orders release after claim/unclaim and before delete", () => {
+    expect(queueRowKinds({ claimable: false, unclaimable: false, releasable: true, deletable: true }))
+      .toEqual([QUEUE_KIND.release, QUEUE_KIND.delete]);
+  });
+
+  it("maps every panel member to its card's label", () => {
+    const panelRows: Record<string, QueueRowInfo> = {
+      t1: { visitId: "v", label: "FECALYSIS — Jamila, Ian", assignedTo: null },
+      "panel:v:g": { visitId: "v", label: "Chemistry — Cruz, Ana", assignedTo: null, memberIds: ["a", "b"] },
+    };
+    expect(labelsByTestId(panelRows)).toEqual({
+      t1: panelRows.t1,
+      a: panelRows["panel:v:g"],
+      b: panelRows["panel:v:g"],
+    });
+  });
+
+  it("reports tests, and the extra report members a release pulled in", () => {
+    const one: Record<string, QueueRowInfo> = {
+      a: { visitId: "v", label: "FBS — Cruz, Ana", assignedTo: null },
+    };
+    expect(bulkReleaseMessage(1, { changedIds: ["a"], skipped: [], alsoReleasedIds: ["b", "c"] }, one))
+      .toBe("Released 1 test.\nAlso released 2 other tests on the same combined report.");
   });
 });

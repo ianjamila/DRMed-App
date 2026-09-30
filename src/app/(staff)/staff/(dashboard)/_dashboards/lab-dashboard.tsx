@@ -264,6 +264,31 @@ async function loadLabStats(
   }
   const releasedTodayPromise = show("lab.released_today") ? releasedTodayQuery : SKIP_COUNT;
 
+  // Finished results waiting to go out — the Pending release tab's count in
+  // this role's sections (pathologist: all, so sections may be null). Not
+  // money-gated: an unpaid one still needs chasing, and the tab shows it with
+  // the reason.
+  let readyForReleaseQuery = supabase
+    .from("test_requests")
+    .select("id, services!inner(id, section, kind), visits!inner(id)", {
+      count: "exact",
+      head: true,
+    })
+    .eq("status", "ready_for_release")
+    .eq("is_package_header", false)
+    .not("services.kind", "in", DOCTOR_KINDS_PG_LIST)
+    .is("deleted_at", null)
+    .is("visits.deleted_at", null);
+  if (sections !== null) {
+    readyForReleaseQuery =
+      sections.length === 0
+        ? readyForReleaseQuery.eq("id", "00000000-0000-0000-0000-000000000000")
+        : readyForReleaseQuery.in("services.section", sections);
+  }
+  const readyForReleasePromise = show("lab.ready_for_release")
+    ? readyForReleaseQuery
+    : SKIP_COUNT;
+
   // test_requests has no FK to patients — the name has to come through
   // visits (as the count above already joins for the payment gate), never
   // embedded directly, or PostgREST errors the whole query.
@@ -364,6 +389,7 @@ async function loadLabStats(
     criticalAlerts,
     sendOutAwaiting,
     releasedToday,
+    readyForRelease,
     oldestUnclaimed,
     medtechCriticals,
     pathologistCriticals,
@@ -376,6 +402,7 @@ async function loadLabStats(
     criticalAlertsPromise,
     sendOutAwaitingPromise,
     releasedTodayPromise,
+    readyForReleasePromise,
     oldestUnclaimedPromise,
     medtechCriticalsPromise,
     pathologistCriticalsPromise,
@@ -426,6 +453,7 @@ async function loadLabStats(
     { scope: "critical_alerts", error: criticalAlerts.error },
     { scope: "send_out_awaiting", error: sendOutAwaiting.error },
     { scope: "released_today", error: releasedToday.error },
+    { scope: "ready_for_release", error: readyForRelease.error },
     { scope: "oldest_unclaimed", error: oldestUnclaimed.error },
     { scope: "recent_criticals", error: recentCriticalsError },
     { scope: "pending_signoff", error: pendingSignoff.error },
@@ -456,6 +484,8 @@ async function loadLabStats(
     sendOutAwaitingError: Boolean(sendOutAwaiting.error),
     releasedToday: releasedToday.count ?? 0,
     releasedTodayError: Boolean(releasedToday.error),
+    readyForRelease: readyForRelease.count ?? 0,
+    readyForReleaseError: Boolean(readyForRelease.error),
     oldestUnclaimed: (oldestUnclaimed.data ?? []) as QueueRow[],
     oldestUnclaimedError: Boolean(oldestUnclaimed.error),
     recentCriticals,
@@ -533,6 +563,9 @@ export async function LabDashboard({ session }: { session: StaffSession }) {
   const showCriticalAlertsCard = showSignoff && show("lab.critical_alerts");
   const showSendOutCard = role === "medtech" && show("lab.send_out_awaiting");
   const showReleasedTodayCard = show("lab.released_today");
+  const showReadyForReleaseCard =
+    (role === "medtech" || role === "xray_technician" || role === "pathologist") &&
+    show("lab.ready_for_release");
   const showUpdated7dCard =
     (role === "medtech" || role === "pathologist" || role === "xray_technician") &&
     show("lab.updated_7d");
@@ -542,6 +575,7 @@ export async function LabDashboard({ session }: { session: StaffSession }) {
     showReadyForSignoffCard ||
     showCriticalAlertsCard ||
     showSendOutCard ||
+    showReadyForReleaseCard ||
     showReleasedTodayCard ||
     showUpdated7dCard;
 
@@ -617,6 +651,16 @@ export async function LabDashboard({ session }: { session: StaffSession }) {
                 hint="All dates — requested or in progress, sent to an external lab"
                 href="/staff/queue"
                 error={stats.sendOutAwaitingError}
+              />
+            )}
+            {showReadyForReleaseCard && (
+              <StatCard
+                label="Ready for release"
+                value={stats.readyForRelease}
+                hint="All dates — finished, waiting to go to the patient"
+                href="/staff/queue?filter=pending_release"
+                accent={stats.readyForRelease > 0 ? "warn" : "default"}
+                error={stats.readyForReleaseError}
               />
             )}
             {showReleasedTodayCard && (

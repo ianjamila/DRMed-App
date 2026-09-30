@@ -16,6 +16,7 @@ const NOT_PATIENT: Record<string, string> = {
   "src/app/api/cron/stale-bookings/route.ts": "Staff reminder (Bookings not acted on).",
   "src/app/api/cron/template-health/route.ts": "Staff alert.",
   "src/lib/appointments/booking-alert.ts": "Staff alert about a booking.",
+  "src/lib/notifications/release-staff-alert.ts": "Staff alert (Results released) — recipients come from resolveStaffAlertRecipients, never the patient.",
   "src/lib/contact-messages/alert.ts": "Staff alert about a website message.",
   "src/lib/visits/released-payment-alert.ts": "Staff alert (Admin Tools › Email Alerts, released_payment_removed) about a payment change leaving a visit owing after release — recipients come from resolveStaffAlertRecipients, never the patient.",
 };

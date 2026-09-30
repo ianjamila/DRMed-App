@@ -8,6 +8,7 @@ import { formatBulkOutcome } from "@/lib/ui/bulk-outcome";
 export const QUEUE_KIND = {
   claim: "claimable",
   unclaim: "unclaimable",
+  release: "releasable",
   delete: "deletable",
 } as const;
 export type QueueKind = (typeof QUEUE_KIND)[keyof typeof QUEUE_KIND];
@@ -16,11 +17,13 @@ export type QueueKind = (typeof QUEUE_KIND)[keyof typeof QUEUE_KIND];
 export function queueRowKinds(flags: {
   claimable: boolean;
   unclaimable: boolean;
+  releasable: boolean;
   deletable: boolean;
 }): QueueKind[] {
   const kinds: QueueKind[] = [];
   if (flags.claimable) kinds.push(QUEUE_KIND.claim);
   if (flags.unclaimable) kinds.push(QUEUE_KIND.unclaim);
+  if (flags.releasable) kinds.push(QUEUE_KIND.release);
   if (flags.deletable) kinds.push(QUEUE_KIND.delete);
   return kinds;
 }
@@ -62,6 +65,8 @@ export interface QueueRowInfo {
   benchCount?: number;
   /** A panel row's bench members and holders as rendered — what its Unclaim sends as "what I saw". */
   bench?: Array<{ id: string; holder: string | null }>;
+  /** A chemistry panel card: the test ids it stands for (its rowKey is the card key). */
+  memberIds?: string[];
 }
 
 // A chemistry panel row is selected as ONE row but claimed server-side by
@@ -138,6 +143,21 @@ export function rowTestCount(row: QueueRowInfo | undefined, scope: "bench" | "al
   return scope === "bench" ? (row.benchCount ?? row.testCount ?? 1) : (row.testCount ?? 1);
 }
 
+/** Result of releaseTestsAction: BulkQueueResult plus the report-mates a release pulled in. */
+export type BulkReleaseResult =
+  | {
+      ok: true;
+      changedIds: string[];
+      skipped: SkippedRow[];
+      alsoReleasedIds: string[];
+      warnings: string[];
+    }
+  | { ok: false; error: string };
+
+function tests(n: number): string {
+  return `test${n === 1 ? "" : "s"}`;
+}
+
 /**
  * "Claimed 3 of 5 tests." plus one line per skipped row, naming it and why.
  * Every skipped row is named (at most 100, the action cap): the bar clears
@@ -160,4 +180,31 @@ export function bulkQueueMessage(
       reason: s.reason,
     })),
   });
+}
+
+/** Expand panel rows so an outcome message can name a skipped member test by its card. */
+export function labelsByTestId(
+  rowsByKey: Readonly<Record<string, QueueRowInfo>>,
+): Record<string, QueueRowInfo> {
+  const out: Record<string, QueueRowInfo> = {};
+  for (const [key, info] of Object.entries(rowsByKey)) {
+    if (info.memberIds) for (const id of info.memberIds) out[id] = info;
+    else out[key] = info;
+  }
+  return out;
+}
+
+/** bulkQueueMessage("Released", …) plus a line for report members released along with the selection. */
+export function bulkReleaseMessage(
+  sentCount: number,
+  result: {
+    changedIds: readonly string[];
+    skipped: readonly SkippedRow[];
+    alsoReleasedIds: readonly string[];
+  },
+  rowsByTestId: Readonly<Record<string, QueueRowInfo>>,
+): string {
+  const base = bulkQueueMessage("Released", sentCount, result, rowsByTestId);
+  const n = result.alsoReleasedIds.length;
+  return n === 0 ? base : `${base}\nAlso released ${n} other ${tests(n)} on the same combined report.`;
 }

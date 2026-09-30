@@ -264,6 +264,10 @@ const SURFACES: Record<string, Surface> = {
     meaning: "all",
     why: "The Visits archive shows and filter-chips all three classes (Lab / Doctor Consults / Doctor Procedures) — classifying them is its whole job.",
   },
+  "lib/actions/visits/release-rows.ts": {
+    meaning: "lab",
+    why: "The one ready_for_release → released write for the visit page and the lab queue. Doctor lines never reach ready_for_release by design; the candidate read excludes them by kind anyway.",
+  },
   "lib/actions/queue/bulk-cores.ts": {
     meaning: "lab",
     why: "The bulk Claim / Unclaim bodies, moved out of queue/actions.ts (its old home was \"lab\": claim/unclaim/reassign bench work). A consultation has no bench step to claim, and claiming one would park it in in_progress forever — claimTestsCore refuses a doctor line through evaluateClaim.",
@@ -445,6 +449,10 @@ const LIFECYCLES: Record<string, LifecycleSurface> = {
   "lib/visits/archive-query.ts": {
     lifecycle: "any",
     why: "The Visits archive has a Live / Deleted / All view toggle; applyView() applies is-null, not-is-null or nothing per view. Filtering here would delete the Deleted view.",
+  },
+  "lib/actions/visits/release-rows.ts": {
+    lifecycle: "live",
+    why: "The release write. The candidate read pins deleted_at and visits!inner deleted_at, so a deleted line or visit is never released.",
   },
   "lib/actions/visits/queue-deletion.ts": {
     lifecycle: "any",
@@ -654,6 +662,10 @@ const LIFECYCLES: Record<string, LifecycleSurface> = {
   "lib/reports/lab-tat.ts": {
     lifecycle: "live",
     why: "Turnaround time. This is one of the two surfaces that had reasoned P0043 made the filter a no-op; see the note at the top of this section for why that did not hold.",
+  },
+  "lib/notifications/release-staff-alert.ts": {
+    lifecycle: "live",
+    why: "Emails reception about results released on a visit. The alert runs after the response, so it re-proves the visit live at query level; a deleted visit has nothing to print.",
   },
   "lib/visits/released-payment-alert.ts": {
     lifecycle: "live",

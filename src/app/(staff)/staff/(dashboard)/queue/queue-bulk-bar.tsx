@@ -9,6 +9,8 @@ import { useRowSelection } from "@/components/staff/row-selection/selection-cont
 import {
   QUEUE_KIND,
   bulkQueueMessage,
+  bulkReleaseMessage,
+  labelsByTestId,
   parsePanelRowKey,
   rowTestCount,
   sentTestCount,
@@ -16,7 +18,8 @@ import {
   type QueueRowInfo,
 } from "@/lib/queue/bulk-queue";
 import { UNDO_ALREADY, UNDO_EXPIRED, UNDO_WINDOW_MS, undoOutcomeMessage } from "@/lib/ui/bulk-undo";
-import { undoBulkQueueAction } from "./actions";
+import { RELEASE_MEDIUM_OPTIONS, type ReleaseMedium } from "@/lib/visits/release-media";
+import { releaseTestsAction, undoBulkQueueAction } from "./actions";
 import {
   claimQueueSelectionAction,
   deleteQueueSelectionAction,
@@ -61,7 +64,8 @@ interface Outcome {
   undo: OutcomeUndo | null;
 }
 
-// The lab queue's selection bar: Claim · Unclaim (optional reason) · Delete
+// The lab queue's selection bar: Claim · Unclaim (optional reason) · Release
+// (medium picker; a panel sends its ready members) · Delete
 // (required reason, red confirm — QueueDeleteDialog's wording). Each button
 // acts on the selected rows that carry its kind; the server re-proves every
 // row and reports the ones it skipped by name.
@@ -77,7 +81,8 @@ export function QueueBulkBar({ rowsByKey }: Props) {
   const [err, setErr] = useState<string | null>(null);
   // Which button started the transition in flight — one useTransition serves
   // all three, so without this every visible button would read "…ing".
-  const [running, setRunning] = useState<"claim" | "unclaim" | "delete" | null>(null);
+  const [running, setRunning] = useState<"claim" | "unclaim" | "release" | "delete" | null>(null);
+  const [medium, setMedium] = useState<ReleaseMedium>("physical");
   // The last action's outcome, naming every skipped test. An action only
   // clears the keys it acted on, so other selected rows (e.g. an
   // unclaimable test under Claim) can leave `count > 0` — the outcome must
@@ -96,6 +101,12 @@ export function QueueBulkBar({ rowsByKey }: Props) {
     (key) => parsePanelRowKey(key) !== null || rowsByKey[key]!.assignedTo !== null,
   );
   const deleteKeys = known(keysByKind[QUEUE_KIND.delete]);
+  const releaseKeys = known(keysByKind[QUEUE_KIND.release]);
+  // A panel stands for its ready members; a single test for itself. One call,
+  // de-duplicated — the server expands a combined report to its whole set.
+  const releaseIds = Array.from(
+    new Set(releaseKeys.flatMap((key) => rowsByKey[key]!.memberIds ?? [key])),
+  );
 
   function closePanel() {
     setPanel(null);
@@ -238,6 +249,32 @@ export function QueueBulkBar({ rowsByKey }: Props) {
     );
   }
 
+  function release() {
+    if (pending || releaseIds.length === 0) return;
+    const keys = releaseKeys;
+    const ids = releaseIds;
+    setRunning("release");
+    start(async () => {
+      const result = await releaseTestsAction({ testRequestIds: ids, medium });
+      if (!result.ok) {
+        // Nothing was attempted — keep the selection.
+        alert(result.error);
+        return;
+      }
+      const msg = bulkReleaseMessage(ids.length, result, labelsByTestId(rowsByKey));
+      // Release keeps #261's outcome text; it carries no Undo here (the
+      // 10-minute bulk Undo covers Claim / Unclaim / Delete only).
+      setOutcome({
+        message: result.warnings.length ? `${msg}\n${result.warnings.join("\n")}` : msg,
+        edits: selectionEdits,
+        undo: null,
+      });
+      clearKeys(keys);
+      closePanel();
+      router.refresh();
+    });
+  }
+
   function remove() {
     if (pending || deleteKeys.length === 0) return;
     if (!reason.trim()) {
@@ -323,6 +360,26 @@ export function QueueBulkBar({ rowsByKey }: Props) {
         >
           Unclaim ({testsIn(unclaimKeys, "bench")})
         </Button>
+      ) : null}
+      {releaseKeys.length > 0 ? (
+        <>
+          <select
+            aria-label="Release medium"
+            value={medium}
+            disabled={pending}
+            onChange={(e) => setMedium(e.target.value as ReleaseMedium)}
+            className="min-h-[36px] rounded-md border border-[color:var(--color-brand-bg-mid)] bg-white px-2 text-xs"
+          >
+            {RELEASE_MEDIUM_OPTIONS.map((o) => (
+              <option key={o.value} value={o.value}>
+                {o.label}
+              </option>
+            ))}
+          </select>
+          <Button type="button" size="sm" variant="brand" disabled={pending} onClick={release}>
+            {pending && running === "release" ? "Releasing…" : `Release ${n(releaseIds.length)}`}
+          </Button>
+        </>
       ) : null}
       {deleteKeys.length > 0 ? (
         <Button

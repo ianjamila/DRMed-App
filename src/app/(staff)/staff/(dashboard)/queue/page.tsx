@@ -74,6 +74,14 @@ import {
   type PanelState,
 } from "@/lib/queue/panel-members";
 import { QueueBulkBar } from "./queue-bulk-bar";
+import { QueueReleaseButton } from "@/components/staff/release/queue-release-button";
+import { evaluateRelease, RELEASE_REFUSAL } from "@/lib/queue/release-eligibility";
+import { reportReleaseBlock } from "@/lib/queue/report-release-scope";
+import { getConsentCurrentByPatient, isConsentGateRequired } from "@/lib/consent/gate";
+import { isActivePatient } from "@/lib/patients/active";
+import { isReleaseMedium, type ReleaseMedium } from "@/lib/visits/release-media";
+import { canActOnResult } from "@/lib/visits/line-visibility";
+import { ReleaseOutcomeProvider } from "@/components/staff/release/release-outcome";
 import { receptionQueueHref } from "@/lib/queue/reception-redirect";
 
 const LAB_QUEUE_SUBSCRIPTIONS = [
@@ -108,6 +116,12 @@ type QueueCardSingle = {
   // A file is on record (released tab only), printable or not — tells "no
   // file" apart from "shared report not fully released" for reception.
   hasFile: boolean;
+  // Pending release: evaluateRelease's first refusal, or null when the lab may
+  // release it. Off that tab (and for reception) always a refusal.
+  releaseBlock: string | null;
+  preferredMedium: ReleaseMedium | null;
+  // Consent missing while the consent gate is OFF — a warning, not a block.
+  consentWarning: boolean;
 };
 
 type QueueCardGrouped = {
@@ -143,9 +157,20 @@ type QueueCardGrouped = {
   // with a file prints the whole panel. null when none qualifies.
   printTestId: string | null;
   hasFile: boolean;
+  // The patient facts a panel's release preflight needs (the members come from
+  // the FULL-membership read, which carries no patient data).
+  patientActive: boolean;
+  consentOnFile: boolean;
+  releaseBlock: string | null;
+  preferredMedium: ReleaseMedium | null;
+  consentWarning: boolean;
 };
 
 type QueueCard = QueueCardSingle | QueueCardGrouped;
+
+function releaseMedium(v: string | null | undefined): ReleaseMedium | null {
+  return isReleaseMedium(v) ? v : null;
+}
 
 function statusRank(s: string): number {
   return s === "requested" ? 0 : s === "in_progress" ? 1 : 2;
@@ -202,8 +227,8 @@ const QUEUE_SELECT = `
     services!inner ( id, code, name, kind, turnaround_hours, section, report_group_id,
       report_groups ( code, name ) ),
     visits!inner (
-      id, visit_number, payment_status, is_sample,
-      patients!inner ( id, drm_id, first_name, last_name )
+      id, visit_number, payment_status, hmo_provider_id, is_sample,
+      patients!inner ( id, drm_id, first_name, last_name, preferred_release_medium, deleted_at, merged_into_id )
     )
   `;
 
@@ -216,8 +241,8 @@ const QUEUE_SELECT_SEARCH = `
     services!inner ( id, code, name, kind, turnaround_hours, section, report_group_id,
       report_groups ( code, name ) ),
     visits!inner (
-      id, visit_number, payment_status, is_sample,
-      patients!inner ( id, drm_id, first_name, last_name )
+      id, visit_number, payment_status, hmo_provider_id, is_sample,
+      patients!inner ( id, drm_id, first_name, last_name, preferred_release_medium, deleted_at, merged_into_id )
     ),
     lab_search!inner ( )`;
 
@@ -424,6 +449,27 @@ export default async function QueuePage({ searchParams }: SearchProps) {
   const queueTitle = queueTitleForRole(session.role);
   const pageTestIds = (rows ?? []).map((r) => r.id);
 
+  // Release is offered on Pending release only, and never to reception. The
+  // consent read is one batch for the page: while the gate is ON a missing
+  // consent blocks Release, while it is OFF it is only a warning.
+  const releaseTab = filter === "pending_release" && !receptionView;
+  let gateRequired = false;
+  let consentByPatient = new Map<string, boolean>();
+  const consentWarningFor = (patientId: string) =>
+    releaseTab && !gateRequired && !(consentByPatient.get(patientId) ?? false);
+  if (releaseTab) {
+    const pageIds = (rows ?? []).flatMap((r) => {
+      const v = Array.isArray(r.visits) ? r.visits[0] : r.visits;
+      const p = Array.isArray(v?.patients) ? v.patients[0] : v?.patients;
+      return p ? [p.id] : [];
+    });
+    const patientIds = Array.from(new Set(pageIds));
+    [gateRequired, consentByPatient] = await Promise.all([
+      isConsentGateRequired(),
+      getConsentCurrentByPatient(patientIds),
+    ]);
+  }
+
   // Print buttons live on "Released today" only — the other tabs are work
   // still on the bench, with no finished file to hand over.
   const pdfStates = releasedTab
@@ -557,6 +603,12 @@ export default async function QueuePage({ searchParams }: SearchProps) {
           section: svc.section,
           printTestId: printable ? r.id : null,
           hasFile: pdfState !== undefined,
+          patientActive: isActivePatient(patient),
+          consentOnFile: consentByPatient.get(patient.id) ?? false,
+          // Judged on the panel's FULL membership once it is read (below).
+          releaseBlock: RELEASE_REFUSAL.notReady,
+          preferredMedium: releaseMedium(patient.preferred_release_medium),
+          consentWarning: consentWarningFor(patient.id),
         };
         groupedAcc.set(key, created);
         cards.push(created);
@@ -581,6 +633,27 @@ export default async function QueuePage({ searchParams }: SearchProps) {
         canDelete: rowDeletable,
         printTestId: printable ? r.id : null,
         hasFile: pdfState !== undefined,
+        releaseBlock: releaseTab
+          ? (() => {
+              const verdict = evaluateRelease(
+                {
+                  status: r.status,
+                  isPackageHeader: false, // the list pins is_package_header = false
+                  isDoctorLine: false, // ...and excludes doctor kinds
+                  section: svc.section,
+                  visitDeleted: false, // ...and pins visits.deleted_at
+                  patientActive: isActivePatient(patient),
+                  visit: { payment_status: visit.payment_status, hmo_provider_id: visit.hmo_provider_id },
+                  consentOnFile: consentByPatient.get(patient.id) ?? false,
+                  gateRequired,
+                },
+                session.role,
+              );
+              return verdict.ok ? null : verdict.error;
+            })()
+          : RELEASE_REFUSAL.notReady,
+        preferredMedium: releaseMedium(patient.preferred_release_medium),
+        consentWarning: consentWarningFor(patient.id),
       });
     }
   }
@@ -640,11 +713,54 @@ export default async function QueuePage({ searchParams }: SearchProps) {
   // the row's Claim / Unclaim / Delete and its checkbox only offer what the
   // server will do for the whole panel. Released today has no bench actions.
   const panelStates = new Map<string, PanelState>();
+  // Pending release only: the ready members a panel's Release sends (from the
+  // FULL membership, so a page-split panel is judged whole).
+  const panelReadyIds = new Map<string, string[]>();
   if (selectable) {
     const refs = cards.flatMap((card) =>
       card.kind === "grouped" ? [{ visitId: card.visitId, groupId: card.groupId }] : [],
     );
     const read = await fetchPanelMembers(supabase, refs);
+    if (releaseTab) {
+      // A failed read leaves every panel refused (fail closed).
+      const unreadable = "Couldn't load this panel's tests — refresh the page.";
+      for (const card of cards) {
+        if (card.kind !== "grouped") continue;
+        card.releaseBlock = unreadable;
+        const members = read.ok ? read.byKey.get(panelRowKey(card.visitId, card.groupId)) : undefined;
+        if (!members) continue;
+        const ready = members.filter((m) => m.status === "ready_for_release");
+        panelReadyIds.set(panelRowKey(card.visitId, card.groupId), ready.map((m) => m.id));
+        let block: string | null = null;
+        if (ready.length === 0) block = RELEASE_REFUSAL.notReady;
+        for (const m of ready) {
+          const verdict = evaluateRelease(
+            {
+              status: m.status,
+              isPackageHeader: false, // fetchPanelMembers excludes headers
+              isDoctorLine: false, // ...and a report group never holds a doctor line
+              section: m.section,
+              visitDeleted: false, // ...and deleted visits
+              patientActive: card.patientActive,
+              visit: { payment_status: m.visitPaymentStatus, hmo_provider_id: m.visitHmoProviderId },
+              consentOnFile: card.consentOnFile,
+              gateRequired,
+            },
+            session.role,
+          );
+          if (!verdict.ok) {
+            block = verdict.error;
+            break;
+          }
+        }
+        // Whole-report rule: a member linked to the report that is not yet
+        // ready keeps the whole report from being released.
+        block ??= reportReleaseBlock(
+          members.filter((m) => m.resultId !== null).map((m) => ({ status: m.status, deleted: false })),
+        );
+        card.releaseBlock = block;
+      }
+    }
     if (read.ok) {
       const memberIds = [...read.byKey.values()].flatMap((ms) => ms.map((m) => m.id));
       // Same finished-combined-report lock the single rows use (P0067).
@@ -669,6 +785,7 @@ export default async function QueuePage({ searchParams }: SearchProps) {
       ? queueRowKinds({
           claimable: state.claimable,
           unclaimable: state.unclaimable,
+          releasable: releaseTab && card.releaseBlock === null,
           deletable: state.deletable,
         })
       : [];
@@ -677,6 +794,7 @@ export default async function QueuePage({ searchParams }: SearchProps) {
     queueRowKinds({
       claimable: card.status === "requested" && canClaimSection(session.role, card.section),
       unclaimable: canUnclaim(card),
+      releasable: releaseTab && card.releaseBlock === null,
       deletable: card.canDelete,
     });
   const selectionEntries: SelectionEntry[] = [];
@@ -691,6 +809,7 @@ export default async function QueuePage({ searchParams }: SearchProps) {
         // Weighed by EVERY member (what Delete acts on), so the selection
         // caps count the records the server will actually touch.
         selectionEntries.push({ rowKey, kinds, weight: state.allIds.length });
+        const readyIds = panelReadyIds.get(rowKey) ?? [];
         rowsByKey[rowKey] = {
           visitId: card.visitId,
           label: `${card.label} — ${card.patientName}`,
@@ -698,6 +817,8 @@ export default async function QueuePage({ searchParams }: SearchProps) {
           testCount: state.allIds.length,
           benchCount: state.benchIds.length,
           bench: seenBench(state),
+          // Release sends these (the panel's ready members, whole membership).
+          memberIds: readyIds,
         };
         continue;
       }
@@ -786,6 +907,9 @@ export default async function QueuePage({ searchParams }: SearchProps) {
 
   return (
     <div className="px-4 py-8 sm:px-6 lg:px-8">
+      <ReleaseOutcomeProvider
+        resetKey={JSON.stringify([filter, mineOnly, start, end, q, visit, params.sort ?? "", params.dir ?? "", params.page ?? "", params.size ?? ""])}
+      >
       {viewingHistory ? null : (
         <RealtimeRefresher
           channelName="queue-page"
@@ -1133,6 +1257,25 @@ export default async function QueuePage({ searchParams }: SearchProps) {
                             stale={staleFor(card.testRequestId)}
                           />
                         ) : null}
+                        {releaseTab ? (
+                          <div className="mb-1 flex justify-end">
+                            <QueueReleaseButton
+                              testRequestIds={[card.testRequestId]}
+                              preferredMedium={card.preferredMedium}
+                              blockReason={card.releaseBlock}
+                              consentWarning={card.consentWarning}
+                              size="compact"
+                            />
+                          </div>
+                        ) : null}
+                        {releasedTab && !receptionView && canActOnResult(session.role, card.section) ? (
+                          <Link
+                            href={`/staff/queue/${card.testRequestId}?undo=1`}
+                            className="mr-3 text-xs font-bold text-[color:var(--color-brand-text-soft)] hover:underline"
+                          >
+                            Undo…
+                          </Link>
+                        ) : null}
                         {receptionView ? null : card.status === "requested" &&
                         canClaimSection(session.role, card.section) ? (
                           <ClaimButton
@@ -1259,6 +1402,26 @@ export default async function QueuePage({ searchParams }: SearchProps) {
                           stale={staleFor(card.printTestId)}
                         />
                       ) : null}
+                      {releaseTab ? (
+                        <div className="mb-1 flex justify-end">
+                          <QueueReleaseButton
+                            testRequestIds={panelReadyIds.get(panelRowKey(card.visitId, card.groupId)) ?? []}
+                            preferredMedium={card.preferredMedium}
+                            blockReason={card.releaseBlock}
+                            consentWarning={card.consentWarning}
+                            label="Release panel"
+                            size="compact"
+                          />
+                        </div>
+                      ) : null}
+                      {releasedTab && !receptionView && canActOnResult(session.role, card.section) ? (
+                        <Link
+                          href={card.href}
+                          className="mr-3 text-xs font-bold text-[color:var(--color-brand-text-soft)] hover:underline"
+                        >
+                          Undo…
+                        </Link>
+                      ) : null}
                       {receptionView ? null : panelStateOf(card)?.claimable ? (
                         <ClaimButton
                           panel={{ visitId: card.visitId, groupId: card.groupId }}
@@ -1343,6 +1506,7 @@ export default async function QueuePage({ searchParams }: SearchProps) {
         }))}
         noun="test"
       />
+      </ReleaseOutcomeProvider>
     </div>
   );
 }
