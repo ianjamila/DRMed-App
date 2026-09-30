@@ -134,6 +134,8 @@
 //   at the end to confirm all-PASS.
 import "./lib/load-env";
 import { requireLocalOrExplicitProd } from "./lib/env-guard";
+import fs from "node:fs";
+import path from "node:path";
 import { Client, type QueryResult, type QueryResultRow } from "pg";
 import { looseKeyOf } from "../src/lib/sheet-sync/names";
 
@@ -893,8 +895,25 @@ async function main() {
       // an encounter on 2023-11-30 (before the window) is ignored everywhere
       const p5 = await patient("Zzproofw5", "TooOld", {});
       await visit(p5, "2023-11-30", 100);
-      const oldServed = await peopleRows("2023-01-01", "2023-12-31", "served", null, 1000, 0);
-      assert(!oldServed.some((r) => r.patient_id === p5), "an encounter before 2023-12-01 must be ignored entirely");
+      const oldEnc = await q(`select 1 from public._patient_sources_encounters() e where e.survivor_id = $1`, [p5]);
+      assert(oldEnc.rows.length === 0, "an encounter before 2023-12-01 must be ignored entirely");
+
+      // (P1) Revenue is the CLINIC's share: a doctor consult line carries the
+      // whole doctor fee in final_price_php and the clinic's cut in
+      // clinic_fee_php; a line with no clinic fee (lab) counts its final price.
+      const p6 = await patient("Zzproofw6", "ConsultPf", {});
+      const v6 = await visit(p6, "2026-06-18", 0);
+      await q(
+        `insert into public.test_requests (visit_id, service_id, requested_by, final_price_php, clinic_fee_php, doctor_pf_php)
+         values ($1, $2, $3, 600, 100, 500), ($1, $2, $3, 250, null, null)`,
+        [v6, fx.serviceId, fx.adminId],
+      );
+      const clinicShare = await q<{ php: string }>(
+        `select coalesce(sum(l.php),0)::text as php from public._ps_revenue_lines($1,$2) l where l.survivor_id = $3`,
+        [JUNE.from, JUNE.to, p6],
+      );
+      assert(Number(clinicShare.rows[0].php) === 350,
+        `P1: expected clinic share 350 (consult 100 of 600 + lab 250), got ${clinicShare.rows[0].php}`);
     }));
 
     // 15. Volume > 1,000 ------------------------------------------------------
@@ -1058,6 +1077,13 @@ async function main() {
         q(`select public.patient_sources_summary('2026-06-30'::date,'2026-06-01'::date)`));
       await expectPgError("summary > 400 days", "22023", () =>
         q(`select public.patient_sources_summary('2025-01-01'::date,'2026-06-30'::date)`));
+      // (P2) Visit history starts 2023-12-01; an earlier start is refused (not shown wrong).
+      await expectPgError("summary before 2023-12-01", "22023", () =>
+        q(`select public.patient_sources_summary('2023-11-30'::date,'2023-12-31'::date)`));
+      await expectPgError("series before 2023-12-01", "22023", () =>
+        q(`select public.patient_sources_series('2022-06-01'::date,'2022-06-30'::date,'day','new')`));
+      await expectOk("summary from exactly 2023-12-01", () =>
+        q(`select public.patient_sources_summary('2023-12-01'::date,'2023-12-31'::date)`));
       await expectPgError("people bad mode", "22023", () =>
         q(`select public.patient_sources_people($1::date,$2::date,'everyone',null,50,0)`, [JUNE.from, JUNE.to]));
     }));
@@ -1314,6 +1340,111 @@ async function main() {
     }));
 
     // 22. Whole history, not the period --------------------------------------
+    // (P3) A merged-away duplicate spelled differently from its survivor, with
+    // UNLINKED sheet lines under the duplicate's name: one New person, not two.
+    await check("Merged duplicate's own name key is the survivor's (P3)", () => scoped(async () => {
+      await setRole("postgres", null);
+      const before = await summary();
+      const bId = await patient("Zzproofp3b", "Survivor", { createdAt: "2026-06-05T02:00:00Z" });
+      const aId = await patient("Zzproofp3a", "Duplicate", { createdAt: "2026-06-05T02:00:00Z" });
+      await q(`update public.patients set merged_into_id = $1 where id = $2`, [bId, aId]);
+      await sheetLine("2026-06-12", "zzproofp3a|duplicate", null, 0);
+      const after = await summary();
+      const d = delta(before, after);
+      assert(d.new_confirmed === 0 && d.new_unconfirmed === 1,
+        `P3: expected exactly ONE new person (the name identity; survivor suppressed), got confirmed ${d.new_confirmed} + unconfirmed ${d.new_unconfirmed}`);
+      const ident = await identityRow(`patient:${bId}`);
+      assert(ident?.basis === "suppressed", `P3: expected the survivor to be suppressed, got ${JSON.stringify(ident)}`);
+    }));
+
+    // (M2) patient_sources_referrers reads referrer_raw from the identity core.
+    // Its output must equal the 0189 function (which re-derived the referrer
+    // itself) on data covering every referrer path.
+    await check("Referrers equal the 0189 rule (M2)", () => scoped(async () => {
+      await setRole("postgres", null);
+      const ok = await patient("Zzproofm2ok", "App", { createdAt: "2026-06-06T02:00:00Z" });
+      await q(`update public.patients set referred_by_doctor = 'Dr. M2 App' where id = $1`, [ok]);
+      await visit(ok, "2026-06-07");
+      const x = await patient("Zzproofm2x", "Xa", {});
+      const y = await patient("Zzproofm2y", "Ya", {});
+      await q(`update public.patients set merged_into_id = $1 where id = $2`, [x, y]);
+      await visit(x, "2026-06-08");
+      await customerRow("zzproofm2y|old", { patientId: y, referredBy: "Dr. M2 Early", sheetRow: 1 });
+      await customerRow("zzproofm2y|new", { patientId: y, referredBy: "Dr. M2 Late", sheetRow: 9 });
+      const blank = await patient("Zzproofm2b", "Blank", {});
+      await visit(blank, "2026-06-09");
+      await customerRow("zzproofm2b|c", { patientId: blank, referredBy: "   ", sheetRow: 1 });
+      // unconfirmed names: exactly one Customers row / two rows / one LINKED row
+      await sheetLine("2026-06-10", "zzproofm2one|n", null, 0);
+      await customerRow("zzproofm2one|n", { referredBy: "Dr. M2 One" });
+      await sheetLine("2026-06-10", "zzproofm2two|n", null, 0);
+      await customerRow("zzproofm2two|n", { referredBy: "Dr. M2 Aaa", sheetRow: 1 });
+      await customerRow("zzproofm2two|n", { referredBy: "Dr. M2 Bbb", sheetRow: 2 });
+      const lk = await patient("Zzproofm2lk", "Linked", {});
+      await sheetLine("2026-06-11", "zzproofm2link|n", null, 0);
+      await customerRow("zzproofm2link|n", { patientId: lk, referredBy: "Dr. M2 Linked" });
+
+      const oldSql = fs.readFileSync(path.resolve(process.cwd(), "supabase/migrations/0189_patient_sources.sql"), "utf8");
+      const start = oldSql.indexOf("create or replace function public.patient_sources_referrers(");
+      const end = oldSql.indexOf("\n$$;\n", start) + 5;
+      assert(start > 0 && end > start, "could not extract the 0189 referrers function");
+      await q(oldSql.slice(start, end).replace("public.patient_sources_referrers(", "public._ps_referrers_0189("));
+      await q(`grant execute on function public._ps_referrers_0189(date, date, int) to authenticated`);
+
+      const norm = (rows: { doctor_label: string; new_confirmed: number; new_unconfirmed: number }[]) =>
+        rows.map((r) => `${r.doctor_label}|${r.new_confirmed}|${r.new_unconfirmed}`).sort();
+      let compared = 0;
+      for (const [from, to] of [[JUNE.from, JUNE.to], ["2026-01-01", "2026-06-30"], ["2025-07-01", "2026-06-30"]]) {
+        await asAdmin();
+        const oldR = await q<{ doctor_label: string; new_confirmed: number; new_unconfirmed: number }>(
+          `select * from public._ps_referrers_0189($1, $2, 100)`, [from, to]);
+        await setRole("postgres", null);
+        const newR = await referrersRows(from, to, 100);
+        assert(JSON.stringify(norm(oldR.rows)) === JSON.stringify(norm(newR)),
+          `M2: referrers differ from the 0189 rule for ${from}..${to}: old=${JSON.stringify(norm(oldR.rows))} new=${JSON.stringify(norm(newR))}`);
+        compared += newR.length;
+      }
+      assert(compared >= 6, `M2: the comparison must cover real rows, got ${compared}`);
+      const june = norm(await referrersRows(JUNE.from, JUNE.to, 100));
+      for (const want of ["Dr. M2 App|1|0", "Dr. M2 Late|1|0", "Dr. M2 One|0|1", "Dr. M2 Linked|0|1"]) {
+        assert(june.includes(want), `M2: expected ${want} in ${JSON.stringify(june)}`);
+      }
+      assert(!june.some((r) => r.startsWith("Dr. M2 Aaa") || r.startsWith("Dr. M2 Bbb") || r.startsWith("Dr. M2 Early")), "M2: ambiguous / superseded referrers must not surface");
+    }));
+
+    // (M1) Both stream-(a) readers take the mirror window from ONE helper that
+    // reads sheet_sync_settings (no second hard-coded 2026-05-26).
+    await check("Mirror window is single-sourced (M1)", () => scoped(async () => {
+      await setRole("postgres", null);
+      await q(`update public.sheet_sync_settings set mirror_window_start = date '2026-06-20' where id`);
+      const p = await patient("Zzproofm1", "Window", { imported: true });
+      await visit(p, "2026-06-10", 400, { imported: true }); // imported, BEFORE the moved window -> counts
+      const enc = await q(`select 1 from public._patient_sources_encounters() e where e.survivor_id = $1`, [p]);
+      assert(enc.rows.length === 1, `M1: encounters must use the settings window (1 row), got ${enc.rows.length}`);
+      const rev = await q<{ php: string }>(
+        `select coalesce(sum(l.php),0)::text as php from public._ps_revenue_lines($1,$2) l where l.survivor_id = $3`,
+        [JUNE.from, JUNE.to, p]);
+      assert(Number(rev.rows[0].php) === 400, `M1: revenue lines must use the settings window (400), got ${rev.rows[0].php}`);
+      const w = await q<{ w: string }>(`select public._ps_mirror_window_start()::text as w`);
+      assert(w.rows[0].w === "2026-06-20", `M1: helper must return the settings value, got ${w.rows[0].w}`);
+    }));
+
+    // (P5) Direct RPC: a group mixing a campaign total with per-ad rows is refused, nothing written.
+    await check("Ad spend: a mixed-breakdown group is refused (P5)", () => scoped(async () => {
+      await setRole("postgres", null);
+      await setRole("authenticated", { sub: fx.adminId, role: "authenticated" });
+      const rows = [
+        { spend_date: "2026-06-20", platform: "meta", campaign_key: "p5mix", ad_key: "(campaign)", campaign_label: "P5", spend_php: 1000 },
+        { spend_date: "2026-06-20", platform: "meta", campaign_key: "p5mix", ad_key: "adA", campaign_label: "P5", spend_php: 600 },
+        { spend_date: "2026-06-21", platform: "meta", campaign_key: "p5ok", ad_key: "adZ", campaign_label: "P5", spend_php: 5 },
+      ];
+      await expectPgError("mixed total + per-ad", "22023", () =>
+        q(`select public.ad_spend_import(gen_random_uuid(), $1::jsonb)`, [JSON.stringify(rows)]));
+      await setRole("postgres", null);
+      const left = await q(`select 1 from public.ad_spend_daily where campaign_key in ('p5mix','p5ok')`);
+      assert(left.rows.length === 0, `P5: a refused import must write nothing, found ${left.rows.length} rows`);
+    }));
+
     await check("Whole history, not the period", () => scoped(async () => {
       await setRole("postgres", null);
       const beforeJune = await summary(JUNE.from, JUNE.to);

@@ -400,5 +400,564 @@ begin
 end;
 $$;
 
--- ===== Part B: Patient Sources ===============================================
--- (appended by Task B)
+-- ===== Part B: Patient Sources / ad spend ====================================
+-- Bodies below are the 0189 bodies (nothing later redefines them) with only
+-- the marked hunks changed.
+
+-- (B1, M1) The mirror-window start, single-sourced. Replaces the
+-- "select mirror_window_start ... coalesce(v_window, '2026-05-26')" pair that
+-- was repeated in _patient_sources_encounters and _ps_revenue_lines. The
+-- column is NOT NULL default '2026-05-26' (0170), so no second copy of the
+-- date is needed; a missing singleton row raises no_data_found (P0002) from
+-- select ... into strict instead of silently falling back.
+create or replace function public._ps_mirror_window_start()
+returns date
+language plpgsql
+stable
+set search_path = ''
+as $$
+declare
+  v_window date;
+begin
+  perform public._ps_assert_mirror_mode();
+  select s.mirror_window_start into strict v_window from public.sheet_sync_settings s where s.id;
+  return v_window;
+end;
+$$;
+revoke all on function public._ps_mirror_window_start() from public, anon, authenticated, service_role;
+
+-- (B2, P2) Period lower bound.
+create or replace function public._ps_check_period(p_from date, p_to date)
+returns void
+language plpgsql
+immutable
+set search_path = ''
+as $$
+begin
+  if p_from is null or p_to is null or p_from > p_to or p_to - p_from > 400 then
+    raise exception 'Pick a period whose start is on or before its end, at most 400 days long'
+      using errcode = '22023';
+  end if;
+  -- (P2) Visit history only exists from 2023-12-01: an earlier period would
+  -- count registration-only people as New while their pre-window visits are
+  -- ignored, so refuse it rather than show a wrong number.
+  if p_from < date '2023-12-01' then
+    raise exception 'Patient Sources starts on 1 December 2023 - pick a start on or after that date'
+      using errcode = '22023';
+  end if;
+end;
+$$;
+
+-- (B3, M1) Encounters: window from the single helper.
+create or replace function public._patient_sources_encounters()
+returns table (identity text, survivor_id uuid, loose_key text, service_date date, source text)
+language plpgsql
+stable
+set search_path = ''
+as $$
+#variable_conflict use_column
+declare
+  v_window date;
+begin
+  v_window := public._ps_mirror_window_start();
+
+  return query
+  with surv as (
+    select s.patient_id, s.survivor_id
+    from public._ps_survivors() s
+    join public.patients sp on sp.id = s.survivor_id
+    where sp.deleted_at is null
+  )
+  select 'patient:' || s.survivor_id::text, s.survivor_id, null::text, v.visit_date, 'app'::text
+  from public.visits v
+  join surv s on s.patient_id = v.patient_id
+  where v.deleted_at is null
+    and v.visit_date >= date '2023-12-01'
+    and (v.visit_date < v_window or v.legacy_import_run_id is null)
+  union all
+  select case when l.patient_id is null then 'name:' || l.loose_key
+              else 'patient:' || s.survivor_id::text end,
+         s.survivor_id,
+         case when l.patient_id is null then l.loose_key end,
+         l.service_date,
+         'sheet'::text
+  from public.sheet_encounter_lines l
+  left join surv s on s.patient_id = l.patient_id
+  where l.service_date >= date '2023-12-01'
+    and (l.patient_id is null or s.survivor_id is not null);
+end;
+$$;
+
+-- (B4, P1 + M1) Revenue lines: clinic share for doctor lines; window helper.
+create or replace function public._ps_revenue_lines(p_from date, p_to date)
+returns table (identity text, survivor_id uuid, service_date date, source text, php numeric, overlap boolean)
+language plpgsql
+stable
+set search_path = ''
+as $$
+#variable_conflict use_column
+declare
+  v_window date;
+begin
+  v_window := public._ps_mirror_window_start();
+
+  return query
+  with surv as (
+    select s.patient_id, s.survivor_id
+    from public._ps_survivors() s
+    join public.patients sp on sp.id = s.survivor_id
+    where sp.deleted_at is null
+  ),
+  app_visits as (
+    select v.id as visit_id, s.survivor_id, v.visit_date
+    from public.visits v
+    join surv s on s.patient_id = v.patient_id
+    where v.deleted_at is null
+      and v.visit_date between greatest(p_from, date '2023-12-01') and p_to
+      and (v.visit_date < v_window or v.legacy_import_run_id is null)
+  ),
+  app_days as (
+    select distinct a.survivor_id, a.visit_date from app_visits a
+  ),
+  app as (
+    select 'patient:' || a.survivor_id::text as identity, a.survivor_id, a.visit_date as service_date,
+           'app'::text as source,
+           -- (P1) The CLINIC's share: a doctor consult/procedure line stores the
+           -- whole doctor fee in final_price_php and the clinic's cut in
+           -- clinic_fee_php (0011; set only on those kinds). Every other line
+           -- has clinic_fee_php null, so it falls back to final_price_php.
+           coalesce(sum(coalesce(tr.clinic_fee_php, tr.final_price_php)), 0)::numeric(14,2) as php,
+           false as overlap
+    from app_visits a
+    join public.test_requests tr on tr.visit_id = a.visit_id and tr.deleted_at is null
+    group by a.survivor_id, a.visit_date
+  ),
+  sheet as (
+    select case when l.patient_id is null then 'name:' || l.loose_key
+                else 'patient:' || s.survivor_id::text end,
+           s.survivor_id,
+           l.service_date,
+           'sheet'::text,
+           coalesce(l.revenue_php, 0)::numeric(14,2),
+           (s.survivor_id is not null and exists (
+              select 1 from app_days d where d.survivor_id = s.survivor_id and d.visit_date = l.service_date))
+    from public.sheet_encounter_lines l
+    left join surv s on s.patient_id = l.patient_id
+    where l.service_date between greatest(p_from, date '2023-12-01') and p_to
+      and (l.patient_id is null or s.survivor_id is not null)
+  )
+  select * from app
+  union all
+  select * from sheet;
+end;
+$$;
+
+-- (B5, P3 + M2) Identities. A new OUT column changes the return type, so the
+-- function is dropped and re-created (ACL restated below). Nothing depends on
+-- it at the catalog level (its callers are plpgsql).
+drop function if exists public._patient_sources_identities();
+create or replace function public._patient_sources_identities()
+returns table (
+  identity     text,
+  confirmed    boolean,
+  survivor_id  uuid,
+  loose_key    text,
+  first_date   date,
+  basis        text,
+  is_returning boolean,
+  channel      text,
+  referrer_raw text
+)
+language sql
+stable
+set search_path = ''
+as $$
+  with surv as (
+    select s.patient_id, s.survivor_id
+    from public._ps_survivors() s
+    join public.patients sp on sp.id = s.survivor_id
+    where sp.deleted_at is null
+  ),
+  -- (M2) The latest (highest sheet_row) non-blank sheet referrer per survivor,
+  -- computed once; patient_sources_referrers reads it from referrer_raw.
+  sheet_ref as (
+    select distinct on (s.survivor_id) s.survivor_id, c.referred_by_raw
+    from public.sheet_customer_rows c
+    join surv s on s.patient_id = c.patient_id
+    where nullif(btrim(c.referred_by_raw), '') is not null
+    order by s.survivor_id, c.sheet_row desc
+  ),
+  enc as (
+    select distinct e.identity, e.service_date from public._patient_sources_encounters() e
+  ),
+  first_enc as (
+    select e.identity, min(e.service_date) as d from enc e group by e.identity
+  ),
+  member as (
+    select s.survivor_id,
+           f.registered_on as fact_on,
+           f.sheet_new_repeat,
+           -- An imported patient's created_at is the import night, never a registration day.
+           case when p.legacy_import_run_id is null
+                then (p.created_at at time zone 'Asia/Manila')::date end as app_on
+    from surv s
+    join public.patients p on p.id = s.patient_id
+    left join public.patient_acquisition_facts f on f.patient_id = s.patient_id
+  ),
+  member_ranked as (
+    select m.*, min(m.fact_on) over (partition by m.survivor_id) as min_fact_on from member m
+  ),
+  confirmed_reg as (
+    select m.survivor_id,
+           -- P18, decided per GROUP: a sheet date wins; else the earliest app-native
+           -- sign-up; imported-only groups with no sheet date stay undated.
+           coalesce(min(m.fact_on), min(m.app_on)) as reg_on,
+           case when bool_or(m.fact_on is not null)
+                then coalesce(bool_or(m.sheet_new_repeat = 'repeat') filter (where m.fact_on = m.min_fact_on), false)
+                else coalesce(bool_or(m.sheet_new_repeat = 'repeat'), false)
+           end as is_returning
+    from member_ranked m
+    group by m.survivor_id
+  ),
+  old_visitors as (
+    select distinct s.survivor_id
+    from public.visits v
+    join surv s on s.patient_id = v.patient_id
+    where v.deleted_at is null and v.visit_date < date '2023-12-01'
+  ),
+  name_enc as (
+    select e.identity from first_enc e where e.identity like 'name:%'
+  ),
+  confirmed_keys as (
+    select r.survivor_id, public._ps_loose_key(sp.last_name, sp.first_name) as k
+    from confirmed_reg r join public.patients sp on sp.id = r.survivor_id
+    union
+    select s.survivor_id, c.loose_key
+    from public.sheet_customer_rows c join surv s on s.patient_id = c.patient_id
+    union
+    -- (P3) A merged-away duplicate's OWN spelling: unlinked sheet lines under
+    -- the duplicate's name belong to the survivor, not a second New person.
+    select s.survivor_id, public._ps_loose_key(m.last_name, m.first_name)
+    from surv s join public.patients m on m.id = s.patient_id
+    where s.patient_id <> s.survivor_id   -- only merged-away members (the survivor own key is above)
+  ),
+  suppressed as (
+    select distinct k.survivor_id
+    from confirmed_keys k join name_enc n on n.identity = 'name:' || k.k
+  ),
+  confirmed as (
+    -- Owner decision 2026-09-28: a live visit before 2023-12-01 outranks a
+    -- registration date — such a customer is an OLD customer (before_window,
+    -- first_date null, counted nowhere), never New, even when they also have
+    -- a later sheet registered_on or app created_at. An encounter since
+    -- December 2023 still wins over everything (unchanged).
+    select 'patient:' || r.survivor_id::text as identity,
+           true as confirmed,
+           r.survivor_id,
+           null::text as loose_key,
+           case when fe.d is not null then fe.d
+                when sup.survivor_id is not null then null
+                when ov.survivor_id is not null then null
+                else r.reg_on end as first_date,
+           case when fe.d is not null then 'encounter'
+                when sup.survivor_id is not null then 'suppressed'
+                when ov.survivor_id is not null then 'before_window'
+                when r.reg_on is not null then 'registration'
+                else 'undated' end as basis,
+           r.is_returning,
+           coalesce(sp.referral_source, 'not_recorded') as channel,
+           coalesce(nullif(btrim(sp.referred_by_doctor), ''), sr.referred_by_raw) as referrer_raw
+    from confirmed_reg r
+    join public.patients sp on sp.id = r.survivor_id
+    left join sheet_ref sr on sr.survivor_id = r.survivor_id
+    left join first_enc fe on fe.identity = 'patient:' || r.survivor_id::text
+    left join suppressed sup on sup.survivor_id = r.survivor_id
+    left join old_visitors ov on ov.survivor_id = r.survivor_id
+  ),
+  cust_by_key as (
+    select c.loose_key,
+           count(*) as n_rows,
+           min(c.referral_source_id) as only_source,
+           min(c.registered_on) filter (where c.patient_id is null) as unlinked_reg_on,
+           bool_or(c.patient_id is null) as has_unlinked,
+           -- (M2) the answer only when this name has exactly ONE Customers row
+           -- (linked or not) - the same rule as the channel below.
+           case when count(*) = 1 then min(c.referred_by_raw) end as only_referrer_raw
+    from public.sheet_customer_rows c
+    group by c.loose_key
+  ),
+  name_ids as (
+    select n.identity, substr(n.identity, 6) as k from name_enc n
+    union
+    select 'name:' || c.loose_key, c.loose_key from cust_by_key c where c.has_unlinked
+  ),
+  unconfirmed as (
+    select ni.identity,
+           false,
+           null::uuid,
+           ni.k,
+           coalesce(fe.d, cb.unlinked_reg_on),
+           case when fe.d is not null then 'encounter'
+                when cb.unlinked_reg_on is not null then 'registration'
+                else 'undated' end,
+           false,
+           case when cb.n_rows = 1 then coalesce(cb.only_source, 'not_recorded') else 'not_recorded' end,
+           cb.only_referrer_raw
+    from name_ids ni
+    left join first_enc fe on fe.identity = ni.identity
+    left join cust_by_key cb on cb.loose_key = ni.k
+  )
+  select * from confirmed
+  union all
+  select * from unconfirmed
+$$;
+
+-- (B6, M2) Referrers read referrer_raw from the identity core.
+create or replace function public.patient_sources_referrers(p_from date, p_to date, p_limit int default 20)
+returns table (doctor_label text, new_confirmed int, new_unconfirmed int)
+language plpgsql
+stable
+security definer
+set search_path = ''
+as $$
+#variable_conflict use_column
+begin
+  if not public.has_role(array['admin']) then
+    raise exception 'Patient Sources is for admins only' using errcode = '42501';
+  end if;
+  perform public._ps_assert_mirror_mode();
+  perform public._ps_check_period(p_from, p_to);
+
+  return query
+  with ids as (
+    select * from public._patient_sources_identities() i
+    where i.basis in ('encounter', 'registration') and not i.is_returning
+      and i.first_date between p_from and p_to
+  ),
+  -- (M2) The referrer answer now comes from the identity core (referrer_raw):
+  -- one definition, no second copy of the linked/unlinked rules here.
+  raw as (
+    select i.confirmed, i.referrer_raw as raw_label from ids i
+  ),
+  normed as (
+    select r.confirmed, btrim(r.raw_label) as spelling, public._ps_doctor_norm(r.raw_label) as k
+    from raw r where r.raw_label is not null
+  ),
+  spellings as (
+    select n.k, n.spelling, count(*) as c from normed n where n.k is not null group by n.k, n.spelling
+  ),
+  labels as (
+    select distinct on (s.k) s.k, s.spelling from spellings s order by s.k, s.c desc, s.spelling
+  )
+  select l.spelling,
+         (count(*) filter (where n.confirmed))::int,
+         (count(*) filter (where not n.confirmed))::int
+  from normed n
+  join labels l on l.k = n.k
+  group by l.k, l.spelling
+  order by count(*) desc, l.spelling
+  limit greatest(1, least(coalesce(p_limit, 20), 100));
+end;
+$$;
+
+-- (B7, P5) ad_spend_import refuses a mixed-kind group. The 3-arg signature is unchanged.
+create or replace function public.ad_spend_import(p_upload_id uuid, p_rows jsonb, p_rejected_count int default 0)
+returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_inserted int := 0;
+  v_replaced int := 0;
+  v_deleted int := 0;
+  v_days int := 0;
+  v_n int;
+  v_kind_changed boolean;
+begin
+  if not public.has_role(array['admin']) then
+    raise exception 'Only admins can save ad spend' using errcode = '42501';
+  end if;
+  -- Codex recheck #3: serialize every import/removal so two concurrent
+  -- uploads can never both observe an empty/stale group and both insert.
+  perform pg_advisory_xact_lock(hashtext('ad_spend_import'));
+
+  if p_upload_id is null or p_rows is null or jsonb_typeof(p_rows) <> 'array' then
+    raise exception 'Ad spend import needs an upload id and a list of rows' using errcode = '22023';
+  end if;
+  if p_rejected_count is null or p_rejected_count < 0 then
+    raise exception 'Ad spend import needs a non-negative rejected row count' using errcode = '22023';
+  end if;
+  v_n := jsonb_array_length(p_rows);
+  if v_n = 0 or v_n > 20000 then
+    raise exception 'Ad spend import takes 1 to 20,000 rows, got %', v_n using errcode = '22023';
+  end if;
+
+  -- (P5) One group (spend_date, platform, campaign_key) must carry ONE kind of
+  -- row. The client parser guarantees it, but a direct RPC call mixing a
+  -- campaign total with per-ad rows would otherwise keep both (min(kind) below
+  -- picks one, and the delete leaves the rest): double counted spend. Refuse
+  -- before anything is deleted or written.
+  if exists (
+    select 1
+    from jsonb_to_recordset(p_rows) as r(
+      spend_date date, platform text, campaign_key text, ad_key text,
+      campaign_label text, spend_php numeric, impressions int, clicks int)
+    group by r.spend_date, r.platform, r.campaign_key
+    having count(distinct case when r.ad_key = '(campaign)' then 'total'
+                               when r.ad_key like 'id:%' then 'id'
+                               else 'name' end) > 1
+  ) then
+    raise exception 'A campaign and day in this file carries more than one ad-spend breakdown (campaign total, per ad name, per ad ID). Nothing was saved. [mixed breakdown]'
+      using errcode = '22023';
+  end if;
+
+  -- A row's KIND: "(campaign)" is a campaign total; "id:…" is a per-ad row
+  -- keyed by ad ID; anything else is a per-ad row keyed by ad name (the
+  -- parser refuses a file mixing more than one kind for the same group, so a
+  -- touched group's uploaded rows are homogeneous in practice). If any
+  -- touched group's kind differs from what is already saved for it — a
+  -- representation change — and the file had rejected rows, refuse the
+  -- whole upload: nothing is saved.
+  select exists (
+    select 1
+    from (
+      select r.spend_date, r.platform, r.campaign_key,
+             min(case when r.ad_key = '(campaign)' then 'total'
+                      when r.ad_key like 'id:%' then 'id'
+                      else 'name' end) as kind
+      from jsonb_to_recordset(p_rows) as r(
+        spend_date date, platform text, campaign_key text, ad_key text,
+        campaign_label text, spend_php numeric, impressions int, clicks int)
+      group by r.spend_date, r.platform, r.campaign_key
+    ) g
+    where exists (
+      select 1 from public.ad_spend_daily a
+      where a.spend_date = g.spend_date and a.platform = g.platform and a.campaign_key = g.campaign_key
+        and (case when a.ad_key = '(campaign)' then 'total'
+                  when a.ad_key like 'id:%' then 'id'
+                  else 'name' end) <> g.kind
+    )
+  ) into v_kind_changed;
+
+  if v_kind_changed and p_rejected_count > 0 then
+    -- [breakdown change] tags this specific message for the action to map to
+    -- clean user text (never raw PG text) — never confuse it with any other
+    -- 22023 raised above.
+    raise exception 'This file changes how saved spend is broken down (campaign total vs per ad) but % rows were rejected — fix them and upload again. Nothing was saved. [breakdown change]', p_rejected_count
+      using errcode = '22023';
+  end if;
+
+  -- Delete only rows of a DIFFERENT kind within each touched group. A
+  -- same-kind row is left alone here — ON CONFLICT below updates it in
+  -- place — so a sibling ad_key the upload doesn't mention survives. Two
+  -- separate statements (not one WITH with two data-modifying CTEs on the
+  -- same table, whose relative order is unspecified) so this delete is
+  -- guaranteed visible to the insert that follows it.
+  delete from public.ad_spend_daily a
+  using (
+    select r.spend_date, r.platform, r.campaign_key,
+           min(case when r.ad_key = '(campaign)' then 'total'
+                    when r.ad_key like 'id:%' then 'id'
+                    else 'name' end) as kind
+    from jsonb_to_recordset(p_rows) as r(
+      spend_date date, platform text, campaign_key text, ad_key text,
+      campaign_label text, spend_php numeric, impressions int, clicks int)
+    group by r.spend_date, r.platform, r.campaign_key
+  ) g
+  where a.spend_date = g.spend_date and a.platform = g.platform and a.campaign_key = g.campaign_key
+    and (case when a.ad_key = '(campaign)' then 'total'
+              when a.ad_key like 'id:%' then 'id'
+              else 'name' end) <> g.kind;
+  get diagnostics v_deleted = row_count;
+
+  with src as (
+    select r.spend_date, r.platform, r.campaign_key, r.ad_key,
+           max(r.campaign_label) as campaign_label,
+           sum(r.spend_php) as spend_php,
+           sum(r.impressions)::int as impressions,
+           sum(r.clicks)::int as clicks
+    from jsonb_to_recordset(p_rows) as r(
+      spend_date date, platform text, campaign_key text, ad_key text,
+      campaign_label text, spend_php numeric, impressions int, clicks int)
+    group by r.spend_date, r.platform, r.campaign_key, r.ad_key
+  ),
+  up as (
+    insert into public.ad_spend_daily as a
+      (spend_date, platform, campaign_key, ad_key, campaign_label, spend_php,
+       impressions, clicks, uploaded_by, uploaded_at, upload_id)
+    select s.spend_date, s.platform, s.campaign_key, s.ad_key, s.campaign_label, s.spend_php,
+           s.impressions, s.clicks, auth.uid(), now(), p_upload_id
+    from src s
+    on conflict (spend_date, platform, campaign_key, ad_key) do update
+      set campaign_label = excluded.campaign_label,
+          spend_php      = excluded.spend_php,
+          impressions    = excluded.impressions,
+          clicks         = excluded.clicks,
+          uploaded_by    = excluded.uploaded_by,
+          uploaded_at    = excluded.uploaded_at,
+          upload_id      = excluded.upload_id
+    returning (xmax = 0) as inserted, a.spend_date
+  )
+  select count(*) filter (where u.inserted), count(*) filter (where not u.inserted), count(distinct u.spend_date)
+    into v_inserted, v_replaced, v_days
+  from up u;
+  v_replaced := v_replaced + v_deleted;
+
+  insert into public.audit_log (actor_id, actor_type, action, resource_type, resource_id, metadata)
+  values (auth.uid(), 'staff', 'ad_spend.imported', 'ad_spend_upload', p_upload_id,
+          jsonb_build_object('inserted', v_inserted, 'replaced', v_replaced, 'days', v_days));
+
+  return jsonb_build_object('inserted', v_inserted, 'replaced', v_replaced, 'days', v_days);
+end;
+$$;
+
+-- (B8) ACLs restated (drop/create of the identities function lost its grants;
+-- the rest are CREATE OR REPLACE and keep theirs, restated for clarity).
+revoke all on function public._ps_check_period(date, date) from public, anon, authenticated, service_role;
+revoke all on function public._patient_sources_encounters() from public, anon, authenticated, service_role;
+revoke all on function public._patient_sources_identities() from public, anon, authenticated, service_role;
+revoke all on function public._ps_revenue_lines(date, date) from public, anon, authenticated, service_role;
+revoke all on function public.patient_sources_referrers(date, date, int) from public, anon;
+grant execute on function public.patient_sources_referrers(date, date, int) to authenticated;
+revoke all on function public.ad_spend_import(uuid, jsonb, int) from public, anon;
+grant execute on function public.ad_spend_import(uuid, jsonb, int) to authenticated;
+
+-- (B9) Post-conditions.
+do $$
+declare
+  f text;
+  v_def text;
+begin
+  foreach f in array array[
+    'public._ps_mirror_window_start()', 'public._ps_check_period(date,date)',
+    'public._patient_sources_encounters()', 'public._patient_sources_identities()',
+    'public._ps_revenue_lines(date,date)'
+  ] loop
+    if has_function_privilege('anon', f, 'execute') or has_function_privilege('authenticated', f, 'execute')
+       or has_function_privilege('service_role', f, 'execute') then
+      raise exception '0193: helper % is executable by a JWT role', f;
+    end if;
+  end loop;
+  foreach f in array array['public.patient_sources_referrers(date,date,integer)', 'public.ad_spend_import(uuid,jsonb,integer)'] loop
+    if has_function_privilege('anon', f, 'execute') or not has_function_privilege('authenticated', f, 'execute') then
+      raise exception '0193: % has the wrong ACL', f;
+    end if;
+  end loop;
+  -- The bodies carry each hunk.
+  v_def := pg_get_functiondef('public._ps_check_period(date,date)'::regprocedure);
+  if v_def not like '%2023-12-01%' then raise exception '0193: period lower bound (P2) missing'; end if;
+  v_def := pg_get_functiondef('public._ps_revenue_lines(date,date)'::regprocedure);
+  if v_def not like '%coalesce(tr.clinic_fee_php, tr.final_price_php)%' then raise exception '0193: clinic share (P1) missing'; end if;
+  if v_def like '%2026-05-26%' or v_def like '%sheet_sync_settings%' then raise exception '0193: revenue lines still carry their own mirror window (M1)'; end if;
+  v_def := pg_get_functiondef('public._patient_sources_encounters()'::regprocedure);
+  if v_def like '%2026-05-26%' or v_def like '%sheet_sync_settings%' then raise exception '0193: encounters still carry their own mirror window (M1)'; end if;
+  v_def := pg_get_functiondef('public._patient_sources_identities()'::regprocedure);
+  if v_def not like '%_ps_loose_key(m.last_name, m.first_name)%' then raise exception '0193: merged-member keys (P3) missing'; end if;
+  if v_def not like '%referrer_raw%' then raise exception '0193: referrer_raw (M2) missing'; end if;
+  v_def := pg_get_functiondef('public.patient_sources_referrers(date,date,integer)'::regprocedure);
+  if v_def like '%sheet_customer_rows%' then raise exception '0193: referrers still reads the sheet directly (M2)'; end if;
+  v_def := pg_get_functiondef('public.ad_spend_import(uuid,jsonb,integer)'::regprocedure);
+  if v_def not like '%[mixed breakdown]%' then raise exception '0193: mixed-breakdown guard (P5) missing'; end if;
+end;
+$$;
