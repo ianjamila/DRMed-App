@@ -53,6 +53,11 @@ Built for compliance with the Philippine Data Privacy Act (RA 10173).
    supabase link --project-ref <your-project-ref>
    ```
 
+   For a **local** stack (`supabase start`), also set `SUPABASE_JWT_SECRET` in
+   `.env.development.local` — copy `JWT_SECRET` from `supabase status -o env`.
+   The patient portal signs its short-lived patient tokens with it; without it
+   every portal page fails to read data.
+
 4. Apply database migrations:
    ```bash
    supabase db push

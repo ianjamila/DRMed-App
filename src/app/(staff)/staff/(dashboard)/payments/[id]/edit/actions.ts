@@ -23,6 +23,7 @@ import { loadCompletedWorkCounts } from "@/lib/visits/released-results";
 import { shouldAlertPaymentEdited } from "@/lib/visits/released-payment-alert-content";
 import { sendReleasedPaymentRemovedAlert } from "@/lib/visits/released-payment-alert";
 import { assertVisitPatientActive } from "@/lib/patients/require-active";
+import { withLifecycleRetry } from "@/lib/patients/lifecycle-retry";
 
 export type EditPaymentResult = { ok: true } | { ok: false; error: string };
 
@@ -88,16 +89,18 @@ export async function editPaymentAction(input: {
     { amount_php: d.amount_php, method: d.method },
   );
 
-  const { data: activePaymentId, error: rpcErr } = await admin.rpc("correct_payment", {
-    p_payment_id: d.payment_id,
-    p_amount_php: d.amount_php,
-    p_method: d.method,
-    p_reference_number: d.reference_number,
-    p_notes: d.notes,
-    p_reason: d.reason,
-    p_actor_id: session.user_id,
-    p_expected: { ...d.expected, visit_id: before.visit_id },
-  });
+  const { data: activePaymentId, error: rpcErr } = await withLifecycleRetry(() =>
+    admin.rpc("correct_payment", {
+      p_payment_id: d.payment_id,
+      p_amount_php: d.amount_php,
+      p_method: d.method,
+      p_reference_number: d.reference_number,
+      p_notes: d.notes,
+      p_reason: d.reason,
+      p_actor_id: session.user_id,
+      p_expected: { ...d.expected, visit_id: before.visit_id },
+    }),
+  );
   if (rpcErr) {
     return {
       ok: false,

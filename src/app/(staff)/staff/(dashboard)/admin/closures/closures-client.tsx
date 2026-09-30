@@ -29,7 +29,12 @@ export interface ClosureRow {
   reason: string;
   created_at: string;
   created_by_name: string | null;
-  affected_count: number;
+  // null means the preview RPC failed to count (server error) — never
+  // treated as zero.
+  affected_count: number | null;
+  // On deleted/merged patients' appointments on this day — the RPC always
+  // skips these, so they never block the whole reschedule.
+  skipped_inactive: number;
 }
 
 interface Props {
@@ -237,7 +242,11 @@ function ClosureRow({ row }: { row: ClosureRow }) {
   // affected_count drops to 0 — but until that round-trip completes
   // we want to suppress the button. Track via the action state.
   const justRescheduled = bulkState?.ok === true;
-  const showBulkButton = row.affected_count > 0 && !justRescheduled;
+  const showBulkButton = (row.affected_count ?? 0) > 0 && !justRescheduled;
+  const skipNote =
+    row.skipped_inactive > 0
+      ? ` (${row.skipped_inactive} on deleted or merged records will be left as they are)`
+      : "";
 
   return (
     <tr className="hover:bg-[color:var(--color-brand-bg)]">
@@ -251,15 +260,22 @@ function ClosureRow({ row }: { row: ClosureRow }) {
         {row.reason}
       </td>
       <td className="px-4 py-3">
-        {row.affected_count === 0 && !justRescheduled ? (
+        {row.affected_count === null && !justRescheduled ? (
+          <span
+            className="text-xs text-[color:var(--color-brand-text-soft)]"
+            title="Could not count"
+          >
+            —
+          </span>
+        ) : row.affected_count === 0 && !justRescheduled ? (
           <span className="text-xs text-[color:var(--color-brand-text-soft)]">
-            None
+            None{skipNote}
           </span>
         ) : showBulkButton ? (
           <form action={bulkAction} className="inline-flex items-center gap-2">
             <input type="hidden" name="closed_on" value={row.closed_on} />
             <span className="text-xs font-semibold text-amber-800">
-              {row.affected_count} confirmed
+              {row.affected_count} confirmed{skipNote}
             </span>
             <button
               type="submit"

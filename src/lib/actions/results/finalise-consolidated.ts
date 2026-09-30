@@ -26,6 +26,7 @@ import {
 } from "@/lib/results/value-rows";
 import { commitResultFinalise } from "@/lib/actions/results/result-edit-core";
 import { announceFinaliseRelease } from "@/lib/actions/results/finalise-release-alert";
+import { createLinkedResult } from "@/lib/actions/results/create-linked";
 
 export interface FinaliseInput {
   visitId: string;
@@ -281,35 +282,14 @@ export async function finaliseConsolidatedReport(
     // fileless test. finalised_at is written for real in step 8, in the
     // SAME update as storage_path — only once the PDF is safely stored —
     // which is also when the flip is meant to happen.
-    const { data: resultsRow, error: rErr } = await admin
-      .from("results")
-      .insert({
-        report_group_id: input.groupId,
-        finalised_by_staff_id: session.user_id,
-        generation_kind: "structured",
-        finalised_at: null,
-        uploaded_by: session.user_id,
-        storage_path: null,
-      })
-      .select("id")
-      .single();
-    if (rErr || !resultsRow) {
-      return {
-        ok: false,
-        error: translatePgError(
-          rErr ?? { message: "insert results returned no row" },
-        ),
-      };
-    }
-    resultId = resultsRow.id;
-
-    const { error: jErr } = await admin.from("result_test_requests").insert(
-      input.testRequestIds.map((trid) => ({
-        result_id: resultId,
-        test_request_id: trid,
-      })),
-    );
-    if (jErr) return { ok: false, error: translatePgError(jErr) };
+    const created = await createLinkedResult(admin, {
+      actor: session.user_id,
+      testRequestIds: input.testRequestIds,
+      kind: "structured",
+      reportGroupId: input.groupId,
+    });
+    if (!created.ok) return { ok: false, error: created.error };
+    resultId = created.resultId;
   }
 
   // ---------------------------------------------------------------------

@@ -27,6 +27,7 @@ import {
 import { ipAndAgent } from "@/lib/server/action-helpers";
 import type { BulkQueueResult, BulkReleaseResult, SkippedRow } from "@/lib/queue/bulk-queue";
 import { unclaimPanelMembers } from "@/lib/actions/queue/panel-writes";
+import { withLifecycleRetry } from "@/lib/patients/lifecycle-retry";
 
 export type ClaimResult = { ok: true } | { ok: false; error: string };
 
@@ -67,20 +68,25 @@ export async function claimTestAction(
   );
   if (!verdict.ok) return verdict;
 
-  // Only claim if currently 'requested' — concurrency-safe.
-  const { data, error } = await supabase
-    .from("test_requests")
-    .update({
-      status: "in_progress",
-      assigned_to: session.user_id,
-      started_at: new Date().toISOString(),
-    })
-    .eq("id", testRequestId)
-    .eq("status", "requested")
-    // A queue-deleted line (0125) is not claimable even via a stale link.
-    .is("deleted_at", null)
-    .select("id, visit_id")
-    .maybeSingle();
+  // Only claim if currently 'requested' — concurrency-safe. A conditional
+  // UPDATE like this is safe to retry once: a real commit rolls back whole
+  // on P0072/40P01 (the lifecycle lock, 0184 — e.g. the visit's patient is
+  // merged mid-claim), so a retry can never double-claim.
+  const { data, error } = await withLifecycleRetry(() =>
+    supabase
+      .from("test_requests")
+      .update({
+        status: "in_progress",
+        assigned_to: session.user_id,
+        started_at: new Date().toISOString(),
+      })
+      .eq("id", testRequestId)
+      .eq("status", "requested")
+      // A queue-deleted line (0125) is not claimable even via a stale link.
+      .is("deleted_at", null)
+      .select("id, visit_id")
+      .maybeSingle(),
+  );
 
   if (error) return { ok: false, error: translatePgError(error) };
   if (!data) {
@@ -191,16 +197,21 @@ async function performUnclaim(
 
   // Only an in-flight claim with no uploaded result can be unclaimed. A
   // queue-deleted line (0125) is refused even via a stale link — same rule as
-  // claim and reassign.
-  let update = supabase
-    .from("test_requests")
-    .update({ status: "requested", assigned_to: null, started_at: null })
-    .in("id", testRequestIds)
-    .eq("status", "in_progress")
-    .not("assigned_to", "is", null)
-    .is("deleted_at", null);
-  if (ownerId !== null) update = update.eq("assigned_to", ownerId);
-  const { data, error } = await update.select("id, visit_id");
+  // claim and reassign. Retry once: this conditional UPDATE rolls back whole
+  // on a P0072/40P01 lock race (0184), so a retry can't double-unclaim.
+  // The builder is rebuilt per attempt: `.select()` appends a Prefer header,
+  // so re-running one builder would send it twice.
+  const { data, error } = await withLifecycleRetry(() => {
+    let update = supabase
+      .from("test_requests")
+      .update({ status: "requested", assigned_to: null, started_at: null })
+      .in("id", testRequestIds)
+      .eq("status", "in_progress")
+      .not("assigned_to", "is", null)
+      .is("deleted_at", null);
+    if (ownerId !== null) update = update.eq("assigned_to", ownerId);
+    return update.select("id, visit_id");
+  });
 
   if (error) return { ok: false, error: translatePgError(error) };
   if (!data || data.length === 0) return { ok: false, error: refusal };
@@ -352,16 +363,20 @@ export async function claimTestsAction(input: unknown): Promise<BulkQueueResult>
       skipped.push({ id, reason: verdict.error });
       continue;
     }
-    // The state the operator saw: requested, nobody holding it.
-    const { data, error } = await supabase
-      .from("test_requests")
-      .update({ status: "in_progress", assigned_to: session.user_id, started_at: startedAt })
-      .eq("id", id)
-      .eq("status", "requested")
-      .is("assigned_to", null)
-      .is("deleted_at", null)
-      .select("id, visit_id")
-      .maybeSingle();
+    // The state the operator saw: requested, nobody holding it. Retry once —
+    // this conditional UPDATE rolls back whole on a P0072/40P01 lock race
+    // (0184), so a retry can't double-claim the row.
+    const { data, error } = await withLifecycleRetry(() =>
+      supabase
+        .from("test_requests")
+        .update({ status: "in_progress", assigned_to: session.user_id, started_at: startedAt })
+        .eq("id", id)
+        .eq("status", "requested")
+        .is("assigned_to", null)
+        .is("deleted_at", null)
+        .select("id, visit_id")
+        .maybeSingle(),
+    );
     if (error) {
       skipped.push({ id, reason: translatePgError(error) });
     } else if (!data) {
@@ -575,15 +590,19 @@ export async function unclaimTestsAction(input: unknown): Promise<BulkQueueResul
       skipped.push({ id, reason: "Someone else holds this test now — refresh the queue." });
       continue;
     }
-    const { data, error } = await supabase
-      .from("test_requests")
-      .update({ status: "requested", assigned_to: null, started_at: null })
-      .eq("id", id)
-      .eq("status", "in_progress")
-      .eq("assigned_to", saw)
-      .is("deleted_at", null)
-      .select("id, visit_id")
-      .maybeSingle();
+    // Retry once — this conditional UPDATE rolls back whole on a
+    // P0072/40P01 lock race (0184), so a retry can't double-unclaim the row.
+    const { data, error } = await withLifecycleRetry(() =>
+      supabase
+        .from("test_requests")
+        .update({ status: "requested", assigned_to: null, started_at: null })
+        .eq("id", id)
+        .eq("status", "in_progress")
+        .eq("assigned_to", saw)
+        .is("deleted_at", null)
+        .select("id, visit_id")
+        .maybeSingle(),
+    );
     if (error) {
       skipped.push({ id, reason: translatePgError(error) });
     } else if (!data) {
@@ -688,14 +707,18 @@ export async function reassignTestAction(
     };
   }
 
-  const { data, error } = await supabase
-    .from("test_requests")
-    .update({ assigned_to: newAssigneeId })
-    .eq("id", testRequestId)
-    .in("status", ["in_progress", "result_uploaded"])
-    .is("deleted_at", null)
-    .select("id, visit_id")
-    .maybeSingle();
+  // Retry once — this conditional UPDATE rolls back whole on a P0072/40P01
+  // lock race (0184), so a retry can't double-reassign the row.
+  const { data, error } = await withLifecycleRetry(() =>
+    supabase
+      .from("test_requests")
+      .update({ assigned_to: newAssigneeId })
+      .eq("id", testRequestId)
+      .in("status", ["in_progress", "result_uploaded"])
+      .is("deleted_at", null)
+      .select("id, visit_id")
+      .maybeSingle(),
+  );
 
   if (error) return { ok: false, error: translatePgError(error) };
   if (!data) {

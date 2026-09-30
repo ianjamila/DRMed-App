@@ -16,6 +16,7 @@ import { translatePgError } from "@/lib/accounting/pg-errors";
 import { labQueueGate } from "@/lib/visits/lab-gate";
 import { canClaimSection, sectionsForRole } from "@/lib/auth/role-sections";
 import { scopeToAllowedSections } from "@/lib/visits/bulk-selection";
+import { withLifecycleRetry } from "@/lib/patients/lifecycle-retry";
 
 export type PanelOutcome = { ok: true } | { ok: false; error: string };
 type Supabase = Awaited<ReturnType<typeof createClient>>;
@@ -86,10 +87,16 @@ export async function claimPanelMembers(
   // claims every member into the caller's name or, when any member is no
   // longer requested/unassigned/live, raises P0077 and claims nothing. The
   // checks above only give a clean message first; this is what makes the
-  // panel all-or-nothing under concurrency.
-  const { error } = await supabase.rpc("claim_panel_members", {
-    p_test_request_ids: testRequestIds,
-  });
+  // panel all-or-nothing under concurrency. P0077 is never retried — that's
+  // a real state conflict, not a lock race — but the lifecycle lock this RPC
+  // also takes can raise P0072/40P01 (e.g. the visit's patient is merged
+  // mid-claim); one retry in a fresh transaction is safe since a real commit
+  // rolls back whole.
+  const { error } = await withLifecycleRetry(() =>
+    supabase.rpc("claim_panel_members", {
+      p_test_request_ids: testRequestIds,
+    }),
+  );
   if (error) {
     return { ok: false, error: translatePgError(error) };
   }
@@ -127,10 +134,15 @@ export async function unclaimPanelMembers(
     auditExtra?: Record<string, unknown>;
   },
 ): Promise<PanelOutcome> {
-  const { error } = await supabase.rpc("unclaim_panel_members", {
-    p_test_request_ids: args.members.map((m) => m.id),
-    p_holders: args.members.map((m) => m.holder),
-  });
+  // Same retry-once rule as claimPanelMembers above: P0077 (a member no
+  // longer matches its expected holder) is a real conflict and is never
+  // retried, but a P0072/40P01 lock race is safe to replay once.
+  const { error } = await withLifecycleRetry(() =>
+    supabase.rpc("unclaim_panel_members", {
+      p_test_request_ids: args.members.map((m) => m.id),
+      p_holders: args.members.map((m) => m.holder),
+    }),
+  );
   if (error) return { ok: false, error: translatePgError(error) };
 
   const h = await headers();

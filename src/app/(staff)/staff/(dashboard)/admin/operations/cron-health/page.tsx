@@ -6,6 +6,7 @@ import { manilaDateTime } from "@/lib/dates/manila";
 import { CRON_HEARTBEATS, deriveCronStatus } from "@/lib/ops/cron-heartbeats";
 import { describeCronSchedule } from "@/lib/ops/cron-schedule";
 import { ROUTE_NAME } from "@/lib/staff/route-names";
+import { skipReasonLabel, skipSenderLabel } from "@/lib/notifications/skip-labels";
 
 export const metadata = { title: ROUTE_NAME["/staff/admin/operations/cron-health"] };
 export const dynamic = "force-dynamic";
@@ -40,13 +41,18 @@ export default async function CronHealthPage() {
   const checkedAt = new Date();
   const now = checkedAt.getTime();
 
+  // Function is SECURITY INVOKER: audit_log's RLS (admin-only SELECT) decides
+  // who sees anything, so this must run through the signed-in admin's
+  // RLS-scoped client, never the admin client.
+  const { data: skips, error: skipsError } = await supabase.rpc("notification_skip_summary");
+
   // Not a Daily Monitoring view: this page sits beside the (daily-monitoring)
   // route group, so it gets no period tab bar and owns its own padding.
   return (
     <div className="px-4 py-8 sm:px-6 lg:px-8">
       <PageHeader
         title={ROUTE_NAME["/staff/admin/operations/cron-health"]}
-        subtitle="Latest recorded runs of the clinic’s scheduled tasks. All timestamps are in Manila time."
+        subtitle="Latest recorded runs of the clinic's scheduled tasks, and patient messages that were not sent. All timestamps are in Manila time."
       />
       <p className="mb-4 text-sm text-[color:var(--color-brand-text-soft)]">
         Healthy means a recent run was recorded. Pending means no run has been recorded yet,
@@ -98,6 +104,46 @@ export default async function CronHealthPage() {
           </tbody>
         </table>
       </div>
+      <section className="mt-10" aria-labelledby="skipped-messages-heading">
+        <h2 id="skipped-messages-heading" className="text-lg font-bold text-[color:var(--color-brand-navy)]">
+          Patient messages not sent
+        </h2>
+        <p className="mb-3 mt-1 text-sm text-[color:var(--color-brand-text-soft)]">
+          Result, booking and reminder messages the clinic did not send because the patient record was deleted,
+          merged or could not be checked. These are the skips that were recorded — if the database was down, a
+          check can fail without leaving a record (those are also reported to the error monitor).
+        </p>
+        {skipsError ? (
+          <p role="alert" className="rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+            The skipped-message counts could not be loaded. Please try again.
+          </p>
+        ) : !skips || skips.length === 0 ? (
+          <p className="text-sm text-[color:var(--color-brand-text-soft)]">None in the last 30 days.</p>
+        ) : (
+          <div className="overflow-x-auto rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white">
+            <table className="w-full min-w-[640px] text-sm">
+              <thead className="bg-[color:var(--color-brand-bg)] text-left text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
+                <tr>
+                  <PlainTh label="Message" />
+                  <PlainTh label="Why It Was Not Sent" />
+                  <PlainTh label="Last 7 Days" />
+                  <PlainTh label="Last 30 Days" />
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-[color:var(--color-brand-bg-mid)]">
+                {skips.map((s) => (
+                  <tr key={`${s.sender}:${s.reason}`}>
+                    <td className="px-4 py-3">{skipSenderLabel(s.sender)}</td>
+                    <td className="px-4 py-3">{skipReasonLabel(s.reason)}</td>
+                    <td className="px-4 py-3 tabular-nums">{s.skipped_7d}</td>
+                    <td className="px-4 py-3 tabular-nums">{s.skipped_30d}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
     </div>
   );
 }
