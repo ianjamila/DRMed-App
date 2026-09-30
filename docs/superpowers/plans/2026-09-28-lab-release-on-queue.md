@@ -1266,9 +1266,28 @@ describe("release bell items", () => {
 
 ## Follow-ups (not in this PR — surface to the owner)
 
-- Visit-page per-line release still allows releasing part of a combined report; align it with the queue's whole-report rule?
-- True atomic whole-report release would need an RPC with row locks (a migration); the queue detects and withholds instead.
-- Admin dashboard "Ready for release" card; email alert type "result released" (0155-style migration) if the bell is not enough.
+- True atomic whole-report release would need an RPC with row locks (a migration); the queue and visit page detect and withhold instead.
+- (The visit-page whole-report rule, admin card and email alert moved into this PR as Tasks 18–20.)
+
+## Owner-added scope (2026-09-30) — Tasks 18–20
+
+The owner moved all three follow-ups INTO this PR. **Before building them, expand each into full TDD steps (same style as Tasks 1–17) and append them here.** They were not in the Codex review; run `/codex-review astra high plan` on this addendum before building Task 18 (behaviour change) and Task 20 (migration).
+
+### Task 18: Visit page follows the whole-report rule
+- `releaseTestAction`, `releaseSelectedAction` and `releaseAllReadyComponentsAction` (`visits/[id]/actions.ts`) run the selection through `planReportRelease` (Task 7) with the same fail-closed membership reads as Task 8, and notify only for reports verified complete. Release on one combined-report member releases every ready member of that report, or refuses with the same message.
+- Visit page UI: per-row Release on a combined-report member reads "Release report (N tests)"; a mixed report shows the "isn't finished" reason instead of an enabled button; the visit-page bulk bar shows the outcome incl. "Also released…".
+- **Behaviour change** — say so in the guide (Task 16) and the PR body.
+- Tests: extend Task 6's pin test; per action add mixed / deleted-member / pulled-in / fail-closed cases.
+
+### Task 19: Admin dashboard "Ready for release" card
+- `cards.ts`: `{ id: "admin.ready_for_release", label: "Ready for release", roles: ["admin"], group: "operations" }`.
+- `admin-dashboard.tsx`: Task 14's lab query with no section filter, plus a second count of those on visits NOT money-settled, shown in the hint ("N waiting on payment"); href `/staff/queue?filter=pending_release`. `<StatCard>` only (route-name guard).
+
+### Task 20: Email alert to reception when results are released (MIGRATION)
+- Mirror 0157 `online_booking`: `git fetch && npm run claim -- migration`; the migration recreates `staff_alert_settings_key_check` with `result_released`, seeds its settings row, and ends with a `do $$ … $$` post-check. Add the key to `STAFF_ALERT_KEYS` / `STAFF_ALERTS` in `src/lib/notifications/staff-alerts.ts` (label "Results released", default roles `["reception"]`, description "When the lab releases results, so the counter can print them for a waiting patient"); update `staff-alerts.test.ts`.
+- Sender `src/lib/notifications/release-staff-alert.ts` + content builder (+ tests): ONE email per release action per visit (never per test) with patient name, visit #, test names and a link to `/staff/queue?filter=released_today`; recipients via `resolveStaffAlertRecipients("result_released", admin)`; `audit()` the send; run in `after()` so it never delays the release; skip sample visits; send only for verified-released rows. Call it from every release path (queue action and the visit-page actions).
+- Default ON for reception like the other alerts; adjustable in Admin Tools › Email Alerts.
+- **Prod:** push the migration yourself right before merge (`supabase db push --dry-run`, then push, from this worktree rebased on current main; verify by object). The app must not reach prod before the migration (the CHECK rejects the new key).
 
 ## Skills to update in the same PR
 
