@@ -1,5 +1,6 @@
 "use client";
 
+import { RELEASE_MEDIUM_OPTIONS } from "@/lib/visits/release-media";
 import { useState, useTransition } from "react";
 import { Button } from "@/components/ui/button";
 import { releaseTestAction, type ReleaseMedium } from "./actions";
@@ -21,15 +22,6 @@ interface Props {
   // the standalone tests table.
   size?: "default" | "compact";
 }
-
-const MEDIUM_OPTIONS: { value: ReleaseMedium; label: string }[] = [
-  { value: "physical", label: "Physical" },
-  { value: "email", label: "Email" },
-  { value: "viber", label: "Viber" },
-  { value: "gcash", label: "GCash" },
-  { value: "pickup", label: "Pickup" },
-  { value: "other", label: "Other" },
-];
 
 export function ReleaseButton({
   testRequestId,
@@ -68,7 +60,7 @@ export function ReleaseButton({
         title={title ?? "Release medium"}
         className={`rounded-md border border-[color:var(--color-brand-bg-mid)] bg-white px-2 py-1 focus:border-[color:var(--color-brand-cyan)] focus:outline-none disabled:opacity-50 ${textCls}`}
       >
-        {MEDIUM_OPTIONS.map((o) => (
+        {RELEASE_MEDIUM_OPTIONS.map((o) => (
           <option key={o.value} value={o.value}>
             {o.label}
           </option>

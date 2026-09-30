@@ -31,6 +31,7 @@ import {
 } from "@/lib/visits/bulk-selection";
 import { countResultViews } from "@/lib/results/viewed-count";
 import { canManuallyReleasePackageHeader } from "@/lib/visits/package-header-release";
+import { RELEASE_MEDIA, type ReleaseMedium } from "@/lib/visits/release-media";
 import {
   expandUndoReleaseScope,
   undoUpdateIds,
@@ -38,13 +39,7 @@ import {
   type UndoScopeRejectionReason,
 } from "@/lib/visits/undo-release-scope";
 
-export type ReleaseMedium =
-  | "physical"
-  | "email"
-  | "viber"
-  | "gcash"
-  | "pickup"
-  | "other";
+export type { ReleaseMedium };
 
 export type ReleaseResult =
   | { ok: true }
@@ -60,14 +55,7 @@ export type BulkSelectionResult =
   | { ok: true; count: number }
   | { ok: false; error: string };
 
-const VALID_MEDIA: readonly ReleaseMedium[] = [
-  "physical",
-  "email",
-  "viber",
-  "gcash",
-  "pickup",
-  "other",
-];
+const VALID_MEDIA: readonly ReleaseMedium[] = RELEASE_MEDIA;
 
 // User-facing text for expandUndoReleaseScope's rejections (0172). The whole
 // request is refused — no partial undo — so each message explains why

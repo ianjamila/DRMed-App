@@ -1,5 +1,6 @@
 "use client";
 
+import { RELEASE_MEDIUM_OPTIONS } from "@/lib/visits/release-media";
 import { useState, useTransition } from "react";
 import { Button } from "@/components/ui/button";
 import { Panel } from "@/components/ui/panel";
@@ -30,15 +31,6 @@ interface Props {
   // actually decides what reverts.
   reportScopeByTrId: Record<string, { memberIds: string[]; label: string }>;
 }
-
-const MEDIUM_OPTIONS: { value: ReleaseMedium; label: string }[] = [
-  { value: "physical", label: "Physical" },
-  { value: "email", label: "Email" },
-  { value: "viber", label: "Viber" },
-  { value: "gcash", label: "GCash" },
-  { value: "pickup", label: "Pickup" },
-  { value: "other", label: "Other" },
-];
 
 // Sticky bottom toolbar (same pattern as the hmo-claims bulk bars) that
 // appears once at least one row is selected in either bucket. Rendered as
@@ -200,7 +192,7 @@ export function BulkActionBar({
               title={releaseTitle ?? "Release medium"}
               className="rounded-md border border-[color:var(--color-brand-bg-mid)] bg-white px-2 py-1 text-xs focus:border-[color:var(--color-brand-cyan)] focus:outline-none disabled:opacity-50"
             >
-              {MEDIUM_OPTIONS.map((o) => (
+              {RELEASE_MEDIUM_OPTIONS.map((o) => (
                 <option key={o.value} value={o.value}>
                   {o.label}
                 </option>
