@@ -28,7 +28,7 @@ import {
   deleteTestRequestsForVisit,
   deleteTestRequestsManyCore,
   parseQueueDeleteReason,
-} from "@/lib/actions/queue/bulk-cores";
+} from "@/lib/actions/queue/bulk-delete-core";
 import { revalidateQueueSurfaces, restoreTestRequestsForVisit } from "@/lib/actions/visits/queue-restore-core";
 
 export type QueueDeletionResult =
@@ -205,7 +205,7 @@ const ManyDeleteSchema = z.object({
 // never trusted from the page. Order matters — role, then the input's shape
 // and the reason, and only then the service-role reads — so an empty or
 // unknown-id batch from a caller without the role gets the role error, never
-// a candidate-dependent message. The body lives in bulk-cores.ts
+// a candidate-dependent message. The body lives in bulk-delete-core.ts
 // (deleteTestRequestsManyCore), which re-checks the role and the reason. This
 // public entry point mints its own batch id: the browser must never supply
 // one. panel-actions.ts calls the core directly, sharing one id.

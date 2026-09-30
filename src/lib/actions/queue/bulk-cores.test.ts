@@ -11,6 +11,7 @@ import { join } from "node:path";
 
 const read = (rel: string) => readFileSync(join(process.cwd(), rel), "utf8");
 const coresSrc = read("src/lib/actions/queue/bulk-cores.ts");
+const deleteCoreSrc = read("src/lib/actions/queue/bulk-delete-core.ts");
 const actionsSrc = read("src/app/(staff)/staff/(dashboard)/queue/actions.ts");
 const deletionSrc = read("src/lib/actions/visits/queue-deletion.ts");
 
@@ -30,10 +31,19 @@ function constOf(src: string, name: string): string {
   return end === -1 ? src.slice(start) : src.slice(start, end);
 }
 
-describe("bulk-cores.ts is a plain server-only module", () => {
-  it('starts with import "server-only" and is never a "use server" file', () => {
-    expect(coresSrc.startsWith('import "server-only";')).toBe(true);
-    expect(coresSrc).not.toMatch(/^\s*["']use server["']/m);
+describe("the bulk core modules are plain server-only modules", () => {
+  for (const [name, src] of [
+    ["bulk-cores.ts", coresSrc],
+    ["bulk-delete-core.ts", deleteCoreSrc],
+  ] as const) {
+    it(`${name} starts with import "server-only" and is never a "use server" file`, () => {
+      expect(src.startsWith('import "server-only";')).toBe(true);
+      expect(src).not.toMatch(/^\s*["']use server["']/m);
+    });
+  }
+
+  it("bulk-delete-core.ts takes the batch context as a type import only", () => {
+    expect(deleteCoreSrc).toMatch(/import type \{ BulkBatchContext \} from "@\/lib\/actions\/queue\/bulk-cores"/);
   });
 
   it("exports no BulkBatchContext through a use-server file", () => {
@@ -107,7 +117,7 @@ describe("the cores take the batch context and write it", () => {
   });
 
   it("deleteTestRequestsManyCore hands ctx.batchId / batchSize to every per-visit delete and returns ctx.batchId", () => {
-    const body = bodyOf(coresSrc, "deleteTestRequestsManyCore");
+    const body = bodyOf(deleteCoreSrc, "deleteTestRequestsManyCore");
     expect(body).toMatch(/batchId:\s*ctx\.batchId/);
     expect(body).toMatch(/size:\s*ctx\.batchSize/);
     expect(body).toMatch(/panelKey:\s*ctx\.panelKey/);
@@ -116,7 +126,7 @@ describe("the cores take the batch context and write it", () => {
   });
 
   it("deleteTestRequestsForVisit writes bulk_batch_id and a conditional panel_key from the batch audit", () => {
-    const body = bodyOf(coresSrc, "deleteTestRequestsForVisit");
+    const body = bodyOf(deleteCoreSrc, "deleteTestRequestsForVisit");
     expect(body).toMatch(/bulk_batch_id:\s*bulk\.batchId/);
     expect(body).toMatch(/\.\.\.\(bulk\.panelKey\s*\?\s*\{\s*panel_key:\s*bulk\.panelKey\s*\}\s*:\s*\{\}\)/);
   });
@@ -127,7 +137,7 @@ describe("the cores take the batch context and write it", () => {
       expect(body, fn).toMatch(/LAB_CAPABLE_ROLES as readonly string\[\]\)\.includes\(session\.role\)/);
       expect(body, fn).toContain("NOT_LAB_STAFF");
     }
-    const del = bodyOf(coresSrc, "deleteTestRequestsManyCore");
+    const del = bodyOf(deleteCoreSrc, "deleteTestRequestsManyCore");
     expect(del).toMatch(/QUEUE_DELETE_ROLES\.has\(session\.role\)/);
     // The reason is re-validated in the core too, before any read.
     expect(del.indexOf("parseQueueDeleteReason(")).toBeGreaterThan(-1);

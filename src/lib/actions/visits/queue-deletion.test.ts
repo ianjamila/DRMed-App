@@ -3,13 +3,13 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
 // deleteTestRequestsManyCore (the body of deleteTestRequestsManyAction, in
-// src/lib/actions/queue/bulk-cores.ts) has no pure seam (admin client, StaffSession,
+// src/lib/actions/queue/bulk-delete-core.ts) has no pure seam (admin client, StaffSession,
 // audit()), so — like queue-restore-core.test.ts — it is pinned as source text.
 // #254 made a stale all-deleted selection a hard refusal (panel-actions.ts
 // relies on the ok:false shape); a merge dropped it and the action went back
 // to reporting an empty "success". Lock it in.
 
-const src = readFileSync(join(process.cwd(), "src/lib/actions/queue/bulk-cores.ts"), "utf8");
+const src = readFileSync(join(process.cwd(), "src/lib/actions/queue/bulk-delete-core.ts"), "utf8");
 const start = src.indexOf("export async function deleteTestRequestsManyCore");
 const end = src.indexOf("\nexport ", start + 1);
 const body = src.slice(start, end === -1 ? undefined : end);

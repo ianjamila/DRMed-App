@@ -137,8 +137,8 @@ const EXEMPT: Record<string, string> = {
     "Task 15 undo-merge — the paired lifecycle RPC-equivalent caller to mergePatientsAction above.",
   [`src/lib/actions/visits/queue-deletion.ts:deleteVisitAction`]:
     "Deletes stay unguarded by design (Task 23) — they remove work, never put it back.",
-  [`src/lib/actions/queue/bulk-cores.ts:deleteTestRequestsForVisit`]:
-    "Deletes stay unguarded by design (Task 23) — they remove work, never put it back. Shared core of deleteTestRequestsAction and deleteTestRequestsManyCore (moved from queue-deletion.ts so the bulk cores share one plain module).",
+  [`src/lib/actions/queue/bulk-delete-core.ts:deleteTestRequestsForVisit`]:
+    "Deletes stay unguarded by design (Task 23) — they remove work, never put it back. Shared core of deleteTestRequestsAction and deleteTestRequestsManyCore (moved from queue-deletion.ts into its own plain module, bulk-delete-core.ts, so a server-minted batch context can be passed in).",
   [`src/app/(staff)/staff/(dashboard)/appointments/actions.ts:attachPatientToAppointmentAction`]:
     "The patient is resolved via an activePatients(...)-filtered read or resolvePatient (active-only, Task 9) earlier in this same function, before the attach write.",
   [`src/app/(staff)/staff/(dashboard)/appointments/actions.ts:deleteGroups`]:
