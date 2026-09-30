@@ -1,5 +1,6 @@
 "use client";
 
+import { RELEASE_BLOCKED_CONSENT, RELEASE_BLOCKED_UNPAID } from "@/lib/visits/release-messages";
 import { RELEASE_MEDIUM_OPTIONS } from "@/lib/visits/release-media";
 import { useState, useTransition } from "react";
 import { Button } from "@/components/ui/button";
@@ -40,9 +41,9 @@ export function ReleaseButton({
   const blockedForConsent = gateRequired && !consentOnFile;
   const disabled = pending || !moneySettled || blockedForConsent;
   const title = !moneySettled
-    ? "Visit must be paid, waived, or HMO-covered before release"
+    ? RELEASE_BLOCKED_UNPAID
     : blockedForConsent
-      ? "Patient consent not on file — capture consent first"
+      ? RELEASE_BLOCKED_CONSENT
       : undefined;
 
   const textCls = size === "compact" ? "text-[10px]" : "text-xs";
