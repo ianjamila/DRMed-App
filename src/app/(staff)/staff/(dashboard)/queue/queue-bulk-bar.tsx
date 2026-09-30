@@ -289,13 +289,6 @@ export function QueueBulkBar({ rowsByKey }: Props) {
     setErr(null);
   }
   const n = (count: number) => `${count} test${count === 1 ? "" : "s"}`;
-  // A selected panel key stands for every bench member it resolves to on the
-  // server (weight, not 1), so "N tests" would undercount — say "N selected
-  // rows" instead whenever the open panel's selection includes one.
-  const panelSelection = panel === "unclaim" ? unclaimKeys : deleteKeys;
-  const panelCountLabel = panelSelection.some((key) => parsePanelRowKey(key) !== null)
-    ? `${panelCount} selected row${panelCount === 1 ? "" : "s"}`
-    : n(panelCount);
 
   if (count === 0) {
     if (!outcome) return null;
@@ -354,12 +347,12 @@ export function QueueBulkBar({ rowsByKey }: Props) {
           <p className="text-[color:var(--color-brand-text-mid)]">
             {panel === "unclaim" ? (
               <>
-                Put {panelCountLabel} back in the queue for anyone in the section to claim.
+                Put {n(panelCount)} back in the queue for anyone in the section to claim.
                 Only possible while no result has been uploaded.
               </>
             ) : (
               <>
-                Remove {panelCountLabel} from the queue. Nothing is billed for a deleted
+                Remove {n(panelCount)} from the queue. Nothing is billed for a deleted
                 entry, each can be restored later, and the reason is audit-logged.
               </>
             )}

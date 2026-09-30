@@ -40,7 +40,7 @@ import {
 } from "@/lib/ui/bulk-undo";
 
 // Shared shape for the fresh re-read after a failed panel-write compensation
-// (claim/unclaim/undo-reclaim): whatever is STILL in the state this call put
+// (Undo reclaim and restore — the only two branches that call it): whatever is STILL in the state this call put
 // it in must be audited, never dropped silently (P1). Takes the rows the
 // compensation attempt targeted (not just their ids) so a failed
 // verification read still has enough (visit_id) to audit them by (finding 7).

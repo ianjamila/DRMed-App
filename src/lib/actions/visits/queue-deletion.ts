@@ -338,6 +338,15 @@ export async function deleteTestRequestsManyAction(input: unknown): Promise<Bulk
     .in("id", ids)
     .is("deleted_at", null);
   if (readError) return { ok: false, error: translatePgError(readError) };
+  // Every id already deleted (or gone) — refuse before any write or audit row,
+  // so a stale selection reads as a clear error, not an empty "success".
+  // panel-actions.ts relies on this ok:false shape.
+  if (!candidates || candidates.length === 0) {
+    return {
+      ok: false,
+      error: "Nothing to delete — these tests were already deleted or no longer exist.",
+    };
+  }
   const visitOfSingle = new Map((candidates ?? []).map((c) => [c.id, c.visit_id]));
 
   const byVisit = new Map<string, string[]>();

@@ -1,0 +1,30 @@
+import { describe, expect, it } from "vitest";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+
+// deleteTestRequestsManyAction has no pure seam (admin client, StaffSession,
+// audit()), so — like queue-restore-core.test.ts — it is pinned as source text.
+// #254 made a stale all-deleted selection a hard refusal (panel-actions.ts
+// relies on the ok:false shape); a merge dropped it and the action went back
+// to reporting an empty "success". Lock it in.
+
+const src = readFileSync(join(process.cwd(), "src/lib/actions/visits/queue-deletion.ts"), "utf8");
+const start = src.indexOf("export async function deleteTestRequestsManyAction");
+const end = src.indexOf("\nexport ", start + 1);
+const body = src.slice(start, end === -1 ? undefined : end);
+
+describe("deleteTestRequestsManyAction refuses an all-stale selection", () => {
+  it("returns ok:false when the candidate read finds no live rows", () => {
+    expect(start, "deleteTestRequestsManyAction not found").toBeGreaterThan(-1);
+    expect(body).toMatch(/if \(!candidates \|\| candidates\.length === 0\) \{\s*return \{\s*ok: false,\s*error:\s*"Nothing to delete — these tests were already deleted or no longer exist\.",/);
+  });
+
+  it("refuses after the read-error handling and before any write", () => {
+    const readError = body.indexOf("if (readError)");
+    const refusal = body.indexOf("candidates.length === 0");
+    const firstWrite = body.indexOf("deleteTestRequestsForVisit(");
+    expect(readError).toBeGreaterThan(-1);
+    expect(refusal).toBeGreaterThan(readError);
+    expect(firstWrite).toBeGreaterThan(refusal);
+  });
+});
