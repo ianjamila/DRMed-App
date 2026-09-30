@@ -25,6 +25,17 @@ export function queueRowKinds(flags: {
   return kinds;
 }
 
+/**
+ * deleteTestRequestsManyCore's refusal when EVERY id it was given is already
+ * deleted or gone (before any write). Shared, not duplicated: the bulk Delete
+ * action recognises it to tell a stale set of single tests apart from a role /
+ * reason / input refusal, which must still refuse the whole selection.
+ */
+export const NOTHING_TO_DELETE_REFUSAL =
+  "Nothing to delete — these tests were already deleted or no longer exist.";
+/** The per-row reason for a test or panel that was already deleted or is gone. */
+export const ALREADY_DELETED_REASON = "Already deleted or no longer exists.";
+
 export interface SkippedRow {
   id: string;
   reason: string;

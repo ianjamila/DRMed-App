@@ -48,7 +48,7 @@ import {
   deleteQueueSelectionAction,
   unclaimQueueSelectionAction,
 } from "./panel-actions";
-import { panelRowKey } from "@/lib/queue/bulk-queue";
+import { ALREADY_DELETED_REASON, NOTHING_TO_DELETE_REFUSAL, panelRowKey } from "@/lib/queue/bulk-queue";
 import { UNCLAIM_REFUSAL_OWN } from "@/lib/queue/claim-eligibility";
 
 const VISIT = "11111111-1111-4111-8111-111111111111";
@@ -365,6 +365,64 @@ describe("deleteQueueSelectionAction", () => {
     });
     expect(r).toEqual({ ok: false, error: "Reason is required." });
     expect(h.deleteTestRequestsManyCore).toHaveBeenCalledTimes(1);
+  });
+
+  it("every single already deleted, with a live panel also selected: the singles are named as skipped and the panel is still deleted", async () => {
+    panelRead({ [KEY]: [member(M1), member(M2)] });
+    h.deleteTestRequestsManyCore
+      .mockResolvedValueOnce({ ok: false, error: NOTHING_TO_DELETE_REFUSAL })
+      .mockImplementationOnce(async (_s: unknown, input: { testRequestIds: string[] }, ctx: { batchId: string }) => ({
+        ok: true, changedIds: input.testRequestIds, skipped: [], batchId: ctx.batchId,
+      }));
+    const r = await deleteQueueSelectionAction({
+      testRequestIds: [SINGLE, SINGLE_2],
+      panels: [{ visitId: VISIT, groupId: GROUP }],
+      reason: "duplicate entry",
+    });
+    expect(h.deleteTestRequestsManyCore).toHaveBeenCalledTimes(2);
+    expect(h.deleteTestRequestsManyCore.mock.calls[1]![1]).toEqual({
+      testRequestIds: [M1, M2],
+      reason: "duplicate entry",
+    });
+    expect(r).toMatchObject({
+      ok: true,
+      changedIds: [M1, M2],
+      skipped: [
+        { id: SINGLE, reason: ALREADY_DELETED_REASON },
+        { id: SINGLE_2, reason: ALREADY_DELETED_REASON },
+      ],
+    });
+    // Something was deleted, so the result carries the batch id Undo needs.
+    expect(r).toHaveProperty("batchId");
+  });
+
+  it("every single already deleted and NO panel selected is still the plain refusal", async () => {
+    panelRead({});
+    h.deleteTestRequestsManyCore.mockResolvedValueOnce({ ok: false, error: NOTHING_TO_DELETE_REFUSAL });
+    const r = await deleteQueueSelectionAction({
+      testRequestIds: [SINGLE],
+      panels: [],
+      reason: "dup",
+    });
+    expect(r).toEqual({ ok: false, error: NOTHING_TO_DELETE_REFUSAL });
+  });
+
+  it("every single already deleted and the panel gone too: both are named, nothing is deleted, no batch id", async () => {
+    panelRead({});
+    h.deleteTestRequestsManyCore.mockResolvedValueOnce({ ok: false, error: NOTHING_TO_DELETE_REFUSAL });
+    const r = await deleteQueueSelectionAction({
+      testRequestIds: [SINGLE],
+      panels: [{ visitId: VISIT, groupId: GROUP }],
+      reason: "dup",
+    });
+    expect(r).toEqual({
+      ok: true,
+      changedIds: [],
+      skipped: [
+        { id: SINGLE, reason: ALREADY_DELETED_REASON },
+        { id: KEY, reason: ALREADY_DELETED_REASON },
+      ],
+    });
   });
 
   it("the first panel refused with nothing deleted yet returns the whole refusal", async () => {

@@ -18,7 +18,7 @@ const body = src.slice(start, end === -1 ? undefined : end);
 describe("deleteTestRequestsManyCore refuses an all-stale selection", () => {
   it("returns ok:false when the candidate read finds no live rows", () => {
     expect(start, "deleteTestRequestsManyCore not found").toBeGreaterThan(-1);
-    expect(body).toMatch(/if \(!candidates \|\| candidates\.length === 0\) \{\s*return \{\s*ok: false,\s*error:\s*"Nothing to delete — these tests were already deleted or no longer exist\.",/);
+    expect(body).toMatch(/if \(!candidates \|\| candidates\.length === 0\) \{\s*return \{ ok: false, error: NOTHING_TO_DELETE_REFUSAL \};/);
   });
 
   it("refuses after the read-error handling and before any write", () => {

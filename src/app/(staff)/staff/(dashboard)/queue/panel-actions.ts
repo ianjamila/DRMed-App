@@ -28,6 +28,8 @@ import { MAX_BULK_RECORDS, MAX_BULK_ROWS } from "@/lib/ui/bulk-selection";
 import { QUEUE_DELETE_ROLES } from "@/lib/visits/deletion";
 import { UNCLAIM_REFUSAL_ANY, UNCLAIM_REFUSAL_OWN } from "@/lib/queue/claim-eligibility";
 import {
+  ALREADY_DELETED_REASON,
+  NOTHING_TO_DELETE_REFUSAL,
   combineClaimResults,
   panelRowKey,
   type BulkQueueResult,
@@ -341,15 +343,27 @@ export async function deleteQueueSelectionAction(input: unknown): Promise<BulkQu
       { testRequestIds: singleIds, reason: parsed.data.reason },
       ctx,
     );
-    // Role / reason / input refusal: nothing was deleted, refuse it all.
-    if (!single.ok) return single;
-    changedIds.push(...single.changedIds);
-    skipped.push(...single.skipped);
+    if (!single.ok) {
+      if (panels.length > 0 && single.error === NOTHING_TO_DELETE_REFUSAL) {
+        // Every single test was already deleted (a stale selection) — that is
+        // a per-row outcome, not a refusal of the call: a live panel in the
+        // same selection must still be attempted. Name each single, as the
+        // panel branch below does for a panel that is gone.
+        for (const id of singleIds) skipped.push({ id, reason: ALREADY_DELETED_REASON });
+      } else {
+        // Role / reason / input refusal (or a lone stale set, with nothing
+        // else to do): nothing was deleted, refuse it all.
+        return single;
+      }
+    } else {
+      changedIds.push(...single.changedIds);
+      skipped.push(...single.skipped);
+    }
   }
   for (const panel of panels) {
     const state = resolved.states.get(panel.key);
     if (!state || state.allIds.length === 0) {
-      skipped.push({ id: panel.key, reason: "Already deleted or no longer exists." });
+      skipped.push({ id: panel.key, reason: ALREADY_DELETED_REASON });
       continue;
     }
     const result = await deleteTestRequestsManyCore(

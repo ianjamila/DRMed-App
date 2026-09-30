@@ -16,7 +16,12 @@ import { ipAndAgent } from "@/lib/server/action-helpers";
 import { QUEUE_DELETE_ROLES } from "@/lib/visits/deletion";
 import { QueueDeleteReasonSchema } from "@/lib/validations/accounting";
 import { revalidateQueueSurfaces } from "@/lib/actions/visits/queue-restore-core";
-import type { BulkQueueResult, SkippedRow } from "@/lib/queue/bulk-queue";
+import {
+  ALREADY_DELETED_REASON,
+  NOTHING_TO_DELETE_REFUSAL,
+  type BulkQueueResult,
+  type SkippedRow,
+} from "@/lib/queue/bulk-queue";
 import type { BulkBatchContext } from "@/lib/actions/queue/bulk-cores";
 
 export const NOT_QUEUE_DELETE_STAFF = "Only reception or admin can delete queue entries.";
@@ -167,10 +172,7 @@ export async function deleteTestRequestsManyCore(
   // so a stale selection reads as a clear error, not an empty "success".
   // panel-actions.ts relies on this ok:false shape.
   if (!candidates || candidates.length === 0) {
-    return {
-      ok: false,
-      error: "Nothing to delete — these tests were already deleted or no longer exist.",
-    };
+    return { ok: false, error: NOTHING_TO_DELETE_REFUSAL };
   }
   const visitOfSingle = new Map(candidates.map((c) => [c.id, c.visit_id]));
 
@@ -180,7 +182,7 @@ export async function deleteTestRequestsManyCore(
   for (const id of ids) {
     const visitId = visitOfSingle.get(id);
     if (!visitId) {
-      skipped.push({ id, reason: "Already deleted or no longer exists." });
+      skipped.push({ id, reason: ALREADY_DELETED_REASON });
       continue;
     }
     const group = byVisit.get(visitId);
