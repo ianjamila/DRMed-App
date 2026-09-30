@@ -870,6 +870,10 @@ end;
 $$;
 
 -- 6. ACLs.
+-- The row types carry no data; only the closed helpers use them.
+revoke all on type public._ps_identity from public;
+revoke all on type public._ps_encounter from public;
+revoke all on type public._ps_revenue_line from public;
 revoke all on function public._ps_identity_list() from public, anon, authenticated, service_role;
 revoke all on function public._ps_encounter_list() from public, anon, authenticated, service_role;
 revoke all on function public._ps_revenue_line_list(date, date) from public, anon, authenticated, service_role;
