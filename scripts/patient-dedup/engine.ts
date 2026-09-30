@@ -13,11 +13,16 @@ import { writeCsv } from "../clinical-backfill/report";
 import { clusterByName } from "./lib/cluster";
 import { planCluster } from "./lib/plan";
 import type { PatientRow, ClusterPlan } from "./lib/types";
+import { parseDedupArgs, type DedupArgs } from "./lib/args";
+import { withLifecycleRetry } from "../../src/lib/patients/lifecycle-retry";
 
-interface Args { commit: boolean; }
-export function parseArgs(): Args {
-  const argv = process.argv.slice(2);
-  return { commit: argv.includes("--commit") };
+export function parseArgs(): DedupArgs {
+  try {
+    return parseDedupArgs(process.argv.slice(2));
+  } catch (e) {
+    console.error((e as Error).message);
+    process.exit(2);
+  }
 }
 
 export function adminClient(): SupabaseClient<Database> {
@@ -102,7 +107,7 @@ export async function run(): Promise<void> {
   requireLocalOrExplicitProd("dedup:patients", {
     readOnly: !args.commit,
     writes: args.commit
-      ? "MERGES patient records — sets `patients.merged_into_id` and repoints their visits"
+      ? "MERGES patient records through merge_patients_guarded (moves visits/appointments/results/consents/uploads, writes the undo ledger)"
       : "live patient identities (DRM-ID, name, DOB, phone) written to the tmp/ dedup CSVs",
   });
   // Merges are irreversible from the CLI, so --commit has to name the database
@@ -121,107 +126,54 @@ export async function run(): Promise<void> {
   if (!args.commit) {
     console.log(
       `\nDry-run. To commit against this target:\n` +
-        `  npm run dedup:patients -- --commit ${CONFIRM_FLAG}=${expectedConfirmToken()}` +
+        `  npm run dedup:patients -- --commit --actor=<admin staff id> ${CONFIRM_FLAG}=${expectedConfirmToken()}` +
         `${process.argv.includes("--prod") ? " --prod" : ""}\n` +
-        `\n${CONFIRM_FLAG} names the database above — it changes with the target.\n`,
+        `\n${CONFIRM_FLAG} names the database above — it changes with the target.\n` +
+        `--actor is recorded on every merge (audit log + undo ledger); it must be an active admin.\n`,
     );
     return;
   }
 
-  await commitMerges(admin, plans); // implemented in Task 5
+  await commitMerges(admin, plans, args.actor!); // non-null: --commit requires --actor (parseDedupArgs)
 }
 
-// Tables that carry patients(id) FKs — ALL of them, kept in lockstep with the
-// admin merge Server Action's explicit per-table list
-// (src/app/(staff)/staff/(dashboard)/admin/patient-merge/actions.ts), pinned
-// by actions.tables.test.ts so a new FK table can't be added to one and
-// forgotten on the other.
-const FK_TABLES = ["visits", "appointments", "audit_log", "critical_alerts", "patient_consents", "appointment_attachments"] as const;
-const FILL_FIELDS = ["middle_name", "sex", "phone", "email", "address", "birthdate"] as const;
-
+// One merge = one merge_patients_guarded call (0196): every move, the fill,
+// chain flattening, the tombstone, the undo ledger and the audit row commit
+// together or not at all, recorded against `actor`. CLI merges are therefore
+// undoable from Admin Tools › Possible duplicates for 30 days.
 export async function mergeOne(
   admin: SupabaseClient<Database>,
   canonical: PatientRow,
   source: PatientRow,
   tier: string,
-): Promise<void> {
-  // Idempotent: skip a source already tombstoned (re-run safe), and skip
-  // either side that's since been soft-deleted (0167) — the plan/CSV can be
-  // minutes or days stale by the time --commit runs.
-  const { data: cur, error: curErr } = await admin
-    .from("patients")
-    .select("id, drm_id, merged_into_id, deleted_at")
-    .in("id", [canonical.id, source.id]);
-  if (curErr) throw new Error(`recheck ${source.id}: ${curErr.message}`);
-  const curSource = cur?.find((r) => r.id === source.id);
-  const curCanonical = cur?.find((r) => r.id === canonical.id);
-  if (!curSource || curSource.merged_into_id) return;
-  if (curSource.deleted_at) {
-    console.log(`skip: ${source.drm_id} is deleted`);
-    return;
+  actor: string,
+): Promise<"merged" | "skipped"> {
+  const { error } = await withLifecycleRetry(() =>
+    admin.rpc("merge_patients_guarded", {
+      p_keep: canonical.id,
+      p_source: source.id,
+      p_actor: actor,
+      p_context: { source: "dedup-cli", tier },
+    }),
+  );
+  if (!error) return "merged";
+  // P0058: either record is no longer active — already merged by an earlier
+  // run of this plan, or deleted since the CSV was built. Re-run safe.
+  if (error.code === "P0058") {
+    console.log(`skip: ${source.drm_id} → ${canonical.drm_id}: ${error.message}`);
+    return "skipped";
   }
-  if (curCanonical?.deleted_at) {
-    console.log(`skip: ${canonical.drm_id} is deleted`);
-    return;
-  }
-
-  // 1. Reassign every patient_id FK. `as never` because the payload type differs
-  //    per table in the generated union; patient_id is uuid on all of them.
-  const moved: Record<string, number> = {};
-  for (const table of FK_TABLES) {
-    const { data, error } = await admin.from(table)
-      .update({ patient_id: canonical.id } as never)
-      .eq("patient_id", source.id)
-      .select("id");
-    if (error) throw new Error(`reassign ${table} (${source.drm_id}): ${error.message}`);
-    moved[table] = data?.length ?? 0;
-  }
-
-  // 2. Collapse any existing tombstone chain pointing at the source.
-  const { error: chainErr } = await admin.from("patients")
-    .update({ merged_into_id: canonical.id })
-    .eq("merged_into_id", source.id);
-  if (chainErr) throw new Error(`repoint chain (${source.drm_id}): ${chainErr.message}`);
-
-  // 3. Fill missing fields on the canonical from the source — never overwrite.
-  const fill: Record<string, string> = {};
-  for (const f of FILL_FIELDS) {
-    if (!canonical[f] && source[f]) fill[f] = source[f] as string;
-  }
-  if (Object.keys(fill).length > 0) {
-    const { error } = await admin.from("patients").update(fill as never).eq("id", canonical.id);
-    if (error) throw new Error(`fill canonical (${canonical.drm_id}): ${error.message}`);
-    Object.assign(canonical, fill); // keep in-memory canonical current for the next source in the cluster
-  }
-
-  // 4. Tombstone the source.
-  const { error: tombErr } = await admin.from("patients")
-    .update({ merged_into_id: canonical.id, merged_at: new Date().toISOString() })
-    .eq("id", source.id);
-  if (tombErr) throw new Error(`tombstone (${source.drm_id}): ${tombErr.message}`);
-
-  // 5. Audit (audit() is server-only, so insert directly with the AuditEntry shape).
-  const { error: auditErr } = await admin.from("audit_log").insert({
-    actor_id: null,
-    actor_type: "system",
-    patient_id: canonical.id,
-    action: "patient.merged",
-    resource_type: "patient",
-    resource_id: canonical.id,
-    metadata: { kept_drm_id: canonical.drm_id, merged_drm_id: source.drm_id, merged_patient_id: source.id, tier, moved },
-    ip_address: null,
-    user_agent: null,
-  });
-  if (auditErr) throw new Error(`audit (${source.drm_id}): ${auditErr.message}`);
+  throw new Error(`merge ${source.drm_id} → ${canonical.drm_id}: ${error.message}`);
 }
 
-async function commitMerges(admin: SupabaseClient<Database>, plans: ClusterPlan[]): Promise<void> {
+async function commitMerges(admin: SupabaseClient<Database>, plans: ClusterPlan[], actor: string): Promise<void> {
   let merged = 0;
+  let skipped = 0;
   for (const plan of plans) {
     for (const m of plan.auto) {
-      await mergeOne(admin, plan.canonical, m.row, m.tier);
-      merged++;
+      if ((await mergeOne(admin, plan.canonical, m.row, m.tier, actor)) === "merged") merged++;
+      else skipped++;
     }
   }
-  console.log(`\nCommitted ${merged} merge(s). Review pile left untouched (manual via admin UI).`);
+  console.log(`\nCommitted ${merged} merge(s), skipped ${skipped}. Review pile left untouched (manual via admin UI).`);
 }

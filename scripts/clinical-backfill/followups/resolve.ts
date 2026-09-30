@@ -28,15 +28,29 @@ import type { PatientRow } from "../../patient-dedup/lib/types";
 import { matchKey } from "../lib/names";
 import { parseResolutions } from "./resolutions";
 
-interface Args { file: string; commit: boolean; }
+// 0196: mergeOne() now calls merge_patients_guarded, which records every
+// merge against a named, ACTIVE admin (P0078) — so --commit needs --actor,
+// same as scripts/patient-dedup.
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+interface Args { file: string; commit: boolean; actor: string | null; }
 function parseArgs(): Args {
   const argv = process.argv.slice(2);
   const file = argv.find((a) => a.startsWith("--file="))?.substring(7) ?? "";
   if (!file) { console.error("--file=<resolutions.csv> is required."); process.exit(2); }
-  return {
-    file,
-    commit: argv.includes("--commit"),
-  };
+  const commit = argv.includes("--commit");
+  const eq = argv.find((a) => a.startsWith("--actor="));
+  const at = argv.indexOf("--actor");
+  const raw = eq !== undefined ? eq.slice("--actor=".length) : at >= 0 ? (argv[at + 1] ?? "") : null;
+  if (raw !== null && !UUID_RE.test(raw)) {
+    console.error("--actor must be an admin's staff id (a UUID, from Admin Tools › Staff).");
+    process.exit(2);
+  }
+  if (commit && raw === null) {
+    console.error("--commit needs --actor=<admin staff id>: every merge is recorded against an active admin.");
+    process.exit(2);
+  }
+  return { file, commit, actor: raw };
 }
 
 async function main(): Promise<void> {
@@ -93,7 +107,7 @@ async function main(): Promise<void> {
   if (!args.commit) {
     const token = expectedConfirmToken();
     const prod = process.argv.includes("--prod") ? " --prod" : "";
-    console.log(`\nDry-run. To merge: ... --file=${args.file} --commit ${CONFIRM_FLAG}=${token}${prod}`);
+    console.log(`\nDry-run. To merge: ... --file=${args.file} --commit --actor=<admin staff id> ${CONFIRM_FLAG}=${token}${prod}`);
     console.log(`Then import held rows: npm run backfill:clinical:lab -- --commit ${CONFIRM_FLAG}=${token} --resolutions=${args.file}${prod} (and :consult)`);
     console.log(`${CONFIRM_FLAG} names the database above — it changes with the target.`);
     return;
@@ -103,7 +117,7 @@ async function main(): Promise<void> {
   let merged = 0;
   for (const p of plans) {
     for (const s of p.sources) {
-      await mergeOne(admin, p.target, s, "partner-resolution");
+      await mergeOne(admin, p.target, s, "partner-resolution", args.actor!); // non-null: --commit requires --actor
       merged++;
       console.log(`  merged ${s.drm_id} -> ${p.target.drm_id}`);
     }
