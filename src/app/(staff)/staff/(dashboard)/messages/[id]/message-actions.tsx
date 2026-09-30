@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { STAFF_NOTES_MAX, type ContactMessageKind, type ContactMessageStatus } from "@/lib/contact-messages/labels";
+import { transitionTargets, type StaffStatusTarget } from "@/lib/contact-messages/status-transitions";
 import {
   updateMessageKindAction,
   updateMessageNotesAction,
@@ -24,6 +25,13 @@ interface Props {
   canQuote: boolean;
 }
 
+// Button text per target — "new" is "Reopen" from every status that offers it.
+const TARGET_BUTTON_LABEL: Record<StaffStatusTarget, string> = {
+  replied: "Mark replied",
+  closed: "Mark closed",
+  new: "Reopen",
+};
+
 export function MessageActionsPanel({
   messageId,
   status,
@@ -39,7 +47,7 @@ export function MessageActionsPanel({
   const [notes, setNotes] = useState(staffNotes);
   const [notesSaved, setNotesSaved] = useState(false);
 
-  function fireStatus(target: "new" | "replied" | "closed") {
+  function fireStatus(target: StaffStatusTarget) {
     startStatus(async () => {
       const result = await updateMessageStatusAction(messageId, target);
       if (!result.ok) {
@@ -78,44 +86,18 @@ export function MessageActionsPanel({
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap gap-2">
-        {status === "new" ? (
-          <>
-            <Button type="button" size="sm" variant="success" disabled={statusPending} onClick={() => fireStatus("replied")}>
-              {statusPending ? "…" : "Mark replied"}
-            </Button>
-            <Button type="button" size="sm" variant="outline" disabled={statusPending} onClick={() => fireStatus("closed")}>
-              Mark closed
-            </Button>
-          </>
-        ) : null}
-
-        {status === "replied" ? (
-          <>
-            <Button type="button" size="sm" variant="outline" disabled={statusPending} onClick={() => fireStatus("closed")}>
-              Mark closed
-            </Button>
-            <Button type="button" size="sm" variant="outline" disabled={statusPending} onClick={() => fireStatus("new")}>
-              Reopen
-            </Button>
-          </>
-        ) : null}
-
-        {status === "booked" ? (
-          <>
-            <Button type="button" size="sm" variant="outline" disabled={statusPending} onClick={() => fireStatus("closed")}>
-              Mark closed
-            </Button>
-            <Button type="button" size="sm" variant="outline" disabled={statusPending} onClick={() => fireStatus("new")}>
-              Reopen
-            </Button>
-          </>
-        ) : null}
-
-        {status === "closed" ? (
-          <Button type="button" size="sm" variant="outline" disabled={statusPending} onClick={() => fireStatus("new")}>
-            Reopen
+        {transitionTargets(status).map((target) => (
+          <Button
+            key={target}
+            type="button"
+            size="sm"
+            variant={target === "replied" ? "success" : "outline"}
+            disabled={statusPending}
+            onClick={() => fireStatus(target)}
+          >
+            {target === "replied" && statusPending ? "…" : TARGET_BUTTON_LABEL[target]}
           </Button>
-        ) : null}
+        ))}
       </div>
 
       <div className="flex flex-wrap gap-2 border-t border-[color:var(--color-brand-bg-mid)] pt-3">

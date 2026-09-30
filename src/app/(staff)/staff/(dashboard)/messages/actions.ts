@@ -29,21 +29,20 @@ import {
   type ReplyOutcome,
 } from "@/lib/contact-messages/labels";
 import { firstNameOf } from "@/lib/contact-messages/first-name";
+import { STAFF_STATUS_TARGETS, type StaffStatusTarget } from "@/lib/contact-messages/status-transitions";
 import { ReplyInputSchema, buildEmailReply, buildSmsReplyBody } from "@/lib/contact-messages/reply-content";
 
 export type MessageActionResult<T = { id: string }> =
   | { ok: true; data: T }
   | { ok: false; error: string };
 
-// `booked` is set only by the booking flow (linkMessageToBooking); staff can
-// move a message among the other three, in either direction (including
-// "Reopen" a booked/closed message back to new).
-const STATUS_TARGETS = ["new", "replied", "closed"] as const;
-type StatusTarget = (typeof STATUS_TARGETS)[number];
+// Which moves staff may make (and why `booked` is never one) lives in
+// @/lib/contact-messages/status-transitions, shared with the detail page and
+// the bulk bar.
 
 const StatusSchema = z.object({
   id: z.string().uuid(),
-  status: z.enum(STATUS_TARGETS),
+  status: z.enum(STAFF_STATUS_TARGETS),
 });
 
 const NotesSchema = z.object({
@@ -73,7 +72,7 @@ function revalidateMessageSurfaces(id: string) {
 
 export async function updateMessageStatusAction(
   id: string,
-  status: StatusTarget,
+  status: StaffStatusTarget,
 ): Promise<MessageActionResult> {
   const { session, error: roleError } = await requireInboxStaff();
   if (!session) return { ok: false, error: roleError };
