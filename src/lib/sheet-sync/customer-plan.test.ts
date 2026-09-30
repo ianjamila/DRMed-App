@@ -758,3 +758,112 @@ describe("deleted-patient-match hold (review fix E, owner decision 2026-09-25)",
     expect(create).toMatchObject({ op: "create", link_keys: [key] });
   });
 });
+
+describe("S1: a saved auto link whose patient was later deleted (sync review gaps)", () => {
+  const key = "reyes|ana#1990-01-01";
+  const deletedOf = (over: Partial<DeletedPatientEvidence> = {}): DeletedPatientEvidence => ({
+    id: "gone-1", first_name: "Ana", middle_name: null, last_name: "Reyes", birthdate: "1990-01-01", phone: null, ...over,
+  });
+  const savedLink = (pid: string) => new Map([[key, { link_key: key, patient_id: pid, decision: "link" as const, method: "auto_exact" as const }]]);
+  const run = (patients: PatientRecord[], deleted: DeletedPatientEvidence[], links = savedLink("gone-1")) =>
+    planCustomers({ rows: rowsOf({ name: "Reyes, Ana", dob: 32874 }), index: buildPatientIndex(patients), links, facts: new Map(),
+      prevRows: [], deletedPatients: deleted });
+
+  it("is held as matches_deleted_patient with the deleted id (not the generic 'no longer exists' hold), never created", () => {
+    const out = run([], [deletedOf()]);
+    expect(out.ops.some((o) => o.op === "create")).toBe(false);
+    expect(out.ops.filter((o) => o.op === "hold")).toEqual([{ op: "hold", link_key: key, reason: "matches_deleted_patient" }]);
+    expect(out.review).toHaveLength(1);
+    expect(out.review[0]).toMatchObject({ kind: "possible_existing_patient",
+      payload: { held_because: "matches_deleted_patient", deleted_patient_id: "gone-1" } });
+  });
+
+  it("holds even when the sheet row no longer carries the evidence the name matcher needs (the saved link itself is the proof)", () => {
+    // deleted record has a different DOB than the sheet row, so name+DOB cannot match — only the saved link can
+    const out = run([], [deletedOf({ birthdate: "1985-05-05" })]);
+    expect(out.review[0].payload).toMatchObject({ deleted_patient_id: "gone-1", held_because: "matches_deleted_patient" });
+  });
+
+  it("a link to a merged-away patient whose SURVIVOR was deleted is held the same way", () => {
+    const mergedAway = patient({ first_name: "Ana", middle_name: null, last_name: "Reyes", birthdate: "1990-01-01", merged_into_id: "gone-1" });
+    const out = run([mergedAway], [deletedOf({ birthdate: null })], savedLink(mergedAway.id));
+    expect(out.review[0].payload).toMatchObject({ deleted_patient_id: "gone-1", held_because: "matches_deleted_patient" });
+    expect(out.ops.some((o) => o.op === "create")).toBe(false);
+  });
+
+  it("a merged-away patient whose survivor is LIVE still follows the survivor (no hold, no create)", () => {
+    const survivor = patient({ first_name: "Ana", middle_name: null, last_name: "Reyes", birthdate: "1990-01-01" });
+    const mergedAway = patient({ first_name: "Ana", middle_name: null, last_name: "Reyes", birthdate: "1990-01-01", merged_into_id: survivor.id });
+    const out = run([survivor, mergedAway], [deletedOf()], savedLink(mergedAway.id));
+    expect(out.review).toHaveLength(0);
+    expect(out.ops.some((o) => o.op === "create" || o.op === "hold")).toBe(false);
+    expect(out.ops).toContainEqual(expect.objectContaining({ op: "link", link_key: key, patient_id: survivor.id }));
+  });
+
+  it("a saved link whose patient is simply missing (not deleted) keeps the generic hold", () => {
+    const out = run([], [], savedLink("nobody"));
+    expect(out.review[0]).toMatchObject({ kind: "ambiguous_patient", payload: { reason: "the previously linked patient no longer exists" } });
+  });
+});
+
+describe("S2: facts ops carry the read row_version and survive their own fill (sync review gaps)", () => {
+  const rows = () => rowsOf({ name: "Dela Cruz, Juan Santos", dob: 32874, phone: "09171112222", nr: "NEW" });
+  const fixture = () => patient({ row_version: 7 });
+
+  it("every op for a patient (link, fill, facts) carries the version the planner read", () => {
+    const p = fixture();
+    const out = plan(rows(), [p]);
+    for (const op of ["link", "fill", "facts"] as const) {
+      expect(opsOf(out, op)).toHaveLength(1);
+      expect(opsOf(out, op)[0]).toMatchObject({ expected_row_version: 7 });
+    }
+  });
+
+  it("planner output: fill + facts in ONE chunk — the fill's own bump does not reject the facts", () => {
+    const p = fixture();
+    const out = plan(rows(), [p]);
+    const after = applyOps(out.ops, world([p]));
+    expect(after.counts).toMatchObject({ filled: 1, facts: 1, stale: 0 });
+    expect(after.facts.has(p.id)).toBe(true);
+    expect(after.stalePatientIds).toEqual([]);
+  });
+
+  it("planner output: fill in one chunk, facts in the NEXT call — still written", () => {
+    const p = fixture();
+    const out = plan(rows(), [p]);
+    const fillAndLink = out.ops.filter((o) => o.op !== "facts");
+    const factsOnly = out.ops.filter((o) => o.op === "facts");
+    const first = applyOps(fillAndLink, world([p]));
+    const second = applyOps(factsOnly, first);
+    expect(first.counts.filled).toBe(1);
+    expect(second.counts).toMatchObject({ facts: 1, stale: 0 });
+  });
+
+  it("stale identity (staff edited the patient after the read): fill AND facts are rejected and the id is reported", () => {
+    const p = fixture();
+    const out = plan(rows(), [p]);
+    const edited = world([{ ...p, row_version: 8 }]);
+    const after = applyOps(out.ops, edited);
+    expect(after.counts).toMatchObject({ filled: 0, facts: 0, stale: 3 });
+    expect(after.facts.has(p.id)).toBe(false);
+    expect(after.stalePatientIds).toEqual([p.id]);
+  });
+
+  it("staff edit AFTER our fill but before the facts chunk is still stale (only our own bump is forgiven)", () => {
+    const p = fixture();
+    const out = plan(rows(), [p]);
+    const first = applyOps(out.ops.filter((o) => o.op !== "facts"), world([p]));
+    const live = first.patients.find((x) => x.id === p.id)!;
+    live.row_version = (live.row_version ?? 0) + 1; // staff write between chunks
+    const second = applyOps(out.ops.filter((o) => o.op === "facts"), first);
+    expect(second.counts).toMatchObject({ facts: 0, stale: 1 });
+  });
+
+  it("no fill needed (nothing to fill): facts are written against the untouched read version", () => {
+    const p = patient({ row_version: 3, phone: "+639171112222" });
+    const out = plan(rowsOf({ name: "Dela Cruz, Juan Santos", dob: 32874, phone: "09171112222", nr: "NEW" }), [p]);
+    expect(opsOf(out, "fill")).toHaveLength(0);
+    const after = applyOps(out.ops, world([p]));
+    expect(after.counts).toMatchObject({ facts: 1, stale: 0 });
+  });
+});

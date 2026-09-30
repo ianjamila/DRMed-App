@@ -245,6 +245,24 @@ export function planCustomers(input: Input): CustomerPlan {
     return null;
   }
 
+  /**
+   * The deleted patient a key's SAVED link points at, if any: the linked
+   * patient itself, or — a merged-away patient still resolves to its
+   * survivor — the survivor at the end of the merge chain when that survivor
+   * was deleted. A live chain end returns null (the survivor() path handles
+   * it before this is ever asked).
+   */
+  const deletedById = new Set((input.deletedPatients ?? []).map((dp) => dp.id));
+  function savedLinkDeletedPatient(g: Group): string | null {
+    let cur: string | null | undefined = g.stored?.patient_id;
+    for (let hop = 0; cur && hop < 11; hop++) {
+      if (deletedById.has(cur)) return cur;
+      const p = index.byId.get(cur);
+      cur = p?.merged_into_id;
+    }
+    return null;
+  }
+
   // Corroboration sources: rows linked last run that vanished from this snapshot.
   const currentKeys = new Set(input.rows.map((r) => r.sourceKey));
   const vanishedByPhone = new Map<string, string[]>();
@@ -301,9 +319,6 @@ export function planCustomers(input: Input): CustomerPlan {
     if (loose.length > 0) return nameReview("similar name (surname + first name) — not linked automatically", loose);
     const hits = corroborate(g);
     if (hits.length > 0) return review("possible_existing_patient", "same phone or date of birth as an existing patient", hits);
-    // A saved link whose patient is gone (deleted, or missing from this read):
-    // creating would silently re-make someone staff already removed or linked.
-    if (staleDecision) return review("ambiguous_patient", "the previously linked patient no longer exists");
     // Review fix E: this row would otherwise become a create, but its
     // identity matches a patient staff deleted — hold it for an admin
     // instead of silently re-creating that person. candidates: [] (not the
@@ -311,11 +326,24 @@ export function planCustomers(input: Input): CustomerPlan {
     // index, which a deleted patient is never in; the id travels in `extra`
     // instead, which the SQL create-recheck backstop is the last line of
     // defense against as well.
-    const deletedMatch = matchDeletedPatient(g);
+    //
+    // S1 (sync review gaps): this check comes BEFORE the stale-decision
+    // return. A key whose SAVED auto link points at a patient staff later
+    // deleted used to fall into the generic "no longer exists" hold, which
+    // SQL refuses to Dismiss and the UI offers no candidates for — leaving
+    // "Create a new patient" as the only way out, i.e. re-creating the very
+    // person staff deleted. The saved link's own patient (followed through
+    // merges to a deleted survivor) is the strongest evidence, so it wins
+    // over the name+DOB / name+phone matcher.
+    const deletedMatch = (staleDecision ? savedLinkDeletedPatient(g) : null) ?? matchDeletedPatient(g);
     if (deletedMatch) {
       return review("possible_existing_patient", DELETED_PATIENT_HOLD_REASON, [],
         { held_because: DELETED_PATIENT_HOLD_REASON, deleted_patient_id: deletedMatch });
     }
+    // A saved link whose patient is gone for another reason (missing from
+    // this read): creating would silently re-make someone staff already
+    // removed or linked.
+    if (staleDecision) return review("ambiguous_patient", "the previously linked patient no longer exists");
     return { kind: "create" };
   }
 
@@ -606,7 +634,12 @@ export function planCustomers(input: Input): CustomerPlan {
     // deleted above would otherwise re-send facts for thousands of patients.
     const have = input.facts.get(pid);
     if (!have || have.registered_on !== want.registered_on || have.sheet_new_repeat !== want.new_repeat) {
-      ops.push({ op: "facts", patient_id: pid, ...want }); factsOps++;
+      // S2: carries the SAME read version as the patient's link/fill ops. A
+      // fill earlier in the batch bumps row_version by one; 0193's facts guard
+      // accepts that (and only that) self-inflicted bump, so a stale identity
+      // rejects the facts write while a successful fill+facts batch — in one
+      // chunk or across two — still writes them.
+      ops.push({ op: "facts", patient_id: pid, ...want, expected_row_version: p.row_version }); factsOps++;
     }
   }
 
