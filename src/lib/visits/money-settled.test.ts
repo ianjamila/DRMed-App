@@ -76,7 +76,8 @@ describe("migration 0133 — the DB release gate encodes the same rule", () => {
   });
 
   it("keeps the substring pg-errors.ts and finalise-consolidated.ts match on", () => {
-    // Both read the raised message with /payment_status/i to tell the payment
+    // Both read the raised message with /payment_status/i (finalise-consolidated.ts
+    // via pg-errors → RELEASE_BLOCKED_UNPAID) to tell the payment
     // gate apart from the consent gate on SQLSTATE 23514.
     const raise = sql.slice(sql.indexOf("raise exception"));
     expect(raise).toMatch(/payment_status/);
