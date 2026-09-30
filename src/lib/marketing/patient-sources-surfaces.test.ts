@@ -11,7 +11,7 @@ const ROOT = join(__dirname, "../../..");
 const RPCS = [
   "patient_sources_summary", "patient_sources_series", "patient_sources_revenue", "patient_sources_overlaps",
   "patient_sources_referrers", "patient_sources_people", "ad_spend_daily_totals", "ad_spend_coverage",
-  "ad_spend_import", "ad_spend_delete",
+  "ad_spend_import", "ad_spend_delete", "ad_spend_rows",
 ];
 const CALLERS: Record<string, string> = {
   "src/lib/marketing/patient-sources.server.ts": "the loader module",
@@ -26,6 +26,7 @@ const SURFACES: Record<string, string> = {
   ["src/app/api/admin/reports/patient-sources.csv/route.ts"]: "loadPatientSourcesSummary",
   ["src/app/api/admin/reports/patient-sources-people.csv/route.ts"]: "loadAllPeople",
   [`${S}/marketing/patients/people/page.tsx`]: "loadPeoplePage",
+  [`${S}/marketing/page.tsx`]: "loadAdSpendRows",
 };
 
 // The people CSV route's own audit action is named, by design (P12), exactly

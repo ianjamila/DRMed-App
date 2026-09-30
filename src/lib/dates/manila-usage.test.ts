@@ -284,14 +284,14 @@ const ALLOWED: Record<string, Allowance> = {
 
   // ---- Sample data and an uploaded-CSV grouping key ----------------------
   "app/(staff)/staff/(dashboard)/marketing/_components/ad-dashboard.tsx": {
-    methods: ["getDate", "getFullYear", "getMonth", "setDate", ISO_TRUNCATION],
+    methods: ["getDate", "setDate", ISO_TRUNCATION],
     why:
-      "Two non-clinic uses. `new Date(2026, 5, 15)` is the base of a " +
-      "FABRICATED 28-day demo series shown when no CSV is loaded — the dates " +
-      "are invented, so there is no true value to be wrong about. The second " +
-      "parses a textual date out of a Meta/Google CSV into a grouping key " +
-      "for that upload only; it is local-parse/local-read, and nothing is " +
-      "written to the database from this page.",
+      "One non-clinic use: `new Date(2026, 5, 15)` is the base of a " +
+      "FABRICATED 28-day demo series shown only while no ad spend is saved — " +
+      "the dates are invented, so there is no true value to be wrong about. " +
+      "(The textual-date parser that used to live here moved to the server, " +
+      "src/lib/marketing/ad-spend-import.ts.) The page writes nothing to the " +
+      "database except through saveAdSpendAction.",
   },
 
   // ---- Import parsers: a date TOKEN, not an instant ----------------------

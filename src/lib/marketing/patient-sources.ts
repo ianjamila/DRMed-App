@@ -41,6 +41,20 @@ export interface PeopleRow {
   total_count: number;
 }
 export interface SpendTotalRow { spend_date: string; platform: "meta" | "google"; spend_php: number }
+/** One saved ad row (0203 ad_spend_rows): per ad per day. null leads/bookings/impressions/clicks = the file did not say. */
+export interface AdSpendDbRow {
+  spend_date: string;
+  platform: "meta" | "google";
+  campaign_key: string;
+  campaign_label: string;
+  ad_key: string;
+  ad_label: string | null;
+  spend_php: number;
+  impressions: number | null;
+  clicks: number | null;
+  leads: number | null;
+  platform_bookings: number | null;
+}
 
 export type ReportErrorKind = "converted" | "forbidden" | "invalid" | "error";
 export type ReportResult<T> = { ok: true; data: T } | { ok: false; kind: ReportErrorKind; message: string };
