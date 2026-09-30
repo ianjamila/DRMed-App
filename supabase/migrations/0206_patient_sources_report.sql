@@ -432,6 +432,7 @@ begin
          from public._ps_sec_overlaps(v_lines) x),
     'referrers',
       -- Keep the helper's own order (count desc, spelling): WITH ORDINALITY.
+      -- Top 20, the page's only size (patient_sources_referrers keeps p_limit).
       (select coalesce(jsonb_agg(jsonb_build_object(
                 'doctor_label', x.doctor_label, 'new_confirmed', x.new_confirmed,
                 'new_unconfirmed', x.new_unconfirmed) order by x.ord), '[]'::jsonb)
