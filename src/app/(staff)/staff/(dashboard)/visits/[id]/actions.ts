@@ -15,6 +15,7 @@ import {
 } from "@/lib/validations/accounting";
 import { WAIVE_CLOSED_MONTH_MESSAGE } from "@/lib/visits/payment-edit";
 import { deleteVisitAction } from "@/lib/actions/visits/queue-deletion";
+import { notifyReleased, releaseRows } from "@/lib/actions/visits/release-rows";
 import {
   hasOpenHmoClaim,
   visitDeletability,
@@ -480,89 +481,21 @@ export async function releaseSelectedAction(
   const visitDeleted = await refuseIfVisitDeleted(supabase, visitId);
   if (visitDeleted) return visitDeleted;
 
-  const allowedSections = sectionsForRole(session.role);
-  const { data: candidates } = await supabase
-    .from("test_requests")
-    .select("id, services!inner ( section, name )")
-    .in("id", testRequestIds)
-    .eq("visit_id", visitId)
-    .eq("status", "ready_for_release")
-    .eq("is_package_header", false)
-    .is("deleted_at", null);
-
-  const scoped = scopeToAllowedSections(candidates ?? [], allowedSections);
-  if (scoped.length === 0) {
+  const res = await releaseRows({
+    supabase,
+    session,
+    visitId,
+    ids: testRequestIds,
+    medium: releaseMedium,
+  });
+  if (!res.ok) return { ok: false, error: res.error };
+  if (res.released.length === 0) {
     revalidateReleaseSurfaces(visitId);
     return { ok: false, error: "None of the selected tests are ready to release." };
   }
-  const scopedIds = scoped.map((r) => r.id);
-
-  const now = new Date().toISOString();
-  const { data: released, error } = await supabase
-    .from("test_requests")
-    .update({
-      status: "released",
-      released_at: now,
-      released_by: session.user_id,
-      release_medium: releaseMedium,
-    })
-    .in("id", scopedIds)
-    .eq("visit_id", visitId)
-    .eq("status", "ready_for_release")
-    .select("id, services ( name )");
-
-  if (error) return { ok: false, error: translatePgError(error) };
-  if (!released || released.length === 0) {
-    revalidateReleaseSurfaces(visitId);
-    return { ok: false, error: "None of the selected tests are ready to release." };
-  }
-
-  const h = await headers();
-  const ip = h.get("x-forwarded-for")?.split(",")[0]?.trim() ?? null;
-  const ua = h.get("user-agent");
-  for (const row of released) {
-    await audit({
-      actor_id: session.user_id,
-      actor_type: "staff",
-      action: "test_request.released",
-      resource_type: "test_request",
-      resource_id: row.id,
-      metadata: {
-        visit_id: visitId,
-        release_medium: releaseMedium,
-        bulk: true,
-        selection: true,
-      },
-      ip_address: ip,
-      user_agent: ua,
-    });
-  }
-
-  try {
-    if (released.length === 1) {
-      await notifyResultReleased({
-        testRequestId: released[0].id,
-        visitId,
-        releaseMedium,
-      });
-    } else {
-      await notifyResultsReleasedBulk({
-        visitId,
-        testRequestIds: released.map((r) => r.id),
-        testNames: released.map((r) => serviceName(r.services) ?? "Result"),
-        releaseMedium,
-      });
-    }
-  } catch (err) {
-    await reportError({
-      scope: "notify/result-released-selection",
-      error: err,
-      metadata: { visit_id: visitId, test_request_ids: released.map((r) => r.id) },
-    });
-  }
-
+  await notifyReleased(visitId, res.released, releaseMedium);
   revalidateReleaseSurfaces(visitId);
-  return { ok: true, count: released.length };
+  return { ok: true, count: res.released.length };
 }
 
 // Undoes a hand-picked selection of released rows back to ready_for_release.
