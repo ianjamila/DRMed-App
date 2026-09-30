@@ -11,6 +11,7 @@
 import Papa from "papaparse";
 import { daysInMonth } from "@/lib/dates/manila";
 import { normaliseCampaignName } from "@/lib/marketing/campaign-results";
+import { mapCountColumns, parseCountCell } from "@/lib/marketing/ad-columns";
 
 export type AdPlatform = "meta" | "google";
 export type AdSpendRejectReason = "date_range" | "bad_date" | "no_campaign" | "bad_spend" | "malformed_row";
@@ -43,6 +44,12 @@ export interface AdSpendRow {
   spend_php: number;
   impressions: number | null;
   clicks: number | null;
+  /** The ad's name as uploaded (null for a campaign-total row or a file with no ad name). */
+  ad_label: string | null;
+  /** Leads / results / conversations the platform reported. null = the file did not say; 0 = reported zero. */
+  leads: number | null;
+  /** Bookings / conversions the platform reported (not the clinic's own appointments). null = unknown. */
+  platform_bookings: number | null;
 }
 
 export type AdSpendParse =
@@ -182,6 +189,7 @@ export function parseAdSpendCsv(
   const spendCol = metaSpendCol ?? col("cost", "spend", "amount");
   const imprCol = col("impressions", "impr.", "impr");
   const clickCol = col("link clicks", "clicks");
+  const { leads: leadsCol, bookings: bookingsCol } = mapCountColumns(headers);
   if (!spendCol) {
     return { ok: false, error: "This file has no spend column (Amount spent, Cost or Spend) — nothing was saved." };
   }
@@ -245,6 +253,8 @@ export function parseAdSpendCsv(
     if (spend === null || spend < 0) { reject("bad_spend"); continue; }
     const impressions = imprCol ? count(r[imprCol]) : null;
     const clicks = clickCol ? count(r[clickCol]) : null;
+    const leads = leadsCol ? parseCountCell(r[leadsCol]) : null;
+    const bookings = bookingsCol ? parseCountCell(r[bookingsCol]) : null;
 
     const campaignKey = normaliseCampaignName(campaign);
     // Sonnet review #3: a campaign like "---" or "___" passes the `!campaign`
@@ -253,7 +263,8 @@ export function parseAdSpendCsv(
     // upload with a generic DB error instead of a clean per-row rejection.
     if (!campaignKey) { reject("no_campaign"); continue; }
     const adId = adIdCol ? String(r[adIdCol] ?? "").trim() : "";
-    const adName = adNameCol ? normaliseCampaignName(String(r[adNameCol] ?? "")) : "";
+    const adLabelRaw = adNameCol ? String(r[adNameCol] ?? "").trim() : "";
+    const adName = adNameCol ? normaliseCampaignName(adLabelRaw) : "";
     const adKey = (adId ? `id:${adId}` : adName) || "(campaign)";
     // JSON tuple, not a "|"-joined string (C1): campaign "C|D" + ad "E" and
     // campaign "C" + ad "D|E" must stay two rows.
@@ -263,10 +274,16 @@ export function parseAdSpendCsv(
       prev.spend_php = Math.round((prev.spend_php + spend) * 100) / 100;
       prev.impressions = impressions === null && prev.impressions === null ? null : (prev.impressions ?? 0) + (impressions ?? 0);
       prev.clicks = clicks === null && prev.clicks === null ? null : (prev.clicks ?? 0) + (clicks ?? 0);
+      prev.leads = leads === null && prev.leads === null ? null : (prev.leads ?? 0) + (leads ?? 0);
+      prev.platform_bookings =
+        bookings === null && prev.platform_bookings === null ? null : (prev.platform_bookings ?? 0) + (bookings ?? 0);
+      prev.ad_label ??= adKey === "(campaign)" ? null : adLabelRaw.slice(0, 300) || null;
     } else {
       rows.set(key, {
         spend_date: date, platform, campaign_key: campaignKey.slice(0, 300), ad_key: adKey.slice(0, 300),
         campaign_label: campaign.slice(0, 300), spend_php: spend, impressions, clicks,
+        ad_label: adKey === "(campaign)" ? null : adLabelRaw.slice(0, 300) || null,
+        leads, platform_bookings: bookings,
       });
     }
   }
