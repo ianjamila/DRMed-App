@@ -25,7 +25,9 @@
 // order the caller's array is in. Every scenario therefore runs twice: "seq"
 // (the local default) and "indexed" (enable_seqscan / enable_bitmapscan off
 // in each actor's transaction — locally that yields the pkey scan for the
-// claim and the same status-index nested loop prod uses for the unclaim).
+// claim, and for the unclaim a nested loop whose OUTER side is an index scan
+// of test_requests (status or assigned_to), never the array). B4 and D3
+// re-check that shape before they run and fail loudly if it changes.
 // The plan each mode produced is printed first. The opposite-order scenarios
 // (B4, D3) would deadlock (40P01 — still all-or-nothing, but a retry message
 // instead of P0077) under a plan that locked in ARRAY order; none of these
@@ -264,9 +266,18 @@ function queueDelete(a: Actor, ids: readonly string[], visitId: string): Promise
 // other's answers before ending their own: the loser is queued behind the
 // winner's still-open transaction.
 function andEnd(a: Actor, p: Promise<Outcome>): Promise<Outcome> {
+  // Never rejects: a scenario that throws early closes its connections while
+  // these are still pending, and an unhandled rejection there would kill the
+  // process before the fixtures are torn down. A failed COMMIT still surfaces
+  // — as a failed outcome the scenario's assertions reject.
   return p.then(async (o) => {
-    await a.c.query(o.ok ? "commit" : "rollback");
-    return o;
+    try {
+      await a.c.query(o.ok ? "commit" : "rollback");
+      return o;
+    } catch (e) {
+      const err = e as { code?: string; message?: string };
+      return { ok: false, code: err.code ?? "end-failed", message: err.message ?? String(e) };
+    }
   });
 }
 
@@ -276,12 +287,42 @@ function andEnd(a: Actor, p: Promise<Outcome>): Promise<Outcome> {
 
 class Fail extends Error {}
 
+// Waiting on a ROW: an ungranted transactionid (queued behind the holder's
+// transaction) or tuple lock. A relation-level wait — another session's DDL
+// on the shared stack — does not count, so it can neither fake a forced
+// interleaving nor fail a "must not wait" case.
 async function waitingOnLock(pid: number): Promise<boolean> {
-  const { rows } = await monitor.query<{ w: string | null }>(
-    "select wait_event_type as w from pg_stat_activity where pid = $1",
+  const { rows } = await monitor.query(
+    "select 1 from pg_locks where pid = $1 and not granted and locktype in ('transactionid', 'tuple')",
     [pid],
   );
-  return rows[0]?.w === "Lock";
+  return rows.length > 0;
+}
+
+// B4/D3 release two opposite-order callers at once. That only resolves to
+// one winner + P0077 while both functions lock rows in ONE order whatever
+// the array order is; a plan driven by the array (the unnest Function Scan
+// as the nested loop's OUTER side) would deadlock instead. Refuse to run
+// them — loudly — if this mode's plan has become that shape.
+async function assertLockOrderIndependentOfArray(mode: Mode): Promise<void> {
+  await monitor.query("begin");
+  try {
+    for (const g of MODE_GUCS[mode]) await monitor.query(g);
+    const { rows } = await monitor.query(
+      `explain (costs off) update public.test_requests t set status = 'requested'
+         from unnest($1::uuid[], $2::uuid[]) as x(id, holder)
+        where t.id = x.id and t.status = 'in_progress' and t.assigned_to = x.holder and t.deleted_at is null`,
+      [fx.P, x3(fx.med1)],
+    );
+    const lines = rows.map((r) => String(r["QUERY PLAN"]));
+    const fnAt = lines.findIndex((l) => l.includes("Function Scan on x"));
+    const tAt = lines.findIndex((l) => / on test_requests t\b/.test(l) && /Scan/.test(l));
+    if (fnAt === -1 || tAt === -1 || fnAt < tAt) {
+      throw new Fail(`plan shape changed: the unclaim now locks in ARRAY order (${lines.map((l) => l.trim()).join(" / ")}) — opposite-order callers can deadlock (40P01); see the header`);
+    }
+  } finally {
+    await monitor.query("rollback");
+  }
 }
 
 // Strict: the actor's in-flight statement must be observed blocked on a
@@ -560,6 +601,7 @@ async function forcedScenarios(mode: Mode): Promise<void> {
   // Two hand-backs of the same panel whose member lists arrive in opposite
   // orders, released at the same instant from behind an outside lock.
   await scenario(s("B4 two unclaims, opposite member order, released together → one lands, other P0077"), async () => {
+    await assertLockOrderIndependentOfArray(mode);
     await setState(P, fx.med1);
     const adm = await actor("A1", fx.admin1);
     const own = await actor("M1", fx.med1);
@@ -656,6 +698,7 @@ async function forcedScenarios(mode: Mode): Promise<void> {
   });
 
   await scenario(s("D3 claim P+Q vs claim Q+P (opposite order), released together → one wins, no deadlock"), async () => {
+    await assertLockOrderIndependentOfArray(mode);
     const a = await actor("M1", fx.med1);
     const b = await actor("M2", fx.med2);
     const gate = await holdRows([...P, ...Q]);
@@ -951,6 +994,14 @@ const MUTANTS: Mutant[] = [
     mustFail: ["C1"],
   },
   {
+    key: "D",
+    what: "unclaim keeps whatever matched",
+    fn: "unclaim_panel_members",
+    from: "if v_unclaimed <> v_wanted then",
+    to: "if false then",
+    mustFail: ["C1", "B3"],
+  },
+  {
     key: "C",
     what: "claim ignores deleted_at",
     fn: "claim_panel_members",
@@ -1014,10 +1065,45 @@ async function controlRounds(): Promise<void> {
 // Main
 // ---------------------------------------------------------------------------
 
+// Remove this run's fixtures (and its control schema) and prove none are left.
+async function teardown(): Promise<void> {
+  await closeActors();
+  await monitor.query(`drop schema if exists pcc_ctl_${TAG.slice(4)} cascade`);
+  await sweepTagged(TAG);
+  const left = await countTagged(TAG);
+  if (left > 0) {
+    results.push({ name: "teardown", ok: false, detail: `${left} fixture rows left behind` });
+    console.log(`  FAIL  teardown — ${left} fixture rows left behind`);
+  } else {
+    console.log("  teardown: every fixture row removed");
+  }
+}
+
 async function main(): Promise<void> {
   const rounds = Number(process.env.PCC_ROUNDS ?? 25);
   monitor = await connect();
+
+  // One run at a time on the shared stack: the startup sweep below removes
+  // EVERY pcc- fixture, which would pull a concurrent run's live rows out from
+  // under it. Session-level, so it lasts until the monitor disconnects.
+  const { rows: lock } = await monitor.query<{ got: boolean }>(
+    "select pg_try_advisory_lock(hashtext('panel-claim:concurrency-proof')) as got",
+  );
+  if (!lock[0].got) {
+    console.error("[panel-claim:concurrency-proof] another run is in progress on this stack — try again when it finishes.");
+    await monitor.end();
+    process.exit(3);
+  }
+
   let seeded = false;
+  // Ctrl-C: tear down before exiting, so committed fixtures never outlive the
+  // run (open transactions roll back when their connections close).
+  process.once("SIGINT", () => {
+    console.log("\n  interrupted — tearing down");
+    teardown()
+      .catch((e) => console.error(e))
+      .finally(() => process.exit(130));
+  });
   try {
     const { rows: fn } = await monitor.query<{ n: string }>(
       "select count(*) as n from pg_proc where proname in ('claim_panel_members', 'unclaim_panel_members')",
@@ -1041,17 +1127,8 @@ async function main(): Promise<void> {
     }
     if (process.argv.includes("--control")) await controlRounds();
   } finally {
-    await closeActors();
-    if (seeded || (await countTagged(TAG)) > 0) {
-      await sweepTagged(TAG);
-      const left = await countTagged(TAG);
-      if (left > 0) {
-        results.push({ name: "teardown", ok: false, detail: `${left} fixture rows left behind` });
-        console.log(`  FAIL  teardown — ${left} fixture rows left behind`);
-      } else {
-        console.log("  teardown: every fixture row removed");
-      }
-    }
+    if (seeded || (await countTagged(TAG)) > 0) await teardown();
+    else await closeActors();
     await monitor.end();
   }
 
