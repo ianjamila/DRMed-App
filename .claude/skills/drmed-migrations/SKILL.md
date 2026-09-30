@@ -1,6 +1,6 @@
 ---
 name: drmed-migrations
-description: Use when working on DRMed database schema changes, Supabase migrations, RLS policies, audit-log obligations, payment-gating trigger considerations, function grants/ACLs, applying a migration to prod, or the migration workflow. Trigger whenever the user mentions migration, new migration, schema change, new table, alter table, alter schema, drop table, drop column, regenerate types, regen types, db:diff, db:types, db:types:remote, db:reset, supabase db push, supabase db reset, supabase migrations, schema_migrations, apply_migration, execute_sql, RLS policy, row-level security policy, has_role, current_patient_id, payment gating trigger, enforce_payment_before_release, audit_log table, audit-log obligation, SECURITY DEFINER, grant execute, revoke execute, anon-executable, function ACL, default privileges, rls_auto_enable, ensure_rls, P00xx error code, translatePgError, pg-errors, seed script, seed:test, seed:services, seed:templates, seed.sql, smoke:results, or the files under supabase/migrations/ (0001 → 0149, with gaps). Also trigger when adding any new table, trigger, or function — the skill carries the RLS-template + audit-row + payment-gating + ACL checklist. Don't make Claude reconstruct the per-table checklist from scratch.
+description: Use when working on DRMed database schema changes, Supabase migrations, RLS policies, audit-log obligations, payment-gating trigger considerations, function grants/ACLs, applying a migration to prod, or the migration workflow. Trigger whenever the user mentions migration, new migration, schema change, new table, alter table, alter schema, drop table, drop column, regenerate types, regen types, db:diff, db:types, db:types:remote, db:reset, supabase db push, supabase db reset, supabase migrations, schema_migrations, apply_migration, execute_sql, RLS policy, row-level security policy, has_role, current_patient_id, payment gating trigger, enforce_payment_before_release, audit_log table, audit-log obligation, SECURITY DEFINER, grant execute, revoke execute, anon-executable, function ACL, default privileges, rls_auto_enable, ensure_rls, P00xx error code, translatePgError, pg-errors, seed script, seed:test, seed:services, seed:templates, seed.sql, smoke:results, concurrency proof, race condition, two-session test, row lock, deadlock, 40P01, dblink, pg_locks, claim/lock/all-or-nothing function, or the files under supabase/migrations/ (0001 → 0149, with gaps). Also trigger when adding any new table, trigger, or function — the skill carries the RLS-template + audit-row + payment-gating + ACL checklist. Don't make Claude reconstruct the per-table checklist from scratch.
 ---
 
 # DRMed migrations & schema workflow
@@ -80,6 +80,7 @@ scripts/                                 ← seed-*.ts, import-*.ts, smoke-*.ts,
 1. npm run db:diff -- <name>          → writes supabase/migrations/<n+1>_<name>.sql (hand-write instead when it's a function/trigger/policy change — diff output for those is noisy)
 2. supabase start && supabase db reset → full replay on a fresh local DB (this is the ONLY "staging"; there is no staging project)
 3. npm test / typecheck / lint         → no PR-triggered CI exists (.github/workflows has only db-backup.yml); Vercel preview is the only gate
+   (+ a two-session concurrency proof for claim / lock / all-or-nothing / racing money-path writes — see "Proving a migration under concurrency")
 4. Apply to prod (see below) BEFORE merging the PR — the Vercel production deploy of merged app code must never run ahead of its migration
 5. npm run db:types                    → regenerate src/types/database.ts (CHECK/trigger/function-only changes produce an empty diff — expected)
 ```
@@ -164,6 +165,47 @@ docker exec -e PGPASSWORD=postgres supabase_db_DRMed psql -h 127.0.0.1 -U authen
   -c "set role service_role; set role patient_lifecycle_writer;"
 ```
 expect `permission denied to set role`.
+
+## Proving a migration under concurrency
+
+**When it's required.** Any migration whose correctness depends on two sessions acting on the
+same rows at the same moment:
+- claim / hand-back / reassign writes whose guard is a `WHERE status = … and assigned_to …`;
+- all-or-nothing multi-row writes (a row-count check that raises and rolls the whole set back — 0191's P0077);
+- functions that take locks (`for update`, advisory locks), or a design that accepts a lock-order cycle (0183's waive vs. undo-release cascade → `40P01`);
+- money-path writes that can race: release vs. payment void/delete, the payment gate (`enforce_payment_before_release`), the GL bridge (at most one journal entry per event).
+
+A `supabase/tests/00NN_*_smoke.sql` file proves each refusal one statement after another in
+ONE transaction — it can never prove a race, because a transaction never waits on itself. Ship
+both. Models: `scripts/panel-claim-concurrency-proof.ts` (`npm run panel-claim:concurrency-proof -- --control`, #258, 0191) and the older dblink `supabase/tests/0183_waiver_race_smoke.sql`.
+
+**`pg` runner or dblink?** Default to the `pg` runner.
+
+| | `pg` runner — `scripts/<name>-concurrency-proof.ts` (tsx) | dblink — `supabase/tests/00NN_*_race_smoke.sql` (psql) |
+|---|---|---|
+| Sessions act as | `authenticated` with a JWT `sub` per connection (or `service_role` for admin-client writes) — RLS, invoker rights and triggers such as 0190's holder guard apply exactly as for the staff server client | `supabase_admin` (the local `postgres` role is not a superuser and `dblink_connect` refuses it) — RLS bypassed unless each worker sets its own role |
+| Plan modes, mutant control rounds, N free-race rounds | straightforward | awkward |
+| Use for | anything a staff JWT calls; anything with a mutant round | a quick race proof of a `service_role`-only / SECURITY DEFINER function, kept next to its smoke file |
+
+dblink specifics (0183): refuse unless `inet_server_addr()` is local/private; the workers commit,
+so tear down explicitly (and from the exception handler) under `session_replication_role = replica`;
+drain `dblink_get_result` twice even when the first call raises, or the next `dblink_send_query`
+fails with "another command is already in progress"; call `pg_stat_clear_snapshot()` on every
+poll, since `pg_stat_activity` is a per-transaction snapshot.
+
+**Recipe (`pg` runner).**
+1. **Guard.** `import "./lib/load-env"` and `requireLocalOrExplicitProd(...)` before any client (`guard-coverage.test.ts`), PLUS a hard refusal of any non-localhost DB URL — the runner commits rows, so there is no `--prod`. Add an npm script `<name>:concurrency-proof`.
+2. **One run at a time.** `select pg_try_advisory_lock(hashtext('<name>:concurrency-proof'))` on the monitor connection; exit when it isn't granted, since the startup sweep would pull a concurrent run's live rows out from under it.
+3. **Committed, tagged fixtures.** Two connections cannot see each other's uncommitted rows, so seed and COMMIT. Tag every row per run (`pcc-<hex>`), sweep every stale tag and stale control schema before seeding, delete in `finally` and then count — a tagged row left behind is a FAIL. `process.once("SIGINT", …)` runs the same teardown. Mint your own staff, patients and visits: the local stack is SHARED — never `db reset` it while other sessions are using it (the workflow's replay step belongs on a stack nobody else is using), never touch another session's fixtures (the `Bsqfixture` rows are reseeded mid-run and their staff role-flipped by another session).
+4. **Actors.** One `pg` `Client` per session: `begin`, `select set_config('request.jwt.claims', '{"sub":…,"role":"authenticated"}', true)`, `set local role authenticated` (or `service_role`). Issue each write exactly as the app does — the RPC, or the Server Action's UPDATE text with its WHERE guards copied verbatim.
+5. **Force the interleaving; never hope for it.** Hold one side's row locks (its open transaction, or a separate `for update` holder that lines several actors up and releases them at once), start the other side, then poll `pg_locks` for that backend: `pid = $1 and not granted and locktype in ('transactionid', 'tuple')`. `mustWait` FAILS the scenario if the wait is not seen within ~5s, so it can never degrade silently into a sequential run; `mustNotWait` fails if a call that should answer at once blocks. **Count only row-lock waits** — a relation-level wait from another session's DDL on the shared stack would fake a forced interleaving (the dblink precedent's `wait_event_type = 'Lock'` counts any lock; prefer the `pg_locks` form).
+6. **Racers end their own transaction the moment their own call answers** — commit on success, roll back on refusal, the way PostgREST ends each RPC (the runner's `andEnd`). Never await the other racer's result before ending your own: the loser is queued behind the winner's still-open transaction.
+7. **Assert committed state from a separate monitor connection:** exactly one outcome (one winner, the loser refused with the expected P-code), no half-applied set, no duplicate side-effect rows (journal entries, audit rows, allocations). Free-race rounds (timing-based, `N` from an env var) assert the invariant only.
+8. **Match prod's plan — lock order IS the plan's scan order.** The local stack holds a handful of rows and seq-scans; prod picks an index. Read-only EXPLAIN the exact statement on prod through MCP `execute_sql` (`explain (costs off) …` — never `analyze` a write), then run every scenario twice: the local default and a mode whose `set local` GUCs (`enable_seqscan = off`, `enable_bitmapscan = off`, …) force prod's shape. Print both plans at the start. **An array-driven plan** (an `unnest` Function Scan as the nested loop's outer side) locks rows in the caller's array order, so two callers holding opposite orders deadlock (`40P01`) — still atomic, but the user gets a retry message instead of the P-code. Opposite-order scenarios re-check the plan shape first and fail loudly when it changes. If the design accepts a cycle on purpose (0183), prove it: at least one side observed waiting on a lock (the cycle formed), exactly one aborts with `40P01`, re-running the loser converges, and `pg-errors.ts` translates `40P01`.
+9. **`--control`: prove the proof can fail.** Copy each function under test with `pg_get_functiondef`, rename it into a throwaway schema (`<prefix>_ctl_<hex>`), delete one guard per mutant by string replacement (throw if the `from` text is missing, so a rewritten function can't make the mutant a silent no-op), grant `usage` + `execute` to `authenticated, service_role`, rerun the forced scenarios against the copy, and pass only when the named scenarios FAIL in every plan mode. **Never create a mutant in `public`** — other sessions call the real functions throughout. Drop the schema in `finally`; sweep stale ones at startup. A trigger body can't be isolated this way (a trigger on a `public` table fires for every session), so mutate the functions the scenarios call directly and say in the header which guards the control rounds do not cover.
+10. **Report** `N/M passed`, exit 1 on any failure, and put the command, the count and each mode's plan in the PR.
+
+If the proof finds a real bug, fix it forward in a NEW migration (claimed number, `npm run claim -- migration`), re-run smoke + tsc + lint + vitest and the proof, then follow the normal prod workflow above. If it finds nothing, ship the runner alone — a test-only PR.
 
 ## `format('%s', <boolean>)` renders `t`/`f`
 

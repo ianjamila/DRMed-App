@@ -67,6 +67,9 @@ const HARDENED: Record<string, string> = {
   // inclusive view, and the dedup view recreated with the active predicate.
   v_patients_directory_admin: "0167",
   v_patient_dedup_candidate_pairs: "0167",
+  // 0194: the lab queue / results archive search text. Security invoker from
+  // birth; registered so a later redefinition cannot drop it.
+  lab_search_rows: "0194",
 };
 
 const migrations = readdirSync(MIGRATIONS_DIR)
@@ -96,6 +99,7 @@ describe("hardened views keep security_invoker", () => {
     // A reminder to extend HARDENED in the same migration that hardens a view —
     // a view that is hardened but not listed here is guarded by nothing.
     expect(Object.keys(HARDENED).sort()).toEqual([
+      "lab_search_rows",
       "v_daily_revenue_by_service",
       "v_hmo_ar_aging",
       "v_hmo_provider_summary",
