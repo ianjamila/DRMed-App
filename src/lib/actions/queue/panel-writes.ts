@@ -349,12 +349,18 @@ export async function restorePanelMembers(
   // prior reason, patient) is its deleted state, which the restore clears.
   // The members ARE deleted (hence no deleted_at filter), but their visit must
   // be live: restore_panel_members refuses a deleted visit, so nothing to audit.
-  const { data: before } = await admin
+  const { data: before, error: readError } = await admin
     .from("test_requests")
     .select("id, deleted_at, delete_reason, visits!inner ( patient_id ), services ( name, code )")
     .in("id", ids)
     .eq("visit_id", args.visitId)
     .is("visits.deleted_at", null);
+  // The read only enriches the audit rows; a failed read must not block the
+  // restore (which commits all-or-nothing on its own) — log it and carry on
+  // with null enrichment.
+  if (readError) {
+    console.error("restorePanelMembers pre-read failed", { visitId: args.visitId, error: readError });
+  }
   const infoOf = new Map((before ?? []).map((r) => [r.id, r]));
 
   const { error } = await withLifecycleRetry(() =>

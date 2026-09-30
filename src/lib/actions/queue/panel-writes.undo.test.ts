@@ -148,3 +148,93 @@ describe("exact timestamp pass-through (microseconds)", () => {
     expect(db.rpcCalls[0]!.args.p_started_at).toEqual([MICRO]);
   });
 });
+
+describe("audit shape and retry pins", () => {
+  const T = "2026-09-30T01:00:00.000Z";
+  const extra = { via: "bulk_undo", undo_of_batch: "b", bulk_batch_id: "u", panel_key: "k" };
+
+  it("reclaim audit metadata carries the visit, from/to, grouped and the batch extras", async () => {
+    db.hooks.rpc = () => ({ data: 1, error: null });
+    await reclaimPanelMembers(session, db.client() as never, {
+      members: [{ id: "m1", holder: "tech-a", startedAt: null }],
+      visitIdOf: () => "visit-1",
+      auditExtra: extra,
+    });
+    const meta = (h.audit.mock.calls[0]![0] as Record<string, unknown>).metadata;
+    expect(meta).toMatchObject({ visit_id: "visit-1", from: null, to: "tech-a", grouped: true, ...extra });
+  });
+
+  it("restore audit metadata marks a multi-member restore bulk and keeps prior_deleted_at", async () => {
+    db.seed("test_requests", [
+      tr("m1", { deleted_at: "2026-09-30T01:00:00+00:00" }),
+      tr("m2", { deleted_at: "2026-09-30T01:00:00+00:00" }),
+    ]);
+    db.hooks.rpc = () => ({ data: 2, error: null });
+    await restorePanelMembers(session, db.client() as never, {
+      visitId: "visit-1", members: [{ id: "m1", deletedAt: T }, { id: "m2", deletedAt: T }], reason: "x",
+    });
+    for (const c of h.audit.mock.calls) {
+      expect((c[0] as Record<string, unknown>).metadata).toMatchObject({
+        bulk: true, prior_deleted_at: "2026-09-30T01:00:00+00:00",
+      });
+    }
+    // A single member is not "bulk".
+    h.audit.mockClear();
+    await restorePanelMembers(session, db.client() as never, {
+      visitId: "visit-1", members: [{ id: "m1", deletedAt: T }], reason: "x",
+    });
+    expect((h.audit.mock.calls[0]![0] as Record<string, unknown>).metadata).toMatchObject({ bulk: false });
+  });
+
+  it("restore retries once on a lost lifecycle race (P0072), never on P0082", async () => {
+    db.seed("test_requests", [tr("m1", { deleted_at: T })]);
+    let n = 0;
+    db.hooks.rpc = () => (++n === 1 ? { data: null, error: { code: "P0072", message: "moved" } } : { data: 1, error: null });
+    const ok = await restorePanelMembers(session, db.client() as never, {
+      visitId: "visit-1", members: [{ id: "m1", deletedAt: T }], reason: "x",
+    });
+    expect(ok).toEqual({ ok: true, restoredIds: ["m1"] });
+    expect(n).toBe(2);
+
+    n = 0;
+    db.hooks.rpc = () => (++n, { data: null, error: P0082 });
+    const refused = await restorePanelMembers(session, db.client() as never, {
+      visitId: "visit-1", members: [{ id: "m1", deletedAt: T }], reason: "x",
+    });
+    expect(refused.ok).toBe(false);
+    expect(n).toBe(1);
+  });
+
+  it("the restore pre-read only sees members on a live visit", async () => {
+    db.seed("test_requests", [tr("m1", { deleted_at: T })]);
+    db.hooks.rpc = () => ({ data: 1, error: null });
+    await restorePanelMembers(session, db.client() as never, {
+      visitId: "visit-1", members: [{ id: "m1", deletedAt: T }], reason: "x",
+    });
+    const [read] = db.selects("test_requests");
+    expect(read!.filters).toContainEqual(["is", ["visits.deleted_at", null]]);
+    expect(read!.filters).toContainEqual(["eq", ["visit_id", "visit-1"]]);
+  });
+
+  it("a failed pre-read is logged and does not block the restore (audit rows get null enrichment)", async () => {
+    db.seed("test_requests", [tr("m1", { deleted_at: T })]);
+    db.hooks.readError = () => ({ code: "XX000", message: "boom" });
+    db.hooks.rpc = () => ({ data: 1, error: null });
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const r = await restorePanelMembers(session, db.client() as never, {
+      visitId: "visit-1", members: [{ id: "m1", deletedAt: T }], reason: "x",
+    });
+    expect(r).toEqual({ ok: true, restoredIds: ["m1"] });
+    expect(db.rpcCalls).toHaveLength(1);
+    expect(spy).toHaveBeenCalledWith(
+      "restorePanelMembers pre-read failed",
+      { visitId: "visit-1", error: { code: "XX000", message: "boom" } },
+    );
+    const a = h.audit.mock.calls[0]![0] as Record<string, unknown>;
+    expect(a.patient_id).toBeNull();
+    expect(a.metadata).toMatchObject({
+      service_name: null, service_code: null, prior_delete_reason: null, prior_deleted_at: T,
+    });
+    spy.mockRestore();
+  });
+});
