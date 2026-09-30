@@ -62,3 +62,21 @@ export async function getConsentHistory(patientId: string): Promise<ConsentHisto
     });
   return (data ?? []) as ConsentHistoryEvent[];
 }
+
+/**
+ * consent_current for many patients in one read (the lab queue lists up to
+ * 100 rows across visits). Admin client, same as getPatientConsentState. A
+ * missing patient reads as false. Display/preflight only — the DB trigger
+ * (0088) is the guard at release time.
+ */
+export async function getConsentCurrentByPatient(
+  patientIds: readonly string[],
+): Promise<Map<string, boolean>> {
+  const ids = Array.from(new Set(patientIds));
+  const out = new Map<string, boolean>();
+  if (ids.length === 0) return out;
+  const admin = createAdminClient();
+  const { data } = await admin.from("patients").select("id, consent_current").in("id", ids);
+  for (const r of data ?? []) out.set(r.id, !!r.consent_current);
+  return out;
+}
