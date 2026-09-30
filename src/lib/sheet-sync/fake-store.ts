@@ -52,6 +52,8 @@ export class FakeStore implements SheetSyncStore {
   // and applyCustomerOps's apply (run.test.ts's review-fix-B coverage).
   protected patients: PatientRecord[];
   private deletedPatients: DeletedPatientEvidence[];
+  /** this run's own-fill versions (S2) — the fake store is one run. */
+  private ownFills = new Map<string, number>();
   private links: Map<string, LinkRecord>;
   private facts: Map<string, FactsRecord>;
   private aliases: Map<string, string>;
@@ -126,10 +128,11 @@ export class FakeStore implements SheetSyncStore {
     // counted `created` for every create op regardless of whether it was
     // actually skipped as a duplicate — review fix B's test coverage would
     // have failed silently against that).
-    const after = applyOps(ops, { patients: this.patients, links: this.links, facts: this.facts });
+    const after = applyOps(ops, { patients: this.patients, links: this.links, facts: this.facts, ownFills: this.ownFills });
     this.patients = after.patients;
     this.links = after.links;
     this.facts = after.facts;
+    this.ownFills = after.ownFills ?? this.ownFills;
     return {
       created: after.created, counts: after.counts,
       skippedCreateKeys: after.skippedCreateKeys, stalePatientIds: after.stalePatientIds,

@@ -95,8 +95,9 @@ export interface ChannelTableRow {
   unconfirmed: number;
   total: number;
   share: number;
-  previousTotal: number;
-  change: number;
+  /** null when the previous period starts before Patient Sources' first date (no comparison). */
+  previousTotal: number | null;
+  change: number | null;
 }
 
 function totalsByChannel(rows: readonly SeriesRow[]): Map<string, { confirmed: number; unconfirmed: number }> {
@@ -111,9 +112,9 @@ function totalsByChannel(rows: readonly SeriesRow[]): Map<string, { confirmed: n
 }
 
 /** `current` / `previous` are 'period'-grain rows (one bucket each). */
-export function channelTable(current: readonly SeriesRow[], previous: readonly SeriesRow[]): ChannelTableRow[] {
+export function channelTable(current: readonly SeriesRow[], previous: readonly SeriesRow[] | null): ChannelTableRow[] {
   const cur = totalsByChannel(current);
-  const prev = totalsByChannel(previous);
+  const prev = totalsByChannel(previous ?? []);
   const grand = [...cur.values()].reduce((s, t) => s + t.confirmed + t.unconfirmed, 0);
   const channels = new Set([...cur.keys(), ...prev.keys()]);
   return [...channels]
@@ -121,7 +122,7 @@ export function channelTable(current: readonly SeriesRow[], previous: readonly S
       const c = cur.get(channel) ?? { confirmed: 0, unconfirmed: 0 };
       const p = prev.get(channel) ?? { confirmed: 0, unconfirmed: 0 };
       const total = c.confirmed + c.unconfirmed;
-      const previousTotal = p.confirmed + p.unconfirmed;
+      const previousTotal = previous === null ? null : p.confirmed + p.unconfirmed;
       return {
         channel,
         label: channelLabel(channel),
@@ -130,7 +131,7 @@ export function channelTable(current: readonly SeriesRow[], previous: readonly S
         total,
         share: grand > 0 ? total / grand : 0,
         previousTotal,
-        change: total - previousTotal,
+        change: previousTotal === null ? null : total - previousTotal,
       };
     })
     .sort((a, b) => b.total - a.total || a.label.localeCompare(b.label) || a.channel.localeCompare(b.channel));
@@ -218,7 +219,7 @@ export function sheetBanner(
     return "Sheet data is not included yet — the sheet sync has not loaded anything. Showing app records only.";
   }
   if (s.last_run_status === "partial" || s.last_run_status === "failed") {
-    return "The last sheet sync did not finish every tab — some sheet data may be out of date. Check “Sheet last updated” below and Admin Tools › Sheet Sync.";
+    return "The last sheet sync did not finish every tab — some sheet data may be out of date. Check “Latest service date in the sheet” below and Admin Tools › Sheet Sync.";
   }
   if (s.sync_paused) {
     return "The sheet sync is paused — sheet data is included up to the dates below and is not being refreshed.";
@@ -260,4 +261,21 @@ export function seriesCsvRows(
     ["Period start", "Channel", "Confirmed", "Unconfirmed"],
     ...series.map((r) => [r.bucket_start, channelLabel(r.channel), Number(r.confirmed), Number(r.unconfirmed)]),
   ];
+}
+
+/**
+ * The "New patients" tile on Booking Sources. Patient Sources refuses a period
+ * that starts before PATIENT_SOURCES_MIN_DATE (0193), so that page skips the
+ * summary call (`summary === null`) and says so instead of showing an error.
+ */
+export function newPatientsTile(
+  summary: ReportResult<SummaryRow> | null,
+): { value: string; error: boolean; linked: boolean } {
+  if (summary === null) return { value: "Not available before Dec 2023", error: false, linked: false };
+  if (!summary.ok) return { value: "—", error: true, linked: true };
+  return {
+    value: `${summary.data.new_confirmed.toLocaleString("en-PH")} confirmed · ${summary.data.new_unconfirmed.toLocaleString("en-PH")} unconfirmed`,
+    error: false,
+    linked: true,
+  };
 }

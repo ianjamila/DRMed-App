@@ -3,7 +3,7 @@ import { requireAdminStaff } from "@/lib/auth/require-admin";
 import { createClient } from "@/lib/supabase/server";
 import { todayManilaISODate } from "@/lib/dates/manila";
 import { reportCsvResponse } from "@/lib/reports/csv-response";
-import { resolvePeriod } from "@/lib/marketing/period";
+import { PATIENT_SOURCES_MIN_DATE, resolvePeriod } from "@/lib/marketing/period";
 import { parseGrain, parseMode, seriesCsvRows } from "@/lib/marketing/patient-sources";
 import { loadPatientSourcesSeries, loadPatientSourcesSummary } from "@/lib/marketing/patient-sources.server";
 
@@ -15,7 +15,9 @@ export async function GET(req: NextRequest) {
   const staff = await requireAdminStaff();
   const sp = req.nextUrl.searchParams;
   const todayISO = todayManilaISODate();
-  const period = resolvePeriod({ from: sp.get("from") ?? undefined, to: sp.get("to") ?? undefined }, todayISO);
+  const period = resolvePeriod({ from: sp.get("from") ?? undefined, to: sp.get("to") ?? undefined }, todayISO, { min: PATIENT_SOURCES_MIN_DATE });
+  // An unusable period is a 400, never a silent export of this month.
+  if (period.problem) return new Response(period.problem, { status: 400 });
   const mode = parseMode(sp.get("mode") ?? undefined);
   const grain = parseGrain(sp.get("grain") ?? undefined);
   const supabase = await createClient();
