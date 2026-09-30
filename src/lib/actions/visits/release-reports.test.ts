@@ -30,7 +30,7 @@ vi.mock("@/lib/observability/report-error", () => ({
 
 import { RELEASE_BLOCKED_CONSENT, RELEASE_REFUSAL_PATIENT_INACTIVE } from "@/lib/visits/release-messages";
 import { REPORT_REFUSAL } from "@/lib/queue/report-release-scope";
-import { makeFakeReleaseDb, type FakeLink, type FakeTestRow } from "./fake-release-db";
+import { FAKE_RELEASED_AT, makeFakeReleaseDb, type FakeLink, type FakeTestRow } from "./fake-release-db";
 import {
   COULDNT_CONFIRM_RELEASE,
   OUTSIDE_SECTIONS_REASON,
@@ -40,7 +40,7 @@ import {
 } from "./release-reports";
 
 const session = { user_id: "u1", role: "medtech" } as never;
-function run(rows: FakeTestRow[], links: FakeLink[], selectedIds: string[], prep?: (f: ReturnType<typeof makeFakeReleaseDb>) => void) {
+function run(rows: FakeTestRow[], links: FakeLink[], selectedIds: string[], prep?: (f: ReturnType<typeof makeFakeReleaseDb>) => void, bulkBatchId?: string) {
   const fake = makeFakeReleaseDb({ rows, links });
   prep?.(fake);
   // Started a microtask later so a test can arm failures/overrides on `fake` after run() returns.
@@ -52,6 +52,7 @@ function run(rows: FakeTestRow[], links: FakeLink[], selectedIds: string[], prep
       selectedIds,
       medium: "email",
       auditMeta: { source: "queue" },
+      bulkBatchId,
     }),
   );
   return { fake, out };
@@ -117,11 +118,41 @@ describe("releaseVisitSelection", () => {
         action: "test_request.released",
         resource_type: "test_request",
         resource_id: a.resource_id,
-        metadata: { visit_id: "v1", release_medium: "email", bulk: true, selection: true, source: "queue" },
+        metadata: { visit_id: "v1", release_medium: "email", bulk: true, selection: true, source: "queue", released_at: FAKE_RELEASED_AT },
         ip_address: "1.2.3.4",
         user_agent: "ua",
       });
     }
+  });
+
+  it("each audit row carries the exact released_at string the RPC returned, unchanged (never through a JS Date)", async () => {
+    const stamp = "2026-09-30T07:00:00.987654+00:00";
+    const { fake, out } = run([{ id: "a" }, { id: "b" }], [], ["a", "b"]);
+    fake.overrideNextRpc("release_visit_results", {
+      released: [
+        { id: "a", name: "A", report_id: null, selected: true, released_at: stamp },
+        { id: "b", name: "B", report_id: null, selected: true, released_at: "2026-09-30T07:00:01.000001+00:00" },
+      ],
+      refused: [],
+    });
+    await out;
+    const at = (id: string) => (fx.audits.find((a) => a.resource_id === id)!.metadata as { released_at: string }).released_at;
+    expect(at("a")).toBe(stamp);
+    expect(at("b")).toBe("2026-09-30T07:00:01.000001+00:00");
+  });
+
+  it("stamps bulk_batch_id on every released row's audit (report-mates too) and passes it to the notice", async () => {
+    const { out } = run([{ id: "a" }, { id: "b" }, { id: "c" }], report("r1", "a", "b"), ["a", "c"], undefined, "batch-1");
+    await out;
+    expect(fx.audits.map((a) => a.resource_id)).toEqual(["a", "b", "c"]);
+    for (const a of fx.audits) expect(a.metadata).toMatchObject({ bulk_batch_id: "batch-1", source: "queue" });
+    expect(fx.notified).toEqual([expect.objectContaining({ bulkBatchId: "batch-1" })]);
+  });
+
+  it("without a bulkBatchId the audit rows carry no bulk_batch_id", async () => {
+    const { out } = run([{ id: "a" }], [], ["a"]);
+    await out;
+    expect(fx.audits[0].metadata).not.toHaveProperty("bulk_batch_id");
   });
 
   it.each([
@@ -160,7 +191,7 @@ describe("releaseVisitSelection", () => {
   it("a selected id the result lists nowhere is skipped as raced (never silently dropped)", async () => {
     const { fake, out } = run([{ id: "a" }, { id: "b" }], [], ["a", "b"]);
     fake.overrideNextRpc("release_visit_results", {
-      released: [{ id: "a", name: "A", report_id: null, selected: true }],
+      released: [{ id: "a", name: "A", report_id: null, selected: true, released_at: FAKE_RELEASED_AT }],
       refused: [],
     });
     const o = await out;
@@ -237,6 +268,8 @@ describe("releaseVisitSelection", () => {
 
   it.each([
     ["not an object", "nope"],
+    ["released row without released_at", { released: [{ id: "a", name: "A", report_id: null, selected: true }], refused: [] }],
+    ["released row with a non-string released_at", { released: [{ id: "a", name: "A", report_id: null, selected: true, released_at: 1759215600000 }], refused: [] }],
     ["missing refused", { released: [] }],
     ["released row without a name", { released: [{ id: "a", report_id: null, selected: true }], refused: [] }],
     ["refused row with a non-numeric count", { released: [], refused: [{ id: "a", code: "not_ready", report_id: null, count: "x" }] }],
@@ -262,6 +295,15 @@ describe("releaseVisitSelection", () => {
 });
 
 describe("notifyReleased", () => {
+  it("passes bulkBatchId to the single and the bulk notice", async () => {
+    await notifyReleased("v1", [{ id: "a", name: "A" }], "email", "b1");
+    await notifyReleased("v1", [{ id: "a", name: "A" }, { id: "b", name: "B" }], "email", "b2");
+    expect(fx.notified).toEqual([
+      expect.objectContaining({ testRequestId: "a", bulkBatchId: "b1" }),
+      expect.objectContaining({ testRequestIds: ["a", "b"], bulkBatchId: "b2" }),
+    ]);
+  });
+
   it("never throws: a failing notice is reported instead", async () => {
     fx.notifyThrows = true;
     await expect(notifyReleased("v1", [{ id: "a", name: "A" }], "email")).resolves.toBeUndefined();

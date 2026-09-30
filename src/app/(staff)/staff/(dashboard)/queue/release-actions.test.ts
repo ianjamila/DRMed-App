@@ -44,7 +44,7 @@ import { RELEASE_REFUSAL } from "@/lib/queue/release-eligibility";
 import { REPORT_REFUSAL } from "@/lib/queue/report-release-scope";
 import { COULDNT_CONFIRM_RELEASE, RACED_REASON } from "@/lib/actions/visits/release-reports";
 import { RELEASE_REFUSAL_PATIENT_INACTIVE } from "@/lib/visits/release-messages";
-import { makeFakeReleaseDb, type FakeLink, type FakeTestRow } from "@/lib/actions/visits/fake-release-db";
+import { FAKE_RELEASED_AT, makeFakeReleaseDb, type FakeLink, type FakeTestRow } from "@/lib/actions/visits/fake-release-db";
 
 const { releaseTestsAction } = await import("./actions");
 
@@ -303,6 +303,30 @@ describe("releaseTestsAction — fail closed", () => {
     expect(fx.notifyOne.length + fx.notifyBulk.length).toBe(0);
     expect(fx.alerts).toHaveLength(0);
     expect(fx.audits).toHaveLength(0);
+  });
+
+  it("a released row without released_at is malformed: nothing announced or audited, every id skipped", async () => {
+    const fake = setup([{ id: A }], []);
+    fake.overrideNextRpc("release_visit_results", {
+      released: [{ id: A, name: "A", report_id: null, selected: true }],
+      refused: [],
+    });
+    const res = await releaseTestsAction({ testRequestIds: [A], medium: "email" });
+    expect(res).toMatchObject({ ok: true, changedIds: [], skipped: [{ id: A, reason: COULDNT_CONFIRM_RELEASE }] });
+    expect(fx.notifyOne.length + fx.notifyBulk.length).toBe(0);
+    expect(fx.alerts).toHaveLength(0);
+    expect(fx.audits).toHaveLength(0);
+  });
+
+  it("every release audit row carries the RPC's exact released_at; the queue mints no Undo batch", async () => {
+    setup([{ id: A }, { id: B }], report("r1", A, B));
+    await releaseTestsAction({ testRequestIds: [A], medium: "email" });
+    expect(fx.audits.map((a) => a.resource_id).sort()).toEqual([A, B]);
+    for (const a of fx.audits) {
+      expect(a.metadata).toMatchObject({ released_at: FAKE_RELEASED_AT });
+      expect(a.metadata).not.toHaveProperty("bulk_batch_id");
+    }
+    expect((fx.notifyBulk[0] as { bulkBatchId?: string }).bulkBatchId).toBeUndefined();
   });
 
   it("plain rows are still announced when no report is involved", async () => {

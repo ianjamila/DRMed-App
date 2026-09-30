@@ -225,11 +225,12 @@ async function begin(a: Actor, mode: Mode): Promise<void> {
 type Out<T> = { ok: true; v: T } | { ok: false; code: string; message: string };
 
 interface ReleaseJson {
-  released: Array<{ id: string; name: string; report_id: string | null; selected: boolean }>;
+  released: Array<{ id: string; name: string; report_id: string | null; selected: boolean; released_at: string }>;
   refused: Array<{ id: string; code: string; report_id: string | null; count: number }>;
 }
 interface UndoJson {
   undone: Array<{ id: string; prior_release_medium: string | null; report_id: string | null }>;
+  skipped: Array<{ id: string; code: string }>;
 }
 
 async function settle<T>(p: Promise<QueryResult>, pick: (r: QueryResult) => T): Promise<Out<T>> {
@@ -251,9 +252,14 @@ function release(a: Actor, visit: string, ids: readonly string[]): Promise<Out<R
 }
 
 // undo release -> rpc("undo_visit_release")
-function undo(a: Actor, visit: string, ids: readonly string[]): Promise<Out<UndoJson>> {
+// `expected` = the batch Undo map (id -> released_at of the release it made).
+function undo(a: Actor, visit: string, ids: readonly string[], expected?: Record<string, string>): Promise<Out<UndoJson>> {
   return settle(
-    a.c.query(`select ${fnSchema}.undo_visit_release($1::uuid, $2::uuid[]) as r`, [visit, ids]),
+    a.c.query(`select ${fnSchema}.undo_visit_release($1::uuid, $2::uuid[], null, $3::jsonb) as r`, [
+      visit,
+      ids,
+      expected ? JSON.stringify(expected) : null,
+    ]),
     (r) => r.rows[0].r as UndoJson,
   );
 }
@@ -747,6 +753,101 @@ async function forcedScenarios(mode: Mode): Promise<void> {
       { posted: 1, reversed: 1 },
       { posted: 1, reversed: 0 },
       { posted: 1, reversed: 0 },
+    ]);
+  });
+
+  // --- B3-B5. the 10-minute batch Undo (p_expected_released_at) ----------------
+  const releasedMap = (v: ReleaseJson) => Object.fromEntries(v.released.map((r) => [r.id, r.released_at]));
+  const expectAllSkipped = (label: string, o: Out<UndoJson>, ids: readonly string[]) => {
+    const v = expectOk(label, o);
+    if (v.undone.length !== 0) throw new Fail(`${label}: expected nothing undone, got ${v.undone.length}`);
+    const got = v.skipped.map((x) => `${x.id}:${x.code}`).sort().join(",");
+    const want = ids.map((id) => `${id}:changed_since`).sort().join(",");
+    if (got !== want) throw new Fail(`${label}: expected skipped [${want}], got [${got}]`);
+  };
+
+  await sc("B3", "batch Undo waits behind a plain undo -> answers undone=[] , all three skipped changed_since", async () => {
+    const f = await mkFix({ states: ["ready", "ready", "ready"] });
+    const m = await actor("M1", fx.med1);
+    const adm = await actor("A", fx.admin1);
+    await begin(m, mode);
+    const map = releasedMap(expectOk("M1 release", await release(m, f.visit, f.ids)));
+    await m.c.query("commit");
+    await begin(adm, mode);
+    if (expectOk("A undo", await undo(adm, f.visit, [f.ids[0]])).undone.length !== 3) throw new Fail("A undo: expected 3 undone");
+    await begin(m, mode);
+    const pb = undo(m, f.visit, f.ids, map);
+    await mustWait(m, "the batch undo queues behind the plain undo");
+    await adm.c.query("commit");
+    expectAllSkipped("M1 batch undo", await pb, f.ids);
+    await m.c.query("commit");
+    await expectState("after", f.ids, ["rdy:-", "rdy:-", "rdy:-"]);
+    await expectUniform("uniform", f.ids);
+  });
+
+  await sc("B4", "batch Undo waits behind undo + re-release -> restores nothing, report stays wholly released", async () => {
+    const f = await mkFix({ states: ["ready", "ready", "ready"] });
+    const m = await actor("M1", fx.med1);
+    const adm = await actor("A", fx.admin1);
+    await begin(m, mode);
+    const map = releasedMap(expectOk("M1 release", await release(m, f.visit, f.ids)));
+    await m.c.query("commit");
+    await begin(adm, mode);
+    expectOk("A undo", await undo(adm, f.visit, [f.ids[0]]));
+    await adm.c.query("commit");
+    await begin(adm, mode);
+    expectRelease("A re-release", await release(adm, f.visit, f.ids), { released: 3 });
+    await begin(m, mode);
+    const pb = undo(m, f.visit, f.ids, map);
+    await mustWait(m, "the batch undo queues behind the re-release");
+    await adm.c.query("commit");
+    expectAllSkipped("M1 batch undo", await pb, f.ids);
+    await m.c.query("commit");
+    await expectState("after", f.ids, ["rel:A", "rel:A", "rel:A"]);
+    await expectJes("journal", f.ids, [
+      { posted: 1, reversed: 1 },
+      { posted: 1, reversed: 1 },
+      { posted: 1, reversed: 1 },
+    ]);
+  });
+
+  // The report-level check is what keeps a partly-changed report whole: the
+  // per-line released_at check alone would still undo the members that match.
+  await sc("B4b", "batch Undo when ONE member no longer carries its release -> whole report skipped, none undone", async () => {
+    const f = await mkFix({ states: ["ready", "ready", "ready"] });
+    const m = await actor("M1", fx.med1);
+    await begin(m, mode);
+    const map = releasedMap(expectOk("M1 release", await release(m, f.visit, f.ids)));
+    await m.c.query("commit");
+    await monitor.query("update public.test_requests set released_at = released_at + interval '1 second' where id = $1", [f.ids[2]]);
+    await begin(m, mode);
+    expectAllSkipped("M1 batch undo", await undo(m, f.visit, f.ids, map), f.ids);
+    await m.c.query("commit");
+    await expectState("after", f.ids, ["rel:M1", "rel:M1", "rel:M1"]);
+    await expectJes("journal", f.ids, three);
+  });
+
+  await sc("B5", "batch Undo (exact map) holds -> release WAITS -> releases all three again, one entry each", async () => {
+    const f = await mkFix({ states: ["ready", "ready", "ready"] });
+    const m = await actor("M1", fx.med1);
+    const m2 = await actor("M2", fx.med2);
+    await begin(m, mode);
+    const map = releasedMap(expectOk("M1 release", await release(m, f.visit, f.ids)));
+    await m.c.query("commit");
+    await begin(m, mode);
+    const u = expectOk("M1 batch undo", await undo(m, f.visit, f.ids, map));
+    if (u.undone.length !== 3 || u.skipped.length !== 0) throw new Fail(`batch undo: expected 3 undone / 0 skipped, got ${u.undone.length} / ${u.skipped.length}`);
+    await begin(m2, mode);
+    const pr = release(m2, f.visit, f.ids);
+    await mustWait(m2, "the release queues behind the batch undo");
+    await m.c.query("commit");
+    expectRelease("M2 release", await pr, { released: 3 });
+    await m2.c.query("commit");
+    await expectState("after", f.ids, ["rel:M2", "rel:M2", "rel:M2"]);
+    await expectJes("journal", f.ids, [
+      { posted: 1, reversed: 1 },
+      { posted: 1, reversed: 1 },
+      { posted: 1, reversed: 1 },
     ]);
   });
 
@@ -1305,13 +1406,21 @@ const MUTANTS: Mutant[] = [
     to: "and false);",
     mustFail: ["E1"],
   },
+  {
+    key: "M5",
+    what: "batch Undo ignores released_at (report check drops the exact-release condition; the per-line check still guards a fully changed report, so B4b is the discriminator)",
+    fn: "undo_visit_release",
+    from: "and tr.released_at = (p_expected_released_at ->> m::text)::timestamptz)) then",
+    to: "and true)) then",
+    mustFail: ["B4b"],
+  },
 ];
 
 const FN_SIGS: Record<FnName, string> = {
   release_actor: "uuid",
   release_report_locks: "uuid, uuid[], text",
   release_visit_results: "uuid, uuid[], text, uuid",
-  undo_visit_release: "uuid, uuid[], uuid",
+  undo_visit_release: "uuid, uuid[], uuid, jsonb",
 };
 
 async function controlRounds(): Promise<void> {

@@ -41,7 +41,7 @@ vi.mock("@/lib/notifications/release-staff-alert", () => ({
 import { RELEASE_REFUSAL } from "@/lib/queue/release-eligibility";
 import { REPORT_REFUSAL } from "@/lib/queue/report-release-scope";
 import { COULDNT_CONFIRM_RELEASE } from "@/lib/actions/visits/release-reports";
-import { makeFakeReleaseDb, type FakeLink, type FakeTestRow } from "@/lib/actions/visits/fake-release-db";
+import { FAKE_RELEASED_AT, makeFakeReleaseDb, type FakeLink, type FakeTestRow } from "@/lib/actions/visits/fake-release-db";
 
 const { releaseTestAction, releaseSelectedAction, releaseAllReadyComponentsAction, undoReleaseSelectedAction } = await import("./actions");
 
@@ -302,6 +302,8 @@ describe("releaseSelectedAction — Undo handle (bulk-select follow-ups)", () =>
       expect(meta.visit_id).toBe("v1");
       // The exact value written to the row — what Undo predicates its revert on.
       expect(meta.released_at).toBe(fake.rows.find((r) => r.id === e.resource_id)!.releasedAt);
+      // ...at full microsecond precision, exactly as the RPC returned it.
+      expect(meta.released_at).toBe(FAKE_RELEASED_AT);
     }
     // The patient notice carries the batch id too, so its audit row is not
     // read as a later, unrelated change that blocks the Undo.
@@ -317,8 +319,9 @@ describe("releaseSelectedAction — Undo handle (bulk-select follow-ups)", () =>
 
     seed();
     // A sample visit: notify-released skips the message (SAMPLE_SKIP_REASON).
-    const wrapped = fx.db as { from: (t: string) => Record<string, unknown> };
+    const wrapped = fx.db as { from: (t: string) => Record<string, unknown>; rpc: unknown };
     fx.db = {
+      rpc: wrapped.rpc,
       from(table: string) {
         const q = wrapped.from(table);
         if (table === "visits") q.maybeSingle = async () => ({ data: { deleted_at: null, is_sample: true }, error: null });
@@ -452,7 +455,7 @@ describe("undoReleaseSelectedAction — undo_visit_release", () => {
     const fake = releasedSeed();
     await undoReleaseSelectedAction("v1", ["x"], "  wrong patient ");
     expect(undoCalls(fake)).toEqual([
-      { name: "undo_visit_release", args: { p_visit_id: "v1", p_test_request_ids: ["x"], p_actor: "u1" } },
+      { name: "undo_visit_release", args: { p_visit_id: "v1", p_test_request_ids: ["x"], p_actor: "u1", p_expected_released_at: null } },
     ]);
   });
 
@@ -524,10 +527,20 @@ describe("undoReleaseSelectedAction — undo_visit_release", () => {
 
   it("an empty undo list reads as nothing to unrelease", async () => {
     const fake = releasedSeed();
-    fake.overrideNextRpc("undo_visit_release", { undone: [] });
+    fake.overrideNextRpc("undo_visit_release", { undone: [], skipped: [] });
     expect(await undoReleaseSelectedAction("v1", ["x"], "r")).toEqual({
       ok: false,
       error: "None of the selected tests can be unreleased.",
+    });
+    expect(fx.audits).toEqual([]);
+  });
+
+  it("a result without the always-present skipped list is malformed, not guessed at", async () => {
+    const fake = releasedSeed();
+    fake.overrideNextRpc("undo_visit_release", { undone: [] });
+    expect(await undoReleaseSelectedAction("v1", ["x"], "r")).toEqual({
+      ok: false,
+      error: "Couldn't confirm what was undone — check the visit page.",
     });
     expect(fx.audits).toEqual([]);
   });

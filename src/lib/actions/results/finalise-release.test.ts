@@ -24,7 +24,7 @@ vi.mock("@/lib/notifications/release-staff-alert", () => ({
 }));
 vi.mock("@/lib/observability/report-error", () => ({ reportError: async () => {} }));
 
-import { makeFakeReleaseDb, type FakeTestRow } from "@/lib/actions/visits/fake-release-db";
+import { FAKE_RELEASED_AT, makeFakeReleaseDb, type FakeTestRow } from "@/lib/actions/visits/fake-release-db";
 import { releaseFinalisedReport } from "./finalise-release";
 
 const session = { user_id: "u1", role: "medtech" } as never;
@@ -73,7 +73,24 @@ describe("finalise-consolidated release (step 9)", () => {
     expect(lineAudits).toHaveLength(3);
     for (const a of lineAudits) {
       expect(a.metadata).toMatchObject({ source: "finalise_consolidated", result_id: "r1", release_medium: "other" });
+      // The exact database stamp, unchanged; finalise mints no Undo batch.
+      expect(a.metadata).toMatchObject({ released_at: FAKE_RELEASED_AT });
+      expect(a.metadata).not.toHaveProperty("bulk_batch_id");
     }
+  });
+
+  it("a released row the database returns without released_at is malformed: nothing audited or announced, reads as deferred", async () => {
+    const { outcome, summary } = await finaliseRelease(ids.map((id) => ({ id })), (fake) =>
+      fake.overrideNextRpc("release_visit_results", {
+        released: ids.map((id) => ({ id, name: id, report_id: "r1", selected: true })),
+        refused: [],
+      }),
+    );
+    expect(audits.filter((a) => a.action === "test_request.released")).toHaveLength(0);
+    expect(fx.notified).toHaveLength(0);
+    expect(fx.alerts).toHaveLength(0);
+    expect(outcome?.changedIds ?? []).toEqual([]);
+    expect(summary.releaseDeferred).toBe(true);
   });
 
   it("a ONE-test report awaiting sign-off reads as sign-off, not a raced release", async () => {

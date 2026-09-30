@@ -48,6 +48,13 @@ export type FakeRow = Required<Omit<FakeTestRow, "hmoProviderId" | "releasedAt" 
   releaseMedium: string | null;
 };
 
+/**
+ * The released_at the release RPC model stamps on every row it releases: a
+ * fixed, full-microsecond ISO string (never round-trips through a JS Date, which
+ * would truncate it to milliseconds — the 10-minute Undo compares it exactly).
+ */
+export const FAKE_RELEASED_AT = "2026-09-30T07:00:00.123456+00:00";
+
 export interface FakeLink {
   testRequestId: string;
   resultId: string;
@@ -246,13 +253,12 @@ export function makeFakeReleaseDb(seed: { rows: FakeTestRow[]; links?: FakeLink[
       if (!inSections(r)) refused.push({ id, code: "outside_sections", report_id: null, count: 0 });
       else release.add(id);
     }
-    const now = new Date().toISOString();
     const released = Array.from(release).sort().map((id) => {
       const r = rows.find((x) => x.id === id)!;
       r.status = "released";
-      r.releasedAt = now;
+      r.releasedAt = FAKE_RELEASED_AT;
       r.releaseMedium = args.p_medium as string;
-      return { id, name: r.name, report_id: okReports.get(id) ?? null, selected: ids.includes(id) };
+      return { id, name: r.name, report_id: okReports.get(id) ?? null, selected: ids.includes(id), released_at: FAKE_RELEASED_AT };
     });
     for (const id of ids) {
       if (!release.has(id) && !refused.some((x) => x.id === id)) {
@@ -267,6 +273,9 @@ export function makeFakeReleaseDb(seed: { rows: FakeTestRow[]; links?: FakeLink[
     const ids = Array.from(new Set(args.p_test_request_ids as string[])).sort();
     const err = lockAndAssert(visitId, ids, "This visit was deleted from the queue. Restore it before undoing a release.");
     if (err) return { data: null, error: err };
+    const expected = args.p_expected_released_at as Record<string, string> | null | undefined;
+    const batch = expected != null;
+    const refusedIds = new Set<string>();
     const expanded = new Set(ids);
     const okReports = new Map<string, string>();
     for (const rid of reportsOf(ids)) {
@@ -275,15 +284,21 @@ export function makeFakeReleaseDb(seed: { rows: FakeTestRow[]; links?: FakeLink[
       if (mem.some((m) => !inSections(m))) return { data: null, error: p0081("This report has tests outside the sections you can act on, so it can't be undone from here — ask an admin.") };
       if (mem.some((m) => m.isPackageHeader)) return { data: null, error: p0081("This report includes a package header, which shouldn't happen — ask an admin to check it.") };
       if (mem.some((m) => m.visitId !== visitId)) return { data: null, error: p0081("This report spans more than one visit, which shouldn't happen — ask an admin to check it.") };
+      // Batch Undo: the report comes back only if EVERY member (deleted ones included) is still exactly this batch's release.
+      if (batch && mem.some((m) => !(m.id in expected) || m.status !== "released" || m.deleted || m.releasedAt !== expected[m.id])) {
+        mem.forEach((m) => refusedIds.add(m.id));
+        continue;
+      }
       for (const m of mem) {
         expanded.add(m.id);
         okReports.set(m.id, rid);
       }
     }
     const cands = rows.filter(
-      (r) => expanded.has(r.id) && r.visitId === visitId && r.status === "released" && !r.isPackageHeader && !r.deleted && inSections(r),
+      (r) => expanded.has(r.id) && r.visitId === visitId && r.status === "released" && !r.isPackageHeader && !r.deleted && inSections(r)
+        && !refusedIds.has(r.id) && (!batch || (r.id in expected && r.releasedAt === expected[r.id])),
     );
-    if (cands.length === 0) return { data: null, error: p0081("None of the selected tests can be unreleased.") };
+    if (cands.length === 0 && !batch) return { data: null, error: p0081("None of the selected tests can be unreleased.") };
     const undone = cands
       .sort((a, b) => a.id.localeCompare(b.id))
       .map((r) => {
@@ -293,7 +308,9 @@ export function makeFakeReleaseDb(seed: { rows: FakeTestRow[]; links?: FakeLink[
         r.releaseMedium = null;
         return prior;
       });
-    return { data: { undone }, error: null };
+    const undoneIds = new Set(undone.map((u) => u.id));
+    const skipped = ids.filter((id) => !undoneIds.has(id)).map((id) => ({ id, code: batch ? "changed_since" : "not_released" }));
+    return { data: { undone, skipped }, error: null };
   }
 
   const models: Record<string, (args: Record<string, unknown>) => { data: unknown; error: Err | null }> = {
