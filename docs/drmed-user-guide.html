@@ -326,7 +326,7 @@
   <div class="meta">
     <div><strong>Audience</strong>Reception · Medtech · X-ray · Pathologist · Admin · Patients</div>
     <div><strong>Covers</strong>Everything live in production as of the September 2026 release</div>
-    <div><strong>Version</strong>2.49 · 30 September 2026</div>
+    <div><strong>Version</strong>2.53 · 30 September 2026</div>
     <div><strong>Replaces</strong>Staff User Guide v1.0 (22 May 2026)</div>
   </div>
 </header>
@@ -1052,6 +1052,8 @@
     </ol>
     <p>Under the on/off switch, a summary line always shows where the alert actually stands: <q>N people will get this</q> (or <q>1 person</q>) in green once it's live, or <q>Off — nobody is emailed</q> in grey when it's switched off. If the alert is on but the switched-on staff and extra addresses add up to nobody, the line turns red instead: <q>On, but nobody will get this — switch on a staff member or add an address below.</q> A separate amber line appears whenever a switched-on staff member has no sign-in email on file: <q>N switched-on staff member(s) have no email on file and won't actually receive this.</q></p>
     <p><b>Last sent</b>, near the bottom of the card, shows the date and time of the most recent send and how many of that alert's recipients actually got it — for example <q>sent to 3 of 4, 1 failed</q> — or <q>Never sent yet.</q> if it hasn't gone out.</p>
+    <p>When a send reached nobody, the reason follows in brackets: <q>turned off in Email Alerts</q>, <q>nobody is switched on for this alert in Email Alerts</q>, or — when the list of who gets it couldn&apos;t be read at that moment — <q>couldn&apos;t read who gets this alert (…) — nobody was emailed</q>. The last one is a system problem, not a setting to fix here; it is also reported to the error log. If a read fails only partly, the alert still goes to everyone who could be found.</p>
+    <p>If part of this page itself couldn&apos;t be loaded, a red box at the top says <q>Some of this page couldn&apos;t be loaded, so the switches and email addresses below may be wrong — reload before changing anything.</q> — a staff member can otherwise look as if they have no email on file. <kbd class="ui">Send test</kbd> then refuses with <q>Couldn&apos;t read who gets this alert right now — reload the page and try again.</q></p>
     <p><kbd class="ui">Send a test</kbd> emails the alert's current recipients a copy clearly marked <q>[Test]</q>, naming who sent it and that no real event happened. It only works while the alert is switched on — while it's off the button is greyed out and hovering it explains why: <q>Turn this alert on to send a test</q>. If the alert is on but nobody would actually receive it, sending a test refuses with <q>Nobody would receive this alert right now — switch on a staff member or add an address first.</q></p>
   </section>
 

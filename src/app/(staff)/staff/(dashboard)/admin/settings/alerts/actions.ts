@@ -355,7 +355,9 @@ export async function sendTestAlertAction(
   if (recipients.emails.length === 0) {
     return {
       ok: false,
-      error: "Nobody would receive this alert right now — switch on a staff member or add an address first.",
+      error: recipients.loadError
+        ? "Couldn't read who gets this alert right now — reload the page and try again."
+        : "Nobody would receive this alert right now — switch on a staff member or add an address first.",
     };
   }
 

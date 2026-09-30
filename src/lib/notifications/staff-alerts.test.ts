@@ -4,6 +4,7 @@ import { join } from "node:path";
 import {
   STAFF_ALERT_KEYS,
   STAFF_ALERTS,
+  alertSkipReason,
   computeAlertRecipients,
   isStaffSubscribed,
   type AlertStaffMember,
@@ -99,5 +100,26 @@ describe("computeAlertRecipients", () => {
   it("isStaffSubscribed honours an explicit false for a default role", () => {
     expect(isStaffSubscribed({ id: "a1", role: "admin" }, ["admin"], new Map([["a1", false]]))).toBe(false);
     expect(isStaffSubscribed({ id: "a1", role: "admin" }, ["admin"], new Map())).toBe(true);
+  });
+});
+
+describe("alertSkipReason", () => {
+  it("is null when someone will be emailed, even after a partial read", () => {
+    expect(alertSkipReason({ enabled: true, emails: ["a@x.test"], loadError: null })).toBeNull();
+    expect(alertSkipReason({ enabled: true, emails: ["a@x.test"], loadError: "boom" })).toBeNull();
+  });
+  it("says turned off for a disabled alert", () => {
+    expect(alertSkipReason({ enabled: false, emails: [], loadError: null })).toBe("turned off in Email Alerts");
+  });
+  it("says nobody is switched on only when every read succeeded", () => {
+    expect(alertSkipReason({ enabled: true, emails: [], loadError: null })).toBe(
+      "nobody is switched on for this alert in Email Alerts",
+    );
+  });
+  it("never blames Email Alerts when a read failed", () => {
+    const r = alertSkipReason({ enabled: true, emails: [], loadError: "staff sign-in emails: timeout" });
+    expect(r).toContain("couldn't read who gets this alert");
+    expect(r).toContain("staff sign-in emails: timeout");
+    expect(r).not.toContain("nobody is switched on");
   });
 });

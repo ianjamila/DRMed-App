@@ -8,6 +8,7 @@ import { REMIND_UNTIMED_AFTER_DAYS, unactedBookings } from "@/lib/appointments/s
 import { buildStaleBookingsAlertEmail } from "@/lib/appointments/stale-bookings-alert";
 import { sendEmail } from "@/lib/notifications/email";
 import { resolveStaffAlertRecipients } from "@/lib/notifications/staff-alert-recipients";
+import { alertSkipReason } from "@/lib/notifications/staff-alerts";
 
 export const dynamic = "force-dynamic";
 
@@ -77,6 +78,7 @@ export async function GET(request: Request) {
       // can switch people on/off or turn the reminder off entirely.
       const alert = await resolveStaffAlertRecipients("stale_bookings", admin);
       const recipients = alert.emails;
+      const skipReason = alertSkipReason(alert);
 
       const base = process.env.NEXT_PUBLIC_SITE_URL ?? "https://drmed.ph";
       const content = buildStaleBookingsAlertEmail({
@@ -103,7 +105,8 @@ export async function GET(request: Request) {
           likely_no_shows: likely,
           recipients: recipients.length,
           emailed,
-          ...(alert.enabled ? {} : { skipped: "turned off in Email Alerts" }),
+          ...(skipReason ? { skipped: skipReason } : {}),
+          ...(alert.loadError ? { recipients_error: alert.loadError } : {}),
         },
       });
       await audit({

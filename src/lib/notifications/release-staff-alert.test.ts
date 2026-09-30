@@ -138,6 +138,39 @@ describe("scheduleReleaseStaffAlert", () => {
     });
   });
 
+  it("a failed recipient read is audited as a read failure, never as nobody switched on", async () => {
+    resolveRecipients.mockResolvedValue({
+      enabled: true,
+      emails: [],
+      staffOn: ["s1"],
+      staffWithoutEmail: ["s1"],
+      loadError: "staff sign-in emails, page 1: timeout",
+    });
+    scheduleReleaseStaffAlert("v1", 3);
+    await run();
+    expect(sendEmail).not.toHaveBeenCalled();
+    const meta = auditMock.mock.calls[0]![0].metadata;
+    expect(meta.skipped).toContain("couldn't read who gets this alert");
+    expect(meta.skipped).not.toContain("nobody is switched on");
+    expect(meta.recipients_error).toBe("staff sign-in emails, page 1: timeout");
+  });
+
+  it("still emails whoever was resolved after a partial read, and records the error", async () => {
+    resolveRecipients.mockResolvedValue({
+      enabled: true,
+      emails: ["desk@drmed.test"],
+      staffOn: [],
+      staffWithoutEmail: [],
+      loadError: "alert recipients: gone",
+    });
+    scheduleReleaseStaffAlert("v1", 3);
+    await run();
+    expect(sendEmail).toHaveBeenCalledTimes(1);
+    const meta = auditMock.mock.calls[0]![0].metadata;
+    expect(meta.skipped).toBeUndefined();
+    expect(meta.recipients_error).toBe("alert recipients: gone");
+  });
+
   it("reports (and does not rethrow) a thrown visit read", async () => {
     visitResult = new Error("boom");
     scheduleReleaseStaffAlert("v1", 3);

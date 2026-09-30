@@ -16,6 +16,7 @@ import "server-only";
 // contact_message.alert_sent — recipient COUNTS only, never addresses.
 
 import { resolveStaffAlertRecipients } from "@/lib/notifications/staff-alert-recipients";
+import { alertSkipReason } from "@/lib/notifications/staff-alerts";
 import { sendEmail } from "@/lib/notifications/email";
 import { audit } from "@/lib/audit/log";
 import { reportError } from "@/lib/observability/report-error";
@@ -54,9 +55,7 @@ export async function sendNewMessageAlert(input: NewMessageAlertInput): Promise<
     let skipped: string | null = null;
 
     if (emails.length === 0) {
-      skipped = recipients.enabled
-        ? "nobody is switched on for this alert in Email Alerts"
-        : "turned off in Email Alerts";
+      skipped = alertSkipReason(recipients);
     } else {
       for (const to of emails) {
         const result = await sendEmail({ to, subject: content.subject, text: content.text, html: content.html });
@@ -82,7 +81,7 @@ export async function sendNewMessageAlert(input: NewMessageAlertInput): Promise<
         recipients: emails.length,
         sent,
         failed,
-        ...(skipped ? { skipped } : {}),
+        ...(skipped ? { skipped } : {}), ...(recipients.loadError ? { recipients_error: recipients.loadError } : {}),
       } as unknown as Json,
     });
   } catch (error) {
