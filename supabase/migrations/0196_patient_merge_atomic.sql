@@ -204,14 +204,18 @@ as $$
 $$;
 
 revoke all on function public.patient_has_live_v2_merge(uuid) from public, anon, authenticated, service_role;
--- patient_merge_writer also needs EXECUTE here even though the guard trigger
--- only *acts* on this function's result when current_user <> 'patient_merge_writer':
--- Postgres does not guarantee left-to-right / short-circuit evaluation of AND
--- (docs 4.2.14), so this arm CAN be evaluated even when the writer role is the
--- one updating merged_into_id. Without the grant that evaluation itself raises
--- permission-denied and blocks the writer's own legitimate writes; granting it
--- does not weaken the guard, since the AND still requires the other arms true.
-grant execute on function public.patient_has_live_v2_merge(uuid) to authenticated, service_role, patient_merge_writer;
+grant execute on function public.patient_has_live_v2_merge(uuid) to authenticated, service_role;
+-- patient_merge_writer does NOT get EXECUTE here (idempotent: the local DB may
+-- still hold an earlier grant, so revoke it explicitly). guard_live_merge_marker
+-- below nests the call inside a SEPARATE inner IF, rather than ANDing it onto
+-- the outer condition: Postgres checks EXECUTE privilege on a function call
+-- when it INITIALISES that expression's plan, not lazily as AND short-circuits
+-- at evaluation time (docs 4.2.14) — a single ANDed condition would need the
+-- grant even for the arm that never actually needs to run. A nested IF is its
+-- own statement, only planned once control reaches it, so when the writer is
+-- the one updating merged_into_id (current_user = 'patient_merge_writer') the
+-- outer IF is false and the inner call is never planned or checked at all.
+revoke execute on function public.patient_has_live_v2_merge(uuid) from patient_merge_writer;
 
 -- SECURITY INVOKER: current_user is the role actually writing.
 create or replace function public.guard_live_merge_marker()
@@ -222,10 +226,11 @@ set search_path = pg_catalog, public, pg_temp
 as $$
 begin
   if new.merged_into_id is distinct from old.merged_into_id
-     and current_user <> 'patient_merge_writer'
-     and public.patient_has_live_v2_merge(old.id) then
-    raise exception '% was merged in Admin Tools — undo it there', old.drm_id
-      using errcode = 'P0080';
+     and current_user <> 'patient_merge_writer' then
+    if public.patient_has_live_v2_merge(old.id) then
+      raise exception '% was merged in Admin Tools — undo it there', old.drm_id
+        using errcode = 'P0080';
+    end if;
   end if;
   return new;
 end;
@@ -277,6 +282,7 @@ declare
   v_fill      jsonb := '{}'::jsonb;
   v_rechained uuid[];
   v_merge_id  uuid;
+  v_repeat_n  int;
   f           text;
 begin
   -- (1) Validate.
@@ -363,6 +369,20 @@ begin
       case when v_keep.merged_into_id is not null then v_keep.drm_id else v_source.drm_id end
       using errcode = 'P0058';
   end if;
+  -- An active record that is itself the SOURCE of a live ledger row (undone_at
+  -- is null) can only be an interrupted legacy undo (0196's resume path is the
+  -- only way an active record keeps a live source row) — merging it again
+  -- would fork that half-finished history, and would otherwise hit the raw
+  -- uq_patient_merges_live_source unique violation (23505) the moment this
+  -- record becomes a source again.
+  if exists (select 1 from public.patient_merges pm where pm.source_id = p_keep and pm.undone_at is null) then
+    raise exception '% has an unfinished undo of an earlier merge — finish it from Admin Tools › Possible duplicates › Recently merged first',
+      v_keep.drm_id using errcode = 'P0079';
+  end if;
+  if exists (select 1 from public.patient_merges pm where pm.source_id = p_source and pm.undone_at is null) then
+    raise exception '% has an unfinished undo of an earlier merge — finish it from Admin Tools › Possible duplicates › Recently merged first',
+      v_source.drm_id using errcode = 'P0079';
+  end if;
 
   -- (4) Move, in this order (visits before critical_alerts: 0184's
   -- alert-matches-its-test check). Each UPDATE fires a_lifecycle_guard, whose
@@ -393,10 +413,16 @@ begin
   perform public.recompute_patient_consent_cache(p_keep);
 
   -- The repeat flag is set on visit INSERT only; the kept record may now
-  -- have several visits. Set-only, like the trigger.
+  -- have several visits. Set-only, like the trigger. Recorded in context (so
+  -- it lands in the ledger AND the audit row) only when this UPDATE actually
+  -- flips it — undo uses that to know whether to revert it (F5).
   update public.patients set is_repeat_patient = true
    where id = p_keep and not is_repeat_patient
      and (select count(*) from public.visits v where v.patient_id = p_keep) > 1;
+  get diagnostics v_repeat_n = row_count;
+  if v_repeat_n > 0 then
+    v_ctx := v_ctx || jsonb_build_object('repeat_flag_set', true);
+  end if;
 
   -- (6) Fill NULL/blank fields on keep from source; never overwrite.
   select to_jsonb(p) into v_kj from public.patients p where p.id = p_keep;
@@ -501,6 +527,8 @@ declare
   v_kept        text[] := '{}';
   v_before      jsonb := '{}'::jsonb;
   v_rechained   uuid[];
+  v_repeat_n        int;
+  v_repeat_reverted boolean := false;
   v_left        jsonb;
   v_report      jsonb;
   f             text;
@@ -530,12 +558,22 @@ begin
     raise exception 'merge record not found' using errcode = 'P0079';
   end if;
   v_legacy := m.snapshot_version is null;
-  v_mv_visits   := array(select x::uuid   from jsonb_array_elements_text(coalesce(m.moved->'visits', '[]'::jsonb)) x);
-  v_mv_appts    := array(select x::uuid   from jsonb_array_elements_text(coalesce(m.moved->'appointments', '[]'::jsonb)) x);
-  v_mv_audit    := array(select x::bigint from jsonb_array_elements_text(coalesce(m.moved->'audit_log', '[]'::jsonb)) x);
-  v_mv_alerts   := array(select x::uuid   from jsonb_array_elements_text(coalesce(m.moved->'critical_alerts', '[]'::jsonb)) x);
-  v_mv_consents := array(select x::uuid   from jsonb_array_elements_text(coalesce(m.moved->'patient_consents', '[]'::jsonb)) x);
-  v_mv_attach   := array(select x::uuid   from jsonb_array_elements_text(coalesce(m.moved->'appointment_attachments', '[]'::jsonb)) x);
+  -- Defensive (F6/M6): a hand-edited or otherwise malformed ledger row's
+  -- `moved` may hold null / a non-array scalar / a missing key for one of the
+  -- six — jsonb_array_elements_text on anything but a JSON array raises a raw
+  -- 22023, so treat anything that is not actually an array as empty.
+  v_mv_visits   := array(select x::uuid   from jsonb_array_elements_text(
+    case jsonb_typeof(m.moved->'visits') when 'array' then m.moved->'visits' else '[]'::jsonb end) x);
+  v_mv_appts    := array(select x::uuid   from jsonb_array_elements_text(
+    case jsonb_typeof(m.moved->'appointments') when 'array' then m.moved->'appointments' else '[]'::jsonb end) x);
+  v_mv_audit    := array(select x::bigint from jsonb_array_elements_text(
+    case jsonb_typeof(m.moved->'audit_log') when 'array' then m.moved->'audit_log' else '[]'::jsonb end) x);
+  v_mv_alerts   := array(select x::uuid   from jsonb_array_elements_text(
+    case jsonb_typeof(m.moved->'critical_alerts') when 'array' then m.moved->'critical_alerts' else '[]'::jsonb end) x);
+  v_mv_consents := array(select x::uuid   from jsonb_array_elements_text(
+    case jsonb_typeof(m.moved->'patient_consents') when 'array' then m.moved->'patient_consents' else '[]'::jsonb end) x);
+  v_mv_attach   := array(select x::uuid   from jsonb_array_elements_text(
+    case jsonb_typeof(m.moved->'appointment_attachments') when 'array' then m.moved->'appointment_attachments' else '[]'::jsonb end) x);
 
   -- (3) Lock: result membership over the COMPLETE undo scope (every recorded
   -- visit, whoever owns it now, and every alert on keep or source for their
@@ -582,11 +620,18 @@ begin
   if m.undone_at is not null then
     raise exception 'this merge was already undone' using errcode = 'P0079';
   end if;
-  if now() - m.merged_at >= interval '30 days' then
-    raise exception 'merges can only be undone within 30 days' using errcode = 'P0079';
-  end if;
+  -- v_resume must be known BEFORE the 30-day check (F1): an interrupted old-app
+  -- undo has already cleared the source's marker, so the source is active
+  -- again with half its rows already back — that must always be completable,
+  -- at any age. This mirrors merged_into_id = null AND legacy below without
+  -- disturbing that if/elsif/else's own position (and its error precedence)
+  -- later in this block.
   select * into v_keep from public.patients where id = m.keep_id;
   select * into v_source from public.patients where id = m.source_id;
+  v_resume := (v_source.merged_into_id is null and v_legacy);
+  if not v_resume and now() - m.merged_at >= interval '30 days' then
+    raise exception 'merges can only be undone within 30 days' using errcode = 'P0079';
+  end if;
   if v_keep.merged_into_id is not null then
     raise exception 'the kept record % has since been merged into another record — undo that merge first', v_keep.drm_id
       using errcode = 'P0079';
@@ -602,7 +647,8 @@ begin
   if v_source.merged_into_id = m.keep_id then
     null;
   elsif v_source.merged_into_id is null and v_legacy then
-    v_resume := true;   -- the pre-3b app cleared the marker first and stopped part-way
+    v_resume := true;   -- redundant with the pre-30-day-check assignment above (F1);
+                         -- restated so this branch reads standalone, same value either way
   else
     raise exception '% is no longer merged into %, so this merge cannot be undone', v_source.drm_id, v_keep.drm_id
       using errcode = 'P0079';
@@ -719,6 +765,17 @@ begin
   perform public.recompute_patient_consent_cache(m.source_id);
   perform public.recompute_patient_consent_cache(m.keep_id);
 
+  -- Revert the repeat flag this merge set (F5), if the keep's own visit count
+  -- (post move-back) no longer justifies it — count ALL visits, like the
+  -- trigger and like the merge-side set above.
+  if coalesce(m.context->>'repeat_flag_set', 'false') = 'true'
+     and (select count(*) from public.visits v where v.patient_id = m.keep_id) <= 1 then
+    update public.patients set is_repeat_patient = false
+     where id = m.keep_id and is_repeat_patient;
+    get diagnostics v_repeat_n = row_count;
+    v_repeat_reverted := v_repeat_n > 0;
+  end if;
+
   -- (10) Report + ledger + audit.
   v_left := jsonb_build_object(
     'visits', to_jsonb(array(select id from public.visits where id = any(v_mv_visits) and patient_id = m.keep_id order by id)),
@@ -738,7 +795,9 @@ begin
     'left_on_keep', v_left,
     'kept_fields', to_jsonb(v_kept),
     'reverted_fields', to_jsonb(v_revert),
-    'rechained_back', cardinality(v_rechained));
+    'rechained_back', cardinality(v_rechained),
+    'rechained_not_restored', to_jsonb(array(select id from unnest(m.rechained) id where id <> all(v_rechained))),
+    'repeat_flag_reverted', v_repeat_reverted);
 
   update public.patient_merges
      set undone_at = now(), undone_by = p_actor, undo_report = v_report
@@ -816,6 +875,43 @@ begin
   end if;
   if not exists (select 1 from pg_trigger where tgname = 'trg_patients_live_merge_guard' and tgenabled = 'O') then
     raise exception '0196: trg_patients_live_merge_guard missing or disabled';
+  end if;
+
+  -- F2 (I2): a critical_alerts row's patient_id must always name the patient
+  -- of its own test's visit. Prod holds 0 alerts today and 0184's (a2') check
+  -- enforces this on INSERT / patient_id change, so only a pre-0184 row could
+  -- be stale — this catches one before it reaches prod.
+  select count(*) into n
+    from public.critical_alerts ca
+    join public.test_requests t on t.id = ca.test_request_id
+    join public.visits v on v.id = t.visit_id
+   where ca.patient_id is distinct from v.patient_id;
+  if n > 0 then
+    raise exception '0196: % critical alert(s) name a patient other than their test''s visit — reconcile before pushing', n;
+  end if;
+
+  -- F3 (I3): keep 0202's invariant standing for patient_merges / patient_consents
+  -- — anon/authenticated hold NO privilege (table, column or owned sequence),
+  -- and every policy on the two tables names only patient_merge_writer.
+  if exists (
+    select 1 from (values ('patient_merges'), ('patient_consents')) as t(rel)
+    cross join (values ('anon'), ('authenticated')) as r(rolname)
+    where has_table_privilege(r.rolname, ('public.' || t.rel)::regclass,
+            'SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER,MAINTAIN')
+       or has_any_column_privilege(r.rolname, ('public.' || t.rel)::regclass, 'SELECT,INSERT,UPDATE,REFERENCES')
+  ) then
+    raise exception '0196: anon/authenticated hold a privilege on patient_merges or patient_consents';
+  end if;
+  if has_sequence_privilege('anon', 'public.patient_consents_seq_seq', 'USAGE,SELECT,UPDATE')
+     or has_sequence_privilege('authenticated', 'public.patient_consents_seq_seq', 'USAGE,SELECT,UPDATE') then
+    raise exception '0196: anon/authenticated hold a privilege on patient_consents_seq_seq';
+  end if;
+  if exists (
+    select 1 from pg_policy p
+     where p.polrelid in ('public.patient_merges'::regclass, 'public.patient_consents'::regclass)
+       and p.polroles <> array['patient_merge_writer'::regrole::oid]
+  ) then
+    raise exception '0196: a policy on patient_merges or patient_consents names a role other than patient_merge_writer';
   end if;
 
   -- The consent fold must reproduce every patient's cached state (spec R4):

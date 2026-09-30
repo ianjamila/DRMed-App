@@ -321,6 +321,8 @@ begin
   perform pg_temp.expect('s1.10 writer cannot change deletion columns (0167 guard)',
     pg_temp.state_as('patient_merge_writer', format(
       'update public.patients set deleted_at = now() where id = %L', pg_temp.mk_patient('S1D'))), '42501');
+  perform pg_temp.expect('s1.12 writer has no EXECUTE on patient_has_live_v2_merge (F4: nested IFs, no extra grant)',
+    has_function_privilege('patient_merge_writer', 'public.patient_has_live_v2_merge(uuid)', 'execute')::text, 'false');
 end
 $s1$;
 
@@ -532,6 +534,7 @@ $s3$;
 do $s4$
 declare
   k uuid; s uuid; d uuid; x uuid; y uuid;
+  ux_k uuid; ux_src uuid; ux_other uuid;
   sig constant text := 'public.merge_patients_guarded(uuid, uuid, uuid, jsonb)';
 begin
   k := pg_temp.mk_patient('S4K');
@@ -579,6 +582,18 @@ begin
   perform pg_temp.expect('s4.16 service_role can', has_function_privilege('service_role', sig, 'execute')::text, 'true');
   perform pg_temp.expect('s4.17 authenticated call is denied (42501)',
     pg_temp.state_as('authenticated', format('select public.merge_patients_guarded(%L, %L, %L, null)', k, s, pg_temp.admin())), '42501');
+
+  -- s4.18 (F1): X is the source of a LIVE interrupted-legacy ledger row (the
+  -- old app cleared its marker, so X is active again, but the undo never
+  -- finished) — X cannot be merged again, as either side of a new merge.
+  ux_k := pg_temp.mk_patient('S4UXK'); ux_src := pg_temp.mk_patient('S4UXX');
+  perform pg_temp.legacy_merge(ux_k, ux_src);
+  perform pg_temp.as_writer(format('update public.patients set merged_into_id = null, merged_at = null where id = %L', ux_src));
+  perform pg_temp.expect('s4.18a merging X in as source is refused (unfinished undo)',
+    pg_temp.state_of(format('select pg_temp.merge(%L, %L)', k, ux_src)), 'P0079');
+  ux_other := pg_temp.mk_patient('S4UXO');
+  perform pg_temp.expect('s4.18b merging X in as keep is refused (unfinished undo)',
+    pg_temp.state_of(format('select pg_temp.merge(%L, %L)', ux_src, ux_other)), 'P0079');
 end
 $s4$;
 
@@ -710,8 +725,36 @@ begin
     (rep->>'resumed_interrupted_undo'),
     '2|2|0|false');
   perform pg_temp.expect('s6.12 the source takes writes again', pg_temp.state_of(format('select pg_temp.mk_visit(%L)', s)), 'ok');
+  perform pg_temp.expect('s6.13 (F5 control) repeat flag NOT reverted: keep ends with 2 own visits',
+    (select is_repeat_patient from public.patients where id = k)::text || '|' || (rep->>'repeat_flag_reverted'),
+    'true|false');
 end
 $s6$;
+
+-- s6b (F5) ---------------------------------------------------------------------
+-- The repeat flag a merge sets is reverted by undo when the keep ends with no
+-- own visits of its own; the flag was set BY the merge, recorded in context.
+do $s6b$
+declare
+  k uuid; s uuid; mid uuid; rep jsonb; m public.patient_merges%rowtype;
+begin
+  k := pg_temp.mk_patient('S6BK');
+  s := pg_temp.mk_patient('S6BS');
+  perform pg_temp.mk_visit(s);
+  perform pg_temp.mk_visit(s);
+
+  mid := (pg_temp.merge(k, s)->>'merge_id')::uuid;
+  select * into m from public.patient_merges where id = mid;
+  perform pg_temp.expect('s6b.1 merge sets repeat flag + records it in context',
+    (select is_repeat_patient from public.patients where id = k)::text || '|' || (m.context->>'repeat_flag_set'),
+    'true|true');
+
+  rep := pg_temp.undo(mid);
+  perform pg_temp.expect('s6b.2 undo reverts the repeat flag it set (keep ends with 0 own visits)',
+    (select is_repeat_patient from public.patients where id = k)::text || '|' || (rep->>'repeat_flag_reverted'),
+    'false|true');
+end
+$s6b$;
 
 -- s7 ---------------------------------------------------------------------------
 do $s7$
@@ -793,11 +836,29 @@ begin
 end
 $s8$;
 
+-- s8b (F7) ---------------------------------------------------------------------
+-- A malformed `moved` shape (a hand-edited or older ledger row) must not crash
+-- the undo with a raw 22023 — treat anything that is not a JSON array as empty.
+do $s8b$
+declare k uuid; s uuid; mid uuid;
+begin
+  k := pg_temp.mk_patient('S8BK');
+  s := pg_temp.mk_patient('S8BS');
+  perform pg_temp.mark_merged(s, k);
+  insert into public.patient_merges (keep_id, source_id, merged_by, moved, filled_from_source)
+  values (k, s, pg_temp.admin(), '{"visits": null, "appointments": 3}'::jsonb, '{}')
+  returning id into mid;
+  perform pg_temp.expect('s8b.1 defensive moved shape: undo succeeds instead of raising 22023',
+    pg_temp.state_of(format('select pg_temp.undo(%L)', mid)), 'ok');
+end
+$s8b$;
+
 -- s9 ---------------------------------------------------------------------------
 do $s9$
 declare
   k uuid; s uuid; vs1 uuid; vs2 uuid; ls1 uuid; r1 uuid; al uuid; ap uuid; mid uuid; rep jsonb;
   k2 uuid; s2 uuid; vs3 uuid; vk2 uuid; mid2 uuid;
+  k3 uuid; s3 uuid; mid3 uuid; rep3 jsonb;
 begin
   k := pg_temp.mk_patient('S9K');
   s := pg_temp.mk_patient('S9S', '09179990001');
@@ -830,6 +891,17 @@ begin
   perform pg_temp.as_writer(format('update public.visits set patient_id = %L where id = %L', s2, vs3));  -- now split
   perform pg_temp.expect('s9.4 resume refuses an already-split result', pg_temp.state_of(format('select pg_temp.undo(%L)', mid2)), 'P0079');
   perform pg_temp.expect('s9.5 ledger still live', ((select undone_at from public.patient_merges where id = mid2) is null)::text, 'true');
+
+  -- s9.6 (F1): an interrupted legacy undo must always be completable, even
+  -- when the ledger row is well past the ordinary 30-day undo window — the
+  -- source is already active again and half its rows are already back.
+  k3 := pg_temp.mk_patient('S9K3'); s3 := pg_temp.mk_patient('S9S3');
+  mid3 := pg_temp.legacy_merge(k3, s3);
+  perform pg_temp.as_writer(format('update public.patients set merged_into_id = null, merged_at = null where id = %L', s3));
+  update public.patient_merges set merged_at = now() - interval '45 days' where id = mid3;
+  rep3 := pg_temp.undo(mid3);
+  perform pg_temp.expect('s9.6 interrupted legacy undo older than 30 days still completes',
+    (rep3->>'resumed_interrupted_undo'), 'true');
 end
 $s9$;
 
