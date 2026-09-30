@@ -9,6 +9,8 @@ import { audit } from "@/lib/audit/log";
 import { reportError } from "@/lib/observability/report-error";
 import { requireAdminStaff } from "@/lib/auth/require-admin";
 import { runUndoSteps, undoMergeSteps } from "@/lib/patients/undo-merge-steps";
+import { mergeMoveSteps, runMergeMoveSteps } from "@/lib/patients/merge-steps";
+import { withLifecycleRetry } from "@/lib/patients/lifecycle-retry";
 import { sendEmail } from "@/lib/notifications/email";
 import { checkPatientRecipient } from "@/lib/notifications/active-patient-recipient";
 import { auditSkippedInactiveRecipient } from "@/lib/notifications/inactive-recipient-audit";
@@ -181,48 +183,55 @@ export async function mergePatientsAction(
     };
   }
 
-  // Reassign FK rows. We do these as separate updates rather than a
-  // transaction because Supabase JS doesn't expose explicit transactions
-  // — at this row volume the operations are independently idempotent
-  // and a partial failure leaves a recoverable state (re-run the merge
-  // and the second pass is a no-op for already-moved rows).
-  const { data: visits } = await admin
-    .from("visits")
-    .update({ patient_id: keep_id })
-    .eq("patient_id", source_id)
-    .select("id");
-  const { data: appts } = await admin
-    .from("appointments")
-    .update({ patient_id: keep_id })
-    .eq("patient_id", source_id)
-    .select("id");
-  const { data: auditRows } = await admin
-    .from("audit_log")
-    .update({ patient_id: keep_id })
-    .eq("patient_id", source_id)
-    .select("id");
-  const { data: criticalAlerts } = await admin
-    .from("critical_alerts")
-    .update({ patient_id: keep_id })
-    .eq("patient_id", source_id)
-    .select("id");
-  const { data: consents } = await admin
-    .from("patient_consents")
-    .update({ patient_id: keep_id })
-    .eq("patient_id", source_id)
-    .select("id");
-  // 0167: current_patient_id() is active-only, so a portal token for the
-  // (now-merged) source patient can no longer reach these through RLS. Move
-  // them the same way as the other FK tables, or they become unreachable —
-  // nobody else owns them.
-  const { data: attachments } = await admin
-    .from("appointment_attachments")
-    .update({ patient_id: keep_id })
-    .eq("patient_id", source_id)
-    .select("id");
+  // Reassign FK rows source→keep (merge-steps.ts). Since 0184 every write to
+  // a patient-owned table takes the patient lifecycle lock, so a move can
+  // fail with 40P01 (a concurrent payment path can take the visit's shared
+  // lock first), P0072 (the record moved mid-save) or 23514 (a critical
+  // alert's patient must match its test's patient — it can only move back
+  // once its visit already has). The runner stops at the FIRST move that
+  // still fails and reports which ones completed; each move is retried once
+  // on a lock race, with a fresh builder per attempt (re-awaiting one
+  // PostgREST builder with `.select()` would re-append its Prefer header and
+  // send the mutation twice). Nothing below this — filling fields,
+  // tombstoning the source, writing the undo ledger — runs unless every move
+  // actually landed (0184 review finding P1): a merge that stopped part-way
+  // used to tombstone the source anyway and strand the rows that didn't
+  // move on a now-inactive patient. A re-run after a stopped merge is safe —
+  // already-moved rows no longer match patient_id = source.
+  const moveOutcome = await runMergeMoveSteps(mergeMoveSteps(), (step) =>
+    withLifecycleRetry(() =>
+      admin.from(step.table).update({ patient_id: keep_id }).eq("patient_id", source_id).select("id"),
+    ),
+  );
+  if (!moveOutcome.ok) {
+    await reportError({
+      scope: "mergePatientsAction:move",
+      error: new Error(moveOutcome.error),
+      metadata: {
+        keep_id,
+        source_id,
+        failed_table: moveOutcome.failedAt.table,
+        completed_moves: moveOutcome.completed,
+      },
+    });
+    return {
+      ok: false,
+      error:
+        "The merge stopped part-way because another change was being saved. Nothing is lost — both records are still active. Run the merge again to finish it.",
+    };
+  }
+  const {
+    visits,
+    appointments: appts,
+    audit_log: auditRows,
+    critical_alerts: criticalAlerts,
+    patient_consents: consents,
+    appointment_attachments: attachments,
+  } = moveOutcome.moved;
 
   // Fill missing fields on the kept row from the source row — never
-  // overwrite a non-null value.
+  // overwrite a non-null value. Checked the same way as a move above: on
+  // failure, stop before tombstoning the source.
   const fill: {
     middle_name?: string;
     sex?: string;
@@ -236,7 +245,21 @@ export async function mergePatientsAction(
   if (!keep.email && source.email) fill.email = source.email;
   if (!keep.address && source.address) fill.address = source.address;
   if (Object.keys(fill).length > 0) {
-    await admin.from("patients").update(fill).eq("id", keep_id);
+    const { error: fillErr } = await withLifecycleRetry(() =>
+      admin.from("patients").update(fill).eq("id", keep_id),
+    );
+    if (fillErr) {
+      await reportError({
+        scope: "mergePatientsAction:fill",
+        error: new Error(fillErr.message),
+        metadata: { keep_id, source_id },
+      });
+      return {
+        ok: false,
+        error:
+          "The merge stopped part-way because another change was being saved. Nothing is lost — both records are still active. Run the merge again to finish it.",
+      };
+    }
   }
 
   // Tombstone the source row.

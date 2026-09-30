@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { UNDO_MERGE_TABLES } from "@/lib/patients/undo-merge-steps";
+import { MERGE_MOVE_TABLES } from "@/lib/patients/merge-steps";
 
 // 0167: current_patient_id() is active-only, so once a patient is merged
 // away, its portal session can no longer reach ANY row still pointing at the
@@ -18,6 +19,13 @@ import { UNDO_MERGE_TABLES } from "@/lib/patients/undo-merge-steps";
 // call per table, so its "which tables move" list is UNDO_MERGE_TABLES, not
 // a literal regex per table. UNDO_MERGE_TABLES must stay in lockstep with
 // FK_TABLES below (and with the CLI engine's own FK_TABLES).
+//
+// 0184 review finding P1: mergePatientsAction itself now moves rows through
+// the paired runMergeMoveSteps()/mergeMoveSteps() runner
+// (src/lib/patients/merge-steps.ts) instead of one hand-written UPDATE per
+// table with its errors ignored — a partial failure used to tombstone the
+// source and strand the rows that didn't move. So its "which tables move"
+// list is MERGE_MOVE_TABLES, not a literal regex per table either.
 
 const ACTIONS_FILE = join(
   process.cwd(),
@@ -40,13 +48,19 @@ const FK_TABLES = [
 ];
 
 describe("patient merge moves every patient_id FK table", () => {
-  it("app-level merge (mergePatientsAction) reassigns each table to keep_id", () => {
-    for (const table of FK_TABLES) {
-      const re = new RegExp(
-        `\\.from\\("${table}"\\)\\s*\\n?\\s*\\.update\\(\\{ patient_id: keep_id \\}\\)`,
-      );
-      expect(actionsSrc, `mergePatientsAction must reassign ${table}`).toMatch(re);
-    }
+  it("app-level merge (mergePatientsAction) runs the shared merge-steps runner, whose table list matches FK_TABLES", () => {
+    expect(actionsSrc, "mergePatientsAction must use runMergeMoveSteps/mergeMoveSteps").toMatch(
+      /runMergeMoveSteps\(mergeMoveSteps\(\)/,
+    );
+    // The runner re-points every table via the step's own table name
+    // (step.table) — a single generic UPDATE, not one hand-written call per
+    // table.
+    expect(actionsSrc).toMatch(
+      /\.from\(step\.table\)\.update\(\{ patient_id: keep_id \}\)/,
+    );
+    expect([...MERGE_MOVE_TABLES].sort(), "MERGE_MOVE_TABLES must match FK_TABLES").toEqual(
+      [...FK_TABLES].sort(),
+    );
   });
 
   it("app-level undo (undoMergeAction) runs the shared undo-merge-steps runner, whose table list matches FK_TABLES", () => {
