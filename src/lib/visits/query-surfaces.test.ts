@@ -264,9 +264,9 @@ const SURFACES: Record<string, Surface> = {
     meaning: "all",
     why: "The Visits archive shows and filter-chips all three classes (Lab / Doctor Consults / Doctor Procedures) — classifying them is its whole job.",
   },
-  "lib/actions/visits/queue-deletion.ts": {
+  "lib/actions/queue/bulk-cores.ts": {
     meaning: "all",
-    why: "Soft-delete/restore of whatever line reception selected. A mis-keyed consultation is exactly the sort of line that gets deleted.",
+    why: "The lab queue's bulk claim / unclaim / delete bodies, moved out of queue/actions.ts and queue-deletion.ts so a server-minted batch id can be passed in. Claim and unclaim refuse a doctor line in JS (evaluateClaim's isDoctorLine), not with a read filter; the delete half removes whatever line reception or admin selected, and deleteTestRequestsForVisit reads the bill line unfiltered on purpose — a mis-keyed consultation is exactly the sort of line that gets deleted.",
   },
   "lib/actions/visits/queue-restore-core.ts": {
     meaning: "all",
@@ -494,6 +494,10 @@ const LIFECYCLES: Record<string, LifecycleSurface> = {
   "app/(staff)/staff/(dashboard)/queue/consolidated/[visitId]/[groupId]/page.tsx": {
     lifecycle: "live",
     why: "The consolidated chemistry panel's entry screen — bench work, same rule as the queue it belongs to.",
+  },
+  "lib/actions/queue/bulk-cores.ts": {
+    lifecycle: "any",
+    why: "The lab queue's bulk claim / unclaim / delete bodies (moved out of queue/actions.ts and queue-deletion.ts). Every read filters the line's own deleted_at is null; unclaim also filters the deleted visit in the query and claim refuses it in JS (evaluateClaim's visitDeleted). The delete half deliberately does not: deleteTestRequestsManyCore reads candidates by line only and deleteTestRequestsForVisit refuses a deleted visit with the clear message 'Visit is already deleted.' (as queue-deletion.ts always did) — so the file as a whole cannot claim 'live'.",
   },
   "lib/actions/queue/panel-writes.ts": {
     lifecycle: "live",

@@ -17,14 +17,18 @@
 import { z } from "zod";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { audit } from "@/lib/audit/log";
-import { requireActiveStaff, type StaffSession } from "@/lib/auth/require-staff";
+import { requireActiveStaff } from "@/lib/auth/require-staff";
 import { ipAndAgent } from "@/lib/server/action-helpers";
-import { QueueDeleteReasonSchema } from "@/lib/validations/accounting";
 import { translatePgError } from "@/lib/accounting/pg-errors";
 import { QUEUE_DELETE_ROLES } from "@/lib/visits/deletion";
 import { MAX_BULK_SELECTION } from "@/lib/visits/bulk-selection";
 import { assertVisitPatientActive } from "@/lib/patients/require-active";
-import type { BulkQueueResult, SkippedRow } from "@/lib/queue/bulk-queue";
+import type { BulkQueueResult } from "@/lib/queue/bulk-queue";
+import {
+  deleteTestRequestsForVisit,
+  deleteTestRequestsManyCore,
+  parseQueueDeleteReason,
+} from "@/lib/actions/queue/bulk-cores";
 import { revalidateQueueSurfaces, restoreTestRequestsForVisit } from "@/lib/actions/visits/queue-restore-core";
 
 export type QueueDeletionResult =
@@ -42,19 +46,6 @@ async function requireQueueDeleteStaff() {
   return { session, error: null } as const;
 }
 
-function parseReason(reason: string):
-  | { ok: true; reason: string }
-  | { ok: false; error: string } {
-  const parsed = QueueDeleteReasonSchema.safeParse({ reason });
-  if (!parsed.success) {
-    return {
-      ok: false,
-      error: parsed.error.issues[0]?.message ?? "Reason is required.",
-    };
-  }
-  return { ok: true, reason: parsed.data.reason };
-}
-
 // ---------------------------------------------------------------------------
 // Visit level (reception queue)
 // ---------------------------------------------------------------------------
@@ -65,7 +56,7 @@ export async function deleteVisitAction(
 ): Promise<QueueDeletionResult> {
   const { session, error: roleError } = await requireQueueDeleteStaff();
   if (!session) return { ok: false, error: roleError };
-  const parsed = parseReason(reason);
+  const parsed = parseQueueDeleteReason(reason);
   if (!parsed.ok) return { ok: false, error: parsed.error };
 
   const admin = createAdminClient();
@@ -124,7 +115,7 @@ export async function restoreVisitAction(
   // refuse it on an inactive patient (restore the patient first).
   const active = await assertVisitPatientActive(createAdminClient(), visitId);
   if (!active.ok) return { ok: false, error: active.error };
-  const parsed = parseReason(reason);
+  const parsed = parseQueueDeleteReason(reason);
   if (!parsed.ok) return { ok: false, error: parsed.error };
 
   const admin = createAdminClient();
@@ -172,100 +163,6 @@ export async function restoreVisitAction(
 // DB trigger; components themselves are rejected there (P0044).
 // ---------------------------------------------------------------------------
 
-type VisitDeleteOutcome =
-  | { ok: true; deletedIds: string[] }
-  | { ok: false; error: string };
-
-// Per-visit core shared by deleteTestRequestsAction (one visit) and
-// deleteTestRequestsManyAction (a queue selection across visits). NOT
-// exported: every export of a "use server" file is a public endpoint, and
-// this trusts the session + reason its caller already checked.
-async function deleteTestRequestsForVisit(
-  session: StaffSession,
-  visitId: string,
-  testRequestIds: string[],
-  reason: string,
-  bulk?: { size: number; batchId?: string },
-): Promise<VisitDeleteOutcome> {
-  const admin = createAdminClient();
-  const { data: candidates } = await admin
-    .from("test_requests")
-    .select(
-      "id, final_price_php, is_package_header, visits!inner ( patient_id, deleted_at ), services ( name, code )",
-    )
-    .in("id", testRequestIds)
-    .eq("visit_id", visitId)
-    .is("deleted_at", null);
-  const rows = candidates ?? [];
-  if (rows.length === 0) {
-    return { ok: false, error: "None of the selected tests can be deleted." };
-  }
-  if (rows.some((r) => r.visits.deleted_at !== null)) {
-    return { ok: false, error: "Visit is already deleted." };
-  }
-
-  // One UPDATE per visit — the 0125 guard raises P0042/P0043/P0044 for the
-  // whole statement, so a mixed selection on one visit fails atomically
-  // rather than half-deleting. The exact timestamp rides the audit metadata
-  // below so a bulk Undo can predicate its restore on it (P1: exact
-  // predicates) rather than restoring whatever is currently deleted.
-  const deletedAtIso = new Date().toISOString();
-  const { data: deleted, error } = await admin
-    .from("test_requests")
-    .update({
-      deleted_at: deletedAtIso,
-      deleted_by: session.user_id,
-      delete_reason: reason,
-    })
-    .in(
-      "id",
-      rows.map((r) => r.id),
-    )
-    .eq("visit_id", visitId)
-    .is("deleted_at", null)
-    .select("id");
-  if (error) return { ok: false, error: translatePgError(error) };
-  if (!deleted || deleted.length === 0) {
-    return { ok: false, error: "None of the selected tests can be deleted." };
-  }
-
-  const rowById = new Map(rows.map((r) => [r.id, r]));
-  const { ip, ua } = await ipAndAgent();
-  for (const row of deleted) {
-    const info = rowById.get(row.id);
-    await audit({
-      actor_id: session.user_id,
-      actor_type: "staff",
-      patient_id: info?.visits.patient_id ?? null,
-      action: "test_request.deleted",
-      resource_type: "test_request",
-      resource_id: row.id,
-      metadata: {
-        visit_id: visitId,
-        reason,
-        service_name: info?.services?.name ?? null,
-        service_code: info?.services?.code ?? null,
-        final_price_php:
-          info?.final_price_php != null ? Number(info.final_price_php) : null,
-        is_package_header: info?.is_package_header ?? false,
-        bulk: deleted.length > 1,
-        deleted_at: deletedAtIso,
-        ...(bulk
-          ? {
-              bulk_batch_size: bulk.size,
-              ...(bulk.batchId ? { bulk_batch_id: bulk.batchId } : {}),
-            }
-          : {}),
-      },
-      ip_address: ip,
-      user_agent: ua,
-    });
-  }
-
-  revalidateQueueSurfaces(visitId);
-  return { ok: true, deletedIds: deleted.map((r) => r.id) };
-}
-
 export async function deleteTestRequestsAction(
   visitId: string,
   testRequestIds: string[],
@@ -273,7 +170,7 @@ export async function deleteTestRequestsAction(
 ): Promise<QueueDeletionResult> {
   const { session, error: roleError } = await requireQueueDeleteStaff();
   if (!session) return { ok: false, error: roleError };
-  const parsed = parseReason(reason);
+  const parsed = parseQueueDeleteReason(reason);
   if (!parsed.ok) return { ok: false, error: parsed.error };
   if (testRequestIds.length === 0) {
     return { ok: false, error: "No tests selected." };
@@ -308,11 +205,10 @@ const ManyDeleteSchema = z.object({
 // never trusted from the page. Order matters — role, then the input's shape
 // and the reason, and only then the service-role reads — so an empty or
 // unknown-id batch from a caller without the role gets the role error, never
-// a candidate-dependent message. Each VISIT is its own atomic statement
-// (deleteTestRequestsForVisit, one UPDATE — the 0125 guard raises for the
-// whole statement on a single undeletable row). A chemistry panel is deleted
-// whole by panel-actions.ts, which calls this with the panel's full member
-// list as testRequestIds — one visit, so still one atomic statement.
+// a candidate-dependent message. The body lives in bulk-cores.ts
+// (deleteTestRequestsManyCore), which re-checks the role and the reason. This
+// public entry point mints its own batch id: the browser must never supply
+// one. panel-actions.ts calls the core directly, sharing one id.
 export async function deleteTestRequestsManyAction(input: unknown): Promise<BulkQueueResult> {
   const { session, error: roleError } = await requireQueueDeleteStaff();
   if (!session) return { ok: false, error: roleError };
@@ -325,61 +221,13 @@ export async function deleteTestRequestsManyAction(input: unknown): Promise<Bulk
         "Could not read the selection — refresh the queue and try again.",
     };
   }
-  const parsed = parseReason(shape.data.reason);
-  if (!parsed.ok) return { ok: false, error: parsed.error };
   const batchId = crypto.randomUUID();
   const ids = Array.from(new Set(shape.data.testRequestIds));
-
-  const admin = createAdminClient();
-
-  const { data: candidates, error: readError } = await admin
-    .from("test_requests")
-    .select("id, visit_id")
-    .in("id", ids)
-    .is("deleted_at", null);
-  if (readError) return { ok: false, error: translatePgError(readError) };
-  // Every id already deleted (or gone) — refuse before any write or audit row,
-  // so a stale selection reads as a clear error, not an empty "success".
-  // panel-actions.ts relies on this ok:false shape.
-  if (!candidates || candidates.length === 0) {
-    return {
-      ok: false,
-      error: "Nothing to delete — these tests were already deleted or no longer exist.",
-    };
-  }
-  const visitOfSingle = new Map((candidates ?? []).map((c) => [c.id, c.visit_id]));
-
-  const byVisit = new Map<string, string[]>();
-  const skipped: SkippedRow[] = [];
-
-  for (const id of ids) {
-    const visitId = visitOfSingle.get(id);
-    if (!visitId) {
-      skipped.push({ id, reason: "Already deleted or no longer exists." });
-      continue;
-    }
-    const group = byVisit.get(visitId);
-    if (group) group.push(id);
-    else byVisit.set(visitId, [id]);
-  }
-
-  const changedIds: string[] = [];
-  for (const [visitId, groupIds] of byVisit) {
-    const outcome = await deleteTestRequestsForVisit(session, visitId, groupIds, parsed.reason, {
-      size: ids.length,
-      batchId,
-    });
-    if (!outcome.ok) {
-      for (const id of groupIds) skipped.push({ id, reason: outcome.error });
-      continue;
-    }
-    const done = new Set(outcome.deletedIds);
-    for (const id of groupIds) {
-      if (done.has(id)) changedIds.push(id);
-      else skipped.push({ id, reason: "Already deleted or not deletable." });
-    }
-  }
-  return { ok: true, changedIds, skipped, batchId };
+  return deleteTestRequestsManyCore(
+    session,
+    { testRequestIds: ids, reason: shape.data.reason },
+    { batchId, batchSize: ids.length },
+  );
 }
 
 export async function restoreTestRequestsAction(
@@ -389,7 +237,7 @@ export async function restoreTestRequestsAction(
 ): Promise<QueueDeletionResult> {
   const { session, error: roleError } = await requireQueueDeleteStaff();
   if (!session) return { ok: false, error: roleError };
-  const parsed = parseReason(reason);
+  const parsed = parseQueueDeleteReason(reason);
   if (!parsed.ok) return { ok: false, error: parsed.error };
   if (testRequestIds.length === 0) {
     return { ok: false, error: "No tests selected." };
