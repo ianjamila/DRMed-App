@@ -399,7 +399,7 @@ select null from pg_temp.expect_error('9 metadata not an object', 'a0000000-0000
 select null from pg_temp.expect_error('9 oversized metadata', 'a0000000-0000-4000-8000-000000000205',
   format($q$select public.release_visit_results('e0000000-0000-4000-8000-000000000205',
        '{f7000000-0000-4000-8000-000000000205}'::uuid[], 'email', null, %L::jsonb)$q$,
-    jsonb_build_object('metadata', jsonb_build_object('pad', repeat('x', 5000)))), 'P0081');
+    jsonb_build_object('metadata', jsonb_build_object('source', repeat('x', 5000)))), 'P0081');
 
 select null from pg_temp.expect_error('9 a key outside the allow-list (acting_as)', 'a0000000-0000-4000-8000-000000000205',
   $q$select public.release_visit_results('e0000000-0000-4000-8000-000000000205',

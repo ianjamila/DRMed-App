@@ -39,6 +39,10 @@
 //       nothing changes, no release_undone audit rows.
 //   B4d batch Undo when a released member has released_at NULL: waits, then the
 //       whole report is skipped changed_since (never split); no audit rows.
+//   B6  audit ordering after a lock wait: an undo whose transaction BEGAN before
+//       the release it then waits for still stamps its release_undone rows
+//       AFTER the release's rows (0205: created_at = clock_timestamp(), not the
+//       transaction's now()) - loadOwnBatchRows' changedSince orders by it.
 //   A/B1/B2 also assert the test_request.released / release_undone audit rows
 //   0205 writes in the same transaction (loser / refused calls write none).
 //   C1  a member held (in_progress) by M2 and being handed back: the release
@@ -106,7 +110,8 @@
 // M4 drops the package-header lock (E), M5 drops the exact-release condition
 // from the batch Undo's report check (B4b), M6 drops 0205's string-type check on
 // the batch Undo map (B4c), M7 reverts the report check to the null-unsafe
-// `not (...)` form (B4d). The control rounds do NOT cover the
+// `not (...)` form (B4d), M8 stamps the undo's audit rows with now() (B6).
+// The control rounds do NOT cover the
 // guards that live in triggers on public tables (the payment gate, the consent
 // gate, the GL bridge's one-posted-entry unique index, fn_release_header_when_
 // components_done): a trigger on a public table fires for every session, so a
@@ -819,6 +824,46 @@ async function forcedScenarios(mode: Mode): Promise<void> {
     ]);
     // a was released by the fixture (no audit row); the RPC released b and c, then undid all three.
     await expectAudit("audit", f.ids, { released: 2, undone: 3 });
+  });
+
+  await sc("B6", "undo BEGAN before the release it waits for -> its audit rows are still stamped after the release's", async () => {
+    const f = await mkFix({ states: ["ready", "ready", "ready"] });
+    const adm = await actor("A", fx.admin1);
+    const m = await actor("M1", fx.med1);
+    // The waiter's transaction starts FIRST: with now() its rows would carry
+    // this earlier instant, i.e. land BEFORE the release it waited for.
+    await begin(adm, mode);
+    const waiterStart = (await adm.c.query<{ t: string }>("select now()::text as t")).rows[0].t;
+    await sleep(20);
+    await begin(m, mode);
+    const holderStart = (await m.c.query<{ t: string }>("select now()::text as t")).rows[0].t;
+    const { rows: order } = await monitor.query<{ ok: boolean }>(
+      "select $1::timestamptz < $2::timestamptz as ok",
+      [waiterStart, holderStart],
+    );
+    if (!order[0].ok) throw new Fail(`the waiter did not begin first (${waiterStart} vs ${holderStart})`);
+    expectRelease("M1 release", await release(m, f.visit, f.ids), { released: 3 });
+    const pu = undo(adm, f.visit, [f.ids[0]]);
+    await mustWait(adm, "the undo queues behind the release's row locks");
+    await m.c.query("commit");
+    const u = expectOk("A undo", await pu);
+    if (u.undone.length !== 3) throw new Fail(`A undo: expected 3 undone, got ${u.undone.length}`);
+    await adm.c.query("commit");
+    await expectState("after", f.ids, ["rdy:-", "rdy:-", "rdy:-"]);
+    await expectAudit("audit", f.ids, { released: 3, undone: 3, releasedBy: fx.med1 });
+    const { rows } = await monitor.query<{ ok: boolean; rel: string; und: string }>(
+      `select min(created_at) filter (where action = 'test_request.release_undone')
+               > max(created_at) filter (where action = 'test_request.released') as ok,
+             max(created_at) filter (where action = 'test_request.released')::text as rel,
+             min(created_at) filter (where action = 'test_request.release_undone')::text as und
+        from public.audit_log
+       where resource_type = 'test_request' and resource_id = any($1::uuid[])
+         and action in ('test_request.released', 'test_request.release_undone')`,
+      [f.ids],
+    );
+    if (!rows[0].ok) {
+      throw new Fail(`undo rows stamped at/before the release rows (last release ${rows[0].rel}, first undo ${rows[0].und})`);
+    }
   });
 
   await sc("B2", "partial report: undo holds -> release WAITS -> release releases all three, one entry each", async () => {
@@ -1579,6 +1624,13 @@ const MUTANTS: Mutant[] = [
       ["(p_expected_released_at ->> m::text)::timestamptz) is not true) then", "(p_expected_released_at ->> m::text)::timestamptz)) then"],
     ],
     mustFail: ["B4d"],
+  },
+  {
+    key: "M8",
+    what: "undo's audit rows stamped with the transaction's now() instead of clock_timestamp()",
+    fn: "undo_visit_release",
+    edits: [["v_ip, v_ua, clock_timestamp()", "v_ip, v_ua, now()"]],
+    mustFail: ["B6"],
   },
 ];
 
