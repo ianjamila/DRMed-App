@@ -110,10 +110,11 @@ export function QueueBulkBar({ rowsByKey }: Props) {
       else alert(result.error);
       return;
     }
-    // Claim, Unclaim and Delete all get Undo — only when the server gave us
-    // a batch id and at least one row actually changed. A selection that
-    // included a chemistry panel never gets one yet (panel-actions.ts has no
-    // Undo of its own): see claim()/unclaim()/remove() below.
+    // Claim, Unclaim and Delete all get Undo, for ANY selection — single
+    // tests, chemistry panels or a mix (one batch id covers the whole call) —
+    // but only when the server gave us that batch id and at least one row
+    // actually changed. A panel is undone whole or not at all (see
+    // undoBulkQueueAction in actions.ts).
     const undo: OutcomeUndo | null =
       result.batchId && result.changedIds.length > 0
         ? {
