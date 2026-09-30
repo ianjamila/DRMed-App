@@ -10,6 +10,7 @@ import { StaffBookingSchema, type StaffBookingInput } from "@/lib/validations/st
 import { createAppointmentGroup, type PatientResolution } from "@/lib/appointments/create";
 import type { BookingConflict } from "@/lib/appointments/timing";
 import { resolvePatient } from "@/lib/patients/resolve";
+import { translatePgError } from "@/lib/accounting/pg-errors";
 import { activePatients } from "@/lib/patients/active";
 import { assertPatientActive } from "@/lib/patients/require-active";
 import { findCandidatesForInput } from "@/lib/patients/find-duplicates";
@@ -104,7 +105,7 @@ export async function createStaffAppointmentAction(input: StaffBookingInput): Pr
         phone: data.patient.phone,
         email: data.patient.email,
         address: data.patient.address,
-      });
+      }, translatePgError);
       if (!r.ok) return { ok: false, error: r.error };
       return { ok: true, patient: { patientId: r.id, drmId: r.drm_id, email: data.patient.email, resolution: r.reused ? "reused" : "created" } };
     }
@@ -127,6 +128,7 @@ export async function createStaffAppointmentAction(input: StaffBookingInput): Pr
     source: data.source,
     attribution: linkedMessage?.attribution ?? null,
     resolvePatient: resolveThunk,
+    translateError: translatePgError,
   });
 
   if (!result.ok) {

@@ -573,3 +573,55 @@ describe("undoReleaseSelectedAction — undo_visit_release", () => {
     expect(undoCalls(fake)).toHaveLength(0);
   });
 });
+
+describe("15. reception never releases (owner rule 2026-09-15)", () => {
+  it.each([
+    ["releaseTestAction", () => releaseTestAction("x", "v1", "email")],
+    ["releaseSelectedAction", () => releaseSelectedAction("v1", ["x"], "email")],
+    ["releaseAllReadyComponentsAction", () => releaseAllReadyComponentsAction("h", "v1", "email")],
+  ] as Array<[string, () => Promise<unknown>]>)("%s refuses with the reception message and makes no RPC", async (_n, run) => {
+    const fake = seed();
+    fx.role = "reception";
+    expect(await run()).toEqual({ ok: false, error: RELEASE_REFUSAL.reception });
+    expect(RELEASE_REFUSAL.reception).toBe("Results are released by the lab team, not reception.");
+    expect(fake.rpcCalls).toEqual([]);
+    expect(statusOf(fake, "x")).toBe("ready_for_release");
+    expect(fx.notifyOne).toEqual([]);
+    expect(fx.notifyBulk).toEqual([]);
+    expect(fx.alerts).toEqual([]);
+  });
+});
+
+describe("16. ready rows outside the caller's sections get the section reason, not 'not ready'", () => {
+  it("releaseSelectedAction: a medtech selecting only an out-of-section ready row", async () => {
+    const fake = seed({ x: { section: "imaging_xray" } });
+    fx.role = "medtech";
+    expect(await releaseSelectedAction("v1", ["x"], "email")).toEqual({ ok: false, error: RELEASE_REFUSAL.section });
+    expect(writes(fake)).toHaveLength(0);
+    expect(fx.revalidate).toEqual(REVALIDATED);
+  });
+
+  it("releaseSelectedAction: a truly not-ready selection keeps the old text", async () => {
+    const fake = seed({ x: { status: "result_uploaded" } });
+    fx.role = "medtech";
+    expect(await releaseSelectedAction("v1", ["x"], "email")).toEqual({ ok: false, error: NONE_READY });
+    expect(writes(fake)).toHaveLength(0);
+  });
+
+  it("releaseAllReadyComponentsAction: ready components all outside the medtech's sections", async () => {
+    const fake = seed({ c1: { section: "imaging_xray" }, c2: { section: "imaging_xray" } });
+    fx.role = "medtech";
+    expect(await releaseAllReadyComponentsAction("h", "v1", "email")).toEqual({ ok: false, error: RELEASE_REFUSAL.section });
+    expect(writes(fake)).toHaveLength(0);
+    expect(fx.revalidate).toEqual(REVALIDATED);
+  });
+
+  it("releaseAllReadyComponentsAction: no ready components keeps the old text", async () => {
+    seed({ c1: { status: "result_uploaded" }, c2: { status: "result_uploaded" } });
+    fx.role = "medtech";
+    expect(await releaseAllReadyComponentsAction("h", "v1", "email")).toEqual({
+      ok: false,
+      error: "No components are ready to release.",
+    });
+  });
+});

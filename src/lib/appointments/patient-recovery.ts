@@ -4,8 +4,7 @@ import { withLifecycleRetry } from "@/lib/patients/lifecycle-retry";
 // NOTE: no `import "server-only"` (directly or transitively) — this module
 // must stay unit-testable without a DB. `PatientResolution` is imported as a
 // type only (erased at build time), so it never pulls in `./create`'s
-// runtime module graph (which does transitively import `server-only` via
-// `translatePgError`).
+// runtime module graph.
 
 export const LOOKUP_AGAIN_ERROR = "We couldn't use that patient record. Look the patient up again, then book.";
 

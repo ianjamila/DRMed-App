@@ -62,15 +62,29 @@ export async function createLinkedResult(
 // P0066 when a concurrent caller (two tabs, a double click) already linked
 // this test to a result. Whether the loser can safely continue against the
 // winner's row is a pure decision, kept here so it can be unit-tested without
-// a database: only a still-open structured draft (not an uploaded PDF, not
-// yet finalised) is safe to pick up — anything else must surface the original
-// P0066 message.
+// a database: only a still-open SINGLE-TEST structured draft (not an uploaded
+// PDF, not yet finalised) is safe to pick up. If the winner started the
+// combined report (a consolidated result — report_group_id set, or linked to
+// more than one test, e.g. the chemistry panel), the single-test path must not
+// write into it: it would save this one test's template over a shared result.
+// Send the user to the combined report instead. Anything else surfaces the
+// original P0066 message.
 // ---------------------------------------------------------------------------
 export interface RacedResultLink {
   generation_kind: string | null;
   finalised_at: string | null;
+  report_group_id: string | null;
 }
 
-export function canContinueRacedStructuredDraft(link: RacedResultLink | null | undefined): boolean {
-  return link != null && link.generation_kind === "structured" && link.finalised_at === null;
+export type RacedDraftOutcome = "continue" | "combined_report" | "refuse";
+
+/** `memberCount` = how many tests the winner's result is linked to. */
+export function racedStructuredDraftOutcome(
+  link: RacedResultLink | null | undefined,
+  memberCount: number,
+): RacedDraftOutcome {
+  if (link == null) return "refuse";
+  if (link.report_group_id !== null || memberCount > 1) return "combined_report";
+  if (link.generation_kind === "structured" && link.finalised_at === null) return "continue";
+  return "refuse";
 }

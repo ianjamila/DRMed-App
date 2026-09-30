@@ -183,3 +183,17 @@ grant select on public.v_patient_dedup_candidate_pairs to service_role;
 revoke all on public.visit_waiver_allocations from anon;
 revoke all on public.visit_waiver_allocations from authenticated;
 grant select on public.visit_waiver_allocations to authenticated;
+
+-- 0202: the eight RLS-on / no-policy tables (the 0151 smoke's list) are
+-- service_role-only — every reader/writer is the service-role client or a
+-- SECURITY DEFINER function, so anon/authenticated hold nothing on them.
+revoke all on public.bill_payment_year_counters    from public, anon, authenticated;
+revoke all on public.bill_year_counters            from public, anon, authenticated;
+revoke all on public.je_year_counters              from public, anon, authenticated;
+revoke all on public.legacy_import_runs            from public, anon, authenticated;
+revoke all on public.patient_consents              from public, anon, authenticated;
+revoke all on public.patient_merges                from public, anon, authenticated;
+revoke all on public.pf_disbursement_year_counters from public, anon, authenticated;
+revoke all on public.sheet_mirror_staging          from public, anon, authenticated;
+revoke all on sequence public.patient_consents_seq_seq     from public, anon, authenticated;
+revoke all on sequence public.sheet_mirror_staging_seq_seq from public, anon, authenticated;

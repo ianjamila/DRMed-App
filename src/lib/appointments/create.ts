@@ -1,6 +1,5 @@
 import { randomUUID } from "node:crypto";
 import type { createAdminClient } from "@/lib/supabase/admin";
-import { translatePgError } from "@/lib/accounting/pg-errors";
 import { manilaSlotFor, KINDS_PER_BRANCH, type BookingBranch } from "@/lib/validations/booking";
 import { dayWindowFor } from "@/lib/physicians/availability";
 import { decideAppointmentTiming, type BookingConflict, type ServiceRow } from "@/lib/appointments/timing";
@@ -8,11 +7,14 @@ import { labRequestStatus, type IntakePreference } from "@/lib/appointments/lab-
 import type { AppointmentSource } from "@/lib/appointments/source";
 import type { Attribution } from "@/lib/analytics/attribution";
 import { insertWithPatientRecovery } from "@/lib/appointments/patient-recovery";
+import type { DbErrorTranslator } from "@/lib/patients/public-db-error";
 
 // Translate an insertWithPatientRecovery error (code may be null, unlike the
-// raw PostgrestError translatePgError expects) into a UI-facing message.
-function translateInsertError(e: { code?: string | null; message: string }): string {
-  return translatePgError({ code: e.code ?? undefined, message: e.message });
+// raw PostgrestError shape a translator expects) into a UI-facing message with
+// the caller's translator: translatePgError for staff, publicDbError for the
+// public form (translatePgError passes staff-only messages through).
+function translateInsertError(translate: DbErrorTranslator, e: { code?: string | null; message: string }): string {
+  return translate({ code: e.code ?? undefined, message: e.message });
 }
 
 // Server-side orchestration. Receives the admin client as a param (no service-
@@ -53,6 +55,9 @@ export interface CreateAppointmentInput {
   // that doesn't assume a staff patient picker (0184 review minor #5).
   // Omit for the staff caller, which keeps the default staff wording.
   lookupAgainError?: string;
+  // How a database error reads: translatePgError (staff) or publicDbError
+  // (public/portal form). Required so no caller inherits staff wording.
+  translateError: DbErrorTranslator;
 }
 
 export type CreateAppointmentResult =
@@ -78,7 +83,7 @@ export async function loadServices(
     .from("services")
     .select("id, name, kind, is_active, fasting_required, requires_time_slot, allow_concurrent")
     .in("id", ids);
-  if (error) return { ok: false, error: error.message };
+  if (error) return { ok: false, error: "Could not load the selected services. Please try again." };
   if (!data || data.length !== ids.length) {
     return { ok: false, error: "One or more services are no longer available." };
   }
@@ -206,7 +211,7 @@ export async function createAppointmentGroup(
     const e = inserted.error;
     if (typeof e === "string") return { ok: false, error: e };
     if (e.code === "P0040") return { ok: false, error: "That slot was just taken. Please pick another time." };
-    return { ok: false, error: translateInsertError(e) };
+    return { ok: false, error: translateInsertError(input.translateError, e) };
   }
   const created = inserted.data;
   const finalPatient = inserted.patient;
@@ -239,6 +244,8 @@ export interface CreateLabRequestOnlyInput {
   // See CreateAppointmentInput.lookupAgainError — this booking path is
   // public/portal-only (no staff caller), so it will always want this set.
   lookupAgainError?: string;
+  // See CreateAppointmentInput.translateError.
+  translateError: DbErrorTranslator;
 }
 
 // A booking where the patient uploaded a doctor's request form instead of
@@ -293,7 +300,7 @@ export async function createLabRequestOnlyBooking(
   if (!inserted.ok) {
     const e = inserted.error;
     if (typeof e === "string") return { ok: false, error: e };
-    return { ok: false, error: translateInsertError(e) };
+    return { ok: false, error: translateInsertError(input.translateError, e) };
   }
   const created = inserted.data;
   if (!created || created.length !== 1) {
