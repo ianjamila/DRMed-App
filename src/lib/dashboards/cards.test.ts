@@ -65,6 +65,12 @@ describe("matchesCardDefault", () => {
   });
 });
 
+it("ships the New patients today tile on for admin", () => {
+  const card = DASHBOARD_CARDS.find((c) => c.id === "admin.new_patients_today");
+  expect(card).toMatchObject({ label: "New patients today", roles: ["admin"], group: "people" });
+  expect(hiddenCardIdsFor("admin", []).has("admin.new_patients_today")).toBe(false);
+});
+
 describe("card registry", () => {
   it("has unique ids", () => {
     const ids = DASHBOARD_CARDS.map((c) => c.id);

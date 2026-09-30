@@ -11,6 +11,8 @@ import {
   type CampaignResultsJoin,
   type DailyCampaignCounts,
 } from "@/lib/marketing/campaign-results";
+import { describeAdSpendSave } from "@/lib/marketing/ad-spend-import";
+import { saveAdSpendAction } from "../ad-spend-actions";
 
 // Ad-spend analytics dashboard, ported from the standalone marketing-kit tool
 // (DRMed-marketing-kit/dashboards/drmed-ad-dashboard.jsx). Fully client-side:
@@ -524,6 +526,7 @@ export function AdPerformanceDashboard({
   const [sort, setSort] = useState<SortState>({ key: "spend", dir: "desc" });
   const [adSort, setAdSort] = useState<SortState>({ key: "spend", dir: "desc" });
   const [note, setNote] = useState("");
+  const [saveNote, setSaveNote] = useState("");
   const fileRef = useRef<HTMLInputElement>(null);
 
   const dates = useMemo(() => [...new Set(data.map((r) => r.date))].sort(), [data]);
@@ -615,6 +618,15 @@ export function AdPerformanceDashboard({
     const input = e.target;
     const file = input.files?.[0];
     if (!file) return;
+    // Also save the spend to the clinic's records for Patient Sources' cost per
+    // new patient (spec §2.3). The server re-parses the raw file with the strict
+    // daily-only contract; the in-browser view below is unchanged.
+    setSaveNote("Saving to clinic records…");
+    void file
+      .text()
+      .then((text) => saveAdSpendAction(text))
+      .then((res) => setSaveNote(describeAdSpendSave(res)))
+      .catch(() => setSaveNote("Not saved to clinic records: the upload failed — try again."));
     // papaparse is only needed once a staff member actually uploads a CSV, so
     // load it on demand to keep it out of the dashboard's initial JS bundle.
     const { default: Papa } = await import("papaparse");
@@ -646,6 +658,7 @@ export function AdPerformanceDashboard({
     setData(buildSample());
     setSource("sample");
     setNote("");
+    setSaveNote("");
     try {
       window.localStorage.removeItem(STORE_KEY);
     } catch {
@@ -783,6 +796,11 @@ export function AdPerformanceDashboard({
           >
             {note}
           </div>
+        )}
+        {saveNote && (
+          <p role="status" className="text-xs mb-3" style={{ color: C.sub }}>
+            {saveNote}
+          </p>
         )}
 
         {/* KPIs */}

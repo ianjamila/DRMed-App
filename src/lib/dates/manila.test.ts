@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
 import {
+  daysBetweenISO,
   firstOfMonthISO,
   friendlyManilaDate,
   isoDateParts,
@@ -175,5 +176,15 @@ describe("manilaISODate / manilaParts — the Manila day an INSTANT falls on", (
       month: 1,
       day: 1,
     });
+  });
+});
+
+describe("daysBetweenISO", () => {
+  it("counts whole calendar days across month and year ends", () => {
+    expect(daysBetweenISO("2026-09-28", "2026-09-28")).toBe(0);
+    expect(daysBetweenISO("2026-01-31", "2026-03-01")).toBe(29);
+    expect(daysBetweenISO("2025-12-31", "2026-01-01")).toBe(1);
+    expect(daysBetweenISO("2026-03-01", "2026-01-31")).toBe(-29);
+    expect(daysBetweenISO("2024-02-28", "2024-03-01")).toBe(2);
   });
 });

@@ -158,6 +158,12 @@ grant select on public.sheet_encounter_lines to authenticated;
 revoke all on public.sheet_mirror_staging from anon;
 revoke all on public.sheet_mirror_staging from authenticated;
 
+-- 0189: ad_spend_daily is admin-read (RLS) and written only through the
+-- ad_spend_import / ad_spend_delete RPCs; never reachable by anon.
+revoke all on public.ad_spend_daily from anon;
+revoke all on public.ad_spend_daily from authenticated;
+grant select on public.ad_spend_daily to authenticated;
+
 -- 0167: patient views (the directory view's mirror already exists from 0171 —
 -- do not duplicate it). The dedup view is service_role-only; the admin
 -- inclusive view is authenticated-only (its WHERE limits it to admins).

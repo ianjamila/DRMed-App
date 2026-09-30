@@ -273,3 +273,12 @@ export function lastOfMonthISO(year: number, month: number): string {
   const n = normaliseMonth(year, month);
   return `${n.year}-${pad2(n.month)}-${pad2(daysInMonth(n.year, n.month))}`;
 }
+
+/**
+ * Whole days from calendar date `a` to `b` (negative when `b` is earlier).
+ * Both are YYYY-MM-DD strings read as UTC midnights, the same arithmetic as
+ * `shiftISODate`, so no runtime-zone accessor is involved.
+ */
+export function daysBetweenISO(a: string, b: string): number {
+  return Math.round((Date.parse(`${b}T00:00:00Z`) - Date.parse(`${a}T00:00:00Z`)) / 86_400_000);
+}

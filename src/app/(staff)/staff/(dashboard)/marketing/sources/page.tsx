@@ -3,19 +3,17 @@ import { ROUTE_NAME, SECTION_NAME } from "@/lib/staff/route-names";
 import { PageHeader } from "@/components/staff/page-header";
 import { createClient } from "@/lib/supabase/server";
 import { fetchAllRows, REPORT_EXPORT_MAX_ROWS } from "@/lib/reports/paging";
-import { isISODate, manilaRangeUtc, todayManilaISODate } from "@/lib/dates/manila";
-import { buildPeriodPresets } from "@/lib/reports/period-presets";
-import { activePatients } from "@/lib/patients/active";
+import { manilaRangeUtc, todayManilaISODate } from "@/lib/dates/manila";
+import { firstParam, resolvePeriod } from "@/lib/marketing/period";
+import { loadPatientSourcesSummary } from "@/lib/marketing/patient-sources.server";
 import { StatCard } from "../../_dashboards/_components/stat-card";
-import { PeriodChips } from "./_components/period-chips";
+import { PeriodControls } from "../_components/period-controls";
 import { ProportionTable } from "./_components/proportion-table";
 import {
   summarizeBookings,
   summarizeMessages,
-  summarizeNewPatientReferrals,
   type AppointmentSourceRow,
   type ContactMessageSourceRow,
-  type NewPatientSourceRow,
 } from "@/lib/marketing/booking-sources";
 
 export const metadata = { title: ROUTE_NAME["/staff/marketing/sources"] };
@@ -24,7 +22,7 @@ export const dynamic = "force-dynamic";
 const PATHNAME = "/staff/marketing/sources";
 
 interface SearchProps {
-  searchParams: Promise<{ from?: string; to?: string }>;
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
 }
 
 export default async function BookingSourcesReportPage({ searchParams }: SearchProps) {
@@ -32,17 +30,15 @@ export default async function BookingSourcesReportPage({ searchParams }: SearchP
   const sp = await searchParams;
 
   const todayISO = todayManilaISODate();
-  const thisMonth = buildPeriodPresets(todayISO).find((p) => p.key === "this-month")!;
-  const from = isISODate(sp.from) ? sp.from : thisMonth.start;
-  const to = isISODate(sp.to) ? sp.to : thisMonth.end;
+  const period = resolvePeriod({ from: firstParam(sp.from), to: firstParam(sp.to) }, todayISO);
 
-  const { fromIso, toIso } = manilaRangeUtc(from, to);
+  const { fromIso, toIso } = manilaRangeUtc(period.from, period.to);
   const supabase = await createClient();
 
   const [
     { rows: apptRows, truncated: apptTruncated },
     { rows: msgRows, truncated: msgTruncated },
-    { rows: patientRows, truncated: patientTruncated },
+    summary,
   ] = await Promise.all([
     fetchAllRows<AppointmentSourceRow>(
       (rFrom, rTo) => {
@@ -72,33 +68,11 @@ export default async function BookingSourcesReportPage({ searchParams }: SearchP
       },
       REPORT_EXPORT_MAX_ROWS,
     ),
-    // New patients created in the period. A merged duplicate (dedup tool) or a
-    // deleted record is not counted — the same active-record rule as the rest
-    // of the app. Imported records are left out too: the May import and the
-    // reception-sheet sync (0170) stamp legacy_import_run_id and create their
-    // patients in bulk on the night they run, so created_at is the import
-    // night, not the day the patient registered — the sync's first run alone
-    // would read as one day with ~549 "new patients". No app registration
-    // path (counter, website, portal) ever sets legacy_import_run_id.
-    fetchAllRows<NewPatientSourceRow>(
-      (rFrom, rTo) => {
-        let q = activePatients(supabase.from("patients").select("id, referral_source, created_at"))
-          .is("legacy_import_run_id", null);
-        if (fromIso) q = q.gte("created_at", fromIso);
-        if (toIso) q = q.lt("created_at", toIso);
-        return q
-          .order("created_at", { ascending: true })
-          .order("id", { ascending: true })
-          .range(rFrom, rTo)
-          .returns<NewPatientSourceRow[]>();
-      },
-      REPORT_EXPORT_MAX_ROWS,
-    ),
+    loadPatientSourcesSummary(supabase, period.from, period.to),
   ]);
 
   const bookings = summarizeBookings(apptRows);
   const messages = summarizeMessages(msgRows);
-  const newPatients = summarizeNewPatientReferrals(patientRows);
 
   const bookedRatePct = messages.bookedRate == null ? "—" : `${Math.round(messages.bookedRate * 100)}%`;
 
@@ -107,15 +81,23 @@ export default async function BookingSourcesReportPage({ searchParams }: SearchP
       <PageHeader
         eyebrow={SECTION_NAME["/staff/marketing"]}
         title={ROUTE_NAME["/staff/marketing/sources"]}
-        subtitle="Where appointments, website messages and new app registrations came from, for a chosen period. Online
+        subtitle="Where appointments and website messages came from, for a chosen period. Online
           bookings and messages tag themselves automatically; a booking made by phone or in
           person is only countable here from the day reception started picking “How did they
-          reach us?” in the New appointment form."
+          reach us?” in the New appointment form. New patients by channel are on Patient Sources."
       />
 
-      <PeriodChips pathname={PATHNAME} from={from} to={to} todayISO={todayISO} />
+      <PeriodControls
+        pathname={PATHNAME}
+        todayISO={todayISO}
+        from={period.from}
+        to={period.to}
+        presetKey={period.presetKey}
+        error={period.error}
+        params={{ from: period.from, to: period.to }}
+      />
 
-      {apptTruncated || msgTruncated || patientTruncated ? (
+      {apptTruncated || msgTruncated ? (
         <p
           role="status"
           className="mb-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900"
@@ -143,9 +125,15 @@ export default async function BookingSourcesReportPage({ searchParams }: SearchP
           hint="Website messages whose status is Booked, over all messages in the period."
         />
         <StatCard
-          label="New app registrations"
-          value={newPatients.total.toLocaleString("en-PH")}
-          hint={`${newPatients.recorded.toLocaleString("en-PH")} said how they heard about us · imports excluded`}
+          label="New patients"
+          value={
+            summary.ok
+              ? `${summary.data.new_confirmed.toLocaleString("en-PH")} confirmed · ${summary.data.new_unconfirmed.toLocaleString("en-PH")} unconfirmed`
+              : "—"
+          }
+          hint="First visit recorded, same count as Patient Sources. See by channel →"
+          href={`/staff/marketing/patients?from=${period.from}&to=${period.to}`}
+          error={!summary.ok}
         />
       </div>
 
@@ -171,20 +159,6 @@ export default async function BookingSourcesReportPage({ searchParams }: SearchP
           every other staff booking shows as no ad tag. “Cancelled / no-show” counts bookings
           under that campaign that were later cancelled or marked no-show — they're counted
           separately and are not part of Count or Share."
-      />
-
-      <ProportionTable
-        title="New app registrations by how they heard about us"
-        columnLabel="Heard about us from"
-        rows={newPatients.bySource.map((s) => ({ label: s.label, count: s.count }))}
-        note="Every patient record created in the app in the period, whoever made it. Records brought
-          in by an import — the original May 2026 import and the reception Google Sheet sync (Admin
-          Tools › Sheet Sync) — are not counted: they are created in bulk on the night the import
-          runs, not on the day the patient registered. Reception answers
-          “Referral source” on the New Patient form (required since 11 September 2026), and
-          patients answer “How did you hear about us?” when they book or register on the website
-          (from 24 September 2026). Patients added from the New appointment form are not asked
-          and show as Not recorded, as do older records. Merged duplicates are not counted."
       />
 
       <ProportionTable
