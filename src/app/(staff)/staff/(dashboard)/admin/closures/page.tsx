@@ -1,4 +1,7 @@
 import { createClient } from "@/lib/supabase/server";
+// The RPC below is service_role-only by design (0184) — this page is
+// already admin-gated by requireAdminStaff().
+import { createAdminClient } from "@/lib/supabase/admin";
 import { requireAdminStaff } from "@/lib/auth/require-admin";
 import { ClosuresClient } from "./closures-client";
 import { ROUTE_NAME } from "@/lib/staff/route-names";
@@ -10,8 +13,9 @@ export const metadata = {
 export const dynamic = "force-dynamic";
 
 export default async function ClosuresAdminPage() {
-  await requireAdminStaff();
+  const session = await requireAdminStaff();
   const supabase = await createClient();
+  const admin = createAdminClient();
 
   // Show today onward; past closures aren't useful for the slot picker.
   const todayISO = new Intl.DateTimeFormat("sv-SE", {
@@ -21,15 +25,16 @@ export default async function ClosuresAdminPage() {
     day: "2-digit",
   }).format(new Date());
 
-  const { data: closures } = await supabase
+  const { data: closureRows } = await supabase
     .from("clinic_closures")
     .select("closed_on, reason, created_at, created_by")
     .gte("closed_on", todayISO)
     .order("closed_on", { ascending: true });
+  const upcoming = closureRows ?? [];
 
   // Fetch the names of the staff who created each closure.
   const creatorIds = Array.from(
-    new Set((closures ?? []).map((c) => c.created_by).filter(Boolean)),
+    new Set(upcoming.map((c) => c.created_by).filter(Boolean)),
   ) as string[];
   const creatorMap = new Map<string, string>();
   if (creatorIds.length > 0) {
@@ -40,23 +45,24 @@ export default async function ClosuresAdminPage() {
     for (const p of profiles ?? []) creatorMap.set(p.id, p.full_name);
   }
 
-  // For each closure date, count appointments that would be affected by
-  // a bulk reschedule (status confirmed/arrived with a real scheduled_at
-  // landing on that Manila day). Patients with pending_callback are
-  // already awaiting a reception call, so they're excluded.
-  const affectedByDate = new Map<string, number>();
-  for (const c of closures ?? []) {
-    const startIso = `${c.closed_on}T00:00:00+08:00`;
-    const next = new Date(startIso);
-    next.setUTCDate(next.getUTCDate() + 1);
-    const { count } = await supabase
-      .from("appointments")
-      .select("id", { count: "exact", head: true })
-      .gte("scheduled_at", startIso)
-      .lt("scheduled_at", next.toISOString())
-      .in("status", ["confirmed", "arrived"]);
-    affectedByDate.set(c.closed_on, count ?? 0);
-  }
+  // For each closure date, preview exactly what a bulk reschedule would do —
+  // the same reschedule_closure_appointments RPC (0184) in dry-run mode, so
+  // this number is never higher than what the button actually moves (the
+  // old hand-rolled count included deleted/merged patients' appointments,
+  // which the action always skips).
+  const previews = await Promise.all(
+    upcoming.map(async (c) => {
+      const { data, error } = await admin.rpc("reschedule_closure_appointments", {
+        p_closed_on: c.closed_on,
+        p_actor: session.user_id,
+        p_dry_run: true,
+      });
+      const r = data as { affected: number; skipped_inactive: number } | null;
+      return { closedOn: c.closed_on, affected: error || !r ? null : r.affected, skippedInactive: r?.skipped_inactive ?? 0 };
+    }),
+  );
+  const affectedByDate = new Map(previews.map((p) => [p.closedOn, p.affected]));
+  const skippedInactiveByDate = new Map(previews.map((p) => [p.closedOn, p.skippedInactive]));
 
   return (
     <div className="px-4 py-8 sm:px-6 lg:px-8">
@@ -72,14 +78,15 @@ export default async function ClosuresAdminPage() {
       </header>
 
       <ClosuresClient
-        initialClosures={(closures ?? []).map((c) => ({
+        initialClosures={upcoming.map((c) => ({
           closed_on: c.closed_on,
           reason: c.reason,
           created_at: c.created_at,
           created_by_name: c.created_by
             ? creatorMap.get(c.created_by) ?? null
             : null,
-          affected_count: affectedByDate.get(c.closed_on) ?? 0,
+          affected_count: affectedByDate.get(c.closed_on) ?? null,
+          skipped_inactive: skippedInactiveByDate.get(c.closed_on) ?? 0,
         }))}
       />
     </div>

@@ -7,26 +7,14 @@ import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { audit } from "@/lib/audit/log";
 import { requireAdminStaff } from "@/lib/auth/require-admin";
-import { manilaRangeUtc } from "@/lib/dates/manila";
-import { fetchCompleteRows } from "@/lib/reports/paging";
-import {
-  isActivePatient,
-  PATIENT_LIFECYCLE_COLUMNS,
-  type PatientLifecycle,
-} from "@/lib/patients/active";
-
-const UPDATE_CHUNK = 200;
+import { translatePgError } from "@/lib/accounting/pg-errors";
+import { ipAndAgent } from "@/lib/server/action-helpers";
+import { withLifecycleRetry } from "@/lib/patients/lifecycle-retry";
 
 export type ClosureResult = { ok: true } | { ok: false; error: string };
 export type BulkRescheduleResult =
   | { ok: true; affected: number; skipped: number }
   | { ok: false; error: string };
-
-interface RescheduleCandidate {
-  id: string;
-  patient_id: string | null;
-  patients: PatientLifecycle | PatientLifecycle[] | null;
-}
 
 const ClosureSchema = z.object({
   closed_on: z
@@ -88,22 +76,10 @@ export async function createClosureAction(
   return { ok: true };
 }
 
-// Move every confirmed / scheduled appointment on the given closure
-// date to pending_callback so reception can reach out and propose a
-// new slot. Only touches appointments with a real scheduled_at on that
-// Manila day; pending_callback rows are already in the right state.
-//
-// A closure can be recorded for a PAST date after a patient whose (then
-// past, non-blocking) appointment fell on that day was deleted — the
-// reschedule must not reopen work on a deleted/merged record by turning a
-// closed appointment into an open pending_callback. Candidates are SELECTed
-// first with the patient's lifecycle columns embedded so `isActivePatient`
-// can filter in JS: PostgREST silently ignores a filter aimed at a
-// LEFT-joined embed (`patients` here — a walk-in appointment has
-// patient_id = null and must still be rescheduled), so this can't be a
-// `.eq()`/`.is()` on the query itself. One inactive patient never blocks the
-// whole action — that row is skipped and the skipped count is reported both
-// in the result and in the closure-level audit metadata.
+// Moves every confirmed/arrived appointment on the closed Manila day to
+// pending_callback via reschedule_closure_appointments (0184): one
+// transaction; a deleted or merged patient's appointment is skipped, never a
+// reason to fail; walk-ins always move.
 export async function bulkRescheduleForClosureAction(
   _prev: BulkRescheduleResult | null,
   formData: FormData,
@@ -126,94 +102,25 @@ export async function bulkRescheduleForClosureAction(
     return { ok: false, error: "Closure no longer exists." };
   }
 
-  // Manila-day bounds: [date 00:00 PHT, next-date 00:00 PHT).
-  const { fromIso: startIso, toIso: endIso } = manilaRangeUtc(closedOn, closedOn);
-  if (!startIso || !endIso) {
-    return { ok: false, error: "Invalid date." };
-  }
-
   const admin = createAdminClient();
-  // The whole matching set, paged with a unique order — a bare select would
-  // stop silently at PostgREST's 1,000-row cap.
-  const { data: candidates, error: selectError } = await fetchCompleteRows((from, to) =>
-    admin
-      .from("appointments")
-      .select(`id, patient_id, patients ( ${PATIENT_LIFECYCLE_COLUMNS} )`)
-      .gte("scheduled_at", startIso)
-      .lt("scheduled_at", endIso)
-      .in("status", ["confirmed", "arrived"])
-      .order("id")
-      .range(from, to)
-      .returns<RescheduleCandidate[]>(),
+  const { ip, ua } = await ipAndAgent();
+  // 0184: one transaction — select, lock the patients, skip inactive ones,
+  // update, audit (per row + summary). No 200-row chunks that could stop
+  // half-way, no row cap.
+  const { data, error } = await withLifecycleRetry(() =>
+    admin.rpc("reschedule_closure_appointments", {
+      p_closed_on: closedOn,
+      p_actor: session.user_id,
+      p_dry_run: false,
+      p_context: { ip, user_agent: ua },
+    }),
   );
-  if (selectError) return { ok: false, error: selectError.message };
-
-  let skipped = 0;
-  const eligibleIds: string[] = [];
-  for (const r of candidates ?? []) {
-    const patient = Array.isArray(r.patients) ? (r.patients[0] ?? null) : r.patients;
-    // Walk-ins (patient_id null, no embedded patient) always reschedule.
-    if (patient === null || isActivePatient(patient)) {
-      eligibleIds.push(r.id);
-    } else {
-      skipped++;
-    }
-  }
-
-  // The update restates the status/date predicates, so a row reception
-  // cancelled or completed after the select is left alone; only the rows
-  // actually changed are counted and audited.
-  const rows: { id: string; patient_id: string | null }[] = [];
-  for (let i = 0; i < eligibleIds.length; i += UPDATE_CHUNK) {
-    const { data: updated, error: updateError } = await admin
-      .from("appointments")
-      .update({ status: "pending_callback", scheduled_at: null })
-      .in("id", eligibleIds.slice(i, i + UPDATE_CHUNK))
-      .gte("scheduled_at", startIso)
-      .lt("scheduled_at", endIso)
-      .in("status", ["confirmed", "arrived"])
-      .select("id, patient_id");
-    if (updateError) return { ok: false, error: updateError.message };
-    rows.push(...(updated ?? []));
-  }
-
-  // One audit row per RESCHEDULED appointment so the trail is searchable
-  // by patient — skipped rows are not touched, so they get no per-row audit
-  // row. Also one summary row at the closure level.
-  const h = await headers();
-  const ip = h.get("x-forwarded-for")?.split(",")[0]?.trim() ?? null;
-  const ua = h.get("user-agent");
-  for (const r of rows) {
-    await audit({
-      actor_id: session.user_id,
-      actor_type: "staff",
-      patient_id: r.patient_id ?? null,
-      action: "appointment.bulk_rescheduled_for_closure",
-      resource_type: "appointment",
-      resource_id: r.id,
-      metadata: {
-        closed_on: closedOn,
-        previous_status: "confirmed_or_arrived",
-        new_status: "pending_callback",
-      },
-      ip_address: ip,
-      user_agent: ua,
-    });
-  }
-  await audit({
-    actor_id: session.user_id,
-    actor_type: "staff",
-    action: "closure.bulk_rescheduled",
-    resource_type: "clinic_closure",
-    resource_id: null,
-    metadata: { closed_on: closedOn, affected: rows.length, skipped },
-    ip_address: ip,
-    user_agent: ua,
-  });
+  if (error || !data) return { ok: false, error: translatePgError(error ?? { message: "Could not reschedule." }) };
+  const r = data as { affected: number; skipped_inactive: number; skipped_changed: number };
 
   revalidatePath("/staff/admin/closures");
   revalidatePath("/staff/appointments");
-  return { ok: true, affected: rows.length, skipped };
+  return { ok: true, affected: r.affected, skipped: r.skipped_inactive + r.skipped_changed };
 }
 
 export async function deleteClosureAction(

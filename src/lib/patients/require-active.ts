@@ -115,3 +115,42 @@ export async function assertResolutionPatientActive(db: Db, resolutionId: string
   if (error) return LOOKUP_FAILED;
   return data ? assertClaimItemsPatientsActive(db, [data.item_id]) : { ok: true };
 }
+
+/**
+ * Which of these test_requests currently belong to an ACTIVE patient — for a
+ * bulk write that must SKIP an inactive patient's row instead of failing the
+ * whole statement (0184 review minor #1): a single multi-row UPDATE aborts
+ * wholesale the instant any ONE row's a_lifecycle_guard trigger refuses it,
+ * so a bulk action over many rows (bulkSetHmoResponseAction) has to exclude
+ * an inactive patient's row BEFORE the write, not discover it as a failure.
+ * Same shape as the queue's per-row bulk claim/unclaim skip and the closures
+ * bulk reschedule's skip count. Returns null only on a lookup failure —
+ * callers should treat that as "skip everything" (fail closed).
+ */
+export async function activeTestRequestIds(
+  db: Db,
+  testRequestIds: readonly string[],
+): Promise<Set<string> | null> {
+  const rows = await selectByIds<{ id: string; visit_id: string }>(testRequestIds, (chunk) =>
+    db.from("test_requests").select("id, visit_id").in("id", chunk),
+  );
+  if (!rows) return null;
+  const visits = await selectByIds<{ id: string; patient_id: string }>(
+    rows.map((r) => r.visit_id),
+    (chunk) => db.from("visits").select("id, patient_id").in("id", chunk),
+  );
+  if (!visits) return null;
+  const patientByVisit = new Map(visits.map((v) => [v.id, v.patient_id]));
+  const patients = await selectByIds<{ id: string; deleted_at: string | null; merged_into_id: string | null }>(
+    visits.map((v) => v.patient_id),
+    (chunk) => db.from("patients").select("id, deleted_at, merged_into_id").in("id", chunk),
+  );
+  if (!patients) return null;
+  const activeByPatient = new Map(patients.map((p) => [p.id, p.deleted_at === null && p.merged_into_id === null]));
+  const out = new Set<string>();
+  for (const r of rows) {
+    const patientId = patientByVisit.get(r.visit_id);
+    if (patientId && activeByPatient.get(patientId)) out.add(r.id);
+  }
+  return out;
+}

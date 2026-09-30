@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useId, useState, useTransition } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
@@ -61,6 +61,7 @@ export function PatientDeleteButton({
   initialReason?: DeleteReason;
 }) {
   const router = useRouter();
+  const blockersId = useId();
   const [open, setOpen] = useState(false);
   const [preview, setPreview] = useState<DeletePreview | null>(null);
   const [blockers, setBlockers] = useState<DeleteBlocker[]>([]);
@@ -161,7 +162,7 @@ export function PatientDeleteButton({
       ) : null}
 
       {groups.length > 0 ? (
-        <div role="alert" className="rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-rose-900">
+        <div id={blockersId} role="alert" className="rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-rose-900">
           <p className="font-bold">This record can&apos;t be deleted yet. Close these first:</p>
           {groups.map((g) => (
             <div key={g.kind} className="mt-2">
@@ -247,6 +248,7 @@ export function PatientDeleteButton({
         confirmLabel="Delete patient"
         confirmVariant="danger"
         confirmDisabled={confirmDisabled}
+        confirmDescribedBy={blockers.length > 0 ? blockersId : undefined}
         onConfirm={confirm}
         onCancel={close}
         isPending={pending}

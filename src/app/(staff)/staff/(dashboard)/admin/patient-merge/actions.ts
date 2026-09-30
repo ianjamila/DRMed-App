@@ -8,8 +8,22 @@ import { activePatients } from "@/lib/patients/active";
 import { audit } from "@/lib/audit/log";
 import { reportError } from "@/lib/observability/report-error";
 import { requireAdminStaff } from "@/lib/auth/require-admin";
+import { runUndoSteps, undoMergeSteps } from "@/lib/patients/undo-merge-steps";
+import {
+  mergeMoveSteps,
+  runMergeMoveSteps,
+  rollbackMergeMoves,
+  MERGE_MOVE_TABLES,
+  type MergeMoveStep,
+  type MergeMoveTable,
+  type MergeRollbackFailure,
+} from "@/lib/patients/merge-steps";
+import { withLifecycleRetry } from "@/lib/patients/lifecycle-retry";
+import { chunkIds } from "@/lib/patients/require-active-core";
+import { fetchCompleteRows } from "@/lib/reports/paging";
 import { sendEmail } from "@/lib/notifications/email";
 import { checkPatientRecipient } from "@/lib/notifications/active-patient-recipient";
+import { auditSkippedInactiveRecipient } from "@/lib/notifications/inactive-recipient-audit";
 import {
   renderEmailShell,
   emailParagraph,
@@ -131,6 +145,162 @@ export async function lookupPatientForMergeAction(
   return { ok: true, patient: preview };
 }
 
+// Ids per rollback chunk — same figure as require-active.ts's own CHUNK (a
+// plain `.in()` with hundreds of values is both a PostgREST/Postgres risk
+// and rides the GET query string uncapped). A single merge's row counts are
+// ordinarily tiny, but this keeps the rollback safe if they aren't.
+const MERGE_ROLLBACK_CHUNK = 200;
+
+// Claws exact ids back from keep_id to source_id for one completed move
+// step, called by runMergeMoveSteps only when a LATER step failed. Chunked,
+// each chunk retried once on a lock race, with a fresh builder per attempt
+// (same Prefer-header trap as the forward move). `.eq("patient_id", keepId)`
+// is a safety predicate: only claw back rows still on the kept patient,
+// never a row some unrelated concurrent write already moved elsewhere.
+// audit_log.id is bigserial (number), not uuid — cast before `.in()`, same
+// as undoMergeAction's own move-back case.
+async function rollbackMergeMoveStep(
+  admin: ReturnType<typeof createAdminClient>,
+  step: MergeMoveStep,
+  ids: unknown[],
+  keepId: string,
+  sourceId: string,
+): Promise<{ error: { message: string } | null }> {
+  const failures: string[] = [];
+  // audit_log.id is bigserial (number), not uuid (string) like the other
+  // five tables — normalise to string for chunking, same as the other
+  // moves' ids, then cast back to Number for THIS table's `.in()`, same as
+  // undoMergeAction's own move-back case.
+  const idStrings = ids.map((id) => String(id));
+  for (const idsChunk of chunkIds(idStrings, MERGE_ROLLBACK_CHUNK)) {
+    const queryIds = step.table === "audit_log" ? idsChunk.map(Number) : idsChunk;
+    const { error } = await withLifecycleRetry(() =>
+      admin
+        .from(step.table)
+        .update({ patient_id: sourceId })
+        .in("id", queryIds)
+        .eq("patient_id", keepId),
+    );
+    if (error) failures.push(error.message);
+  }
+  return failures.length > 0 ? { error: { message: failures.join("; ") } } : { error: null };
+}
+
+// The five contact fields `fill` (below) can copy from source onto keep.
+const FILL_FIELDS = ["middle_name", "sex", "phone", "email", "address"] as const;
+type FillField = (typeof FILL_FIELDS)[number];
+
+// Undoes the fill (0184 review follow-up): only called when the merge is
+// abandoned AFTER the fill already landed (the tombstone write failed). Each
+// field is cleared with its OWN `.eq(field, value)` guard — one UPDATE per
+// field, retried once on a lock race — so a field is only nulled back out if
+// it still holds exactly the value this merge copied in; if some OTHER write
+// changed it in the meantime (unlikely — keep_id is still active and this
+// runs within seconds of the fill), that field is left alone rather than
+// clobbered. Returns which fields (if any) could not be reverted, for the
+// caller to fold into its own rollback-failure accounting.
+async function revertFillFields(
+  admin: ReturnType<typeof createAdminClient>,
+  keepId: string,
+  fill: Partial<Record<FillField, string>>,
+): Promise<{ error: { message: string } | null; failedFields: FillField[] }> {
+  const failedFields: FillField[] = [];
+  const errors: string[] = [];
+  for (const field of FILL_FIELDS) {
+    const value = fill[field];
+    if (value === undefined) continue;
+    // A pre-typed variable, not an inline object literal — Supabase's
+    // `.update()` overload excess-property-checks a literal against the
+    // full Patients Update type, which a computed `{ [field]: null }` key
+    // (field: FillField, a union) can't satisfy even with a cast; assigning
+    // through the index signature on an already `Partial<Record<...>>`-typed
+    // variable sidesteps that (same pattern undoMergeAction's `clear` uses).
+    const payload: Partial<Record<FillField, null>> = {};
+    payload[field] = null;
+    const { error } = await withLifecycleRetry(() =>
+      admin
+        .from("patients")
+        .update(payload)
+        .eq("id", keepId)
+        .eq(field, value),
+    );
+    if (error) {
+      failedFields.push(field);
+      errors.push(`${field}: ${error.message}`);
+    }
+  }
+  return errors.length > 0
+    ? { error: { message: errors.join("; ") }, failedFields }
+    : { error: null, failedFields: [] };
+}
+
+// Reads every id currently on source_id for one FK table, BEFORE any move
+// (0184 review follow-up, unknown-outcome case). Paged/complete — a batch
+// could exceed PostgREST's 1000-row cap — with a total order (`id`) so
+// `.range()` can't drop or repeat rows.
+async function snapshotSourceIds(
+  admin: ReturnType<typeof createAdminClient>,
+  table: MergeMoveTable,
+  sourceId: string,
+): Promise<{ ids: unknown[]; error: string | null }> {
+  const { data, error } = await fetchCompleteRows<{ id: unknown }, { message: string }>((from, to) =>
+    admin
+      .from(table)
+      .select("id")
+      .eq("patient_id", sourceId)
+      .order("id", { ascending: true })
+      .range(from, to),
+  );
+  if (error) return { ids: [], error: error.message };
+  return { ids: (data ?? []).map((r) => r.id), error: null };
+}
+
+// Reports a merge that stopped after the moves already succeeded (the fill
+// or tombstone write failed) or during them (a move failed), and rolls back
+// accordingly. `rolledBack`/`rollbackFailures` are the outcome of a
+// rollbackMergeMoves call the caller already made (or, for a move failure,
+// the one runMergeMoveSteps made internally) — this only turns that outcome
+// into the audit trail + user-facing message, which is the same either way:
+// full rollback success reads as "nothing changed, try again"; a rollback
+// failure reports exactly which ids are stranded and refuses a re-run.
+async function reportMergeStopped(
+  rolledBack: boolean,
+  rollbackFailures: MergeRollbackFailure[],
+  scope: string,
+  originalError: string,
+  extraMetadata: Record<string, unknown>,
+): Promise<MergeResult> {
+  if (rolledBack) {
+    await reportError({
+      scope,
+      error: new Error(originalError),
+      metadata: { ...extraMetadata, rolled_back: true },
+    });
+    return {
+      ok: false,
+      error:
+        "The merge couldn't finish because another change was being saved at the same moment. Nothing was changed — please try again.",
+    };
+  }
+  // The rollback itself couldn't fully complete — some rows may now be on
+  // the wrong patient. Report exactly which ones so this can be fixed by
+  // hand, and refuse a re-run rather than risk compounding the mess.
+  await reportError({
+    scope: `${scope}:rollback`,
+    error: new Error(originalError),
+    metadata: {
+      ...extraMetadata,
+      rollback_failures: rollbackFailures.map((f) => ({ table: f.table, error: f.error })),
+      stranded_ids: Object.fromEntries(rollbackFailures.map((f) => [f.table, f.ids])),
+    },
+  });
+  return {
+    ok: false,
+    error:
+      "The merge stopped part-way and some records could not be put back automatically. Don't run it again — the error has been reported for a manual fix.",
+  };
+}
+
 export async function mergePatientsAction(
   _prev: MergeResult | null,
   formData: FormData,
@@ -179,48 +349,80 @@ export async function mergePatientsAction(
     };
   }
 
-  // Reassign FK rows. We do these as separate updates rather than a
-  // transaction because Supabase JS doesn't expose explicit transactions
-  // — at this row volume the operations are independently idempotent
-  // and a partial failure leaves a recoverable state (re-run the merge
-  // and the second pass is a no-op for already-moved rows).
-  const { data: visits } = await admin
-    .from("visits")
-    .update({ patient_id: keep_id })
-    .eq("patient_id", source_id)
-    .select("id");
-  const { data: appts } = await admin
-    .from("appointments")
-    .update({ patient_id: keep_id })
-    .eq("patient_id", source_id)
-    .select("id");
-  const { data: auditRows } = await admin
-    .from("audit_log")
-    .update({ patient_id: keep_id })
-    .eq("patient_id", source_id)
-    .select("id");
-  const { data: criticalAlerts } = await admin
-    .from("critical_alerts")
-    .update({ patient_id: keep_id })
-    .eq("patient_id", source_id)
-    .select("id");
-  const { data: consents } = await admin
-    .from("patient_consents")
-    .update({ patient_id: keep_id })
-    .eq("patient_id", source_id)
-    .select("id");
-  // 0167: current_patient_id() is active-only, so a portal token for the
-  // (now-merged) source patient can no longer reach these through RLS. Move
-  // them the same way as the other FK tables, or they become unreachable —
-  // nobody else owns them.
-  const { data: attachments } = await admin
-    .from("appointment_attachments")
-    .update({ patient_id: keep_id })
-    .eq("patient_id", source_id)
-    .select("id");
+  // Snapshot every FK table's rows currently on source_id, BEFORE any move
+  // (0184 review follow-up, unknown-outcome case): if a move's HTTP response
+  // is lost after the UPDATE actually committed, PostgREST reports it as an
+  // error with data: null — the row IS on keep_id, but a rollback keyed only
+  // on the acknowledged `moved` ids would never learn that and would leave
+  // it stranded. The snapshot gives the rollback something to fall back on:
+  // union(snapshot, acknowledged ids), filtered to rows still on keep_id, is
+  // exact either way and a no-op for anything that never moved.
+  const snapshot = {} as Record<MergeMoveTable, unknown[]>;
+  for (const table of MERGE_MOVE_TABLES) {
+    const snap = await snapshotSourceIds(admin, table, source_id);
+    if (snap.error) {
+      return { ok: false, error: "Could not prepare the merge. Try again." };
+    }
+    snapshot[table] = snap.ids;
+  }
+
+  // Reassign FK rows source→keep (merge-steps.ts). Since 0184 every write to
+  // a patient-owned table takes the patient lifecycle lock, so a move can
+  // fail with 40P01 (a concurrent payment path can take the visit's shared
+  // lock first), P0072 (the record moved mid-save) or 23514 (a critical
+  // alert's patient must match its test's patient — it can only move back
+  // once its visit already has). The runner stops at the FIRST move that
+  // still fails; each move is retried once on a lock race, with a fresh
+  // builder per attempt (re-awaiting one PostgREST builder with `.select()`
+  // would re-append its Prefer header and send the mutation twice). Nothing
+  // below this — filling fields, tombstoning the source, writing the undo
+  // ledger — runs unless every move actually landed (0184 review finding
+  // P1): a merge that stopped part-way used to tombstone the source anyway
+  // and strand the rows that didn't move on a now-inactive patient.
+  //
+  // On a stop, the runner also rolls back every step it attempted — using
+  // the snapshot above, not just the acknowledged `moved` ids (see
+  // snapshotSourceIds' comment) — to source_id (0184 review follow-up): a
+  // re-run is only a full recovery for rows that never moved at all —
+  // patient_merges.moved is never written on a failed merge, so Undo has
+  // nothing to restore, and without a rollback any row a completed step DID
+  // move would be stranded on keep_id, invisible to Undo, and silently
+  // under-reverted. Both patients are still active at this point, so the
+  // guard allows moving rows back. If the rollback itself fully succeeds,
+  // both records end up exactly as they were and the admin can just try
+  // again. If the rollback can't complete either, some rows are left in an
+  // inconsistent state and this needs a human to look at it — never
+  // silently re-attempted.
+  const moveOutcome = await runMergeMoveSteps(
+    mergeMoveSteps(),
+    snapshot,
+    (step) =>
+      withLifecycleRetry(() =>
+        admin.from(step.table).update({ patient_id: keep_id }).eq("patient_id", source_id).select("id"),
+      ),
+    (step, ids) => rollbackMergeMoveStep(admin, step, ids, keep_id, source_id),
+  );
+  if (!moveOutcome.ok) {
+    return reportMergeStopped(
+      moveOutcome.rolledBack,
+      moveOutcome.rollbackFailures,
+      "mergePatientsAction:move",
+      moveOutcome.error,
+      { keep_id, source_id, failed_table: moveOutcome.failedAt.table, completed_moves: moveOutcome.completed },
+    );
+  }
+  const {
+    visits,
+    appointments: appts,
+    audit_log: auditRows,
+    critical_alerts: criticalAlerts,
+    patient_consents: consents,
+    appointment_attachments: attachments,
+  } = moveOutcome.moved;
 
   // Fill missing fields on the kept row from the source row — never
-  // overwrite a non-null value.
+  // overwrite a non-null value. Checked the same way as a move above: on
+  // failure, stop before tombstoning the source.
   const fill: {
     middle_name?: string;
     sex?: string;
@@ -234,17 +436,93 @@ export async function mergePatientsAction(
   if (!keep.email && source.email) fill.email = source.email;
   if (!keep.address && source.address) fill.address = source.address;
   if (Object.keys(fill).length > 0) {
-    await admin.from("patients").update(fill).eq("id", keep_id);
+    const { error: fillErr } = await withLifecycleRetry(() =>
+      admin.from("patients").update(fill).eq("id", keep_id),
+    );
+    if (fillErr) {
+      // The six moves already landed — a bare "run the merge again" would
+      // write an EMPTY ledger on the re-run (the moves are no-ops the second
+      // time, since the rows are already on keep_id) and Undo would then
+      // have nothing to restore. Roll the six moves back first, same as a
+      // move failure (0184 review follow-up).
+      const { rolledBack, rollbackFailures } = await rollbackMergeMoves(
+        mergeMoveSteps(),
+        moveOutcome.moved,
+        snapshot,
+        (step, ids) => rollbackMergeMoveStep(admin, step, ids, keep_id, source_id),
+      );
+      return reportMergeStopped(rolledBack, rollbackFailures, "mergePatientsAction:fill", fillErr.message, {
+        keep_id,
+        source_id,
+      });
+    }
   }
 
-  // Tombstone the source row.
+  // Tombstone the source row. Retried once on a lock race (P0072/40P01),
+  // same as every move and the fill, with a fresh query per attempt (the
+  // Prefer-header trap). Two extra predicates make the retry ITSELF
+  // idempotent: if the first attempt actually committed but its response was
+  // lost (reported as a retryable error), the retry's own UPDATE now matches
+  // ZERO rows (merged_into_id is no longer null) instead of re-stamping a
+  // second merged_at over the first. A zero-row result isn't necessarily a
+  // failure, though — it's also what a genuinely stale source (deleted or
+  // merged elsewhere between the pre-merge check and here) would produce —
+  // so it's resolved by re-reading source_id: merged_into_id already equal to
+  // keep_id means THIS merge's own earlier attempt is the one that landed,
+  // and the tombstone counts as done.
   const mergedAt = new Date().toISOString();
-  const { error: tombErr } = await admin
-    .from("patients")
-    .update({ merged_into_id: keep_id, merged_at: mergedAt })
-    .eq("id", source_id);
-  if (tombErr) {
-    return { ok: false, error: tombErr.message };
+  const { data: tombRows, error: tombErr } = await withLifecycleRetry(() =>
+    admin
+      .from("patients")
+      .update({ merged_into_id: keep_id, merged_at: mergedAt })
+      .eq("id", source_id)
+      .is("merged_into_id", null)
+      .is("deleted_at", null)
+      .select("id"),
+  );
+  let tombstoneDone = !tombErr && (tombRows?.length ?? 0) > 0;
+  if (!tombErr && !tombstoneDone) {
+    // A lifecycle read (deciding what to do next from the row's current
+    // state) — selects both lifecycle columns per convention, even though
+    // only merged_into_id is checked below.
+    const { data: recheck } = await admin
+      .from("patients")
+      .select("merged_into_id, deleted_at")
+      .eq("id", source_id)
+      .maybeSingle();
+    tombstoneDone = recheck?.merged_into_id === keep_id;
+  }
+  if (tombErr || !tombstoneDone) {
+    // The six moves already landed, so a bare retry would write an EMPTY
+    // ledger on the re-run (the moves are no-ops the second time) and Undo
+    // would have nothing to restore. Roll them back first (0184 review
+    // follow-up) — AND, unlike the fill-failure branch above, revert the
+    // fill too: by this point it already landed, so leaving it in place
+    // would contradict the "nothing was changed" message this reports.
+    // Fold both outcomes into one rollback-failure list so a partial
+    // failure on either side is reported together.
+    const fillRevert =
+      Object.keys(fill).length > 0
+        ? await revertFillFields(admin, keep_id, fill)
+        : { error: null, failedFields: [] as string[] };
+    const { rolledBack: movesRolledBack, rollbackFailures: moveFailures } = await rollbackMergeMoves(
+      mergeMoveSteps(),
+      moveOutcome.moved,
+      snapshot,
+      (step, ids) => rollbackMergeMoveStep(admin, step, ids, keep_id, source_id),
+    );
+    const rollbackFailures: MergeRollbackFailure[] = [...moveFailures];
+    if (fillRevert.error) {
+      rollbackFailures.push({ table: "patients", error: fillRevert.error.message, ids: fillRevert.failedFields });
+    }
+    const rolledBack = movesRolledBack && !fillRevert.error;
+    const message =
+      tombErr?.message ??
+      "the source patient could no longer be tombstoned (already merged or deleted elsewhere)";
+    return reportMergeStopped(rolledBack, rollbackFailures, "mergePatientsAction:tombstone", message, {
+      keep_id,
+      source_id,
+    });
   }
 
   // Record the merge for reversibility (exact moved IDs + filled fields).
@@ -264,9 +542,12 @@ export async function mergePatientsAction(
     filled_from_source: Object.keys(fill),
   });
   if (ledgerErr) {
-    // The merge itself succeeded (rows moved + source tombstoned). If the undo
-    // ledger row failed to write, the merge is NOT reversible — surface it to
-    // Sentry rather than silently presenting it as undoable.
+    // The merge itself succeeded (rows moved + source tombstoned) — unlike
+    // the fill/tombstone failure branches above, there is nothing left to
+    // roll back here; the tombstone already committed, so this IS the
+    // completed merge. If the undo ledger row failed to write, the merge is
+    // NOT reversible — surface it to Sentry rather than silently presenting
+    // it as undoable (0184 review follow-up: pre-existing, unchanged).
     await reportError({
       scope: "mergePatientsAction:ledger",
       error: ledgerErr,
@@ -283,6 +564,15 @@ export async function mergePatientsAction(
   // send, and its on-file email (already carrying whatever `fill` copied over
   // above) is the address of record — never the earlier `keep`/`fill` values.
   const recipient = await checkPatientRecipient(admin, keep_id);
+  if (recipient.kind === "inactive") {
+    await auditSkippedInactiveRecipient({
+      sender: "patient-merge",
+      patientId: keep_id,
+      reason: recipient.reason,
+      resourceType: "patient",
+      resourceId: keep_id,
+    });
+  }
   const keptEmail = recipient.kind === "active" ? (recipient.patient.email ?? fill.email ?? null) : null;
   const mergeEmail = keptEmail
     ? await sendEmail({
@@ -463,37 +753,11 @@ export async function undoMergeAction(
     return { ok: false, error: "Can't undo: the source patient has since been deleted. Restore it first." };
   }
 
-  const moved = (m.moved ?? {}) as Record<string, string[]>;
-  // Re-point each recorded row back to the source patient. Explicit per-table
-  // calls (literal table names) so each .update keeps its typed row shape.
-  const visitIds = moved["visits"] ?? [];
-  if (visitIds.length > 0) {
-    await admin.from("visits").update({ patient_id: m.source_id }).in("id", visitIds);
-  }
-  const apptIds = moved["appointments"] ?? [];
-  if (apptIds.length > 0) {
-    await admin.from("appointments").update({ patient_id: m.source_id }).in("id", apptIds);
-  }
-  // audit_log.id is bigserial (number), not uuid — cast from the JSON string values.
-  const auditIds = (moved["audit_log"] ?? []).map(Number);
-  if (auditIds.length > 0) {
-    await admin.from("audit_log").update({ patient_id: m.source_id }).in("id", auditIds);
-  }
-  const alertIds = moved["critical_alerts"] ?? [];
-  if (alertIds.length > 0) {
-    await admin.from("critical_alerts").update({ patient_id: m.source_id }).in("id", alertIds);
-  }
-  const consentIds = moved["patient_consents"] ?? [];
-  if (consentIds.length > 0) {
-    await admin.from("patient_consents").update({ patient_id: m.source_id }).in("id", consentIds);
-  }
-  const attachmentIds = moved["appointment_attachments"] ?? [];
-  if (attachmentIds.length > 0) {
-    await admin.from("appointment_attachments").update({ patient_id: m.source_id }).in("id", attachmentIds);
-  }
+  const moved = (m.moved ?? {}) as Record<string, (string | number)[]>;
 
   // Null out exactly the fields the merge filled (merge only fills NULL keep
-  // fields, and only from this known set). Typed to those columns.
+  // fields, and only from this known set). Typed to those columns. Computed
+  // BEFORE the step runner so the "clear_filled_fields" step below can use it.
   const filled = (m.filled_from_source ?? []) as string[];
   const clear: Partial<Record<"middle_name" | "sex" | "phone" | "email" | "address", null>> = {};
   for (const f of filled) {
@@ -501,18 +765,46 @@ export async function undoMergeAction(
       clear[f] = null;
     }
   }
-  if (Object.keys(clear).length > 0) {
-    await admin.from("patients").update(clear).eq("id", m.keep_id);
+
+  // 0184: the lifecycle guard refuses moving any row onto a still-merged
+  // (inactive) source patient, so the source's merge marker must be cleared
+  // FIRST — before any row moves back. runUndoSteps stops at the first
+  // failed step (the ledger is left NOT undone) and every step is
+  // idempotent, so re-running Undo after a partial failure is safe.
+  const outcome = await runUndoSteps(undoMergeSteps(), async (step) => {
+    switch (step.kind) {
+      case "clear_source_marker":
+        return admin.from("patients").update({ merged_into_id: null, merged_at: null }).eq("id", m.source_id);
+      case "move_back": {
+        const ids = moved[step.table] ?? [];
+        if (ids.length === 0) return { error: null };
+        // audit_log.id is bigserial (number), not uuid — cast from the JSON string values.
+        return step.table === "audit_log"
+          ? admin.from("audit_log").update({ patient_id: m.source_id }).in("id", ids.map(Number))
+          : admin.from(step.table).update({ patient_id: m.source_id }).in("id", ids as string[]);
+      }
+      case "clear_filled_fields":
+        return Object.keys(clear).length === 0
+          ? { error: null }
+          : admin.from("patients").update(clear).eq("id", m.keep_id);
+      case "mark_ledger_undone":
+        return admin
+          .from("patient_merges")
+          .update({ undone_at: new Date().toISOString(), undone_by: session.user_id })
+          .eq("id", m.id);
+    }
+  });
+  if (!outcome.ok) {
+    await reportError({
+      scope: "undoMergeAction",
+      error: new Error(outcome.error),
+      metadata: { merge_id: m.id, failed_at: outcome.failedAt, completed_steps: outcome.completed },
+    });
+    return {
+      ok: false,
+      error: `Undo stopped part-way (step ${outcome.completed + 1}: ${outcome.error}). Nothing is marked undone — run Undo again; steps already done are safe to repeat.`,
+    };
   }
-
-  // Restore the source row.
-  await admin.from("patients").update({ merged_into_id: null, merged_at: null }).eq("id", m.source_id);
-
-  // Mark the ledger row undone.
-  await admin
-    .from("patient_merges")
-    .update({ undone_at: new Date().toISOString(), undone_by: session.user_id })
-    .eq("id", m.id);
 
   const h = await headers();
   await audit({

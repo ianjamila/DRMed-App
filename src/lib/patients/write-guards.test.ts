@@ -59,6 +59,10 @@ const KNOWN_WRITER_RPCS = new Set<string>([
   "restore_patient",
   "claim_panel_members", // panel-writes.ts claimPanelMembers — all-or-nothing panel claim (0191).
   "unclaim_panel_members", // panel-writes.ts unclaimPanelMembers — all-or-nothing panel hand-back (0191).
+  "create_visit_encounter", // visits/new/actions.ts createVisitAction — visit, lines, PIN in one transaction (0184).
+  "result_create_linked", // create-linked.ts — a result row and its links (0184).
+  "record_hmo_settlement", // hmo-claims/actions.ts recordHmoSettlementAction (0184).
+  "reschedule_closure_appointments", // admin/closures/actions.ts (0184) — skips inactive patients inside the RPC.
 ]);
 
 // Names that count as "this write is guarded" WHEN CALLED DIRECTLY from the
@@ -83,16 +87,16 @@ const GUARD_PATTERN = /\b(assert\w*Active|getActivePatientSession|isActivePatien
 const GUARD_WRAPPERS: Record<string, string> = {
   [`src/app/(staff)/staff/(dashboard)/visits/[id]/actions.ts:refuseIfVisitDeleted`]:
     "Wraps assertVisitPatientActive and returns an early-refusal object every caller checks before writing (6 call sites: release/undo-release/mark-done family).",
-  // NOTE: prepareStructured itself still calls assertPatientActive before its
-  // OWN two writes (a new results/result_test_requests row) — those resolve
-  // directly against GUARD_PATTERN, with no wrapper credit needed. A
-  // GUARD_WRAPPERS entry for it went stale post-rebase: 0172 moved the
-  // draft/finalise/amend writes themselves out of saveDraftAction/
-  // finaliseStructuredAction's own bodies and into separate helpers
-  // (saveDraftValues here; commitResultEdit/commitResultFinalise in
-  // result-edit-core.ts) that do not call prepareStructured directly — so no
-  // caller's write is ever credited THROUGH this wrapper. See the EXEMPT
-  // entries below for where that credit now belongs.
+  // NOTE: prepareStructured calls assertPatientActive before it can reach a
+  // write at all, but as of 0184 its new-result write itself (the
+  // result_create_linked RPC) lives in create-linked.ts, not in
+  // prepareStructured's own body — so no caller's write is ever credited
+  // THROUGH this wrapper. A GUARD_WRAPPERS entry for it went stale
+  // post-rebase: 0172 moved the draft/finalise/amend writes out of
+  // saveDraftAction/finaliseStructuredAction's own bodies into separate
+  // helpers (saveDraftValues here; commitResultEdit/commitResultFinalise in
+  // result-edit-core.ts) that do not call prepareStructured directly either.
+  // See the EXEMPT entries below for where that credit now belongs.
 };
 
 // file:function → why it deliberately has no guard. Seeded from the plan's
@@ -133,6 +137,8 @@ const EXEMPT: Record<string, string> = {
     "Task 15 merge — inline-checks deleted_at/merged_into_id on both rows before writing; the merge/undo-merge lifecycle path is reviewed separately from Task 22/23's active-patient rule.",
   [`src/app/(staff)/staff/(dashboard)/admin/patient-merge/actions.ts:undoMergeAction`]:
     "Task 15 undo-merge — the paired lifecycle RPC-equivalent caller to mergePatientsAction above.",
+  [`src/app/(staff)/staff/(dashboard)/admin/patient-merge/actions.ts:revertFillFields`]:
+    "0184 review follow-up — only called by mergePatientsAction's own tombstone-failure branch, to undo a fill that already landed while the merge itself is being abandoned; same reviewed-separately reasoning as mergePatientsAction/undoMergeAction above, not a live merge write.",
   [`src/lib/actions/visits/queue-deletion.ts:deleteVisitAction`]:
     "Deletes stay unguarded by design (Task 23) — they remove work, never put it back.",
   [`src/lib/actions/visits/queue-deletion.ts:deleteTestRequestsForVisit`]:
@@ -143,10 +149,6 @@ const EXEMPT: Record<string, string> = {
     "Deletes reduce work and stay unguarded, same reasoning as cancelAppointmentAction (Task 22 note); shared by deleteAppointmentAction and bulkDeleteAction.",
   [`src/app/(staff)/staff/(dashboard)/appointments/actions.ts:markLikelyNoShowsAction`]:
     "Bulk confirmed → no_show only — takes work off the record, the same transition transitionGroup leaves unguarded for the single No-show button. Its Undo (undoLikelyNoShowsAction) puts work back and does call assertAppointmentsPatientsActive.",
-  [`src/app/(staff)/staff/(dashboard)/visits/new/actions.ts:createOneVisit`]:
-    "Private helper invoked by createVisitAction only after that function's own assertPatientActive guard already passed.",
-  [`src/app/(staff)/staff/(dashboard)/visits/new/actions.ts:deleteVisitCascade`]:
-    "Rollback-only cleanup of a visit/tests just created in this same guarded call; a delete, not new work.",
   [`src/app/(staff)/staff/(dashboard)/payments/new/actions.ts:voidRedemptionPayment`]:
     "Rollback helper invoked by redeemGiftCode only after that function's own assertVisitPatientActive guard already passed, to void the payment it just inserted.",
   [`src/app/(staff)/staff/(dashboard)/queue/[id]/actions.ts:saveDraftValues`]:
@@ -155,6 +157,8 @@ const EXEMPT: Record<string, string> = {
     "Shared commit helper for the result_edit_commit RPC — every caller (amend-consolidated.ts's amendConsolidatedReport, queue/[id]/actions.ts's amendResultAction/amendStructuredResultAction) calls assertPatientActive before invoking it.",
   [`src/lib/actions/results/result-edit-core.ts:commitResultFinalise`]:
     "Shared commit helper for the result_finalise_commit RPC — every caller (finalise-consolidated.ts's finaliseConsolidatedReport, queue/[id]/actions.ts's finaliseStructuredAction via prepareStructured) calls assertVisitPatientActive/assertPatientActive before invoking it.",
+  [`src/lib/actions/results/create-linked.ts:callResultCreateLinked`]:
+    "Shared creation helper for result_create_linked — every caller (prepareStructured, finaliseConsolidatedReport, uploadResultAction) calls assertPatientActive first, and the RPC itself refuses an inactive patient under the lifecycle lock (0184).",
   [`src/lib/actions/patients/lifecycle.ts:deletePatientAction`]:
     "delete_patient IS the lifecycle-deleting RPC itself — the database refuses it (P0058) when the record is already deleted or merged, so an app-level active-patient guard here would be circular.",
   [`src/lib/actions/patients/lifecycle.ts:restorePatientAction`]:
@@ -166,7 +170,9 @@ const EXEMPT: Record<string, string> = {
   [`src/app/(staff)/staff/(dashboard)/admin/accounting/hmo-claims/actions.ts:voidBatchAction`]:
     "Same reasoning as submitBatchAction above; voiding also reduces work rather than adding it.",
   [`src/app/(staff)/staff/(dashboard)/admin/accounting/hmo-claims/actions.ts:bulkSetHmoResponseAction`]:
-    "Same reasoning as submitBatchAction above — a bulk item-response update on a batch whose items are already guarded at creation/edit time.",
+    "0184 review minor #1: resolves each scoped candidate item's patient via activeTestRequestIds and writes only the active ones — an inactive patient's item is excluded up front and counted in items_skipped, never a reason to fail the whole batch (same shape as bulkRescheduleForClosureAction's skip). activeTestRequestIds does not match GUARD_PATTERN (it classifies rather than asserts), so this stays listed here rather than being picked up as guarded.",
+  [`src/app/(staff)/staff/(dashboard)/admin/closures/actions.ts:bulkRescheduleForClosureAction`]:
+    "Deliberately unguarded: reschedule_closure_appointments locks every candidate patient and SKIPS deleted/merged ones inside the transaction (0184) — one inactive patient must never block rescheduling the whole closed day.",
 };
 
 const isCheckable = (p: string) => /\.(ts|tsx)$/.test(p) && !/\.test\.tsx?$/.test(p) && !/\.d\.ts$/.test(p);

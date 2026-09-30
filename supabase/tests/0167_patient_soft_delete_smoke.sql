@@ -268,18 +268,14 @@ begin
                              'a1000000-0000-4000-8000-000000000167'::uuid, s)), 'P0058');
   reset role;
 
-  -- 9. Real-world writers that update patients also respect the guard. This
-  -- pins CURRENT, ACTUAL behaviour (code review fix #1), not the intended
-  -- end state: maintain_repeat_patient_flag only UPDATEs patients when a
-  -- SECOND visit arrives for a patient whose is_repeat_patient is still
-  -- false, so a deleted patient's FIRST visit is ACCEPTED by the database
-  -- today and only the second one reaches this guard.
-  -- PR 3 adds child-table guards — update this when it does.
+  -- 9. Real-world writers that update patients also respect the guard.
+  -- Since 0184 the a_lifecycle_guard trigger on visits refuses ANY visit on
+  -- a deleted patient, first or second.
   set local role patient_lifecycle_writer;
   update public.patients set deleted_at = now(), deleted_by = k_admin, delete_reason = 'duplicate' where id = r;
   reset role;
-  perform pg_temp.expect('s1.28 CURRENT: first visit on a deleted patient is accepted',
-    pg_temp.state_of(format($q$select pg_temp.mk_visit(%L, false, 'unpaid', 0, 0)$q$, r)), 'ok');
+  perform pg_temp.expect('s1.28 first visit on a deleted patient is refused (0184)',
+    pg_temp.state_of(format($q$select pg_temp.mk_visit(%L, false, 'unpaid', 0, 0)$q$, r)), 'P0058');
   perform pg_temp.expect('s1.29 CURRENT: second visit on a deleted patient is refused',
     pg_temp.state_of(format($q$select pg_temp.mk_visit(%L, false, 'unpaid', 0, 0)$q$, r)), 'P0058');
 
@@ -1202,8 +1198,10 @@ begin
 
   -- SECURITY DEFINER so the guard can't fail open for a caller whose own RLS
   -- hides the patients row (see the migration's comment on this function).
-  perform pg_temp.expect('s9.6 attachment delete guard is definer, pinned',
-    (select format('%s|%s', prosecdef, proconfig) from pg_proc where proname = 'enforce_appointment_attachment_delete'),
+  perform pg_temp.expect('s9.6 attachment guard (0184 a_lifecycle_guard) is definer, pinned',
+    (select format('%s|%s', p.prosecdef, p.proconfig)
+       from pg_trigger t join pg_proc p on p.oid = t.tgfoid
+      where t.tgrelid = 'public.appointment_attachments'::regclass and t.tgname = 'a_lifecycle_guard'),
     't|{"search_path=pg_catalog, public, pg_temp"}');
 end
 $s9$;
