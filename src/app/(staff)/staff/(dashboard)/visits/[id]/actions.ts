@@ -111,6 +111,17 @@ async function refuseIfVisitDeleted(
   return null;
 }
 
+// Every surface that shows a line's release state. A TYPED revalidatePath
+// must name the route FILE path, route groups included — "/staff/queue" +
+// "layout" matches no tag (next/…/revalidate.js). The layout revalidation
+// covers /staff/queue, /staff/queue/[id] and the consolidated report page;
+// "/staff" (untyped, a concrete URL) is the dashboard.
+function revalidateReleaseSurfaces(visitId: string) {
+  revalidatePath(`/staff/visits/${visitId}`);
+  revalidatePath("/(staff)/staff/(dashboard)/queue", "layout");
+  revalidatePath("/staff");
+}
+
 export async function releaseTestAction(
   testRequestId: string,
   visitId: string,
@@ -140,7 +151,7 @@ export async function releaseTestAction(
     .is("deleted_at", null)
     .maybeSingle();
   if (!candidate) {
-    revalidatePath(`/staff/visits/${visitId}`);
+    revalidateReleaseSurfaces(visitId);
     return { ok: false, error: "This result is no longer ready to release." };
   }
   if (scopeToAllowedSections([candidate], allowedSections).length === 0) {
@@ -173,7 +184,7 @@ export async function releaseTestAction(
   if (!updated || updated.length === 0) {
     // 0 rows matched — a concurrent action (e.g. a bulk package release)
     // already released it. Never audit or notify a write that didn't happen.
-    revalidatePath(`/staff/visits/${visitId}`);
+    revalidateReleaseSurfaces(visitId);
     return { ok: false, error: "This result is no longer ready to release." };
   }
 
@@ -201,7 +212,7 @@ export async function releaseTestAction(
     });
   }
 
-  revalidatePath(`/staff/visits/${visitId}`);
+  revalidateReleaseSurfaces(visitId);
   return { ok: true };
 }
 
@@ -271,7 +282,7 @@ export async function releaseAllReadyComponentsAction(
       })
       .map((r) => r.id);
     if (scopedIds.length === 0) {
-      revalidatePath(`/staff/visits/${visitId}`);
+      revalidateReleaseSurfaces(visitId);
       return { ok: false, error: "No components are ready to release." };
     }
   }
@@ -301,7 +312,7 @@ export async function releaseAllReadyComponentsAction(
 
   if (error) return { ok: false, error: translatePgError(error) };
   if (!released || released.length === 0) {
-    revalidatePath(`/staff/visits/${visitId}`);
+    revalidateReleaseSurfaces(visitId);
     return { ok: false, error: "No components are ready to release." };
   }
 
@@ -338,7 +349,7 @@ export async function releaseAllReadyComponentsAction(
     });
   }
 
-  revalidatePath(`/staff/visits/${visitId}`);
+  revalidateReleaseSurfaces(visitId);
   return { ok: true };
 }
 
@@ -413,7 +424,7 @@ export async function releasePackageHeaderAction(
   if (!updated || updated.length === 0) {
     // A concurrent action (or the Leg A trigger itself, on the read above)
     // already released it. Never audit a write that didn't happen.
-    revalidatePath(`/staff/visits/${visitId}`);
+    revalidateReleaseSurfaces(visitId);
     return { ok: false, error: "This package is no longer ready to release." };
   }
 
@@ -433,7 +444,7 @@ export async function releasePackageHeaderAction(
     user_agent: h.get("user-agent"),
   });
 
-  revalidatePath(`/staff/visits/${visitId}`);
+  revalidateReleaseSurfaces(visitId);
   return { ok: true };
 }
 
@@ -481,7 +492,7 @@ export async function releaseSelectedAction(
 
   const scoped = scopeToAllowedSections(candidates ?? [], allowedSections);
   if (scoped.length === 0) {
-    revalidatePath(`/staff/visits/${visitId}`);
+    revalidateReleaseSurfaces(visitId);
     return { ok: false, error: "None of the selected tests are ready to release." };
   }
   const scopedIds = scoped.map((r) => r.id);
@@ -502,7 +513,7 @@ export async function releaseSelectedAction(
 
   if (error) return { ok: false, error: translatePgError(error) };
   if (!released || released.length === 0) {
-    revalidatePath(`/staff/visits/${visitId}`);
+    revalidateReleaseSurfaces(visitId);
     return { ok: false, error: "None of the selected tests are ready to release." };
   }
 
@@ -550,7 +561,7 @@ export async function releaseSelectedAction(
     });
   }
 
-  revalidatePath(`/staff/visits/${visitId}`);
+  revalidateReleaseSurfaces(visitId);
   return { ok: true, count: released.length };
 }
 
@@ -590,7 +601,7 @@ export async function undoReleaseSelectedAction(
     trimmedReason,
     { bulk: true },
   );
-  revalidatePath(`/staff/visits/${visitId}`);
+  revalidateReleaseSurfaces(visitId);
   return result.ok ? { ok: true, count: result.undoneIds.length } : result;
 }
 
