@@ -10,16 +10,25 @@ import {
 import type { StaffSession } from "@/lib/auth/require-staff";
 import { Panel } from "@/components/ui/panel";
 import { manilaTime } from "@/lib/dates/manila";
+import { isDoctorKind } from "@/lib/visits/order-lines";
+import {
+  foldReleaseEvent,
+  isFreshRelease,
+  releaseEventKey,
+} from "@/lib/staff/release-notifications";
 
 interface NotificationItem {
   id: string;
-  kind: "appointment" | "test_request" | "critical_alert";
+  kind: "appointment" | "test_request" | "critical_alert" | "release";
   title: string;
   subtitle: string;
   href: string;
   ts: number;
   // Critical alerts get a louder visual treatment (red badge + icon).
   severity?: "info" | "critical";
+  // Release items merge one visit's releases: how many, and whose.
+  count?: number;
+  visitId?: string;
 }
 
 interface Props {
@@ -43,6 +52,9 @@ const CRITICAL_ROLES: ReadonlyArray<StaffSession["role"]> = [
   "admin",
 ];
 
+// Roles that hear when results are released (reception hands them out).
+const RELEASE_ROLES: ReadonlyArray<StaffSession["role"]> = ["reception"];
+
 export function NotificationBell({ role }: Props) {
   const [items, setItems] = useState<NotificationItem[]>([]);
   const [unread, setUnread] = useState(0);
@@ -54,6 +66,10 @@ export function NotificationBell({ role }: Props) {
     new Map(),
   );
 
+  // Release events already shown (test id + release instant), so a later
+  // UPDATE of the same released row never rings twice.
+  const seenReleasesRef = useRef<Set<string>>(new Set());
+
   const allowedSections = useMemo(() => {
     const list = sectionsForRole(role);
     return list === null ? null : new Set<ServiceSection>(list);
@@ -64,6 +80,7 @@ export function NotificationBell({ role }: Props) {
   const subscribesToAppointments = APPT_ROLES.includes(role);
   const subscribesToQueue = QUEUE_ROLES.includes(role);
   const subscribesToCritical = CRITICAL_ROLES.includes(role);
+  const subscribesToReleases = RELEASE_ROLES.includes(role);
 
   const pushItem = useCallback((item: NotificationItem) => {
     setItems((prev) => [item, ...prev].slice(0, MAX_ITEMS));
@@ -95,7 +112,8 @@ export function NotificationBell({ role }: Props) {
     if (
       !subscribesToAppointments &&
       !subscribesToQueue &&
-      !subscribesToCritical
+      !subscribesToCritical &&
+      !subscribesToReleases
     )
       return;
 
@@ -232,6 +250,78 @@ export function NotificationBell({ role }: Props) {
       );
     }
 
+    if (subscribesToReleases) {
+      // Default replica identity: payload.old holds only the primary key, so
+      // "just released" is judged from released_at + a seen-key, not old/new.
+      channel.on(
+        "postgres_changes",
+        {
+          event: "UPDATE",
+          schema: "public",
+          table: "test_requests",
+          filter: "status=eq.released",
+        },
+        async (payload) => {
+          const row = payload.new as {
+            id: string;
+            service_id: string;
+            visit_id: string;
+            status: string;
+            released_at: string | null;
+            deleted_at?: string | null;
+          };
+          if (row.deleted_at) return;
+          if (!row.released_at || !isFreshRelease(row, Date.now())) return;
+          const key = releaseEventKey({
+            testRequestId: row.id,
+            releasedAt: row.released_at,
+          });
+          if (seenReleasesRef.current.has(key)) return;
+          const [{ data: svc }, { data: visit }] = await Promise.all([
+            supabase
+              .from("services")
+              .select("name, kind")
+              .eq("id", row.service_id)
+              .maybeSingle(),
+            supabase
+              .from("visits")
+              .select("visit_number, patients ( first_name, last_name )")
+              .eq("id", row.visit_id)
+              .maybeSingle(),
+          ]);
+          // Unknown kind → cannot prove it is a lab result; doctor lines
+          // ("Mark done") are not a lab release.
+          if (!svc || isDoctorKind(svc.kind)) return;
+          // Re-check after the awaits: a sibling event may have won.
+          if (seenReleasesRef.current.has(key)) return;
+          seenReleasesRef.current.add(key);
+          const patient = Array.isArray(visit?.patients)
+            ? visit?.patients[0]
+            : visit?.patients;
+          const who = patient
+            ? `${patient.last_name}, ${patient.first_name}`.trim()
+            : "—";
+          const event = {
+            testRequestId: row.id,
+            releasedAt: row.released_at,
+            visitId: row.visit_id,
+            who,
+            visitNumber: visit?.visit_number ?? "?",
+            ts: Date.now(),
+          };
+          // Dedupe already happened on the ref; the updater stays pure.
+          setItems(
+            (prev) =>
+              foldReleaseEvent<NotificationItem>(
+                { items: prev, seen: new Set() },
+                event,
+              ).items.slice(0, MAX_ITEMS),
+          );
+          setUnread((n) => n + 1);
+        },
+      );
+    }
+
     channel.subscribe();
     return () => {
       supabase.removeChannel(channel);
@@ -241,6 +331,7 @@ export function NotificationBell({ role }: Props) {
     subscribesToAppointments,
     subscribesToQueue,
     subscribesToCritical,
+    subscribesToReleases,
     allowedSections,
     pushItem,
   ]);
@@ -250,7 +341,8 @@ export function NotificationBell({ role }: Props) {
   if (
     !subscribesToAppointments &&
     !subscribesToQueue &&
-    !subscribesToCritical
+    !subscribesToCritical &&
+    !subscribesToReleases
   )
     return null;
 
