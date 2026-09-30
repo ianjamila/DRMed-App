@@ -447,7 +447,7 @@ export default async function QueueTestDetailPage({ params, searchParams }: Prop
     },
     session.role,
   );
-  const showReleasePanel = test.status === "ready_for_release" && mayActOnResult;
+  const showReleasePanel = test.status === "ready_for_release" && mayActOnResult && patientActive;
   const undoContext =
     test.status === "released" && mayActOnResult && patientActive && visit.deleted_at === null
       ? await loadRowUndoContext(supabase, test.id)

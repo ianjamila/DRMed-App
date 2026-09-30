@@ -537,7 +537,7 @@ export async function finaliseConsolidatedReport(
   announceFinaliseRelease({
     visitId: input.visitId,
     releaseDeferred,
-    requestedCount: input.testRequestIds.length,
+    requestedIds: input.testRequestIds,
     releasedCount: (releasedRows ?? []).length,
   });
 

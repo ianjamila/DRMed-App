@@ -436,12 +436,15 @@ export default async function QueuePage({ searchParams }: SearchProps) {
   const releaseTab = filter === "pending_release" && !receptionView;
   let gateRequired = false;
   let consentByPatient = new Map<string, boolean>();
+  const consentWarningFor = (patientId: string) =>
+    releaseTab && !gateRequired && !(consentByPatient.get(patientId) ?? false);
   if (releaseTab) {
-    const patientIds = (rows ?? []).flatMap((r) => {
+    const pageIds = (rows ?? []).flatMap((r) => {
       const v = Array.isArray(r.visits) ? r.visits[0] : r.visits;
       const p = Array.isArray(v?.patients) ? v.patients[0] : v?.patients;
       return p ? [p.id] : [];
     });
+    const patientIds = Array.from(new Set(pageIds));
     [gateRequired, consentByPatient] = await Promise.all([
       isConsentGateRequired(),
       getConsentCurrentByPatient(patientIds),
@@ -586,7 +589,7 @@ export default async function QueuePage({ searchParams }: SearchProps) {
           // Judged on the panel's FULL membership once it is read (below).
           releaseBlock: RELEASE_REFUSAL.notReady,
           preferredMedium: releaseMedium(patient.preferred_release_medium),
-          consentWarning: releaseTab && !gateRequired && !(consentByPatient.get(patient.id) ?? false),
+          consentWarning: consentWarningFor(patient.id),
         };
         groupedAcc.set(key, created);
         cards.push(created);
@@ -631,7 +634,7 @@ export default async function QueuePage({ searchParams }: SearchProps) {
             })()
           : RELEASE_REFUSAL.notReady,
         preferredMedium: releaseMedium(patient.preferred_release_medium),
-        consentWarning: releaseTab && !gateRequired && !(consentByPatient.get(patient.id) ?? false),
+        consentWarning: consentWarningFor(patient.id),
       });
     }
   }

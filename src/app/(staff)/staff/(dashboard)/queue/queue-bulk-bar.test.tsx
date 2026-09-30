@@ -119,4 +119,28 @@ describe("QueueBulkBar release", () => {
     expect(text).toContain("Chemistry (2 tests) — Reyes, Ana: Part of this combined report isn't finished");
     expect(text).toContain("Ana Reyes has no consent on file.");
   });
+
+  it("alerts the error and keeps the selection when nothing was attempted", async () => {
+    vi.mocked(releaseTestsAction).mockResolvedValue({ ok: false, error: "Not allowed to release." });
+    const alertSpy = vi.spyOn(window, "alert").mockImplementation(() => {});
+    const user = await selectBoth();
+    await user.click(screen.getByRole("button", { name: "Release 3 tests" }));
+    await waitFor(() => expect(alertSpy).toHaveBeenCalledWith("Not allowed to release."));
+    expect((screen.getByLabelText("Select CBC") as HTMLInputElement).checked).toBe(true);
+    expect((screen.getByLabelText("Select Chemistry") as HTMLInputElement).checked).toBe(true);
+    expect(screen.getByRole("button", { name: "Release 3 tests" })).toBeTruthy();
+    alertSpy.mockRestore();
+  });
+
+  it("shows no Release button when no selected row is releasable", async () => {
+    const user = userEvent.setup();
+    render(
+      <SelectionProvider resetKey="k">
+        <RowSelectCheckbox rowKey="t1" kinds={[QUEUE_KIND.claim]} label="CBC" />
+        <QueueBulkBar rowsByKey={rowsByKey} />
+      </SelectionProvider>,
+    );
+    await user.click(screen.getByLabelText("Select CBC"));
+    expect(screen.queryByRole("button", { name: /^Release/ })).toBeNull();
+  });
 });

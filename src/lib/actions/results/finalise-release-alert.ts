@@ -15,11 +15,13 @@ import { scheduleReleaseStaffAlert } from "@/lib/notifications/release-staff-ale
 export function announceFinaliseRelease(args: {
   visitId: string;
   releaseDeferred: boolean;
-  requestedCount: number;
+  /** The ids the finalisation asked to release — duplicates count once. */
+  requestedIds: string[];
   releasedCount: number;
 }): void {
   if (args.releaseDeferred) return;
-  if (args.requestedCount <= 0) return;
-  if (args.releasedCount !== args.requestedCount) return;
+  const requestedCount = new Set(args.requestedIds).size;
+  if (requestedCount <= 0) return;
+  if (args.releasedCount !== requestedCount) return;
   scheduleReleaseStaffAlert(args.visitId, args.releasedCount);
 }

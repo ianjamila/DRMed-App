@@ -7,6 +7,7 @@ import { RELEASE_MEDIUM_OPTIONS, type ReleaseMedium } from "@/lib/visits/release
 import { releaseOutcomeText, useReleaseOutcome } from "@/components/staff/release/release-outcome";
 import { releaseSelectedAction, undoReleaseSelectedAction } from "./actions";
 import { useRowSelection } from "./selection-context";
+import { RELEASE_BLOCKED_CONSENT, RELEASE_BLOCKED_UNPAID } from "@/lib/visits/release-messages";
 
 interface Props {
   visitId: string;
@@ -75,9 +76,9 @@ export function BulkActionBar({
   const releaseDisabled =
     releasePending || releaseCount === 0 || !moneySettled || blockedForConsent;
   const releaseTitle = !moneySettled
-    ? "Visit must be paid, waived, or HMO-covered before release"
+    ? RELEASE_BLOCKED_UNPAID
     : blockedForConsent
-      ? "Patient consent not on file — capture consent first"
+      ? RELEASE_BLOCKED_CONSENT
       : undefined;
 
   // Undo is a corrective action, not a delivery event — it's never

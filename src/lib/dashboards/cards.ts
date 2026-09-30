@@ -24,7 +24,7 @@ export const DASHBOARD_CARDS: readonly CardDef[] = [
   // ---- Reception ----------------------------------------------------------
   { id: "reception.visits_today",      label: "Visits today",      roles: ["reception"], group: "snapshot" },
   { id: "reception.unpaid_balance",    label: "Unpaid balance",    roles: ["reception"], group: "snapshot", sensitive: true },
-  { id: "reception.pending_release",   label: "Pending release",   roles: ["reception"], group: "snapshot" },
+  { id: "reception.pending_release",   label: "Waiting for the lab to release", roles: ["reception"], group: "snapshot" },
   { id: "reception.released_today",   label: "Released today",    roles: ["reception"], group: "snapshot" },
   // Id kept from when the card was called "Walk-ins waiting"; renaming the id
   // would drop saved preferences.

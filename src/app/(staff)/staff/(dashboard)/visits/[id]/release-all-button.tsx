@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { releaseOutcomeText, useReleaseOutcome } from "@/components/staff/release/release-outcome";
 import { releaseAllReadyComponentsAction } from "./actions";
 import type { ReleaseMedium } from "@/lib/visits/release-media";
+import { RELEASE_BLOCKED_CONSENT, RELEASE_BLOCKED_UNPAID } from "@/lib/visits/release-messages";
 
 interface Props {
   headerId: string;
@@ -50,9 +51,9 @@ export function ReleaseAllButton({
   const blockedForConsent = gateRequired && !consentOnFile;
   const disabled = pending || !moneySettled || blockedForConsent;
   const title = !moneySettled
-    ? "Visit must be paid, waived, or HMO-covered before release"
+    ? RELEASE_BLOCKED_UNPAID
     : blockedForConsent
-      ? "Patient consent not on file — capture consent first"
+      ? RELEASE_BLOCKED_CONSENT
       : undefined;
 
   return (
