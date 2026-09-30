@@ -658,6 +658,7 @@ export default async function QueuePage({ searchParams }: SearchProps) {
       ? queueRowKinds({
           claimable: state.claimable,
           unclaimable: state.unclaimable,
+          releasable: false, // Task 13 wires the real predicate
           deletable: state.deletable,
         })
       : [];
@@ -666,6 +667,7 @@ export default async function QueuePage({ searchParams }: SearchProps) {
     queueRowKinds({
       claimable: card.status === "requested" && canClaimSection(session.role, card.section),
       unclaimable: canUnclaim(card),
+      releasable: false, // Task 13 wires the real predicate
       deletable: card.canDelete,
     });
   const selectionEntries: SelectionEntry[] = [];
