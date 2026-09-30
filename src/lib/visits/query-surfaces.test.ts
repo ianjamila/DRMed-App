@@ -643,6 +643,10 @@ const LIFECYCLES: Record<string, LifecycleSurface> = {
     lifecycle: "live",
     why: "Turnaround time. This is one of the two surfaces that had reasoned P0043 made the filter a no-op; see the note at the top of this section for why that did not hold.",
   },
+  "lib/notifications/release-staff-alert.ts": {
+    lifecycle: "live",
+    why: "Emails reception about results released on a visit. The alert runs after the response, so it re-proves the visit live at query level; a deleted visit has nothing to print.",
+  },
   "lib/visits/released-payment-alert.ts": {
     lifecycle: "live",
     why: "Emails staff that a live visit owes money after its results went out. A deleted visit owes nothing and needs no follow-up.",
