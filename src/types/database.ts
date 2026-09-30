@@ -7850,6 +7850,7 @@ export type Database = {
       release_visit_results: {
         Args: {
           p_actor?: string
+          p_audit?: Json
           p_medium: string
           p_test_request_ids: string[]
           p_visit_id: string
@@ -8188,7 +8189,9 @@ export type Database = {
       undo_visit_release: {
         Args: {
           p_actor?: string
+          p_audit?: Json
           p_expected_released_at?: Json
+          p_reason?: string
           p_test_request_ids: string[]
           p_visit_id: string
         }

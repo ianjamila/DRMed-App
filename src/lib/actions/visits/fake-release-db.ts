@@ -12,6 +12,13 @@
 //    deleted members counted). It writes the in-memory rows like the SQL does.
 //    It does NOT model the payment/consent triggers — inject those with
 //    `failNextRpc`.
+//  - Migration 0205 moved the release / undo AUDIT ROWS into those functions.
+//    The model records what the database would write in `dbAudits`, building
+//    the metadata exactly as the SQL does. It is an emulation for fixtures that
+//    read audit rows afterwards; supabase/tests/0205_release_audit_in_rpc_smoke.sql
+//    is what proves the real keys. Tests of the TypeScript side assert the RPC's
+//    `p_audit` / `p_reason` arguments (rpcCalls), not these rows. The undo's
+//    viewed_count comes from the seed's `viewedCounts` (default 0).
 //
 // Failure injection is one-shot: `failNext(table, "read")` errors the next
 // SELECT, `failNextRpc(name, err)` errors the next call of that RPC,
@@ -78,7 +85,25 @@ export interface FakeRpcCall {
   args: Record<string, unknown>;
 }
 
-export function makeFakeReleaseDb(seed: { rows: FakeTestRow[]; links?: FakeLink[]; actorRole?: string | (() => string) }) {
+/** A row the database function writes to audit_log (0205), as the fake models it. */
+export interface FakeDbAudit {
+  actor_id: unknown;
+  actor_type: "staff";
+  action: "test_request.released" | "test_request.release_undone";
+  resource_type: "test_request";
+  resource_id: string;
+  metadata: Record<string, unknown>;
+  ip_address: string | null;
+  user_agent: string | null;
+}
+
+export function makeFakeReleaseDb(seed: {
+  rows: FakeTestRow[];
+  links?: FakeLink[];
+  actorRole?: string | (() => string);
+  /** Result-view counts the modelled undo snapshots into viewed_count (default 0). */
+  viewedCounts?: Record<string, number>;
+}) {
   const rows: FakeRow[] = seed.rows.map((r) => ({
     visitId: "v1",
     status: "ready_for_release",
@@ -101,6 +126,11 @@ export function makeFakeReleaseDb(seed: { rows: FakeTestRow[]; links?: FakeLink[
   const calls: FakeCall[] = [];
   const failures: Array<{ table: string; phase: FailPhase; error: Err }> = [];
   const rpcCalls: FakeRpcCall[] = [];
+  const dbAudits: FakeDbAudit[] = [];
+  const auditParts = (args: Record<string, unknown>) => {
+    const a = (args.p_audit ?? {}) as { metadata?: Record<string, unknown>; ip?: string | null; user_agent?: string | null };
+    return { extras: a.metadata ?? {}, ip: a.ip ?? null, ua: a.user_agent ?? null };
+  };
   const rpcFailures: Array<{ name: string; error: Err }> = [];
   const rpcOverrides: Array<{ name: string; data: unknown }> = [];
   const hooks: { beforeRead?: (table: string) => void; beforeRpc?: (name: string) => void } = {};
@@ -260,6 +290,26 @@ export function makeFakeReleaseDb(seed: { rows: FakeTestRow[]; links?: FakeLink[
       r.releaseMedium = args.p_medium as string;
       return { id, name: r.name, report_id: okReports.get(id) ?? null, selected: ids.includes(id), released_at: FAKE_RELEASED_AT };
     });
+    const { extras, ip, ua } = auditParts(args);
+    for (const rel of released) {
+      dbAudits.push({
+        actor_id: args.p_actor,
+        actor_type: "staff",
+        action: "test_request.released",
+        resource_type: "test_request",
+        resource_id: rel.id,
+        metadata: {
+          bulk: true,
+          selection: true,
+          ...extras,
+          visit_id: visitId,
+          release_medium: args.p_medium,
+          released_at: rel.released_at,
+        },
+        ip_address: ip,
+        user_agent: ua,
+      });
+    }
     for (const id of ids) {
       if (!release.has(id) && !refused.some((x) => x.id === id)) {
         refused.push({ id, code: "not_ready", report_id: null, count: 0 });
@@ -299,10 +349,29 @@ export function makeFakeReleaseDb(seed: { rows: FakeTestRow[]; links?: FakeLink[
         && !refusedIds.has(r.id) && (!batch || (r.id in expected && r.releasedAt === expected[r.id])),
     );
     if (cands.length === 0 && !batch) return { data: null, error: p0081("None of the selected tests can be unreleased.") };
+    const { extras, ip, ua } = auditParts(args);
     const undone = cands
       .sort((a, b) => a.id.localeCompare(b.id))
       .map((r) => {
         const prior = { id: r.id, prior_release_medium: r.releaseMedium, prior_released_at: r.releasedAt, report_id: okReports.get(r.id) ?? null };
+        dbAudits.push({
+          actor_id: args.p_actor,
+          actor_type: "staff",
+          action: "test_request.release_undone",
+          resource_type: "test_request",
+          resource_id: r.id,
+          metadata: {
+            ...extras,
+            visit_id: visitId,
+            reason: args.p_reason,
+            prior_release_medium: r.releaseMedium,
+            prior_released_at: r.releasedAt,
+            viewed_count: seed.viewedCounts?.[r.id] ?? 0,
+            report_result_id: prior.report_id,
+          },
+          ip_address: ip,
+          user_agent: ua,
+        });
         r.status = "ready_for_release";
         r.releasedAt = null;
         r.releaseMedium = null;
@@ -329,5 +398,5 @@ export function makeFakeReleaseDb(seed: { rows: FakeTestRow[]; links?: FakeLink[
     return model(args);
   };
 
-  return { client: { ...client, rpc } as never, rows, links, calls, rpcCalls, hooks, failNext, failNextRpc, overrideNextRpc };
+  return { client: { ...client, rpc } as never, rows, links, calls, rpcCalls, dbAudits, hooks, failNext, failNextRpc, overrideNextRpc };
 }

@@ -27,6 +27,7 @@ import {
 import { WAIVE_CLOSED_MONTH_MESSAGE } from "@/lib/visits/payment-edit";
 import { deleteVisitAction } from "@/lib/actions/visits/queue-deletion";
 import {
+  releaseAuditArg,
   releaseVisitSelection,
   type VisitReleaseOutcome,
 } from "@/lib/actions/visits/release-reports";
@@ -43,7 +44,6 @@ import {
   MAX_BULK_SELECTION,
   scopeToAllowedSections,
 } from "@/lib/visits/bulk-selection";
-import { countResultViews } from "@/lib/results/viewed-count";
 import { canManuallyReleasePackageHeader } from "@/lib/visits/package-header-release";
 import { isReleaseMedium, type ReleaseMedium } from "@/lib/visits/release-media";
 
@@ -705,8 +705,11 @@ function parseUndoResult(data: unknown): { undone: UndoneRow[]; skippedIds: stri
 // results through the same database function (and so the same 0110
 // accounting reversal) and per-row audit. The caller has already validated
 // input and owns revalidation; the deleted-visit check lives HERE
-// (query-surfaces.test.ts looks for it in this function). `auditExtra` is
-// merged into each row's audit metadata. `expectedReleasedAtOf`
+// (query-surfaces.test.ts looks for it in this function). The database writes
+// one test_request.release_undone audit row per undone row in the same
+// transaction (0205 — so a lost response never leaves an undo unaudited):
+// visit_id, the reason, the prior medium/time and the patient's view count
+// (all read under the row lock), `auditExtra`, and report_result_id. `expectedReleasedAtOf`
 // (undoReleaseBatchAction only) limits the undo to the EXACT release each id's
 // audit row recorded, whole reports included; every other caller omits it.
 async function undoReleasedRows(
@@ -730,6 +733,7 @@ async function undoReleasedRows(
   // concurrent release can never leave one report half undone. Headers only
   // ever flip through the 0110 cascade, never directly. The release times
   // are compared in SQL: a JavaScript Date would drop their microseconds.
+  const audit = await releaseAuditArg(auditExtra);
   const { data, error } = await withLifecycleRetry(() =>
     supabase.rpc("undo_visit_release", {
       p_visit_id: visitId,
@@ -738,6 +742,8 @@ async function undoReleasedRows(
       p_expected_released_at: expectedReleasedAtOf
         ? Object.fromEntries(expectedReleasedAtOf)
         : null,
+      p_reason: trimmedReason,
+      p_audit: audit,
     }),
   );
   if (error) return { ok: false, error: translatePgError(error) };
@@ -755,42 +761,6 @@ async function undoReleasedRows(
   // A batch Undo may legitimately restore nothing (every report changed since).
   if (undone.length === 0 && !expectedReleasedAtOf) {
     return { ok: false, error: "None of the selected tests can be unreleased." };
-  }
-
-  // Snapshot how often the patient had already viewed/downloaded each result
-  // at the moment of undo — the undone-releases report surfaces this (RA
-  // 10173: undoing does not un-see a result the patient already opened).
-  const viewedCountById = new Map<string, number>(
-    await Promise.all(
-      undone.map(async (row) => [row.id, await countResultViews(row.id)] as const),
-    ),
-  );
-
-  const h = await headers();
-  const ip = h.get("x-forwarded-for")?.split(",")[0]?.trim() ?? null;
-  const ua = h.get("user-agent");
-  for (const row of undone) {
-    await audit({
-      actor_id: session.user_id,
-      actor_type: "staff",
-      action: "test_request.release_undone",
-      resource_type: "test_request",
-      resource_id: row.id,
-      metadata: {
-        visit_id: visitId,
-        reason: trimmedReason,
-        // Read under the row lock by the RPC, so they describe the release actually undone.
-        prior_release_medium: row.prior_release_medium,
-        prior_released_at: row.prior_released_at,
-        viewed_count: viewedCountById.get(row.id) ?? 0,
-        ...auditExtra,
-        // Present only when this row was reverted as part of a whole-report
-        // undo (0172) — the combined result every member shares.
-        report_result_id: row.report_id,
-      },
-      ip_address: ip,
-      user_agent: ua,
-    });
   }
 
   return { ok: true, undoneIds: undone.map((r) => r.id), skippedIds };
