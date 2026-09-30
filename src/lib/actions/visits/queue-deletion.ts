@@ -14,7 +14,6 @@
  * same shape as finalise-consolidated living under src/lib/actions.
  */
 
-import { z } from "zod";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { audit } from "@/lib/audit/log";
 import { requireActiveStaff } from "@/lib/auth/require-staff";
@@ -23,10 +22,8 @@ import { translatePgError } from "@/lib/accounting/pg-errors";
 import { QUEUE_DELETE_ROLES } from "@/lib/visits/deletion";
 import { MAX_BULK_SELECTION } from "@/lib/visits/bulk-selection";
 import { assertVisitPatientActive } from "@/lib/patients/require-active";
-import type { BulkQueueResult } from "@/lib/queue/bulk-queue";
 import {
   deleteTestRequestsForVisit,
-  deleteTestRequestsManyCore,
   NOT_QUEUE_DELETE_STAFF,
   parseQueueDeleteReason,
 } from "@/lib/actions/queue/bulk-delete-core";
@@ -190,45 +187,6 @@ export async function deleteTestRequestsAction(
   );
   if (!outcome.ok) return outcome;
   return { ok: true, count: outcome.deletedIds.length };
-}
-
-const ManyDeleteSchema = z.object({
-  testRequestIds: z
-    .array(z.string().uuid({ message: "Could not read the selection — refresh the queue and try again." }))
-    .min(1, { message: "Nothing to delete — no tests were selected." })
-    .max(MAX_BULK_SELECTION, {
-      message: `Too many tests selected — the limit is ${MAX_BULK_SELECTION} per action.`,
-    }),
-  reason: z.string(),
-});
-
-// The lab queue's bulk Delete (spec §6): a selection that can span visits —
-// never trusted from the page. Order matters — role, then the input's shape
-// and the reason, and only then the service-role reads — so an empty or
-// unknown-id batch from a caller without the role gets the role error, never
-// a candidate-dependent message. The body lives in bulk-delete-core.ts
-// (deleteTestRequestsManyCore), which re-checks the role and the reason. This
-// public entry point mints its own batch id: the browser must never supply
-// one. panel-actions.ts calls the core directly, sharing one id.
-export async function deleteTestRequestsManyAction(input: unknown): Promise<BulkQueueResult> {
-  const { session, error: roleError } = await requireQueueDeleteStaff();
-  if (!session) return { ok: false, error: roleError };
-  const shape = ManyDeleteSchema.safeParse(input);
-  if (!shape.success) {
-    return {
-      ok: false,
-      error:
-        shape.error.issues[0]?.message ??
-        "Could not read the selection — refresh the queue and try again.",
-    };
-  }
-  const batchId = crypto.randomUUID();
-  const ids = Array.from(new Set(shape.data.testRequestIds));
-  return deleteTestRequestsManyCore(
-    session,
-    { testRequestIds: ids, reason: shape.data.reason },
-    { batchId, batchSize: ids.length },
-  );
 }
 
 export async function restoreTestRequestsAction(

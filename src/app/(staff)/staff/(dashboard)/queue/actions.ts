@@ -20,15 +20,9 @@ import {
   evaluateUnclaim,
 } from "@/lib/queue/claim-eligibility";
 import { ipAndAgent } from "@/lib/server/action-helpers";
-import { parsePanelRowKey, type BulkQueueResult } from "@/lib/queue/bulk-queue";
+import { parsePanelRowKey } from "@/lib/queue/bulk-queue";
 import { unclaimPanelMembers } from "@/lib/actions/queue/panel-writes";
-import {
-  BULK_INPUT_ERROR,
-  LAB_CAPABLE_ROLES,
-  NOT_LAB_STAFF,
-  claimTestsCore,
-  unclaimTestsCore,
-} from "@/lib/actions/queue/bulk-cores";
+import { LAB_CAPABLE_ROLES } from "@/lib/actions/queue/bulk-cores";
 import { stillCommittedRows, PARTIAL_PANEL_LEFTOVER_REASON, partiallyRestoredIds } from "@/lib/queue/partial-panel";
 import { QUEUE_DELETE_ROLES } from "@/lib/visits/deletion";
 import { labQueueGate } from "@/lib/visits/lab-gate";
@@ -348,66 +342,6 @@ export async function unclaimFromQueueAction(
     session.role === "admin" ? null : session.user_id,
     new Map(testRequestIds.map((id, i) => [id, holders[i]!])),
   );
-}
-
-// ---------------------------------------------------------------------------
-// Bulk claim / unclaim from the queue list's selection bar (spec §6).
-// Per-row atomicity: each row is evaluated and written on its own, one skip
-// never blocks the rest, and every id sent comes back in exactly one of
-// changedIds / skipped. Independent single-test rows only — chemistry panels
-// get no checkbox, so performUnclaim's all-or-nothing panel contract above is
-// untouched.
-// ---------------------------------------------------------------------------
-
-const BulkClaimSchema = z.array(z.string().uuid()).min(1).max(MAX_BULK_SELECTION);
-
-// Single tests only — a chemistry panel is claimed whole through
-// panel-actions.ts (claimPanelAction / claimQueueSelectionAction), which
-// shares one batch id between its single tests and its panels. This public
-// entry point mints its own id: the browser must never supply one, so the
-// core (src/lib/actions/queue/bulk-cores.ts) takes it as an argument.
-export async function claimTestsAction(input: unknown): Promise<BulkQueueResult> {
-  // Role before anything candidate-dependent (spec §9 item 5).
-  const session = await requireActiveStaff();
-  if (!(LAB_CAPABLE_ROLES as readonly string[]).includes(session.role)) {
-    return { ok: false, error: NOT_LAB_STAFF };
-  }
-  const parsed = BulkClaimSchema.safeParse(input);
-  if (!parsed.success) return { ok: false, error: BULK_INPUT_ERROR };
-  const batchId = crypto.randomUUID();
-  const ids = Array.from(new Set(parsed.data));
-  const supabase = await createClient();
-  return claimTestsCore(session, supabase, ids, { batchId, batchSize: ids.length });
-}
-
-const BulkUnclaimSchema = z.object({
-  items: z
-    .array(
-      z.object({
-        testRequestId: z.string().uuid(),
-        // The holder the operator SAW — the write only lands while it still holds.
-        assignedTo: z.string().uuid(),
-      }),
-    )
-    .min(1)
-    .max(MAX_BULK_SELECTION),
-  reason: z.string().max(500).optional(),
-});
-
-// Single tests only — a chemistry panel is unclaimed whole through
-// panel-actions.ts (unclaimQueueSelectionAction / the panel page's Unclaim).
-// Mints its own batch id, same reasoning as claimTestsAction.
-export async function unclaimTestsAction(input: unknown): Promise<BulkQueueResult> {
-  const session = await requireActiveStaff();
-  if (!(LAB_CAPABLE_ROLES as readonly string[]).includes(session.role)) {
-    return { ok: false, error: NOT_LAB_STAFF };
-  }
-  const parsed = BulkUnclaimSchema.safeParse(input);
-  if (!parsed.success) return { ok: false, error: BULK_INPUT_ERROR };
-  const batchId = crypto.randomUUID();
-  const batchSize = new Set(parsed.data.items.map((i) => i.testRequestId)).size;
-  const supabase = await createClient();
-  return unclaimTestsCore(session, supabase, parsed.data, { batchId, batchSize });
 }
 
 export async function reassignTestAction(

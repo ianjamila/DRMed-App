@@ -1,6 +1,7 @@
 // Per-row claim / unclaim predicates for the lab queue (spec §6). Shared by
-// the single-row actions (claimTestAction, performUnclaim) and the bulk ones
-// (claimTestsAction, unclaimTestsAction) in queue/actions.ts, so a row the
+// the single-row actions (claimTestAction, performUnclaim) in queue/actions.ts
+// and the bulk ones (claimTestsCore, unclaimTestsCore in
+// src/lib/actions/queue/bulk-cores.ts), so a row the
 // bulk bar skips is refused for exactly the reason its own button would give.
 // Pure: no I/O, so vitest pins every branch.
 

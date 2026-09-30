@@ -6,44 +6,42 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const router = vi.hoisted(() => ({ replace: vi.fn(), refresh: vi.fn() }));
 vi.mock("next/navigation", () => ({ useRouter: () => router }));
 vi.mock("./actions", () => ({
-  claimTestsAction: vi.fn(),
-  unclaimTestsAction: vi.fn(),
   undoBulkQueueAction: vi.fn(),
 }));
-vi.mock("@/lib/actions/visits/queue-deletion", () => ({
-  deleteTestRequestsManyAction: vi.fn(),
-}));
-// Not exercised here (no chemistry panel in these fixtures — see
-// panel-actions.test.ts / the queue's own tests for panel wiring), but the
-// bar imports these unconditionally, and the real module pulls in
-// server-only code that throws outside a Server Component.
+// EVERY bulk Claim / Unclaim / Delete goes through these three, panel or not:
+// they mint the one batch id that shows Undo. The real module pulls in
+// server-only code that throws outside a Server Component, so they are mocked.
 vi.mock("./panel-actions", () => ({
   claimQueueSelectionAction: vi.fn(),
   unclaimQueueSelectionAction: vi.fn(),
   deleteQueueSelectionAction: vi.fn(),
 }));
 
-import { claimTestsAction, unclaimTestsAction, undoBulkQueueAction } from "./actions";
-import { deleteTestRequestsManyAction } from "@/lib/actions/visits/queue-deletion";
+import { undoBulkQueueAction } from "./actions";
+import {
+  claimQueueSelectionAction,
+  deleteQueueSelectionAction,
+  unclaimQueueSelectionAction,
+} from "./panel-actions";
 import { QueueBulkBar } from "./queue-bulk-bar";
 import { SelectionProvider } from "@/components/staff/row-selection/selection-context";
 import { RowSelectCheckbox } from "@/components/staff/row-selection/row-select-checkbox";
 import { SelectAllCheckbox } from "@/components/staff/row-selection/select-all-checkbox";
-import { QUEUE_KIND, bulkQueueMessage, type QueueRowInfo } from "@/lib/queue/bulk-queue";
+import { QUEUE_KIND, bulkQueueMessage, panelRowKey, type QueueRowInfo } from "@/lib/queue/bulk-queue";
 import { UNDO_EXPIRED, undoOutcomeMessage } from "@/lib/ui/bulk-undo";
 import type { SelectionEntry } from "@/lib/ui/bulk-selection";
 
 // Bulk-select follow-ups (item 6): the checkboxes (RowSelectCheckbox /
 // SelectAllCheckbox), the shared SelectionProvider and QueueBulkBar are all
-// real here — only the three lab-queue server actions and next/navigation
+// real here — only the three bulk server actions and next/navigation
 // are mocked, so this exercises the same wiring the queue page composes
 // (rowsByKey/QUEUE_KIND contract). Pins: which buttons a selection unlocks
 // per QUEUE_KIND, that Unclaim carries the holder the row showed, that
 // Delete requires a reason, that the outcome panel names every skipped row
 // and prunes every sent key, that ineligible rows stay selected with the
 // outcome inline, and the ↶ Undo visibility/counting/retry/expiry rules.
-// Chemistry panels are covered separately, through panel-actions.ts
-// (this bar routes a selection containing one there instead of here).
+// Server-side panel handling is covered by panel-actions / panel-writes tests;
+// here a panel key only has to travel in the same call as the single tests.
 
 const VISIT_1 = "11111111-1111-1111-1111-111111111111";
 
@@ -106,9 +104,9 @@ function Harness({ rows, resetKey = "k1" }: { rows: Row[]; resetKey?: string }) 
 }
 
 beforeEach(() => {
-  vi.mocked(claimTestsAction).mockReset();
-  vi.mocked(unclaimTestsAction).mockReset();
-  vi.mocked(deleteTestRequestsManyAction).mockReset();
+  vi.mocked(claimQueueSelectionAction).mockReset();
+  vi.mocked(unclaimQueueSelectionAction).mockReset();
+  vi.mocked(deleteQueueSelectionAction).mockReset();
   vi.mocked(undoBulkQueueAction).mockReset();
   router.refresh.mockReset();
   // QueueBulkBar renders via FixedBottomBar, which measures itself with a
@@ -151,8 +149,8 @@ it("an unclaimable row with no holder yet does not unlock Unclaim", async () => 
 });
 
 describe("Claim", () => {
-  it("sends a panel-free selection straight to claimTestsAction as a plain id array", async () => {
-    vi.mocked(claimTestsAction).mockResolvedValue({
+  it("sends a panel-free selection to claimQueueSelectionAction with no panels", async () => {
+    vi.mocked(claimQueueSelectionAction).mockResolvedValue({
       ok: true,
       changedIds: ["t1", "t2"],
       skipped: [],
@@ -170,14 +168,45 @@ describe("Claim", () => {
     await user.click(screen.getByRole("checkbox", { name: "Select all tests" }));
     await user.click(screen.getByRole("button", { name: "Claim (2)" }));
 
-    expect(claimTestsAction).toHaveBeenCalledTimes(1);
-    expect(claimTestsAction).toHaveBeenCalledWith(["t1", "t2"]);
+    expect(claimQueueSelectionAction).toHaveBeenCalledTimes(1);
+    expect(claimQueueSelectionAction).toHaveBeenCalledWith({ testRequestIds: ["t1", "t2"], panels: [] });
+    // The whole-selection batch id it returns is what offers Undo.
+    expect(await screen.findByRole("button", { name: "↶ Undo" })).toBeTruthy();
+  });
+
+  it("sends single tests and a chemistry panel in ONE call and offers one Undo", async () => {
+    const GROUP = "22222222-2222-2222-2222-222222222222";
+    const panelKey = panelRowKey(VISIT_1, GROUP);
+    vi.mocked(claimQueueSelectionAction).mockResolvedValue({
+      ok: true,
+      changedIds: ["t1", "m1", "m2"],
+      skipped: [],
+      batchId: "b-mixed",
+    });
+    const user = userEvent.setup();
+    render(
+      <Harness
+        rows={[
+          { key: "t1", kinds: [QUEUE_KIND.claim] },
+          { key: panelKey, kinds: [QUEUE_KIND.claim] },
+        ]}
+      />,
+    );
+    await user.click(screen.getByRole("checkbox", { name: "Select all tests" }));
+    await user.click(screen.getByRole("button", { name: "Claim (2)" }));
+
+    expect(claimQueueSelectionAction).toHaveBeenCalledTimes(1);
+    expect(claimQueueSelectionAction).toHaveBeenCalledWith({
+      testRequestIds: ["t1"],
+      panels: [{ visitId: VISIT_1, groupId: GROUP }],
+    });
+    expect(await screen.findAllByRole("button", { name: "↶ Undo" })).toHaveLength(1);
   });
 });
 
 describe("Unclaim", () => {
   it("opens a reason panel and carries the holder the row showed", async () => {
-    vi.mocked(unclaimTestsAction).mockResolvedValue({
+    vi.mocked(unclaimQueueSelectionAction).mockResolvedValue({
       ok: true,
       changedIds: ["t2"],
       skipped: [],
@@ -190,8 +219,9 @@ describe("Unclaim", () => {
     const confirm = await screen.findByRole("button", { name: /Confirm unclaim/ });
     await user.click(confirm);
 
-    expect(unclaimTestsAction).toHaveBeenCalledWith({
+    expect(unclaimQueueSelectionAction).toHaveBeenCalledWith({
       items: [{ testRequestId: "t2", assignedTo: "holder-a" }],
+      panels: [],
       reason: undefined,
     });
   });
@@ -206,11 +236,11 @@ describe("Delete", () => {
     await user.click(screen.getByRole("button", { name: "Confirm delete (1)" }));
 
     expect(await screen.findByRole("alert")).toHaveProperty("textContent", "Reason is required.");
-    expect(deleteTestRequestsManyAction).not.toHaveBeenCalled();
+    expect(deleteQueueSelectionAction).not.toHaveBeenCalled();
   });
 
   it("sends the typed reason once one is entered", async () => {
-    vi.mocked(deleteTestRequestsManyAction).mockResolvedValue({
+    vi.mocked(deleteQueueSelectionAction).mockResolvedValue({
       ok: true,
       changedIds: ["t3"],
       skipped: [],
@@ -223,8 +253,9 @@ describe("Delete", () => {
     await user.type(screen.getByLabelText("Reason for deleting"), "Duplicate entry");
     await user.click(screen.getByRole("button", { name: "Confirm delete (1)" }));
 
-    expect(deleteTestRequestsManyAction).toHaveBeenCalledWith({
+    expect(deleteQueueSelectionAction).toHaveBeenCalledWith({
       testRequestIds: ["t3"],
+      panels: [],
       reason: "Duplicate entry",
     });
   });
@@ -235,7 +266,7 @@ it("the outcome panel names every skipped row and prunes every key that was sent
     { key: "t1", kinds: [QUEUE_KIND.claim], label: "CBC — Cruz, Ana" },
     { key: "t4", kinds: [QUEUE_KIND.claim], label: "FBS — Reyes, Ben" },
   ];
-  vi.mocked(claimTestsAction).mockResolvedValue({
+  vi.mocked(claimQueueSelectionAction).mockResolvedValue({
     ok: true,
     changedIds: ["t1"],
     skipped: [{ id: "t4", reason: "Claimed by someone else or changed just now." }],
@@ -264,7 +295,7 @@ it("the outcome panel names every skipped row and prunes every key that was sent
 });
 
 it("a row not eligible for the pressed button stays selected, the outcome shows inline, and a new tick drops it", async () => {
-  vi.mocked(claimTestsAction).mockResolvedValue({
+  vi.mocked(claimQueueSelectionAction).mockResolvedValue({
     ok: true,
     changedIds: ["t1"],
     skipped: [],
@@ -298,7 +329,7 @@ it("a row not eligible for the pressed button stays selected, the outcome shows 
 
 describe("Undo", () => {
   it("shows ↶ Undo when the result carries a batchId and at least one row changed", async () => {
-    vi.mocked(claimTestsAction).mockResolvedValue({
+    vi.mocked(claimQueueSelectionAction).mockResolvedValue({
       ok: true,
       changedIds: ["t1"],
       skipped: [],
@@ -313,7 +344,7 @@ describe("Undo", () => {
   });
 
   it("hides ↶ Undo when the result carries no batchId", async () => {
-    vi.mocked(claimTestsAction).mockResolvedValue({
+    vi.mocked(claimQueueSelectionAction).mockResolvedValue({
       ok: true,
       changedIds: ["t1"],
       skipped: [],
@@ -328,7 +359,7 @@ describe("Undo", () => {
   });
 
   it("counts restored rows by identity, not by their (possibly shared) label", async () => {
-    vi.mocked(claimTestsAction).mockResolvedValue({
+    vi.mocked(claimQueueSelectionAction).mockResolvedValue({
       ok: true,
       changedIds: ["t1", "t2"],
       skipped: [],
@@ -362,7 +393,7 @@ describe("Undo", () => {
   });
 
   it("keeps ↶ Undo after a retryable failure, so the operator can try again", async () => {
-    vi.mocked(claimTestsAction).mockResolvedValue({
+    vi.mocked(claimQueueSelectionAction).mockResolvedValue({
       ok: true,
       changedIds: ["t1"],
       skipped: [],
@@ -384,7 +415,7 @@ describe("Undo", () => {
   });
 
   it("removes ↶ Undo once the server says the window/batch is gone (UNDO_EXPIRED)", async () => {
-    vi.mocked(claimTestsAction).mockResolvedValue({
+    vi.mocked(claimQueueSelectionAction).mockResolvedValue({
       ok: true,
       changedIds: ["t1"],
       skipped: [],
@@ -404,7 +435,7 @@ describe("Undo", () => {
 });
 
 it("an ok:false result is alerted and keeps the selection so the operator can retry", async () => {
-  vi.mocked(claimTestsAction).mockResolvedValue({
+  vi.mocked(claimQueueSelectionAction).mockResolvedValue({
     ok: false,
     error: "Only lab staff can claim or unclaim tests from the queue.",
   });

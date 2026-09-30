@@ -104,9 +104,9 @@ const EXEMPT: Record<string, string> = {
   [`src/app/(staff)/staff/(dashboard)/queue/actions.ts:performUnclaim`]:
     "Handing a claim back reduces work, same reasoning as claimTestAction; shared by unclaimTestAction/unclaimOwnTestAction/unclaimFromQueueAction.",
   [`src/lib/actions/queue/bulk-cores.ts:claimTestsCore`]:
-    "Bulk form of claimTestAction (body of claimTestsAction, moved out so the batch id is passed in) — claiming does not bill or release, and a deleted/merged patient has no open lines to claim.",
+    "Bulk form of claimTestAction (the bulk bar's single-test Claim body, taking a server-minted batch id — called by claimQueueSelectionAction) — claiming does not bill or release, and a deleted/merged patient has no open lines to claim.",
   [`src/lib/actions/queue/bulk-cores.ts:unclaimTestsCore`]:
-    "Bulk form of the queue list's Unclaim (body of unclaimTestsAction) — handing a claim back reduces work, same reasoning as performUnclaim.",
+    "Bulk form of the queue list's Unclaim (the bulk bar's single-test Unclaim body, called by unclaimQueueSelectionAction) — handing a claim back reduces work, same reasoning as performUnclaim.",
   [`src/app/(staff)/staff/(dashboard)/queue/actions.ts:reassignTestAction`]:
     "Reassigning an already-claimed line does not put new work or money on the record.",
   [`src/app/(staff)/staff/(dashboard)/queue/actions.ts:undoBulkQueueAction`]:

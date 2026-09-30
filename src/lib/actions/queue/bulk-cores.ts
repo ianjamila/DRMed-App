@@ -6,10 +6,11 @@ import "server-only";
 // Plain server-only module — NOT "use server" — so the batch id can be an
 // argument. Every export of a "use server" file is a public endpoint the
 // browser can call with arbitrary input; a batch id that came from there could
-// be forged to fold unrelated audit rows into someone's Undo. So the entry
-// points (claimTestsAction, unclaimTestsAction, deleteTestRequestsManyAction,
-// and queue/panel-actions.ts) parse the input, check the role, MINT the id
-// with crypto.randomUUID() and hand it to a core here as a BulkBatchContext.
+// be forged to fold unrelated audit rows into someone's Undo. So the ONLY entry
+// points are the bulk bar's three *QueueSelectionAction in queue/panel-actions.ts:
+// they parse the input, check the role, MINT one id per call with
+// crypto.randomUUID() and hand it to a core here as a BulkBatchContext — the
+// same id the panel writes get, so a mixed selection has one Undo.
 //
 // Each core re-checks the role itself: a direct call can't skip the refusal.
 
@@ -36,7 +37,6 @@ export interface BulkBatchContext {
 export const LAB_CAPABLE_ROLES = ["medtech", "xray_technician", "pathologist", "admin"] as const;
 
 export const NOT_LAB_STAFF = "Only lab staff can claim or unclaim tests from the queue.";
-export const BULK_INPUT_ERROR = "Could not read the selection — refresh the queue and try again.";
 
 // ---------------------------------------------------------------------------
 // Claim

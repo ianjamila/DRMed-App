@@ -3,8 +3,11 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
 // The bulk claim / unclaim / delete bodies live in bulk-cores.ts, a plain
-// server-only module that takes a batch context. The public "use server"
-// entry points mint that context. Modules importing "server-only" can't be
+// server-only module that takes a batch context. The only public "use server"
+// entry points that run them are the bulk bar's three *QueueSelectionAction in
+// queue/panel-actions.ts (the former per-kind wrappers had no caller left and
+// were removed — an unused public endpoint is attack surface); they mint that
+// context. Modules importing "server-only" can't be
 // imported under vitest, so — like actions.undo-reversal.test.ts — this pins
 // the source text: it is the only place the rule "a browser can never supply
 // a batch id" is checked.
@@ -14,6 +17,7 @@ const coresSrc = read("src/lib/actions/queue/bulk-cores.ts");
 const deleteCoreSrc = read("src/lib/actions/queue/bulk-delete-core.ts");
 const actionsSrc = read("src/app/(staff)/staff/(dashboard)/queue/actions.ts");
 const deletionSrc = read("src/lib/actions/visits/queue-deletion.ts");
+const panelActionsSrc = read("src/app/(staff)/staff/(dashboard)/queue/panel-actions.ts");
 
 /** From `export async function name(` up to the next top-level export (or EOF). */
 function bodyOf(src: string, fnName: string): string {
@@ -47,56 +51,63 @@ describe("the bulk core modules are plain server-only modules", () => {
   });
 
   it("exports no BulkBatchContext through a use-server file", () => {
-    for (const src of [actionsSrc, deletionSrc]) {
+    for (const src of [actionsSrc, deletionSrc, panelActionsSrc]) {
       expect(src).toMatch(/^"use server";/);
-      expect(src).not.toContain("BulkBatchContext");
+      // panel-actions.ts imports the TYPE (erased at build); none may re-export it.
+      expect(src).not.toMatch(/export\s[^;]*BulkBatchContext/);
+      expect(src).not.toMatch(/export\s*\{[^}]*BulkBatchContext/);
     }
   });
 });
 
-describe("the public wrappers mint the batch id themselves", () => {
+describe("the bulk bar's public actions mint the batch id themselves", () => {
   const cases = [
-    {
-      name: "claimTestsAction",
-      src: actionsSrc,
-      core: "claimTestsCore(",
-      schema: "BulkClaimSchema",
-    },
-    {
-      name: "unclaimTestsAction",
-      src: actionsSrc,
-      core: "unclaimTestsCore(",
-      schema: "BulkUnclaimSchema",
-    },
-    {
-      name: "deleteTestRequestsManyAction",
-      src: deletionSrc,
-      core: "deleteTestRequestsManyCore(",
-      schema: "ManyDeleteSchema",
-    },
+    { name: "claimQueueSelectionAction", core: "claimTestsCore(", schema: "ClaimSelectionSchema" },
+    { name: "unclaimQueueSelectionAction", core: "unclaimTestsCore(", schema: "UnclaimSelectionSchema" },
+    { name: "deleteQueueSelectionAction", core: "deleteTestRequestsManyCore(", schema: "DeleteSelectionSchema" },
   ];
 
   for (const c of cases) {
     describe(c.name, () => {
-      const body = bodyOf(c.src, c.name);
+      const body = bodyOf(panelActionsSrc, c.name);
 
-      it("mints crypto.randomUUID() and passes it to its core", () => {
-        expect(body).toContain("crypto.randomUUID()");
+      it("mints crypto.randomUUID() exactly once and passes that context to its core", () => {
+        expect(body.match(/crypto\.randomUUID\(\)/g)).toHaveLength(1);
         expect(body).toContain(c.core);
-        expect(body).toMatch(/\{\s*batchId,\s*batchSize\b/);
+        expect(body).toMatch(/batchId:\s*crypto\.randomUUID\(\)/);
+        expect(body).toMatch(/batchSize:/);
       });
 
-      it("has a zod schema with no batch-id field", () => {
-        const schema = constOf(c.src, c.schema);
-        expect(schema).not.toMatch(/batchId|batch_id|bulk_batch/);
+      it("has a zod schema with no batch-id or panel-key field", () => {
+        const schema = constOf(panelActionsSrc, c.schema);
+        expect(schema).not.toMatch(/batchId|batch_id|bulk_batch|panelKey|panel_key/);
       });
 
-      it("does not write audit rows itself (the core does)", () => {
+      it("does not write audit rows itself (the cores and panel writes do)", () => {
         expect(body).not.toContain("audit(");
         expect(body).not.toMatch(/bulk_batch_id/);
       });
     });
   }
+
+  it("the panel schemas carry no batch-id or panel-key field either", () => {
+    const panelSchemas = constOf(panelActionsSrc, "PanelSchema");
+    expect(panelSchemas).not.toMatch(/batchId|batch_id|bulk_batch|panelKey|panel_key/);
+  });
+
+  it("the removed per-kind wrappers are gone from the use-server files", () => {
+    for (const name of ["claimTestsAction", "unclaimTestsAction", "deleteTestRequestsManyAction"]) {
+      for (const src of [actionsSrc, deletionSrc, panelActionsSrc]) {
+        expect(src).not.toContain(`export async function ${name}(`);
+      }
+    }
+  });
+
+  it("claimPanelAction (the row button) passes no batch and mints nothing", () => {
+    const body = bodyOf(panelActionsSrc, "claimPanelAction");
+    expect(body).toContain("claimPanelMembers(");
+    expect(body).not.toMatch(/randomUUID|panelBatch\(|batch/);
+  });
 });
 
 describe("the cores take the batch context and write it", () => {

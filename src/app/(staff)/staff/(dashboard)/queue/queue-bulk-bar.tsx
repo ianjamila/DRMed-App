@@ -6,7 +6,6 @@ import { Button } from "@/components/ui/button";
 import { BulkBar } from "@/components/staff/row-selection/bulk-bar";
 import { BulkOutcomePanel } from "@/components/staff/row-selection/bulk-outcome";
 import { useRowSelection } from "@/components/staff/row-selection/selection-context";
-import { deleteTestRequestsManyAction } from "@/lib/actions/visits/queue-deletion";
 import {
   QUEUE_KIND,
   bulkQueueMessage,
@@ -17,7 +16,7 @@ import {
   type QueueRowInfo,
 } from "@/lib/queue/bulk-queue";
 import { UNDO_ALREADY, UNDO_EXPIRED, UNDO_WINDOW_MS, undoOutcomeMessage } from "@/lib/ui/bulk-undo";
-import { claimTestsAction, unclaimTestsAction, undoBulkQueueAction } from "./actions";
+import { undoBulkQueueAction } from "./actions";
 import {
   claimQueueSelectionAction,
   deleteQueueSelectionAction,
@@ -192,17 +191,14 @@ export function QueueBulkBar({ rowsByKey }: Props) {
       done(
         "Claimed",
         keys,
-        // A selection with no chemistry panel goes straight to the
-        // single-test action — it alone stamps a batch id, so only a
-        // panel-free Claim offers Undo. A selection with a panel goes
-        // through panel-actions.ts, which checks the record budget with
-        // every panel counted in full before claiming anything.
-        panels.length === 0
-          ? await claimTestsAction(singleIds)
-          : await claimQueueSelectionAction({
-              testRequestIds: singleIds,
-              panels: panels.map(({ visitId, groupId }) => ({ visitId, groupId })),
-            }),
+        // Every selection — single tests, panels or both — goes through
+        // panel-actions.ts: it checks the record budget with every panel
+        // counted in full, then mints ONE batch id for the whole call, so a
+        // mixed selection has one Undo.
+        await claimQueueSelectionAction({
+          testRequestIds: singleIds,
+          panels: panels.map(({ visitId, groupId }) => ({ visitId, groupId })),
+        }),
         false,
         Date.now(),
       ),
@@ -226,13 +222,11 @@ export function QueueBulkBar({ rowsByKey }: Props) {
       done(
         "Unclaimed",
         keys,
-        panels.length === 0
-          ? await unclaimTestsAction({ items, reason: reason.trim() || undefined })
-          : await unclaimQueueSelectionAction({
-              items,
-              panels: heldPanels.map(({ visitId, groupId, members }) => ({ visitId, groupId, members })),
-              reason: reason.trim() || undefined,
-            }),
+        await unclaimQueueSelectionAction({
+          items,
+          panels: heldPanels.map(({ visitId, groupId, members }) => ({ visitId, groupId, members })),
+          reason: reason.trim() || undefined,
+        }),
         true,
         Date.now(),
       ),
@@ -252,13 +246,11 @@ export function QueueBulkBar({ rowsByKey }: Props) {
       done(
         "Deleted",
         keys,
-        panels.length === 0
-          ? await deleteTestRequestsManyAction({ testRequestIds: singleIds, reason: reason.trim() })
-          : await deleteQueueSelectionAction({
-              testRequestIds: singleIds,
-              panels: panels.map(({ visitId, groupId }) => ({ visitId, groupId })),
-              reason: reason.trim(),
-            }),
+        await deleteQueueSelectionAction({
+          testRequestIds: singleIds,
+          panels: panels.map(({ visitId, groupId }) => ({ visitId, groupId })),
+          reason: reason.trim(),
+        }),
         true,
         Date.now(),
       ),

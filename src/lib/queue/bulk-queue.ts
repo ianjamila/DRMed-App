@@ -75,6 +75,9 @@ export function parsePanelRowKey(key: string): { visitId: string; groupId: strin
  * single-test call is returned as-is — the caller never runs the panels then.
  * A refusal of a whole panel call lands every key in `panelKeys` in
  * `skipped`, because the single tests before it DID change.
+ * The batch id (one per call, shared by the single tests and the panels — the
+ * caller minted it once) rides the result only when something changed: it is
+ * what shows the bar's Undo, and there is nothing to undo otherwise.
  */
 export function combineClaimResults(
   single: BulkQueueResult | null,
@@ -92,7 +95,13 @@ export function combineClaimResults(
       skipped.push(...panelKeys.map((id) => ({ id, reason: panels.error })));
     }
   }
-  return { ok: true, changedIds, skipped };
+  const batchId = single?.batchId ?? (panels?.ok ? panels.batchId : undefined);
+  return {
+    ok: true,
+    changedIds,
+    skipped,
+    ...(batchId && changedIds.length > 0 ? { batchId } : {}),
+  };
 }
 
 /**

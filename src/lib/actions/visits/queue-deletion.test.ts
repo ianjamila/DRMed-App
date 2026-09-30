@@ -2,7 +2,8 @@ import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
-// deleteTestRequestsManyCore (the body of deleteTestRequestsManyAction, in
+// deleteTestRequestsManyCore (the bulk bar's Delete body, called by
+// deleteQueueSelectionAction in queue/panel-actions.ts; in
 // src/lib/actions/queue/bulk-delete-core.ts) has no pure seam (admin client, StaffSession,
 // audit()), so — like queue-restore-core.test.ts — it is pinned as source text.
 // #254 made a stale all-deleted selection a hard refusal (panel-actions.ts
