@@ -220,8 +220,15 @@ async function notifyKeptPatient(
   const to = recipient.kind === "active" ? (recipient.patient.email ?? null) : null;
   let firstName = "there";
   if (to) {
-    // History read (never filtered): the name on the record we just merged into.
-    const { data: row } = await admin.from("patients").select("first_name").eq("id", keepId).maybeSingle();
+    // History read (never filtered): the name on the record we just merged
+    // into. deleted_at/merged_into_id ride along, unused, only so this mixed
+    // file's per-chain check can see it declares its own state (same pattern
+    // as loadRecentMerges' pts read below).
+    const { data: row } = await admin
+      .from("patients")
+      .select("first_name, deleted_at, merged_into_id")
+      .eq("id", keepId)
+      .maybeSingle();
     if (row?.first_name) firstName = row.first_name;
   }
   const email = to
