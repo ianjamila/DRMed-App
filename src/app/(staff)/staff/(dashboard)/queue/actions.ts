@@ -20,8 +20,11 @@ import {
 } from "@/lib/queue/claim-eligibility";
 import { ipAndAgent } from "@/lib/server/action-helpers";
 import type { BulkQueueResult, SkippedRow } from "@/lib/queue/bulk-queue";
+import { unclaimPanelMembers } from "@/lib/actions/queue/panel-writes";
 
 export type ClaimResult = { ok: true } | { ok: false; error: string };
+
+const HOLDER_CHANGED = "Someone else holds this now — refresh the queue.";
 
 export async function claimTestAction(
   testRequestId: string,
@@ -120,6 +123,10 @@ async function performUnclaim(
   testRequestIds: string[],
   reason: string | undefined,
   ownerId: string | null,
+  // Each test's holder as the operator SAW it (the queue list and panel page
+  // send it). When given, a test held by anyone else now is refused — an
+  // admin may release anyone's claim, but never one taken over since.
+  seenHolders?: ReadonlyMap<string, string>,
 ): Promise<ClaimResult> {
   if (testRequestIds.length === 0) {
     return { ok: false, error: "Nothing to unclaim." };
@@ -145,11 +152,35 @@ async function performUnclaim(
         "This entry was deleted from the queue. Restore it before unclaiming it.",
     };
   }
+  if (seenHolders && before.some((r) => r.assigned_to !== seenHolders.get(r.id))) {
+    return { ok: false, error: HOLDER_CHANGED };
+  }
   // All-or-nothing for a group: refuse up front rather than hand back half a
   // chemistry panel. The UPDATE below re-proves the same predicate.
   const refusal = ownerId === null ? UNCLAIM_REFUSAL_ANY : UNCLAIM_REFUSAL_OWN;
   if (before.some((r) => !evaluateUnclaim(r, ownerId).ok)) {
     return { ok: false, error: refusal };
+  }
+
+  // A consolidated panel is handed back in ONE statement (0191,
+  // unclaim_panel_members): every member under the one holder the pre-read
+  // saw, or nothing — a member that changes in between raises P0077 instead
+  // of leaving the report half returned.
+  if (testRequestIds.length > 1) {
+    // Every member's own holder, as the pre-read saw it — evaluateUnclaim
+    // above already proved each is in progress and, for a non-admin, theirs.
+    // An admin can so recover a panel split between two people.
+    const visitOf = new Map(before.map((r) => [r.id, r.visits.id]));
+    const result = await unclaimPanelMembers(session, supabase, {
+      members: before.map((r) => ({ id: r.id, holder: r.assigned_to! })),
+      visitIdOf: (id) => visitOf.get(id) ?? null,
+      reason: reason?.trim() || null,
+      selfService: ownerId !== null,
+    });
+    if (!result.ok) return result;
+    revalidatePath("/staff/queue");
+    for (const id of testRequestIds) revalidatePath(`/staff/queue/${id}`);
+    return { ok: true };
   }
 
   // Only an in-flight claim with no uploaded result can be unclaimed. A
@@ -226,10 +257,14 @@ export async function unclaimOwnTestAction(
   return performUnclaim(session, [testRequestId], reason, session.user_id);
 }
 
-const QueueUnclaimSchema = z.object({
-  testRequestIds: z.array(z.string().uuid()).min(1).max(MAX_BULK_SELECTION),
-  reason: z.string().max(500).optional(),
-});
+const QueueUnclaimSchema = z
+  .object({
+    testRequestIds: z.array(z.string().uuid()).min(1).max(MAX_BULK_SELECTION),
+    // Parallel to testRequestIds: each test's holder as the operator saw it.
+    holders: z.array(z.string().uuid()).min(1).max(MAX_BULK_SELECTION),
+    reason: z.string().max(500).optional(),
+  })
+  .refine((v) => v.holders.length === v.testRequestIds.length);
 
 // The queue LIST's Unclaim: one entry point for a single test or a
 // consolidated chemistry card. An admin may hand back anyone's claim (same
@@ -242,12 +277,13 @@ export async function unclaimFromQueueAction(
     return { ok: false, error: "Could not unclaim — refresh the queue and try again." };
   }
   const session = await requireActiveStaff();
-  const { testRequestIds, reason } = parsed.data;
+  const { testRequestIds, holders, reason } = parsed.data;
   return performUnclaim(
     session,
     testRequestIds,
     reason,
     session.role === "admin" ? null : session.user_id,
+    new Map(testRequestIds.map((id, i) => [id, holders[i]!])),
   );
 }
 

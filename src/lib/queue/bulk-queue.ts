@@ -40,6 +40,77 @@ export interface QueueRowInfo {
   label: string;
   /** The holder the operator SAW (unclaim sends it as a predicate); null when unclaimed. */
   assignedTo: string | null;
+  /** Tests Delete acts on — every live member of a chemistry panel row. 1 when absent. */
+  testCount?: number;
+  /** Tests Claim / Unclaim act on — a panel's members still on the bench. testCount when absent. */
+  benchCount?: number;
+  /** A panel row's bench members and holders as rendered — what its Unclaim sends as "what I saw". */
+  bench?: Array<{ id: string; holder: string | null }>;
+}
+
+// A chemistry panel row is selected as ONE row but claimed server-side by
+// (visit, report group): the list pages before the fold, so the ids on screen
+// can be part of the panel. Its selection key carries both ids.
+const PANEL_KEY_PREFIX = "panel:";
+
+export function panelRowKey(visitId: string, groupId: string): string {
+  return `${PANEL_KEY_PREFIX}${visitId}:${groupId}`;
+}
+
+export function parsePanelRowKey(key: string): { visitId: string; groupId: string } | null {
+  if (!key.startsWith(PANEL_KEY_PREFIX)) return null;
+  const [visitId, groupId, ...rest] = key.slice(PANEL_KEY_PREFIX.length).split(":");
+  if (!visitId || !groupId || rest.length > 0) return null;
+  return { visitId, groupId };
+}
+
+/**
+ * One result for a bulk action that ran the single tests and the chemistry
+ * panels separately (queue/panel-actions.ts). A refusal of the whole
+ * single-test call is returned as-is — the caller never runs the panels then.
+ * A refusal of a whole panel call lands every key in `panelKeys` in
+ * `skipped`, because the single tests before it DID change.
+ */
+export function combineClaimResults(
+  single: BulkQueueResult | null,
+  panels: BulkQueueResult | null,
+  panelKeys: readonly string[],
+): BulkQueueResult {
+  if (single && !single.ok) return single;
+  const changedIds = [...(single?.changedIds ?? [])];
+  const skipped = [...(single?.skipped ?? [])];
+  if (panels) {
+    if (panels.ok) {
+      changedIds.push(...panels.changedIds);
+      skipped.push(...panels.skipped);
+    } else {
+      skipped.push(...panelKeys.map((id) => ({ id, reason: panels.error })));
+    }
+  }
+  return { ok: true, changedIds, skipped };
+}
+
+/**
+ * How many TESTS a bulk action was sent: every changed test once, plus each
+ * skipped row weighted by the tests that action would have changed — its
+ * bench members for Claim / Unclaim, every member for Delete. Equal to the
+ * key count when every row is a single test.
+ */
+export function sentTestCount(
+  result: { changedIds: readonly string[]; skipped: readonly SkippedRow[] },
+  rowsByKey: Readonly<Record<string, QueueRowInfo>>,
+  scope: "bench" | "all" = "all",
+): number {
+  return (
+    result.changedIds.length +
+    result.skipped.reduce((n, s) => n + rowTestCount(rowsByKey[s.id], scope), 0)
+  );
+}
+
+/** Tests one selected row stands for, for the action's scope. */
+export function rowTestCount(row: QueueRowInfo | undefined, scope: "bench" | "all"): number {
+  if (!row) return 1;
+  return scope === "bench" ? (row.benchCount ?? row.testCount ?? 1) : (row.testCount ?? 1);
 }
 
 function tests(n: number): string {
