@@ -51,7 +51,7 @@ export function ReleaseOutcomeProvider({ children, resetKey }: { children: React
   return (
     <ReleaseOutcomeContext.Provider value={value}>
       {text ? (
-        <Panel key={state.n} role="status" className="mb-4 flex items-start gap-3 p-3 text-xs">
+        <Panel key={state.n} role="status" className="sticky top-2 z-20 mb-4 flex items-start gap-3 p-3 text-xs shadow-sm">
           <p className="flex-1 whitespace-pre-line text-[color:var(--color-brand-text-mid)]">{text}</p>
           <button
             type="button"

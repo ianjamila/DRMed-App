@@ -61,52 +61,52 @@ export function ReleaseButton({
 
   return (
     <div className="flex flex-col items-end gap-0.5">
-    <div className="flex items-center justify-end gap-1.5">
-      {!consentOnFile && !gateRequired ? (
-        <span className="text-[11px] text-amber-600">Consent not on file</span>
-      ) : null}
-      <select
-        value={medium}
-        onChange={(e) => setMedium(e.target.value as ReleaseMedium)}
-        disabled={disabled}
-        title={title ?? "Release medium"}
-        className={`rounded-md border border-[color:var(--color-brand-bg-mid)] bg-white px-2 py-1 focus:border-[color:var(--color-brand-cyan)] focus:outline-none disabled:opacity-50 ${textCls}`}
-      >
-        {RELEASE_MEDIUM_OPTIONS.map((o) => (
-          <option key={o.value} value={o.value}>
-            {o.label}
-          </option>
-        ))}
-      </select>
-      <Button
-        type="button"
-        size="sm"
-        disabled={disabled}
-        title={title}
-        className={`bg-[color:var(--color-brand-cyan)] text-white hover:bg-[color:var(--color-brand-navy)] ${btnSizeCls}`}
-        onClick={() =>
-          start(async () => {
-            const result = await releaseTestAction(testRequestId, visitId, medium);
-            // The page refreshes on success and unmounts this button, so the
-            // outcome goes to the page-level provider (alert is the fallback).
-            const text = result.ok
-              ? releaseOutcomeText({
-                  changedCount: result.changedCount,
-                  alsoReleasedCount: result.alsoReleasedCount,
-                  skipped: result.skipped,
-                  warnings: result.warnings,
-                })
-              : result.error;
-            if (text) {
-              if (outcome) outcome.show(text);
-              else alert(text);
-            }
-          })
-        }
-      >
-        {pending ? "Releasing…" : label}
-      </Button>
-    </div>
+      <div className="flex items-center justify-end gap-1.5">
+        {!consentOnFile && !gateRequired ? (
+          <span className="text-[11px] text-amber-600">Consent not on file</span>
+        ) : null}
+        <select
+          value={medium}
+          onChange={(e) => setMedium(e.target.value as ReleaseMedium)}
+          disabled={disabled}
+          title={title ?? "Release medium"}
+          className={`rounded-md border border-[color:var(--color-brand-bg-mid)] bg-white px-2 py-1 focus:border-[color:var(--color-brand-cyan)] focus:outline-none disabled:opacity-50 ${textCls}`}
+        >
+          {RELEASE_MEDIUM_OPTIONS.map((o) => (
+            <option key={o.value} value={o.value}>
+              {o.label}
+            </option>
+          ))}
+        </select>
+        <Button
+          type="button"
+          size="sm"
+          disabled={disabled}
+          title={title}
+          className={`bg-[color:var(--color-brand-cyan)] text-white hover:bg-[color:var(--color-brand-navy)] ${btnSizeCls}`}
+          onClick={() =>
+            start(async () => {
+              const result = await releaseTestAction(testRequestId, visitId, medium);
+              // The page refreshes on success and unmounts this button, so the
+              // outcome goes to the page-level provider (alert is the fallback).
+              const text = result.ok
+                ? releaseOutcomeText({
+                    changedCount: result.changedCount,
+                    alsoReleasedCount: result.alsoReleasedCount,
+                    skipped: result.skipped,
+                    warnings: result.warnings,
+                  })
+                : result.error;
+              if (text) {
+                if (outcome) outcome.show(text);
+                else alert(text);
+              }
+            })
+          }
+        >
+          {pending ? "Releasing…" : label}
+        </Button>
+      </div>
       {blockReason ? (
         <span className={`${textCls} max-w-[16rem] text-right text-[color:var(--color-brand-text-soft)]`}>
           {blockReason}

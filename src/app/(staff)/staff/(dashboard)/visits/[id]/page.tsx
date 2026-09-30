@@ -359,12 +359,17 @@ export default async function VisitDetailPage({ params, searchParams }: Props) {
       : null;
     reportGroupNameByTrId.set(t.id, rg?.name ?? null);
   }
-  const reportScopeByTrId: Record<string, { memberIds: string[]; label: string }> = {};
+  // readyCount = live, ready members — what a Release click on this report sends out.
+  const readyOnThisVisit = new Set(
+    (tests ?? []).filter((t) => t.deleted_at === null && t.status === "ready_for_release").map((t) => t.id),
+  );
+  const reportScopeByTrId: Record<string, { memberIds: string[]; label: string; readyCount: number }> = {};
   for (const members of membersByResultId.values()) {
     if (members.length <= 1) continue;
     const scope = {
       memberIds: members,
       label: reportGroupNameByTrId.get(members[0]) ?? "combined",
+      readyCount: members.filter((id) => readyOnThisVisit.has(id)).length,
     };
     for (const trId of members) reportScopeByTrId[trId] = scope;
   }
@@ -380,7 +385,14 @@ export default async function VisitDetailPage({ params, searchParams }: Props) {
     if (!blockByScope.has(scope)) {
       blockByScope.set(
         scope,
-        reportReleaseBlock(scope.memberIds.map((id) => trState.get(id) ?? { status: "unknown", deleted: false })),
+        // Every member comes from this visit's rows, so a missing id can't normally
+        // happen; skip it rather than guess (display only — the server re-proves).
+        reportReleaseBlock(
+          scope.memberIds.flatMap((id) => {
+            const st = trState.get(id);
+            return st ? [st] : [];
+          }),
+        ),
       );
     }
     const block = blockByScope.get(scope);
@@ -1952,7 +1964,7 @@ interface TestActionProps {
   editNote?: string | null;
   // Present when this row shares a finished result with other tests — undo
   // reverts the whole report, not just this row (display only).
-  reportScope?: { memberIds: string[]; label: string } | null;
+  reportScope?: { memberIds: string[]; label: string; readyCount?: number } | null;
   // Why a ready row on a combined report can't be released yet (an unfinished
   // or deleted sibling) — the whole-report rule; null when it can.
   releaseBlock?: string | null;
@@ -2125,7 +2137,11 @@ function TestAction({
           consentOnFile={consentOnFile}
           gateRequired={gateRequired}
           size={size}
-          label={reportScope ? `Release report (${reportScope.memberIds.length} tests)` : "Release"}
+          label={
+            reportScope && (reportScope.readyCount ?? 0) > 1
+              ? `Release report (${reportScope.readyCount} tests)`
+              : "Release"
+          }
           blockReason={releaseBlock}
         />
         {editNote ? (

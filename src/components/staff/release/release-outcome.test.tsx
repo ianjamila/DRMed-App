@@ -53,6 +53,18 @@ describe("ReleaseOutcomeProvider", () => {
     fireEvent.click(screen.getByRole("button", { name: "Dismiss" }));
     expect(screen.queryByRole("status")).toBeNull();
   });
+  it("sticks to the top so feedback is visible when the click was far down the page", () => {
+    render(
+      <ReleaseOutcomeProvider>
+        <Trigger />
+      </ReleaseOutcomeProvider>,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "go" }));
+    const cls = screen.getByRole("status").className;
+    expect(cls).toContain("sticky");
+    expect(cls).toContain("top-2");
+    expect(cls).toContain("z-20");
+  });
   it("clears the notice when resetKey changes, and re-announces an identical message", () => {
     const { rerender } = render(
       <ReleaseOutcomeProvider resetKey="a">
