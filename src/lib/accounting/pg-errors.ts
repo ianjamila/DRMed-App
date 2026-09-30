@@ -293,6 +293,9 @@ export function translatePgError(err: PgError): string {
       return err.message
         ? err.message
         : "Some tests in this report were already claimed or changed status.";
+    // 0198 release_visit_results / undo_visit_release: the whole call was refused; nothing changed.
+    case "P0081":
+      return err.message ? err.message : "This couldn't be done — refresh and try again.";
     default:
       return err.message ?? "Database error. Please try again.";
   }

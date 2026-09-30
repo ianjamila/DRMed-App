@@ -33,28 +33,30 @@ vi.mock("@/lib/notifications/notify-released", () => ({
 vi.mock("@/lib/notifications/notify-released-bulk", () => ({
   notifyResultsReleasedBulk: async (a: { testRequestIds: string[] }) => void fx.notifyBulk.push(a),
 }));
+vi.mock("@/lib/results/viewed-count", () => ({ countResultViews: async (id: string) => (id === "a" ? 3 : 0) }));
 vi.mock("@/lib/notifications/release-staff-alert", () => ({
   scheduleReleaseStaffAlert: (v: string, n: number) => void fx.alerts.push([v, n]),
 }));
 
 import { RELEASE_REFUSAL } from "@/lib/queue/release-eligibility";
 import { REPORT_REFUSAL } from "@/lib/queue/report-release-scope";
-import { COULDNT_CHECK_REPORT, RACED_REASON, REPORT_CHANGED_REASON } from "@/lib/actions/visits/release-reports";
-import { makeFakeReleaseDb, type FakeLink, type FakeTestRow } from "@/lib/actions/visits/fake-release-db";
+import { COULDNT_CONFIRM_RELEASE } from "@/lib/actions/visits/release-reports";
+import { FAKE_RELEASED_AT, makeFakeReleaseDb, type FakeLink, type FakeTestRow } from "@/lib/actions/visits/fake-release-db";
 
-const { releaseTestAction, releaseSelectedAction, releaseAllReadyComponentsAction } = await import("./actions");
+const { releaseTestAction, releaseSelectedAction, releaseAllReadyComponentsAction, undoReleaseSelectedAction } = await import("./actions");
 
 const NONE_READY = "None of the selected tests are ready to release.";
 
 /**
- * The fake speaks test_requests / result_test_requests only. The visit page's
+ * The fake serves test_requests pre-reads and the 0198 RPCs. The visit page's
  * actions also read `visits` (deleted check) and use `.maybeSingle()`, so wrap
  * the fake: a live visit, and maybeSingle = first row of the fake's result.
  */
 function setup(rows: FakeTestRow[], links: FakeLink[] = []) {
-  const fake = makeFakeReleaseDb({ rows, links });
-  const inner = fake.client as { from: (t: string) => Record<string, unknown> };
+  const fake = makeFakeReleaseDb({ rows, links, actorRole: () => fx.role });
+  const inner = fake.client as { from: (t: string) => Record<string, unknown>; rpc: unknown };
   fx.db = {
+    rpc: inner.rpc,
     from(table: string) {
       if (table === "visits") {
         const q: Record<string, unknown> = {};
@@ -77,13 +79,13 @@ function setup(rows: FakeTestRow[], links: FakeLink[] = []) {
 }
 type Fake = ReturnType<typeof setup>;
 const statusOf = (fake: Fake, id: string) => fake.rows.find((r) => r.id === id)!.status;
-const updates = (fake: Fake) => fake.calls.filter((c) => c.table === "test_requests" && c.op === "update");
+/** The release_visit_results calls the action made (the one write path). */
+const writes = (fake: Fake) => fake.rpcCalls.filter((c) => c.name === "release_visit_results");
 const report = (result: string, ...ids: string[]): FakeLink[] => ids.map((id) => ({ testRequestId: id, resultId: result }));
-/** Run `fn` on the n-th (1-based) test_requests read — to change a row between the plan and the write. */
-function onTestRequestRead(fake: Fake, n: number, fn: () => void) {
-  let seen = 0;
-  fake.hooks.beforeRead = (table) => {
-    if (table === "test_requests" && ++seen === n) fn();
+/** Run `fn` just before the release RPC plans — to change a row between the page's read and the write. */
+function beforeRelease(fake: Fake, fn: () => void) {
+  fake.hooks.beforeRpc = (name) => {
+    if (name === "release_visit_results") fn();
   };
 }
 const REVALIDATED = [
@@ -135,7 +137,7 @@ describe("releaseTestAction — whole-report rule", () => {
       error: REPORT_REFUSAL.notFinished(1),
     });
     expect(statusOf(fake, "a")).toBe("ready_for_release");
-    expect(updates(fake)).toHaveLength(0);
+    expect(statusOf(fake, "b")).toBe("result_uploaded");
     expect(fx.notifyBulk).toEqual([]);
     expect(fx.notifyOne).toEqual([]);
     expect(fx.alerts).toEqual([]);
@@ -147,12 +149,16 @@ describe("releaseTestAction — whole-report rule", () => {
     expect(statusOf(fake, "a")).toBe("ready_for_release");
   });
 
-  it("4. fails closed when the report membership cannot be read", async () => {
+  it("4. a whole-call refusal (P0081) passes its message through; nothing is released or announced", async () => {
     const fake = seed();
-    fake.failNext("result_test_requests", "read");
-    expect(await releaseTestAction("a", "v1", "email")).toEqual({ ok: false, error: COULDNT_CHECK_REPORT });
-    expect(updates(fake)).toHaveLength(0);
+    fake.failNextRpc("release_visit_results", { code: "P0081", message: "This visit was deleted from the queue. Restore it before releasing results." });
+    expect(await releaseTestAction("a", "v1", "email")).toEqual({
+      ok: false,
+      error: "This visit was deleted from the queue. Restore it before releasing results.",
+    });
+    expect(statusOf(fake, "a")).toBe("ready_for_release");
     expect(fx.alerts).toEqual([]);
+    expect(fx.audits).toEqual([]);
   });
 
   it("5. a plain test releases alone with the single patient notice", async () => {
@@ -174,32 +180,25 @@ describe("releaseTestAction — whole-report rule", () => {
     expect(await releaseTestAction("x", "v1", "email")).toEqual({ ok: false, error: RELEASE_REFUSAL.section });
   });
 
-  it("11. a write that only half-lands warns, and neither notifies nor alerts", async () => {
+  it("11. a malformed RPC result is never announced and points the operator at the page", async () => {
     const fake = seed();
-    fake.failNext("test_requests", "update-partial");
+    fake.overrideNextRpc("release_visit_results", { released: "nope" });
     const res = await releaseTestAction("a", "v1", "email");
-    expect(res).toEqual({ ok: true, changedCount: 1, alsoReleasedCount: 0, skipped: [], warnings: [REPORT_CHANGED_REASON] });
-    expect([statusOf(fake, "a"), statusOf(fake, "b")]).toEqual(["released", "ready_for_release"]);
+    expect(res).toEqual({ ok: false, error: COULDNT_CONFIRM_RELEASE });
     expect(fx.notifyBulk).toEqual([]);
     expect(fx.notifyOne).toEqual([]);
     expect(fx.alerts).toEqual([]);
+    expect(fx.audits).toEqual([]);
   });
 
-  it("12. the selected row races away but a pulled-in sibling releases: still ok, never a bare error", async () => {
+  it("12. a sibling goes stale between the page read and the write: the DB refuses the whole report, nothing goes out", async () => {
     const fake = seed();
-    // read 1 = the candidate read, read 2 = releaseRows' — a goes stale in between.
-    onTestRequestRead(fake, 2, () => {
-      fake.rows.find((r) => r.id === "a")!.status = "result_uploaded";
+    beforeRelease(fake, () => {
+      fake.rows.find((r) => r.id === "b")!.status = "result_uploaded";
     });
     const res = await releaseTestAction("a", "v1", "email");
-    expect(res).toEqual({
-      ok: true,
-      changedCount: 0,
-      alsoReleasedCount: 1,
-      skipped: [{ id: "a", reason: REPORT_CHANGED_REASON }],
-      warnings: [],
-    });
-    expect(statusOf(fake, "b")).toBe("released");
+    expect(res).toEqual({ ok: false, error: REPORT_REFUSAL.notFinished(1) });
+    expect([statusOf(fake, "a"), statusOf(fake, "b")]).toEqual(["ready_for_release", "result_uploaded"]);
     expect(fx.notifyBulk).toEqual([]);
     expect(fx.alerts).toEqual([]);
   });
@@ -267,21 +266,22 @@ describe("releaseSelectedAction — whole-report rule", () => {
     });
   });
 
-  it("12. the selected report races away but a pulled-in member releases: count 0, still ok", async () => {
+  it("12. the selected test goes stale before the write: skipped with the RPC's reason, the plain row still releases", async () => {
     const fake = seed();
-    onTestRequestRead(fake, 2, () => {
-      fake.rows.find((r) => r.id === "a")!.status = "result_uploaded";
+    beforeRelease(fake, () => {
+      fake.rows.find((r) => r.id === "x")!.status = "result_uploaded";
     });
-    const res = await releaseSelectedAction("v1", ["a"], "physical");
+    const res = await releaseSelectedAction("v1", ["a", "x"], "physical");
     expect(res).toEqual({
       ok: true,
-      count: 0,
+      count: 1,
       alsoReleasedCount: 1,
-      skipped: [{ id: "a", reason: REPORT_CHANGED_REASON }],
+      skipped: [{ id: "x", reason: "Released by someone else or changed just now." }],
       warnings: [],
       batchId: expect.any(String),
       notifiedCount: 0,
     });
+    expect(statusOf(fake, "x")).toBe("result_uploaded");
   });
 });
 
@@ -302,6 +302,8 @@ describe("releaseSelectedAction — Undo handle (bulk-select follow-ups)", () =>
       expect(meta.visit_id).toBe("v1");
       // The exact value written to the row — what Undo predicates its revert on.
       expect(meta.released_at).toBe(fake.rows.find((r) => r.id === e.resource_id)!.releasedAt);
+      // ...at full microsecond precision, exactly as the RPC returned it.
+      expect(meta.released_at).toBe(FAKE_RELEASED_AT);
     }
     // The patient notice carries the batch id too, so its audit row is not
     // read as a later, unrelated change that blocks the Undo.
@@ -317,8 +319,9 @@ describe("releaseSelectedAction — Undo handle (bulk-select follow-ups)", () =>
 
     seed();
     // A sample visit: notify-released skips the message (SAMPLE_SKIP_REASON).
-    const wrapped = fx.db as { from: (t: string) => Record<string, unknown> };
+    const wrapped = fx.db as { from: (t: string) => Record<string, unknown>; rpc: unknown };
     fx.db = {
+      rpc: wrapped.rpc,
       from(table: string) {
         const q = wrapped.from(table);
         if (table === "visits") q.maybeSingle = async () => ({ data: { deleted_at: null, is_sample: true }, error: null });
@@ -349,8 +352,9 @@ describe("releaseAllReadyComponentsAction — whole-report rule", () => {
     expect(res).toEqual({ ok: true, changedCount: 2, alsoReleasedCount: 1, skipped: [], warnings: [] });
     expect(["c1", "c2", "d"].map((id) => statusOf(fake, id))).toEqual(["released", "released", "released"]);
     expect(statusOf(fake, "h")).toBe("ready_for_release");
-    const written = updates(fake).flatMap((c) => c.filters.filter((f) => f.column === "id").flatMap((f) => f.value as string[]));
-    expect(written.sort()).toEqual(["c1", "c2", "d"]);
+    // The page sends the ready components; d is pulled in by the database, not selected.
+    expect(writes(fake)).toHaveLength(1);
+    expect((writes(fake)[0].args.p_test_request_ids as string[]).slice().sort()).toEqual(["c1", "c2"]);
     expect(fx.audits.every((a) => (a.metadata as { package_header_id?: string }).package_header_id === "h")).toBe(true);
     expect(fx.alerts).toEqual([["v1", 3]]);
   });
@@ -368,41 +372,30 @@ describe("releaseAllReadyComponentsAction — whole-report rule", () => {
     expect([statusOf(fake, "c1"), statusOf(fake, "c2")]).toEqual(["released", "ready_for_release"]);
   });
 
-  it("12. every component refused is an error; a raced selected row with a pulled-in release is ok", async () => {
+  it("12. every component refused is an error; a component going stale before the write is refused with its report", async () => {
     seed({ c1: { status: "result_uploaded" }, d: { status: "result_uploaded" } });
     expect(await releaseAllReadyComponentsAction("h", "v1", "physical")).toEqual({
       ok: false,
       error: REPORT_REFUSAL.notFinished(1),
     });
     const fake = seed({ c1: { status: "result_uploaded" } });
-    // reads: 1 header, 2 ready components, 3 releaseRows — c2 goes stale in between.
-    onTestRequestRead(fake, 3, () => {
-      fake.rows.find((r) => r.id === "c2")!.status = "result_uploaded";
+    beforeRelease(fake, () => {
+      fake.rows.find((r) => r.id === "d")!.status = "result_uploaded";
     });
     expect(await releaseAllReadyComponentsAction("h", "v1", "physical")).toEqual({
-      ok: true,
-      changedCount: 0,
-      alsoReleasedCount: 1,
-      skipped: [{ id: "c2", reason: REPORT_CHANGED_REASON }],
-      warnings: [],
+      ok: false,
+      error: REPORT_REFUSAL.notFinished(1),
     });
+    expect(statusOf(fake, "c2")).toBe("ready_for_release");
   });
 
-  it("13. changedCount is what the write released: a component already released is not counted, one that races is skipped", async () => {
+  it("13. changedCount is what the write released: a component already released is neither sent nor counted", async () => {
     const fake = seed();
     // Released by someone else before the click: never read as a candidate.
     fake.rows.push({ ...fake.rows[0], id: "c3", parentId: "h", status: "released" });
-    fake.failNext("test_requests", "update-partial");
     const res = await releaseAllReadyComponentsAction("h", "v1", "physical");
-    // partial write lands c1 only; c2 (and its report) did not go out.
-    expect(res).toEqual({
-      ok: true,
-      changedCount: 1,
-      alsoReleasedCount: 0,
-      skipped: [{ id: "c2", reason: RACED_REASON }],
-      warnings: [],
-    });
-    expect(res.ok && res.skipped.some((s) => s.id === "c3")).toBe(false);
+    expect(res).toEqual({ ok: true, changedCount: 2, alsoReleasedCount: 1, skipped: [], warnings: [] });
+    expect(writes(fake)[0].args.p_test_request_ids).not.toContain("c3");
   });
 
   it("keeps its guards: a non-header id and an empty package", async () => {
@@ -446,4 +439,137 @@ describe("14. every action refreshes every surface", () => {
       expect(fx.revalidate).toEqual(REVALIDATED);
     },
   );
+});
+
+describe("undoReleaseSelectedAction — undo_visit_release", () => {
+  const undoCalls = (fake: Fake) => fake.rpcCalls.filter((c) => c.name === "undo_visit_release");
+  const releasedSeed = (over: Record<string, Partial<FakeTestRow>> = {}) =>
+    seed({
+      a: { status: "released", releasedAt: "2026-09-01T02:00:00.000Z", releaseMedium: "email" },
+      b: { status: "released", releasedAt: "2026-09-02T02:00:00.000Z", releaseMedium: "viber" },
+      x: { status: "released", releasedAt: "2026-09-03T02:00:00.000Z", releaseMedium: "physical" },
+      ...over,
+    });
+
+  it("calls the RPC once with the visit, the selection and the acting staff id", async () => {
+    const fake = releasedSeed();
+    await undoReleaseSelectedAction("v1", ["x"], "  wrong patient ");
+    expect(undoCalls(fake)).toEqual([
+      { name: "undo_visit_release", args: { p_visit_id: "v1", p_test_request_ids: ["x"], p_actor: "u1", p_expected_released_at: null } },
+    ]);
+  });
+
+  it("audits every undone row with the prior medium/time FROM THE RPC, the viewed-count snapshot and the report id; the report's other member is audited too", async () => {
+    const fake = releasedSeed();
+    const res = await undoReleaseSelectedAction("v1", ["a"], "wrong patient");
+    expect(res).toEqual({ ok: true, count: 2 });
+    expect([statusOf(fake, "a"), statusOf(fake, "b")]).toEqual(["ready_for_release", "ready_for_release"]);
+    expect(fx.audits.map((e) => e.resource_id)).toEqual(["a", "b"]);
+    expect(fx.audits[0]).toMatchObject({
+      actor_id: "u1",
+      actor_type: "staff",
+      action: "test_request.release_undone",
+      resource_type: "test_request",
+      resource_id: "a",
+      ip_address: "1.2.3.4",
+      user_agent: "ua",
+      metadata: {
+        visit_id: "v1",
+        reason: "wrong patient",
+        prior_release_medium: "email",
+        prior_released_at: "2026-09-01T02:00:00.000Z",
+        viewed_count: 3,
+        bulk: true,
+        report_result_id: "r1",
+      },
+    });
+    expect(fx.audits[1].metadata).toMatchObject({
+      prior_release_medium: "viber",
+      prior_released_at: "2026-09-02T02:00:00.000Z",
+      viewed_count: 0,
+      report_result_id: "r1",
+    });
+  });
+
+  it("a plain row is undone alone with report_result_id null", async () => {
+    releasedSeed();
+    expect(await undoReleaseSelectedAction("v1", ["x"], "typo")).toEqual({ ok: true, count: 1 });
+    expect(fx.audits).toHaveLength(1);
+    expect(fx.audits[0].metadata).toMatchObject({ prior_release_medium: "physical", report_result_id: null });
+  });
+
+  it("a whole-request refusal (P0081) passes the database's message through; nothing is audited", async () => {
+    const fake = releasedSeed();
+    fake.failNextRpc("undo_visit_release", {
+      code: "P0081",
+      message: "This report has tests outside the sections you can act on, so it can't be undone from here — ask an admin.",
+    });
+    expect(await undoReleaseSelectedAction("v1", ["a"], "r")).toEqual({
+      ok: false,
+      error: "This report has tests outside the sections you can act on, so it can't be undone from here — ask an admin.",
+    });
+    expect(fx.audits).toEqual([]);
+  });
+
+  it("40001 is retried once and then succeeds", async () => {
+    const fake = releasedSeed();
+    fake.failNextRpc("undo_visit_release", { code: "40001", message: "changed" });
+    expect(await undoReleaseSelectedAction("v1", ["x"], "r")).toEqual({ ok: true, count: 1 });
+    expect(undoCalls(fake)).toHaveLength(2);
+  });
+
+  it("a payment/database error is translated and nothing is audited", async () => {
+    const fake = releasedSeed();
+    fake.failNextRpc("undo_visit_release", { code: "XX000", message: "boom" });
+    expect(await undoReleaseSelectedAction("v1", ["x"], "r")).toEqual({ ok: false, error: "boom" });
+    expect(fx.audits).toEqual([]);
+  });
+
+  it("an empty undo list reads as nothing to unrelease", async () => {
+    const fake = releasedSeed();
+    fake.overrideNextRpc("undo_visit_release", { undone: [], skipped: [] });
+    expect(await undoReleaseSelectedAction("v1", ["x"], "r")).toEqual({
+      ok: false,
+      error: "None of the selected tests can be unreleased.",
+    });
+    expect(fx.audits).toEqual([]);
+  });
+
+  it("a result without the always-present skipped list is malformed, not guessed at", async () => {
+    const fake = releasedSeed();
+    fake.overrideNextRpc("undo_visit_release", { undone: [] });
+    expect(await undoReleaseSelectedAction("v1", ["x"], "r")).toEqual({
+      ok: false,
+      error: "Couldn't confirm what was undone — check the visit page.",
+    });
+    expect(fx.audits).toEqual([]);
+  });
+
+  it("malformed data is never guessed at: reported, refused with the confirm message, no audit", async () => {
+    const fake = releasedSeed();
+    fake.overrideNextRpc("undo_visit_release", { undone: [{ id: 5 }] });
+    const res = await undoReleaseSelectedAction("v1", ["x"], "r");
+    expect(res).toEqual({ ok: false, error: "Couldn't confirm what was undone — check the visit page." });
+    expect(fx.audits).toEqual([]);
+  });
+
+  it("checks the visit is not deleted BEFORE calling the RPC", async () => {
+    const fake = releasedSeed();
+    const inner = fx.db as { from: (t: string) => Record<string, unknown> };
+    fx.db = {
+      ...inner,
+      from(table: string) {
+        if (table === "visits") {
+          const q: Record<string, unknown> = {};
+          for (const m of ["select", "eq"]) q[m] = () => q;
+          q.maybeSingle = async () => ({ data: { deleted_at: "2026-09-01T00:00:00Z" }, error: null });
+          return q;
+        }
+        return inner.from(table);
+      },
+    };
+    const res = await undoReleaseSelectedAction("v1", ["x"], "r");
+    expect(res.ok).toBe(false);
+    expect(undoCalls(fake)).toHaveLength(0);
+  });
 });
