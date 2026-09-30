@@ -178,7 +178,7 @@ Runs `scripts/smoke-render-results.ts`. Renders to `/tmp/drmed-result-{layout}.p
 
 - Medtech finishes test → status moves to `result_uploaded` (instead of `ready_for_release`)
 - Pathologist must sign off → status moves to `ready_for_release`
-- Then reception/release flow handles `released` (gated by payment trigger)
+- Then the lab releases it (`released`, gated by the payment trigger) — see the release rule under Gotchas
 
 The flip itself is 0059's doing: linking a completed result to an `in_progress` test sets `result_uploaded` **only when** `services.requires_signoff`, otherwise `ready_for_release` directly. So `result_uploaded` reads as "linked, awaiting sign-off", and is empty in production because no service has the flag on.
 
@@ -218,6 +218,7 @@ UI state today:
 - **`filterParamsForPatient`** hides gender-specific rows that don't match patient sex. Don't bypass it on the assumption "we'll filter in UI" — the trigger and the PDF render both consume the unfiltered list otherwise.
 - **No module-scope admin-client imports in `src/lib/results/`.** `admin.ts` imports `server-only`, which throws under `tsx`; `loaders.ts` lazy-imports it inside `loadResultDocumentInput` so `npm run smoke:results` keeps working. Follow that pattern.
 - **Per-service chemistry templates are dead weight** — change the group template (above), not them.
+- **Release rule:** the lab releases from the queue (Pending release row/panel/bulk, the test page, a chemistry report page) or the visit page — never reception (`evaluateRelease` refuses `reception`); a combined report releases whole or not at all; the patient notice and the staff alert go out only for rows verified released (plain rows, or a report confirmed complete). Release code map: UndoReleaseDialog `src/components/staff/release/undo-release-dialog.tsx` (shared queue-release button and outcome notice live beside it); release write `src/lib/actions/visits/release-rows.ts`; whole-report pipeline `releaseVisitSelection` in `src/lib/actions/visits/release-reports.ts`; queue action `releaseTestsAction` in `src/app/(staff)/staff/(dashboard)/queue/actions.ts`; pure rules `src/lib/queue/release-eligibility.ts` (`evaluateRelease`) and `src/lib/queue/report-release-scope.ts`; refusal strings `src/lib/visits/release-messages.ts`; staff alert `src/lib/notifications/release-staff-alert.ts` (+ migration 0192, alert key `result_released`).
 - **Release is trigger-gated three ways**: payment (`enforce_payment_before_release`), consent (`enforce_consent_before_release`, ships OFF), and attending physician for PF-carrying doctor lines (P0034). A "can't release" report usually means one of these, not the template. Since **0133** the payment leg passes on `paid`, `waived`, **or** `hmo_provider_id is not null` — keep it in lockstep with `src/lib/visits/money-settled.ts`, whose unit test pins the trigger's SQL text (there is no pgTAP runner in `npm test`). "Mark consultation/procedure done" writes `status = 'released'`, so it goes through the same trigger and the same UX gate.
 
 ## When this skill should NOT trigger
