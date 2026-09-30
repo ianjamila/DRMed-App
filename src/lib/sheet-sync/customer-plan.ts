@@ -377,8 +377,16 @@ export function planCustomers(input: Input): CustomerPlan {
       return review("possible_existing_patient", "held for an admin decision", [],
         { held_because: DELETED_PATIENT_HOLD_REASON, deleted_patient_id: heldDeleted });
     }
-    if (fresh.kind === "review") return review(fresh.review, "held for an admin decision", fresh.candidates, { detail: fresh.reason, ...fresh.extra, ...why });
-    return review("ambiguous_patient", "held for an admin decision", fresh.kind === "linked" ? [fresh.patientId] : [], why);
+    // The recorded patient is LIVE again (restored, or merged into a live survivor):
+    // offer it as a candidate even when the sheet row's name/DOB no longer finds it,
+    // so Link is always there. Candidate only — a hold never auto-links or creates.
+    // (A HARD-deleted held patient resolves to neither branch and falls back to the
+    // generic admin-decision hold below: safe, it never auto-creates.)
+    const heldLive = g.stored?.hold_reason === DELETED_PATIENT_HOLD_REASON && g.stored.held_patient_id
+      ? index.survivor(g.stored.held_patient_id) : null;
+    const liveCand = heldLive ? [heldLive] : [];
+    if (fresh.kind === "review") return review(fresh.review, "held for an admin decision", [...fresh.candidates, ...liveCand], { detail: fresh.reason, ...fresh.extra, ...why });
+    return review("ambiguous_patient", "held for an admin decision", [...(fresh.kind === "linked" ? [fresh.patientId] : []), ...liveCand], why);
   }
 
   // ---- Pass 1: one resolution per key group. ----

@@ -990,3 +990,32 @@ describe("S1 recheck 2: the held deleted target moves (restore, merge, survivor 
     expect(after.links.get(key)).toMatchObject({ hold_reason: "several patients share this full name", held_patient_id: null });
   });
 });
+
+describe("S1 recheck 3: a restored / live-survivor held patient is always a Link candidate", () => {
+  const key = "reyes|ana#1990-01-01";
+  const delA: DeletedPatientEvidence = { id: "A", first_name: "Ana", middle_name: null, last_name: "Reyes", birthdate: "1985-05-05", phone: null };
+  const saved = { link_key: key, patient_id: "A", decision: "link" as const, method: "auto_exact" as const };
+  const runOn = (w: World, patients: PatientRecord[], del: DeletedPatientEvidence[]) =>
+    planCustomers({ rows: rowsOf({ name: "Reyes, Ana", dob: 32874 }), index: buildPatientIndex(patients), links: w.links, facts: w.facts, prevRows: [], deletedPatients: del });
+  const cands = (out: ReturnType<typeof planCustomers>) => (out.review[0].payload.candidates as Array<{ patient_id: string }>).map((c) => c.patient_id);
+  const held = () => { const w0 = world([], [saved]); return applyOps(runOn(w0, [], [delA]).ops, w0); };
+
+  it("restored with a DIFFERENT name+DOB than the sheet row: still offered, never linked or created", () => {
+    const restored = patient({ id: "A", first_name: "Anna", middle_name: null, last_name: "Reyez", birthdate: "1985-05-05" });
+    const out = runOn(held(), [restored], []);
+    expect(cands(out)).toContain("A");
+    expect(out.ops.filter((o) => o.op === "link" || o.op === "create")).toEqual([]);
+  });
+  it("merged into a live survivor with a different DOB: the survivor is offered", () => {
+    const survivor = patient({ id: "B", first_name: "Anna", middle_name: null, last_name: "Reyez", birthdate: "1970-02-02" });
+    const aMerged = patient({ id: "A", first_name: "Ana", middle_name: null, last_name: "Reyes", birthdate: "1985-05-05", merged_into_id: "B" });
+    const out = runOn(held(), [survivor, aMerged], []);
+    expect(cands(out)).toContain("B");
+    expect(out.ops.filter((o) => o.op === "link" || o.op === "create")).toEqual([]);
+  });
+  it("a HARD-deleted held patient (in neither list) keeps the generic hold and never creates", () => {
+    const out = runOn(held(), [], []);
+    expect(out.review).toHaveLength(1);
+    expect(out.ops.some((o) => o.op === "create")).toBe(false);
+  });
+});
