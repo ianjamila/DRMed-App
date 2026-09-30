@@ -18,7 +18,7 @@ const SCRIPT = "seed:bulk-fixtures";
 const ROLES = ["reception", "medtech", "xray_technician", "pathologist", "admin"] as const;
 
 requireLocalOrExplicitProd(SCRIPT, {
-  writes: "BSQ fixture patients, visits 9101–9106, appointments, website messages and 'BSQ Hist' historic HMO claims (+ their Undo journal entries); optionally inactive@drmed.ph's role",
+  writes: "BSQ fixture patients, visits 9101–9107, appointments, website messages and 'BSQ Hist' historic HMO claims (+ their Undo journal entries); optionally inactive@drmed.ph's role",
 });
 refuseNonLocal(SCRIPT);
 
@@ -55,8 +55,8 @@ async function main() {
       console.log(`inactive@drmed.ph is now an active ${asArg}.`);
     }
     const counts = await client.query(
-      `select (select count(*) from visits where visit_number between '9101' and '9106') as visits,
-              (select count(*) from test_requests tr join visits v on v.id = tr.visit_id where v.visit_number between '9101' and '9106') as tests,
+      `select (select count(*) from visits where visit_number between '9101' and '9107') as visits,
+              (select count(*) from test_requests tr join visits v on v.id = tr.visit_id where v.visit_number between '9101' and '9107') as tests,
               (select count(*) from appointments where notes = 'bsq-fixture') as appointments,
               (select count(*) from contact_messages where message like 'bsq-fixture%') as messages,
               (select count(*) from historic_hmo_claims where patient_name like 'BSQ Hist %') as historic_hmo_claims`,

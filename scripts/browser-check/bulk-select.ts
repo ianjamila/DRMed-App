@@ -1,7 +1,7 @@
 /**
  * Guarded, local-only, signed-in headless-Chrome checklist for every
  * bulk-select behaviour this PR (bulk-select follow-ups) added: fixed bars,
- * keyboard jump, named outcomes, dated callbacks, chemistry panels, Undo
+ * keyboard jump, named outcomes, dated callbacks, chemistry panels and panel Undo, Undo
  * (including Release selected and the historic HMO claim actions), and the
  * audit-log bulk filter. Every check ASSERTS via c.expect — it never
  * just logs.
@@ -308,24 +308,81 @@ async function sectionDatedCallbacks(c: CheckContext, admin: Page): Promise<void
 }
 
 // ---------------------------------------------------------------------------
-// Chemistry panels (item 10)
+// Chemistry panels (item 10) — main's PR #254 panel row: ONE checkbox per
+// (visit, report group) whose aria-label is "Select Chemistry (N tests),
+// <patient>". Claim / Unclaim / Delete act on the panel's FULL live
+// membership (queue/panel-actions.ts), all-or-nothing, and every one carries a
+// server-minted batch id, so Undo is offered for a panel like any other row.
 // ---------------------------------------------------------------------------
+const PANEL_CODES = ["BSQ-GLU", "BSQ-CHOL", "BSQ-TRIG"];
+
+/** The panel row's checkbox for a fixture patient (Echo = 9105, Foxtrot = 9106, Golf = 9107). */
+const panelBox = (page: Page, patient: string) =>
+  page.locator(`input[type="checkbox"][aria-label^="Select Chemistry ("][aria-label*="${patient}"]`);
+
+/** The whole table row that checkbox sits in. */
+const panelRowText = async (page: Page, patient: string) =>
+  (await page.locator("tbody tr").filter({ has: panelBox(page, patient) }).innerText()).replace(/\s+/g, " ");
+
+/** Every chemistry member of a fixture visit, with started_at as epoch text so it compares exactly. */
+async function panelRows(c: CheckContext, visitNumber: string, codes: readonly string[] = PANEL_CODES) {
+  return c.sql(
+    `select s.code, tr.id, tr.status, tr.assigned_to, tr.deleted_at,
+            extract(epoch from tr.started_at)::text as started
+     from test_requests tr
+     join visits v on v.id = tr.visit_id
+     join services s on s.id = tr.service_id
+     where v.visit_number = $1 and s.code = any($2)
+     order by s.code`,
+    [visitNumber, [...codes]],
+  );
+}
+
+async function userId(c: CheckContext, email: string): Promise<string> {
+  const [u] = await c.sql("select id from auth.users where email = $1", [email]);
+  return u.id as string;
+}
+
+/** Audit rows one action left on a panel's members: { action, via } counted per member. */
+async function auditPerMember(
+  c: CheckContext,
+  memberIds: readonly string[],
+  action: string,
+  batchId: string,
+  extraWhere = "",
+) {
+  const rows = await c.sql(
+    `select resource_id, count(*)::int as n from audit_log
+     where action = $1 and metadata->>'via' = 'bulk_undo' and metadata->>'undo_of_batch' = $2
+       and resource_id = any($3::uuid[]) ${extraWhere}
+     group by resource_id`,
+    [action, batchId, [...memberIds]],
+  );
+  return { rows, everyMemberOnce: rows.length === memberIds.length && rows.every((r) => r.n === 1) };
+}
+
 async function sectionPanels(c: CheckContext, med: Page): Promise<void> {
-  await check(c, "P1 panel card has a checkbox and the true count", async () => {
+  await check(c, "P1 panel row has a checkbox and ticking it counts the panel's tests in the bar", async () => {
     await goto(med, `${APP_BASE}/staff/queue?visit=9105`);
-    const box = med.locator('input[aria-label*="panel"][aria-label*="Echo"]');
+    const box = panelBox(med, "Echo");
     const boxCount = await box.count();
-    const countText = await med.locator("td", { hasText: "(3 tests)" }).count();
-    return { ok: boxCount === 1 && countText > 0, detail: { boxCount, countText } };
+    const rowText = boxCount ? await panelRowText(med, "Echo") : "";
+    if (boxCount === 1) await box.check();
+    const claimBtn = med.locator(BAR).locator("button", { hasText: /^Claim \(/ });
+    const claimText = (await claimBtn.count()) ? (await claimBtn.first().innerText()).trim() : null;
+    return {
+      ok: boxCount === 1 && rowText.includes("Chemistry (3 tests)") && claimText === "Claim (3)",
+      detail: { boxCount, rowText, claimText },
+    };
   });
 
-  await check(c, "P2 split panel shows its true count and acts on every member", async () => {
+  await check(c, "P2 split panel: Claim takes EVERY live member, including one not on this page", async () => {
     const N = 5; // smallest PAGE_SIZES entry (src/lib/ui/table-params.ts)
     const [v] = await c.sql("select id from visits where visit_number = '9106'");
     const [glu] = await c.sql("select id from services where code = 'BSQ-GLU'");
     const [chol] = await c.sql("select id from services where code = 'BSQ-CHOL'");
     const [esr] = await c.sql("select id from services where code = 'BSQ-ESR'");
-    const [adminUser] = await c.sql("select id from auth.users where email = 'admin@drmed.ph'");
+    const adminUser = await userId(c, ADMIN.email);
     const [{ now: t0 }] = await c.sql("select now() as now");
     await c.sql("update test_requests set requested_at = $1 where visit_id = $2 and service_id = $3", [
       t0,
@@ -336,7 +393,7 @@ async function sectionPanels(c: CheckContext, med: Page): Promise<void> {
       await c.sql(
         `insert into test_requests (visit_id, service_id, requested_by, final_price_php, requested_at)
          values ($1, $2, $3, 100, $4::timestamptz + ($5 || ' seconds')::interval)`,
-        [v.id, esr.id, adminUser.id, t0, String(i)],
+        [v.id, esr.id, adminUser, t0, String(i)],
       );
     }
     await c.sql(
@@ -344,59 +401,172 @@ async function sectionPanels(c: CheckContext, med: Page): Promise<void> {
       [t0, v.id, chol.id],
     );
 
+    // Glucose sorts onto page 1 with four ESRs; Cholesterol is the sixth row,
+    // so the paged list folds a card holding ONE of the panel's two members.
     await goto(med, `${APP_BASE}/staff/queue?visit=9106&sort=requested_at&dir=asc&size=${N}`);
-    const noteLoc = med.locator("text=/on another page/");
-    const noteCount = await noteLoc.count();
-    const noteText = noteCount ? (await noteLoc.first().innerText()).replace(/\s+/g, " ") : "";
-    const box = med.locator('input[aria-label*="panel"][aria-label*="Foxtrot"]');
+    const box = panelBox(med, "Foxtrot");
     const boxCount = await box.count();
-    if (boxCount === 0) return { ok: false, detail: { noteCount, noteText, boxCount } };
+    if (boxCount !== 1) return { ok: false, detail: { boxCount } };
+    const rowText = await panelRowText(med, "Foxtrot");
+    const shownLabel = /Chemistry \((\d+) tests?\)/.exec(rowText)?.[0] ?? null;
     await box.check();
-    await med.locator(BAR).locator("button", { hasText: /^Claim/ }).click();
+    const claimBtn = med.locator(BAR).locator("button", { hasText: /^Claim \(/ });
+    const barClaim = (await claimBtn.count()) ? (await claimBtn.first().innerText()).trim() : null;
+    await claimBtn.first().click();
     await sleep(900);
-    const rows = await c.sql(
-      `select s.code, tr.status, tr.assigned_to from test_requests tr
-       join services s on s.id = tr.service_id
-       where tr.visit_id = $1 and s.code in ('BSQ-GLU', 'BSQ-CHOL')`,
-      [v.id],
-    );
-    const [medUser] = await c.sql("select id from auth.users where email = 'inactive@drmed.ph'");
+    const rows = await panelRows(c, "9106", ["BSQ-GLU", "BSQ-CHOL"]);
+    const medUser = await userId(c, MED.email);
     const ok =
+      shownLabel === "Chemistry (1 test)" && // the page really shows only one member
+      barClaim === "Claim (2)" && // …but the bar counts the whole panel
       rows.length === 2 &&
-      rows.every((r) => r.status === "in_progress" && r.assigned_to === medUser.id) &&
-      noteCount > 0 &&
-      /2 tests in this panel/.test(noteText) &&
-      /1 on another page/.test(noteText);
-    return { ok, detail: { noteText, rows } };
+      rows.every((r) => r.status === "in_progress" && r.assigned_to === medUser);
+    return { ok, detail: { shownLabel, barClaim, rows } };
   });
 
-  await check(c, "P3 panel claim is all-or-nothing", async () => {
-    // 9105 is untouched by P1/P2 (they only read it / act on 9106).
-    await goto(med, `${APP_BASE}/staff/queue?visit=9105`);
-    const box = med.locator('input[aria-label*="panel"][aria-label*="Echo"]');
-    await box.check();
+  await check(c, "P3 a panel with a member already claimed: no Claim offered, and a stale Claim refuses it whole", async () => {
+    // 9105 is untouched by P1/P2 (P1 only ticks, P2 acts on 9106).
     const [v] = await c.sql("select id from visits where visit_number = '9105'");
     const [glu] = await c.sql("select id from services where code = 'BSQ-GLU'");
-    const [adminUser] = await c.sql("select id from auth.users where email = 'admin@drmed.ph'");
+    const adminUser = await userId(c, ADMIN.email);
+
+    // Half 1 — a STALE page. The medtech ticks the panel while all three
+    // members are still requested, then admin claims one behind their back.
+    await goto(med, `${APP_BASE}/staff/queue?visit=9105`);
+    const box = panelBox(med, "Echo");
+    await box.check();
     await c.sql(
       "update test_requests set status = 'in_progress', assigned_to = $1, started_at = now() where visit_id = $2 and service_id = $3",
-      [adminUser.id, v.id, glu.id],
+      [adminUser, v.id, glu.id],
     );
-    await med.locator(BAR).locator("button", { hasText: /^Claim/ }).click();
+    await med.locator(BAR).locator("button", { hasText: /^Claim \(/ }).first().click();
     await sleep(900);
     const text = await outcomeText(med);
-    const rows = await c.sql(
-      `select s.code, tr.status, tr.assigned_to from test_requests tr
-       join services s on s.id = tr.service_id
-       where tr.visit_id = $1 and s.code in ('BSQ-CHOL', 'BSQ-TRIG')`,
-      [v.id],
-    );
+    const afterStale = await panelRows(c, "9105");
+
+    // Half 2 — a FRESH page. The panel now mixes claimed and unclaimed
+    // members, so main's row offers the medtech no Claim (no checkbox at all:
+    // Unclaim needs every member held, Delete is admin/reception-only).
+    await goto(med, `${APP_BASE}/staff/queue?visit=9105`);
+    const freshBoxCount = await panelBox(med, "Echo").count();
+    const afterFresh = await panelRows(c, "9105");
+
     const ok =
       !!text &&
-      text.includes("already claimed") &&
-      rows.length === 2 &&
-      rows.every((r) => r.status === "requested" && r.assigned_to === null);
-    return { ok, detail: { text, rows } };
+      text.includes("Nothing claimed") &&
+      text.includes("Chemistry (3 tests)") &&
+      text.includes("already claimed or changed status") &&
+      afterStale.length === 3 &&
+      afterStale.filter((r) => r.status === "in_progress" && r.assigned_to === adminUser).length === 1 &&
+      afterStale.filter((r) => r.status === "requested" && r.assigned_to === null).length === 2 &&
+      freshBoxCount === 0 &&
+      afterFresh.length === 3;
+    return { ok, detail: { text, afterStale, freshBoxCount } };
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Panel Undo (PR #254's panel row + this branch's Undo): each panel bulk action
+// leaves a batch id, and ↶ Undo (10 minutes, own actions only) puts the whole
+// panel back — claim → un-claimed via unclaim_panel_members; unclaim → each
+// member reclaimed to its OWN holder with its original started_at; delete →
+// restored. Every check reads the members and their bulk_undo audit rows back.
+// ---------------------------------------------------------------------------
+async function sectionPanelUndo(c: CheckContext, med: Page, admin: Page): Promise<void> {
+  await check(c, "PU1 panel Claim -> Undo puts every member back to requested and unassigned", async () => {
+    await goto(med, `${APP_BASE}/staff/queue?visit=9105`);
+    await panelBox(med, "Echo").check();
+    await med.locator(BAR).locator("button", { hasText: /^Claim \(/ }).first().click();
+    await sleep(900);
+    const afterClaim = await panelRows(c, "9105");
+    const medUser = await userId(c, MED.email);
+    const batchId = await latestBatchId(c, "test_request.claimed");
+    const hadUndo = await clickUndo(med);
+    const afterUndo = await panelRows(c, "9105");
+    const audit = batchId
+      ? await auditPerMember(c, afterUndo.map((r) => r.id as string), "test_request.unclaimed", batchId)
+      : null;
+    const ok =
+      !!batchId &&
+      afterClaim.length === 3 &&
+      afterClaim.every((r) => r.status === "in_progress" && r.assigned_to === medUser) &&
+      hadUndo &&
+      afterUndo.length === 3 &&
+      afterUndo.every((r) => r.status === "requested" && r.assigned_to === null && r.started === null) &&
+      audit?.everyMemberOnce === true;
+    return { ok, detail: { batchId, hadUndo, afterClaim, afterUndo, audit } };
+  });
+
+  await reseed(c);
+  await check(c, "PU2 admin Unclaim of the medtech's panel -> Undo hands every member back with its original started_at", async () => {
+    const medUser = await userId(c, MED.email);
+    // The medtech holds the panel, each member with its own start time.
+    await c.sql(
+      `update test_requests tr set status = 'in_progress', assigned_to = $1,
+              started_at = date_trunc('second', now()) - (x.n || ' minutes')::interval
+       from (select tr2.id, row_number() over (order by s.code) * 7 as n
+             from test_requests tr2 join visits v on v.id = tr2.visit_id join services s on s.id = tr2.service_id
+             where v.visit_number = '9105' and s.code = any($2)) x
+       where tr.id = x.id`,
+      [medUser, PANEL_CODES],
+    );
+    const before = await panelRows(c, "9105");
+    await goto(admin, `${APP_BASE}/staff/queue?visit=9105`);
+    await panelBox(admin, "Echo").check();
+    await admin.locator(BAR).locator("button", { hasText: /^Unclaim \(/ }).first().click();
+    await sleep(300);
+    await admin.locator('button:has-text("Confirm unclaim")').click();
+    await sleep(900);
+    const afterUnclaim = await panelRows(c, "9105");
+    const batchId = await latestBatchId(c, "test_request.unclaimed");
+    const hadUndo = await clickUndo(admin);
+    const afterUndo = await panelRows(c, "9105");
+    const audit = batchId
+      ? await auditPerMember(
+          c,
+          afterUndo.map((r) => r.id as string),
+          "test_request.reassigned",
+          batchId,
+          `and metadata->>'to' = '${medUser}'`,
+        )
+      : null;
+    const ok =
+      !!batchId &&
+      before.length === 3 &&
+      before.every((r) => r.status === "in_progress" && r.assigned_to === medUser && r.started !== null) &&
+      afterUnclaim.every((r) => r.status === "requested" && r.assigned_to === null) &&
+      hadUndo &&
+      afterUndo.length === 3 &&
+      afterUndo.every((r, i) => r.status === "in_progress" && r.assigned_to === medUser && r.started === before[i].started) &&
+      new Set(before.map((r) => r.started)).size === 3 && // the three start times really differed
+      audit?.everyMemberOnce === true;
+    return { ok, detail: { batchId, hadUndo, before, afterUnclaim, afterUndo, audit } };
+  });
+
+  await reseed(c);
+  await check(c, "PU3 admin Delete of a panel -> Undo restores every member", async () => {
+    // 9107 is the unpaid panel — deletability is unpaid-only.
+    await goto(admin, `${APP_BASE}/staff/queue?visit=9107`);
+    await panelBox(admin, "Golf").check();
+    await admin.locator(BAR).locator("button", { hasText: /^Delete \(/ }).first().click();
+    await sleep(300);
+    await admin.locator('textarea[aria-label="Reason for deleting"]').fill("bulk panel delete");
+    await admin.locator('button:has-text("Confirm delete")').click();
+    await sleep(900);
+    const afterDelete = await panelRows(c, "9107");
+    const batchId = await latestBatchId(c, "test_request.deleted");
+    const hadUndo = await clickUndo(admin);
+    const afterUndo = await panelRows(c, "9107");
+    const undoRows = batchId ? await undoRowCount(c, batchId) : 0;
+    const ok =
+      !!batchId &&
+      afterDelete.length === 3 &&
+      afterDelete.every((r) => r.deleted_at !== null) &&
+      hadUndo &&
+      afterUndo.length === 3 &&
+      afterUndo.every((r) => r.deleted_at === null) &&
+      undoRows >= 3;
+    return { ok, detail: { batchId, hadUndo, afterDelete, afterUndo, undoRows } };
   });
 }
 
@@ -1034,6 +1204,9 @@ async function main(): Promise<void> {
 
   await reseed(c);
   await sectionPanels(c, med);
+
+  await reseed(c);
+  await sectionPanelUndo(c, med, admin);
 
   await reseed(c);
   await sectionUndo(c, med, admin);

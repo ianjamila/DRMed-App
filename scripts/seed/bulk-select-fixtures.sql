@@ -5,7 +5,7 @@
 -- soft-delete guard means Bsqfixture patients are created once and reused;
 -- never BSQ-* services either — other local smoke fixtures may borrow them,
 -- so they are upserted by code instead of deleted and recreated).
--- Marked rows: services `BSQ-*`, visits `9101`-`9106`, patients with last
+-- Marked rows: services `BSQ-*`, visits `9101`-`9107`, patients with last
 -- name `Bsqfixture`, appointments with `notes = 'bsq-fixture'`, website
 -- messages with `message like 'bsq-fixture%'`, historic HMO claims with
 -- `patient_name like 'BSQ Hist %'` (plus the journal entries, reversal
@@ -15,10 +15,10 @@ begin;
 -- ---- wipe what a previous run left (never patients) ----
 delete from audit_log where resource_type = 'test_request' and resource_id in (
   select tr.id from test_requests tr join visits v on v.id = tr.visit_id
-  where v.visit_number in ('9101','9102','9103','9104','9105','9106'));
+  where v.visit_number in ('9101','9102','9103','9104','9105','9106','9107'));
 delete from test_requests where visit_id in (
-  select id from visits where visit_number in ('9101','9102','9103','9104','9105','9106'));
-delete from visits where visit_number in ('9101','9102','9103','9104','9105','9106');
+  select id from visits where visit_number in ('9101','9102','9103','9104','9105','9106','9107'));
+delete from visits where visit_number in ('9101','9102','9103','9104','9105','9106','9107');
 delete from audit_log where resource_type = 'appointment' and resource_id in (
   select id from appointments where notes = 'bsq-fixture');
 delete from appointments where notes = 'bsq-fixture';
@@ -54,7 +54,7 @@ delete from historic_hmo_claims where patient_name like 'BSQ Hist %';
 -- ---- patients (created once, reused) ----
 insert into patients (first_name, last_name, birthdate, sex, phone)
 select f, 'Bsqfixture', date '1990-01-01' + (rn * 40), case when rn % 2 = 0 then 'female' else 'male' end, '0917000000' || rn
-from (values ('Alpha',1),('Bravo',2),('Charlie',3),('Delta',4),('Echo',5),('Foxtrot',6)) s(f, rn)
+from (values ('Alpha',1),('Bravo',2),('Charlie',3),('Delta',4),('Echo',5),('Foxtrot',6),('Golf',7)) s(f, rn)
 where not exists (select 1 from patients p where p.last_name = 'Bsqfixture' and p.first_name = s.f);
 
 -- ---- services ----
@@ -71,20 +71,22 @@ from (values ('BSQ-GLU','BSQ Glucose'), ('BSQ-CHOL','BSQ Cholesterol'), ('BSQ-TR
 on conflict (code) do update set name = excluded.name, price_php = excluded.price_php,
   kind = excluded.kind, section = excluded.section, report_group_id = excluded.report_group_id;
 
--- ---- visits: 9101/9102/9105/9106 paid, 9103/9104 unpaid + HMO (lab-gate passes via HMO) ----
+-- ---- visits: 9101/9102/9105/9106 paid, 9103/9104/9107 unpaid + HMO (lab-gate passes via HMO) ----
 with pts as (
   select id, row_number() over (order by first_name) rn from patients where last_name = 'Bsqfixture')
 insert into visits (patient_id, visit_number, payment_status, hmo_provider_id, total_php)
 select id, (9100 + rn)::text,
-       case when rn in (3, 4) then 'unpaid' else 'paid' end,
-       case when rn in (3, 4) then (select id from hmo_providers order by name limit 1) end,
+       case when rn in (3, 4, 7) then 'unpaid' else 'paid' end,
+       case when rn in (3, 4, 7) then (select id from hmo_providers order by name limit 1) end,
        0
 from pts;
 
 -- ---- lab queue lines ----
 -- 9101: 3 singles (claim/unclaim races); 9102: + x-ray (no medtech checkbox);
 -- 9103/9104: cross-visit delete; 9105: a 3-test chemistry panel;
--- 9106: a 2-test chemistry panel + a single (use ?size=… to split a panel across pages).
+-- 9106: a 2-test chemistry panel + a single (use ?size=… to split a panel across pages);
+-- 9107: a 3-test chemistry panel on an UNPAID (HMO) visit — the only panel a bulk
+-- Delete may touch (deletability is `unpaid` only), for the panel Delete -> Undo check.
 insert into test_requests (visit_id, service_id, requested_by, final_price_php)
 select v.id, s.id, (select id from auth.users where email = 'admin@drmed.ph'), 100
 from visits v
@@ -94,8 +96,9 @@ join services s on (
   or (v.visit_number = '9103' and s.code in ('BSQ-CBC','BSQ-UA'))
   or (v.visit_number = '9104' and s.code in ('BSQ-ESR'))
   or (v.visit_number = '9105' and s.code in ('BSQ-GLU','BSQ-CHOL','BSQ-TRIG'))
-  or (v.visit_number = '9106' and s.code in ('BSQ-GLU','BSQ-CHOL','BSQ-CBC')))
-where v.visit_number in ('9101','9102','9103','9104','9105','9106');
+  or (v.visit_number = '9106' and s.code in ('BSQ-GLU','BSQ-CHOL','BSQ-CBC'))
+  or (v.visit_number = '9107' and s.code in ('BSQ-GLU','BSQ-CHOL','BSQ-TRIG')))
+where v.visit_number in ('9101','9102','9103','9104','9105','9106','9107');
 
 -- ---- appointments (Manila wall-clock times today / tomorrow) ----
 -- `source` is constrained (appointments_source_check, 0154) to the values in
