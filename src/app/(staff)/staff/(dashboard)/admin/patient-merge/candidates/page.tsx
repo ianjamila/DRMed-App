@@ -17,10 +17,14 @@ export default async function CandidatesPage({
   const sp = await searchParams;
   const minTier = sp.tier === "weak" ? "weak" : "probable";
   const admin = createAdminClient();
-  const [pairs, recent] = await Promise.all([
+  const [pairs, recentPage] = await Promise.all([
     loadCandidatePairs(admin, { minTier }),
     loadRecentMerges(),
   ]);
+  // Task 10 rewrites this page for paging + the new RecentMerge shape; for
+  // now just unwrap the RPC-backed page envelope so the (unchanged) client
+  // component keeps getting a bare array.
+  const recent = recentPage.rows;
 
   return (
     <div className="space-y-6">
