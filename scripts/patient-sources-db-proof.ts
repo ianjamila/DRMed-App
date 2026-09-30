@@ -29,6 +29,14 @@
 //   PSQL=/opt/homebrew/opt/libpq/bin/psql
 //   DB=postgresql://postgres:postgres@127.0.0.1:54322/postgres
 //   MIG=supabase/migrations/0189_patient_sources.sql
+//   MIG_LIVE — where each body lives NOW (a control that edits a superseded
+//   body proves nothing): identity core + encounters + revenue lines =
+//   0193_sync_review_gaps.sql; the five report RPCs + their rules =
+//   0206_patient_sources_report.sql (_ps_sec_* helpers and wrappers);
+//   patient_sources_people = 0189. Letters A, B, C, E, F, G, L edit the core
+//   -> edit 0193 (psql -f 0193 is safe: create-or-replace + its own
+//   post-conditions). Letter D edits the summary WRAPPER gate -> 0206 (and
+//   drop summary from 0206's post-condition arrays for that round).
 //
 //   A. _patient_sources_encounters, sheet branch: the ELSE clause of the
 //      `case when l.patient_id is null then 'name:' || l.loose_key` emits the
@@ -126,6 +134,33 @@
 //      New. Confirmed 2026-09-28:
 //        FAIL … — expected basis 'before_window' (not 'registration'), got
 //        {"first_date":"2026-06-15","basis":"registration", …}
+//   D (re-pointed to 0206, 2026-09-30). Confirmed: FAIL ACL matrix - functions
+//      — ACL reception/patient_sources_summary: expected error 42501, but the
+//      call succeeded (also fails the two 0199 service_role checks).
+//   M–P (0206, 2026-09-30), each confirmed with the FAIL line quoted:
+//   M. patient_sources_report: delete the 'overlaps' entry. Confirmed
+//      2026-09-30: FAIL 0206: report sections equal the single RPCs (with and
+//      without a previous period) — 2026-06-01..2026-06-30 day/new prev=set:
+//      sections are current,new_by_day,previous,referrers,revenue,series,summary
+//   N. patient_sources_report 'current': 'period', p_mode -> 'period', 'new'.
+//      Confirmed 2026-09-30: FAIL 0206: report sections equal the single RPCs
+//      … — 2026-06-01..2026-06-30 week/served prev=null current: report=[…
+//      "confirmed":4,"unconfirmed":0 …] rpc=[… "confirmed":4,"unconfirmed":1 …]
+//   O. patient_sources_report gate: drop the coalesce -> the migration's own
+//      post-condition aborts ("0206: public.patient_sources_report(...) does
+//      not carry the coalesced service_role gate"). Then also drop the report
+//      from that post-condition's gate array. Confirmed 2026-09-30: FAIL 0206:
+//      report gate matrix — no JWT claims at all: expected error 42501, but
+//      the call succeeded; and FAIL 0206: helpers and list builders are
+//      closed; row types match their producers — patient_sources_report
+//      ACL/definer/gate wrong: {"a":false,"u":true,"s":true,"sd":true,"gate":false}
+//   P. _ps_sec_series 'new' branch: `and not i.is_returning` -> `and true`.
+//      Confirmed 2026-09-30: FAIL 0206: every wrapper returns exactly the
+//      pre-0206 rows — wrappers differ from the pre-0206 bodies: (the proof
+//      prints only the first line; the per-call diffs follow it in the message)
+//   0206 re-apply needs the objects dropped first:
+//     psql $DB -c "drop function if exists public.patient_sources_report(date,date,text,text,date,date);
+//                  drop type if exists public._ps_identity, public._ps_encounter, public._ps_revenue_line cascade;"
 //
 //   for each letter: edit $MIG, then
 //     $PSQL $DB -v ON_ERROR_STOP=1 -f $MIG
