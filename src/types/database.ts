@@ -1408,6 +1408,13 @@ export type Database = {
             foreignKeyName: "critical_alerts_test_request_id_fkey"
             columns: ["test_request_id"]
             isOneToOne: false
+            referencedRelation: "lab_search_rows"
+            referencedColumns: ["test_request_id"]
+          },
+          {
+            foreignKeyName: "critical_alerts_test_request_id_fkey"
+            columns: ["test_request_id"]
+            isOneToOne: false
             referencedRelation: "test_requests"
             referencedColumns: ["id"]
           },
@@ -1659,6 +1666,13 @@ export type Database = {
             isOneToOne: false
             referencedRelation: "v_ops_daily_doctor"
             referencedColumns: ["physician_id"]
+          },
+          {
+            foreignKeyName: "doctor_pf_entries_test_request_id_fkey"
+            columns: ["test_request_id"]
+            isOneToOne: false
+            referencedRelation: "lab_search_rows"
+            referencedColumns: ["test_request_id"]
           },
           {
             foreignKeyName: "doctor_pf_entries_test_request_id_fkey"
@@ -2600,6 +2614,13 @@ export type Database = {
             isOneToOne: false
             referencedRelation: "hmo_claim_batches"
             referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "hmo_claim_items_test_request_id_fkey"
+            columns: ["test_request_id"]
+            isOneToOne: false
+            referencedRelation: "lab_search_rows"
+            referencedColumns: ["test_request_id"]
           },
           {
             foreignKeyName: "hmo_claim_items_test_request_id_fkey"
@@ -4971,6 +4992,13 @@ export type Database = {
             foreignKeyName: "result_amendments_test_request_id_fkey"
             columns: ["test_request_id"]
             isOneToOne: false
+            referencedRelation: "lab_search_rows"
+            referencedColumns: ["test_request_id"]
+          },
+          {
+            foreignKeyName: "result_amendments_test_request_id_fkey"
+            columns: ["test_request_id"]
+            isOneToOne: false
             referencedRelation: "test_requests"
             referencedColumns: ["id"]
           },
@@ -5199,6 +5227,13 @@ export type Database = {
             isOneToOne: false
             referencedRelation: "results"
             referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "result_test_requests_test_request_id_fkey"
+            columns: ["test_request_id"]
+            isOneToOne: false
+            referencedRelation: "lab_search_rows"
+            referencedColumns: ["test_request_id"]
           },
           {
             foreignKeyName: "result_test_requests_test_request_id_fkey"
@@ -6379,6 +6414,10 @@ export type Database = {
           test_number: number | null
           updated_at: string
           visit_id: string
+          lab_search: {
+            search_text: string | null
+            test_request_id: string | null
+          } | null
         }
         Insert: {
           assigned_medtech_id?: string | null
@@ -6517,6 +6556,13 @@ export type Database = {
             isOneToOne: false
             referencedRelation: "legacy_import_runs"
             referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "test_requests_parent_id_fkey"
+            columns: ["parent_id"]
+            isOneToOne: false
+            referencedRelation: "lab_search_rows"
+            referencedColumns: ["test_request_id"]
           },
           {
             foreignKeyName: "test_requests_parent_id_fkey"
@@ -6689,6 +6735,13 @@ export type Database = {
             isOneToOne: false
             referencedRelation: "journal_entries"
             referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "visit_waiver_allocations_test_request_id_fkey"
+            columns: ["test_request_id"]
+            isOneToOne: true
+            referencedRelation: "lab_search_rows"
+            referencedColumns: ["test_request_id"]
           },
           {
             foreignKeyName: "visit_waiver_allocations_test_request_id_fkey"
@@ -6869,6 +6922,13 @@ export type Database = {
       }
     }
     Views: {
+      lab_search_rows: {
+        Row: {
+          search_text: string | null
+          test_request_id: string | null
+        }
+        Relationships: []
+      }
       v_daily_revenue_by_service: {
         Row: {
           business_date: string | null
@@ -7553,6 +7613,19 @@ export type Database = {
         Returns: {
           display_name: string
           drm_id: string
+      lab_search: {
+        Args: { "": Database["public"]["Tables"]["test_requests"]["Row"] }
+        Returns: {
+          search_text: string | null
+          test_request_id: string | null
+        }
+        SetofOptions: {
+          from: "test_requests"
+          to: "lab_search_rows"
+          isOneToOne: true
+          isSetofReturn: true
+        }
+      }
           first_date: string
           identity: string
           identity_kind: string
