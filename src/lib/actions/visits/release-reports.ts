@@ -36,25 +36,37 @@ export const UNVERIFIED_WARNING =
 const MEMBERSHIP_SELECT =
   "test_request_id, result_id, test_requests!inner ( id, visit_id, status, deleted_at, is_package_header, services!inner ( section, kind ) )";
 
+interface MemberTr {
+  visit_id: string;
+  status: string;
+  deleted_at: string | null;
+  is_package_header: boolean;
+  services: { section: string | null; kind: string } | { section: string | null; kind: string }[] | null;
+}
+
 const one = <T>(v: T | T[] | null | undefined): T | null => (Array.isArray(v) ? (v[0] ?? null) : (v ?? null));
 
 /**
  * Every member of the given reports — deleted ones included, exactly like the
  * undo read. `null` on a read error: callers must fail closed, never read a
- * failed or empty result as "no combined report".
+ * failed or empty result as "no combined report". Also `null` when the row
+ * count does not match the exact count (PostgREST row capping can silently
+ * drop members, including unselected ones the link check cannot see).
  */
 async function readMembership(
   supabase: SupabaseClient,
   resultIds: readonly string[],
 ): Promise<ReportMember[] | null> {
-  const { data, error } = await supabase
+  const { data, error, count } = await supabase
     .from("result_test_requests")
-    .select(MEMBERSHIP_SELECT)
+    .select(MEMBERSHIP_SELECT, { count: "exact" })
     .in("result_id", [...resultIds]);
-  if (error) return null;
+  if (error || count === null || count === undefined || count !== (data ?? []).length) return null;
   return (data ?? []).map((l) => {
     const tr = one(l.test_requests as unknown as MemberTr | MemberTr[] | null);
     const svc = one(tr?.services);
+    // A missing embedded `tr` maps to visitId "" / status "": fails safe — the
+    // planner rejects it as other_visit / notFinished rather than releasing it.
     return {
       testRequestId: l.test_request_id as string,
       resultId: l.result_id as string,
@@ -66,14 +78,6 @@ async function readMembership(
       isDoctorLine: svc ? isDoctorKind(svc.kind) : false,
     };
   });
-}
-
-interface MemberTr {
-  visit_id: string;
-  status: string;
-  deleted_at: string | null;
-  is_package_header: boolean;
-  services: { section: string | null; kind: string } | { section: string | null; kind: string }[] | null;
 }
 
 /**

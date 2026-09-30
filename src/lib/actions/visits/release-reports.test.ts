@@ -22,7 +22,7 @@ vi.mock("@/lib/observability/report-error", () => ({ reportError: async () => {}
 
 import { RELEASE_BLOCKED_CONSENT } from "@/lib/visits/release-messages";
 import { makeFakeReleaseDb, type FakeLink, type FakeTestRow } from "./fake-release-db";
-import { REPORT_CHANGED_REASON, releaseVisitSelection } from "./release-reports";
+import { COULDNT_CHECK_REPORT, REPORT_CHANGED_REASON, UNVERIFIED_WARNING, releaseVisitSelection } from "./release-reports";
 
 const session = { user_id: "u1", role: "medtech" } as never;
 function run(rows: FakeTestRow[], links: FakeLink[], selectedIds: string[]) {
@@ -106,6 +106,27 @@ describe("releaseVisitSelection", () => {
     const membership = fake.calls.find((c) => c.table === "result_test_requests" && c.filters.some((f) => f.column === "result_id"))!;
     expect(membership.filters.map((f) => f.column)).toEqual(["result_id"]);
     expect(membership.select).toContain("deleted_at");
+  });
+
+  it("a capped pre-write membership read (unselected sibling dropped, count is the true total) skips the report; no write", async () => {
+    const { fake, out } = run([{ id: "a" }, { id: "b" }], report("r1", "a", "b"), ["a"]);
+    fake.failNext("result_test_requests", "cap");
+    const res = await out;
+    expect(res.changedIds).toEqual([]);
+    expect(res.skipped).toEqual([{ id: "a", reason: COULDNT_CHECK_REPORT }]);
+    expect(fake.calls.some((c) => c.table === "test_requests" && c.op === "update")).toBe(false);
+    expect(fx.notified).toHaveLength(0);
+  });
+
+  it("a capped post-write membership read: release stands, nothing announced, verification warning", async () => {
+    const { fake, out } = run([{ id: "a" }, { id: "b" }], report("r1", "a", "b"), ["a"]);
+    fake.failNext("result_test_requests", "cap-reread");
+    const res = await out;
+    expect(res.changedIds).toEqual(["a"]);
+    expect(res.warnings).toEqual([UNVERIFIED_WARNING]);
+    expect(res.announced).toEqual([]);
+    expect(fx.notified).toHaveLength(0);
+    expect(fx.alerts).toHaveLength(0);
   });
 
   it("returns an empty outcome for an empty selection without reading", async () => {

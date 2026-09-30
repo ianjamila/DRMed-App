@@ -41,15 +41,20 @@ export interface FakeLink {
  *  - "membership"     next result_test_requests read by result_id errors
  *  - "reread"         the SECOND and later membership reads error (the post-write check)
  *  - "truncate"       next membership read silently drops the last member of every report
+ *                     (count follows the shortened list — an undetectable-by-count drop)
+ *  - "cap"            next membership read drops the last member of every report but its
+ *                     `count` stays the true total — PostgREST row capping
+ *  - "cap-reread"     same as "cap", on the SECOND and later membership reads (post-write)
  *  - "update-error"   next UPDATE on the table errors
  *  - "update-partial" next UPDATE on the table applies to the first matching row only
  */
-export type FailPhase = "read" | "membership" | "reread" | "truncate" | "update-error" | "update-partial";
+export type FailPhase = "read" | "membership" | "reread" | "truncate" | "update-error" | "update-partial" | "cap" | "cap-reread";
 
 export interface FakeCall {
   table: string;
   op: "select" | "update";
   select?: string;
+  count?: string;
   patch?: Record<string, unknown>;
   filters: Array<{ op: "eq" | "neq" | "in" | "is" | "not"; column: string; value: unknown; not?: string }>;
 }
@@ -130,9 +135,12 @@ export function makeFakeReleaseDb(seed: { rows: FakeTestRow[]; links?: FakeLink[
       const call: FakeCall = { table, op: "select", filters: [] };
       let selectWanted = false;
       const q: Record<string, unknown> = {};
-      q.select = (s?: string) => {
+      q.select = (s?: string, opts?: { count?: string }) => {
         selectWanted = true;
-        if (call.op === "select") call.select = s;
+        if (call.op === "select") {
+          call.select = s;
+          call.count = opts?.count;
+        }
         return q;
       };
       q.update = (patch: Record<string, unknown>) => {
@@ -157,7 +165,7 @@ export function makeFakeReleaseDb(seed: { rows: FakeTestRow[]; links?: FakeLink[
     },
   };
 
-  function execute(call: FakeCall, selectWanted: boolean): { data: unknown; error: Err | null } {
+  function execute(call: FakeCall, selectWanted: boolean): { data: unknown; error: Err | null; count?: number | null } {
     const { table } = call;
     if (table === "test_requests") {
       const live = rows.filter((r) => call.filters.every((f) => matches(project(r), f)));
@@ -194,12 +202,21 @@ export function makeFakeReleaseDb(seed: { rows: FakeTestRow[]; links?: FakeLink[
       membershipReads += 1;
       const mFail = take(table, ["membership"]) ?? (membershipReads >= 2 ? take(table, ["reread"]) : null);
       if (mFail) return { data: null, error: mFail.error };
-      if (take(table, ["truncate"])) {
+      const dropLast = () => {
         const lastByResult = new Map<string, FakeLink>();
         for (const l of out) lastByResult.set(l.resultId, l);
         out = out.filter((l) => lastByResult.get(l.resultId) !== l);
+      };
+      const inner = (l: FakeLink) => rows.some((x) => x.id === l.testRequestId);
+      let trueTotal = out.filter(inner).length;
+      if (take(table, ["truncate"])) {
+        dropLast();
+        trueTotal = out.filter(inner).length;
+      } else if (take(table, ["cap"]) ?? (membershipReads >= 2 ? take(table, ["cap-reread"]) : null)) {
+        dropLast();
       }
       return {
+        count: call.count ? trueTotal : null,
         data: out
           .map((l) => ({ l, r: rows.find((x) => x.id === l.testRequestId) }))
           .filter((x) => x.r !== undefined)

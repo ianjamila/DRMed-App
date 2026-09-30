@@ -465,15 +465,19 @@ export async function releaseTestsAction(input: unknown): Promise<BulkReleaseRes
   const changedIds: string[] = [];
   const alsoReleasedIds: string[] = [];
   const warnings: string[] = [];
-  for (const [visitId, selectedIds] of survivorsByVisit) {
-    const out = await releaseVisitSelection({
+  // A few visits at a time; results are aggregated in order of first
+  // appearance in the input, whatever order the visits finish in.
+  const outcomes = await mapWithConcurrency([...survivorsByVisit], 4, ([visitId, selectedIds]) =>
+    releaseVisitSelection({
       supabase,
       session,
       visitId,
       selectedIds,
       medium,
       auditMeta: { source: "queue" },
-    });
+    }),
+  );
+  for (const out of outcomes) {
     changedIds.push(...out.changedIds);
     alsoReleasedIds.push(...out.alsoReleasedIds);
     for (const w of out.warnings) if (!warnings.includes(w)) warnings.push(w);
@@ -486,11 +490,9 @@ export async function releaseTestsAction(input: unknown): Promise<BulkReleaseRes
     if (!changedSet.has(id) && !skipped.has(id)) skipped.set(id, "Released by someone else or changed just now.");
   }
 
-  if (survivorsByVisit.size > 0) {
-    revalidatePath("/(staff)/staff/(dashboard)/queue", "layout");
-    revalidatePath("/staff");
-    for (const visitId of survivorsByVisit.keys()) revalidatePath(`/staff/visits/${visitId}`);
-  }
+  revalidatePath("/(staff)/staff/(dashboard)/queue", "layout");
+  revalidatePath("/staff");
+  for (const visitId of survivorsByVisit.keys()) revalidatePath(`/staff/visits/${visitId}`);
   return {
     ok: true,
     changedIds,
@@ -498,6 +500,20 @@ export async function releaseTestsAction(input: unknown): Promise<BulkReleaseRes
     skipped: ids.filter((id) => skipped.has(id) && !changedSet.has(id)).map((id) => ({ id, reason: skipped.get(id)! })),
     warnings,
   };
+}
+
+/** Run `fn` over `items` with at most `limit` in flight; results keep input order. */
+async function mapWithConcurrency<T, R>(items: readonly T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> {
+  const results = new Array<R>(items.length);
+  let next = 0;
+  const worker = async () => {
+    while (next < items.length) {
+      const i = next++;
+      results[i] = await fn(items[i]);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+  return results;
 }
 
 const BulkUnclaimSchema = z.object({

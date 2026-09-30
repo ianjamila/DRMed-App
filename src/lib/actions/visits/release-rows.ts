@@ -55,9 +55,10 @@ export async function releaseRows(args: {
   const rows = candidates ?? [];
   // The read above pins live, ready lines on a live visit; here a merged or
   // deleted patient's lines are refused so the write does not depend on every
-  // caller checking (write-guards). Not airtight: nothing in the DB blocks
-  // releasing a deleted line/visit (0146 documents this), so a delete landing
-  // between this read and the UPDATE below is not refused by a trigger.
+  // caller checking (write-guards). Nothing in the DB blocks releasing a
+  // deleted line/visit (0146 documents this), so a delete landing between this
+  // read and the UPDATE below is not refused by a trigger; the UPDATE re-pins
+  // `deleted_at IS NULL` itself so a just-deleted line is simply not released.
   const live = rows.filter((r) => {
     const v = one(r.visits as unknown as { patients: Lifecycle | Lifecycle[] | null } | null);
     const p = one(v?.patients);
@@ -82,6 +83,7 @@ export async function releaseRows(args: {
     .in("id", scoped.map((r) => r.id))
     .eq("visit_id", visitId)
     .eq("status", "ready_for_release")
+    .is("deleted_at", null)
     .select("id, services ( name )");
   if (error) return { ok: false, error: translatePgError(error) };
 

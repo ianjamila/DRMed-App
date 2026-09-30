@@ -168,7 +168,8 @@ describe("releaseTestsAction — eligibility and the per-visit write", () => {
         { id: B, reason: "Deleted from the queue or no longer exists." },
       ],
     });
-    expect(fx.revalidate).toHaveLength(0);
+    // Revalidation is unconditional (contract point 9), even when no visit survived.
+    expect(fx.revalidate).toHaveLength(2);
   });
 
   it("with the consent gate on, skips a patient without consent and releases one with it", async () => {

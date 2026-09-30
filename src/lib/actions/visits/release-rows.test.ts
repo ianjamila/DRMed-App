@@ -132,6 +132,7 @@ describe("releaseRows", () => {
     );
     expect(calls.updateFilters).toEqual(
       expect.arrayContaining([
+        { op: "is", column: "deleted_at", value: null },
         { op: "eq", column: "status", value: "ready_for_release" },
         { op: "eq", column: "visit_id", value: "v1" },
         { op: "in", column: "id", value: ["a"] },
