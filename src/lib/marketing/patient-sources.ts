@@ -31,6 +31,84 @@ export interface SeriesRow { bucket_start: string; channel: string; confirmed: n
 export interface RevenueRow { channel: string; confirmed_php: number; unconfirmed_php: number }
 export interface OverlapRow { patient_id: string; drm_id: string; service_date: string; app_php: number; sheet_php: number }
 export interface ReferrerRow { doctor_label: string; new_confirmed: number; new_unconfirmed: number }
+
+/** Every section of the Patient Sources page from ONE `patient_sources_report` call (0206). */
+export interface PatientSourcesReport {
+  summary: SummaryRow;
+  series: SeriesRow[];
+  current: SeriesRow[];
+  previous: SeriesRow[] | null;
+  new_by_day: SeriesRow[];
+  revenue: RevenueRow[];
+  overlaps: OverlapRow[];
+  referrers: ReferrerRow[];
+}
+
+const SUMMARY_COUNTS = [
+  "new_confirmed", "new_unconfirmed", "returning_first_recorded", "served_confirmed", "served_unconfirmed",
+  "undated_registrations", "source_recorded", "source_total",
+] as const;
+
+function num(v: unknown): number | null {
+  const n = typeof v === "number" ? v : typeof v === "string" && v.trim() !== "" ? Number(v) : NaN;
+  return Number.isFinite(n) ? n : null;
+}
+function isObj(v: unknown): v is Record<string, unknown> {
+  return typeof v === "object" && v !== null && !Array.isArray(v);
+}
+/** Maps each element with `row`; null if the input is not an array or any element is rejected. */
+function rowsOf<T>(v: unknown, row: (o: Record<string, unknown>) => T | null): T[] | null {
+  if (!Array.isArray(v)) return null;
+  const out: T[] = [];
+  for (const x of v) {
+    const r = isObj(x) ? row(x) : null;
+    if (r === null) return null;
+    out.push(r);
+  }
+  return out;
+}
+function seriesRow(o: Record<string, unknown>): SeriesRow | null {
+  const confirmed = num(o.confirmed), unconfirmed = num(o.unconfirmed);
+  if (typeof o.bucket_start !== "string" || typeof o.channel !== "string" || confirmed === null || unconfirmed === null) return null;
+  return { bucket_start: o.bucket_start, channel: o.channel, confirmed, unconfirmed };
+}
+function revenueRow(o: Record<string, unknown>): RevenueRow | null {
+  const c = num(o.confirmed_php), u = num(o.unconfirmed_php);
+  if (typeof o.channel !== "string" || c === null || u === null) return null;
+  return { channel: o.channel, confirmed_php: c, unconfirmed_php: u };
+}
+function overlapRow(o: Record<string, unknown>): OverlapRow | null {
+  const a = num(o.app_php), s = num(o.sheet_php);
+  if (typeof o.patient_id !== "string" || typeof o.drm_id !== "string" || typeof o.service_date !== "string" || a === null || s === null) return null;
+  return { patient_id: o.patient_id, drm_id: o.drm_id, service_date: o.service_date, app_php: a, sheet_php: s };
+}
+function referrerRow(o: Record<string, unknown>): ReferrerRow | null {
+  const c = num(o.new_confirmed), u = num(o.new_unconfirmed);
+  if (typeof o.doctor_label !== "string" || c === null || u === null) return null;
+  return { doctor_label: o.doctor_label, new_confirmed: c, new_unconfirmed: u };
+}
+
+/** Validates the jsonb reply of `patient_sources_report`; null when it is not the expected shape. */
+export function parsePatientSourcesReport(raw: unknown): PatientSourcesReport | null {
+  if (!isObj(raw) || !isObj(raw.summary)) return null;
+  const sm = raw.summary;
+  const counts: Record<string, number> = {};
+  for (const k of SUMMARY_COUNTS) {
+    const n = num(sm[k]);
+    if (n === null) return null;
+    counts[k] = n;
+  }
+  const summary = { ...(sm as unknown as SummaryRow), ...counts } as SummaryRow;
+  const series = rowsOf(raw.series, seriesRow);
+  const current = rowsOf(raw.current, seriesRow);
+  const newByDay = rowsOf(raw.new_by_day, seriesRow);
+  const previous = raw.previous === null ? null : rowsOf(raw.previous, seriesRow);
+  const revenue = rowsOf(raw.revenue, revenueRow);
+  const overlaps = rowsOf(raw.overlaps, overlapRow);
+  const referrers = rowsOf(raw.referrers, referrerRow);
+  if (!series || !current || !newByDay || (raw.previous !== null && !previous) || !revenue || !overlaps || !referrers) return null;
+  return { summary, series, current, previous, new_by_day: newByDay, revenue, overlaps, referrers };
+}
 export interface PeopleRow {
   identity_kind: "confirmed" | "unconfirmed";
   identity: string;

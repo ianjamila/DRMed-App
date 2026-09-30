@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   NOT_RECORDED, bucketLabel, channelLabel, channelTable, newPatientsTile, chartData, classifyReportError,
-  costPerNewPatient, formatNewToday, parseGrain, parseMode, previousPeriod, seriesCsvRows, sheetBanner,
+  costPerNewPatient, parsePatientSourcesReport, formatNewToday, parseGrain, parseMode, previousPeriod, seriesCsvRows, sheetBanner,
   type SeriesRow, type SummaryRow,
 } from "./patient-sources";
 
@@ -155,5 +155,44 @@ describe("seriesCsvRows", () => {
     expect(rows).toContainEqual(["New customers — unconfirmed", 1]);
     expect(rows.at(-2)).toEqual(["Period start", "Channel", "Confirmed", "Unconfirmed"]);
     expect(rows.at(-1)).toEqual(["2026-09-01", "Walk-in", 3, 1]);
+  });
+});
+
+describe("parsePatientSourcesReport", () => {
+  const summary = {
+    new_confirmed: 3, new_unconfirmed: 1, returning_first_recorded: 0, served_confirmed: 5, served_unconfirmed: 2,
+    undated_registrations: 4, source_recorded: 2, source_total: 4, sheet_last_dates: { lab: "2026-06-12" },
+    sync_paused: true, last_synced_at: null, sheet_rows_present: true, last_run_status: null,
+  };
+  const s = { bucket_start: "2026-06-01", channel: "walk_in", confirmed: 2, unconfirmed: 0 };
+  const good = {
+    summary, series: [s], current: [s], previous: null, new_by_day: [s],
+    revenue: [{ channel: "walk_in", confirmed_php: 1500.5, unconfirmed_php: 0 }],
+    overlaps: [{ patient_id: "p1", drm_id: "DRM-1", service_date: "2026-06-10", app_php: 500, sheet_php: 700 }],
+    referrers: [{ doctor_label: "Dr. A", new_confirmed: 1, new_unconfirmed: 0 }],
+  };
+
+  it("returns every section typed as the single RPCs return them", () => {
+    const r = parsePatientSourcesReport(good);
+    expect(r).toEqual(good);
+  });
+  it("keeps previous as an array when a comparison period was asked for", () => {
+    expect(parsePatientSourcesReport({ ...good, previous: [s] })?.previous).toEqual([s]);
+  });
+  it("coerces numeric strings to numbers (numeric can arrive as text)", () => {
+    const r = parsePatientSourcesReport({ ...good, revenue: [{ channel: "x", confirmed_php: "12.50", unconfirmed_php: "0" }] });
+    expect(r?.revenue[0]).toEqual({ channel: "x", confirmed_php: 12.5, unconfirmed_php: 0 });
+  });
+  it.each([
+    ["not an object", 42],
+    ["null", null],
+    ["missing summary", { ...good, summary: undefined }],
+    ["summary without counts", { ...good, summary: { ...summary, new_confirmed: "x" } }],
+    ["series not an array", { ...good, series: {} }],
+    ["missing referrers", { ...good, referrers: undefined }],
+    ["previous neither null nor array", { ...good, previous: "no" }],
+    ["a series row without a bucket", { ...good, series: [{ channel: "walk_in", confirmed: 1, unconfirmed: 0 }] }],
+  ])("returns null for a malformed reply (%s)", (_label, raw) => {
+    expect(parsePatientSourcesReport(raw)).toBeNull();
   });
 });
