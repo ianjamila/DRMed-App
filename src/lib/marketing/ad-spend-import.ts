@@ -195,7 +195,20 @@ export function parseAdSpendCsv(
     const r = records[idx]!;
     if (badRows.has(idx)) { reject("malformed_row"); continue; }
     const campaign = String((campaignCol && r[campaignCol]) ?? "").trim();
-    if (/^total\b/i.test(campaign) || (dayCol && /^total\b/i.test(String(r[dayCol] ?? "").trim()))) continue;
+    // Export SUMMARY rows are recognised by their whole shape, never by a
+    // campaign's name alone (C2): a real campaign called "Total Health" with a
+    // date is spend and is kept. A summary row is (a) "Total…" sitting in the
+    // date column itself (Google's "Total: Account" lands in Day), or (b) a
+    // campaign cell that is exactly "Total" / "Total: …" on a row with NO date
+    // at all. Anything else that starts with "Total" but has no readable date
+    // falls through to the date check below and is REJECTED visibly (bad_date)
+    // instead of being dropped silently.
+    const dateCellText = dayCol ? String(r[dayCol] ?? "").trim() : "";
+    const noDateAtAll =
+      dateCellText === "" &&
+      !(startCol && String(r[startCol] ?? "").trim()) &&
+      !(endCol && String(r[endCol] ?? "").trim());
+    if (/^total\b/i.test(dateCellText) || (noDateAtAll && /^total(?:\s*:.*)?$/i.test(campaign))) continue;
 
     let platform: AdPlatform;
     if (platformCol) {
@@ -241,7 +254,9 @@ export function parseAdSpendCsv(
     const adId = adIdCol ? String(r[adIdCol] ?? "").trim() : "";
     const adName = adNameCol ? normaliseCampaignName(String(r[adNameCol] ?? "")) : "";
     const adKey = (adId ? `id:${adId}` : adName) || "(campaign)";
-    const key = `${date}|${platform}|${campaignKey}|${adKey}`;
+    // JSON tuple, not a "|"-joined string (C1): campaign "C|D" + ad "E" and
+    // campaign "C" + ad "D|E" must stay two rows.
+    const key = JSON.stringify([date, platform, campaignKey, adKey]);
     const prev = rows.get(key);
     if (prev) {
       prev.spend_php = Math.round((prev.spend_php + spend) * 100) / 100;
@@ -263,7 +278,7 @@ export function parseAdSpendCsv(
   // Refuse the whole file rather than silently keep more than one breakdown.
   const groupKinds = new Map<string, Set<AdKeyKind>>();
   for (const row of rows.values()) {
-    const groupKey = `${row.spend_date}|${row.platform}|${row.campaign_key}`;
+    const groupKey = JSON.stringify([row.spend_date, row.platform, row.campaign_key]);
     const kinds = groupKinds.get(groupKey) ?? new Set<AdKeyKind>();
     kinds.add(adKeyKind(row.ad_key));
     groupKinds.set(groupKey, kinds);

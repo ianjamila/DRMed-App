@@ -207,6 +207,58 @@ describe("parseAdSpendCsv", () => {
   });
 });
 
+describe("summary rows vs real campaigns named Total… (Codex C2)", () => {
+  const H = ["Day", "Campaign", "Cost", "Currency code"];
+  const row = (day: string, campaign: string, cost = "100") => ({ Day: day, Campaign: campaign, Cost: cost, "Currency code": "PHP" });
+
+  it("keeps a real campaign named 'Total Health' that has a date", () => {
+    const r = parseAdSpendCsv([row("2026-09-01", "Total Health", "300"), row("", "Total: Account", "300")], H);
+    expect(r).toMatchObject({ ok: true, rejected: [] });
+    if (!r.ok) throw new Error();
+    expect(r.rows).toEqual([expect.objectContaining({ campaign_key: "total health", campaign_label: "Total Health", spend_php: 300 })]);
+  });
+  it("still skips the export's own summary rows (Total: … / Total in the date column / a bare Total with no date)", () => {
+    const r = parseAdSpendCsv(
+      [row("2026-09-01", "Brand"), row("", "Total: Account"), row("Total: Campaigns", "--"), row("", "Total"), row("", "total : search")],
+      H,
+    );
+    expect(r).toMatchObject({ ok: true, rejected: [] });
+    if (!r.ok) throw new Error();
+    expect(r.rows.map((x) => x.campaign_key)).toEqual(["brand"]);
+  });
+  it("REJECTS visibly (never skips) an ambiguous 'Total Health' row with no date", () => {
+    const r = parseAdSpendCsv([row("2026-09-01", "Brand"), row("", "Total Health", "999")], H);
+    expect(r).toMatchObject({ ok: true, rejected: [{ reason: "bad_date", count: 1 }] });
+  });
+  it("reads a Meta export the same way (Reporting starts/ends)", () => {
+    const cols = ["Reporting starts", "Reporting ends", "Campaign name", "Amount spent (PHP)"];
+    const r = parseAdSpendCsv(
+      [
+        { "Reporting starts": "2026-09-01", "Reporting ends": "2026-09-01", "Campaign name": "Total Health Check-up", "Amount spent (PHP)": "50" },
+        { "Reporting starts": "", "Reporting ends": "", "Campaign name": "Total", "Amount spent (PHP)": "50" },
+      ],
+      cols,
+    );
+    expect(r).toMatchObject({ ok: true, rejected: [] });
+    if (!r.ok) throw new Error();
+    expect(r.rows).toHaveLength(1);
+  });
+});
+
+describe("row keys cannot collide on a '|' inside a name (Codex C1)", () => {
+  it("keeps campaign 'C|D' + ad 'E' and campaign 'C' + ad 'D|E' as two rows with their own amounts", () => {
+    const raw = (campaign: string, ad: string, spend: string) => ({ Date: "2026-09-01", Platform: "Facebook", Campaign: campaign, "Ad name": ad, Spend: spend });
+    const r = parseAdSpendCsv(
+      [raw("C|D", "E", "10"), raw("C", "D|E", "20")],
+      ["Date", "Platform", "Campaign", "Ad name", "Spend"],
+    );
+    expect(r).toMatchObject({ ok: true, rejected: [] });
+    if (!r.ok) throw new Error();
+    expect(r.rows).toHaveLength(2);
+    expect(r.rows.map((x) => x.spend_php).sort()).toEqual([10, 20]);
+  });
+});
+
 describe("parseAdSpendText (through real PapaParse — Codex recheck #2)", () => {
   it("refuses the whole file on an unterminated quote (Quotes-type error), never keeping the merged record", () => {
     // Codex's exact probe: PapaParse swallows the rest of the file into the
