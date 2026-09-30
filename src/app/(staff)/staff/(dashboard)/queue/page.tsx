@@ -76,7 +76,7 @@ import {
 import { QueueBulkBar } from "./queue-bulk-bar";
 import { QueueReleaseButton } from "@/components/staff/release/queue-release-button";
 import { evaluateRelease, RELEASE_REFUSAL } from "@/lib/queue/release-eligibility";
-import { reportReleaseBlock } from "@/lib/queue/report-release-scope";
+import { panelReleaseScope } from "@/lib/queue/report-release-scope";
 import { getConsentCurrentByPatient, isConsentGateRequired } from "@/lib/consent/gate";
 import { activeEmbeddedPatients, isActivePatient } from "@/lib/patients/active";
 import { isReleaseMedium, type ReleaseMedium } from "@/lib/visits/release-media";
@@ -737,10 +737,16 @@ export default async function QueuePage({ searchParams }: SearchProps) {
         card.releaseBlock = unreadable;
         const members = read.ok ? read.byKey.get(panelRowKey(card.visitId, card.groupId)) : undefined;
         if (!members) continue;
-        const ready = members.filter((m) => m.status === "ready_for_release");
-        panelReadyIds.set(panelRowKey(card.visitId, card.groupId), ready.map((m) => m.id));
+        // Each combined report on the panel is judged on its own: a finished
+        // report releases while an unfinished sibling report waits (the
+        // database refuses only the unfinished one), so only members of
+        // releasable reports (and unlinked rows) are sent.
+        const scope = panelReleaseScope(members);
+        const readyIds = new Set(scope.readyIds);
+        const ready = members.filter((m) => readyIds.has(m.id));
+        panelReadyIds.set(panelRowKey(card.visitId, card.groupId), scope.readyIds);
         let block: string | null = null;
-        if (ready.length === 0) block = RELEASE_REFUSAL.notReady;
+        if (ready.length === 0) block = scope.reportBlock ?? RELEASE_REFUSAL.notReady;
         for (const m of ready) {
           const verdict = evaluateRelease(
             {
@@ -761,11 +767,6 @@ export default async function QueuePage({ searchParams }: SearchProps) {
             break;
           }
         }
-        // Whole-report rule: a member linked to the report that is not yet
-        // ready keeps the whole report from being released.
-        block ??= reportReleaseBlock(
-          members.filter((m) => m.resultId !== null).map((m) => ({ status: m.status, deleted: false })),
-        );
         card.releaseBlock = block;
       }
     }

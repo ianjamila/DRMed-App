@@ -477,31 +477,14 @@ export async function releaseSelectedAction(
     skipped,
     warnings: out.warnings,
     batchId,
-    notifiedCount: await notifiedCount(supabase, visitId, releaseMedium, out.announced.length),
+    notifiedCount: out.notice?.status === "sent" ? out.announced.length : 0,
   };
 }
 
-// How many released tests the patient was actually sent a notice about, for
-// the bar's "already notified" line. 0 for a report withheld as unverified
-// (not in `announced`), for a physical / pickup hand-off (notify-released
-// M7) and for a sample visit (SAMPLE_SKIP_REASON) — none of those message the
-// patient. A failed sample read counts as notified: the line then errs on
-// telling staff to inform the patient.
-async function notifiedCount(
-  supabase: Awaited<ReturnType<typeof createClient>>,
-  visitId: string,
-  medium: ReleaseMedium,
-  announced: number,
-): Promise<number> {
-  if (announced === 0 || medium === "physical" || medium === "pickup") return 0;
-  const { data } = await supabase
-    .from("visits")
-    .select("is_sample")
-    .eq("id", visitId)
-    .is("deleted_at", null)
-    .maybeSingle();
-  return data?.is_sample === true ? 0 : announced;
-}
+// notifiedCount (the bar's "already notified" line) is the real outcome of the
+// patient notice: every announced test when a message actually went out, 0 for
+// a report withheld as unverified, a physical / pickup hand-off, a sample
+// visit, a patient with no contact details or a failed send.
 
 // Server-checked 10-minute Undo for releaseSelectedAction (owner 2026-09-28):
 // same window/same-staff/own-batch rules as every other bulk Undo

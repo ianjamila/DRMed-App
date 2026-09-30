@@ -4,6 +4,14 @@ vi.mock("server-only", () => ({}));
 vi.mock("next/headers", () => ({
   headers: async () => new Headers({ "x-forwarded-for": "1.2.3.4", "user-agent": "ua" }),
 }));
+// A physical / pickup hand-off sends no message (notify-released M7); otherwise
+// whatever the test armed in fx.notice.
+const noticeFor = vi.hoisted(() => (medium: string) => {
+  if (medium === "physical" || medium === "pickup") {
+    return { status: "skipped", channels: [], reason: "physical hand-off — no message sent" };
+  }
+  return fx.notice;
+});
 const fx = vi.hoisted(() => ({
   role: "admin" as string,
   db: null as unknown,
@@ -11,6 +19,8 @@ const fx = vi.hoisted(() => ({
   audits: [] as Array<Record<string, unknown>>,
   notifyOne: [] as unknown[],
   notifyBulk: [] as Array<{ testRequestIds: string[] }>,
+  // What the mocked notifiers report for a message that actually goes out.
+  notice: { status: "sent", channels: ["email"], reason: null } as { status: string; channels: string[]; reason: string | null },
   alerts: [] as Array<[string, number]>,
 }));
 vi.mock("next/cache", () => ({
@@ -28,10 +38,16 @@ vi.mock("@/lib/server/action-helpers", () => ({ ipAndAgent: async () => ({ ip: n
 vi.mock("@/lib/observability/report-error", () => ({ reportError: async () => {} }));
 vi.mock("@/lib/actions/visits/queue-deletion", () => ({ deleteVisitAction: async () => ({ ok: true }) }));
 vi.mock("@/lib/notifications/notify-released", () => ({
-  notifyResultReleased: async (a: unknown) => void fx.notifyOne.push(a),
+  notifyResultReleased: async (a: { releaseMedium: string }) => {
+    fx.notifyOne.push(a);
+    return noticeFor(a.releaseMedium);
+  },
 }));
 vi.mock("@/lib/notifications/notify-released-bulk", () => ({
-  notifyResultsReleasedBulk: async (a: { testRequestIds: string[] }) => void fx.notifyBulk.push(a),
+  notifyResultsReleasedBulk: async (a: { testRequestIds: string[]; releaseMedium: string }) => {
+    fx.notifyBulk.push(a);
+    return noticeFor(a.releaseMedium);
+  },
 }));
 vi.mock("@/lib/results/viewed-count", () => ({ countResultViews: async (id: string) => (id === "a" ? 3 : 0) }));
 vi.mock("@/lib/notifications/release-staff-alert", () => ({
@@ -115,6 +131,7 @@ beforeEach(() => {
   fx.notifyOne.length = 0;
   fx.notifyBulk.length = 0;
   fx.alerts.length = 0;
+  fx.notice = { status: "sent", channels: ["email"], reason: null };
 });
 
 describe("releaseTestAction — whole-report rule", () => {
@@ -311,27 +328,40 @@ describe("releaseSelectedAction — Undo handle (bulk-select follow-ups)", () =>
     expect((fx.notifyBulk[0] as { bulkBatchId?: string }).bulkBatchId).toBe(res.batchId);
   });
 
-  it("counts nothing as notified on a physical hand-off or a sample visit", async () => {
+  it("notifiedCount follows the real notice outcome, not a guess", async () => {
+    // Sent: every announced test counts (x alone, then a whole report of 3).
+    seed();
+    const sent = await releaseSelectedAction("v1", ["x"], "email");
+    if (!sent.ok) throw new Error(sent.error);
+    expect(sent.notifiedCount).toBe(1);
+    seed();
+    const sentReport = await releaseSelectedAction("v1", ["a", "x"], "email");
+    if (!sentReport.ok) throw new Error(sentReport.error);
+    expect(sentReport.notifiedCount).toBe(3);
+
+    // Physical hand-off: the notifier reports a skip.
     seed();
     const physical = await releaseSelectedAction("v1", ["x"], "physical");
     if (!physical.ok) throw new Error(physical.error);
     expect(physical.notifiedCount).toBe(0);
 
+    // Sample visit / patient with no contact / inactive recipient: skipped.
+    for (const reason of ["sample visit — patient not contacted", "no email or phone on file"]) {
+      seed();
+      fx.notice = { status: "skipped", channels: [], reason };
+      const skipped = await releaseSelectedAction("v1", ["x"], "email");
+      if (!skipped.ok) throw new Error(skipped.error);
+      expect(skipped.count).toBe(1);
+      expect(skipped.notifiedCount).toBe(0);
+    }
+
+    // A failed send tells the patient nothing.
     seed();
-    // A sample visit: notify-released skips the message (SAMPLE_SKIP_REASON).
-    const wrapped = fx.db as { from: (t: string) => Record<string, unknown>; rpc: unknown };
-    fx.db = {
-      rpc: wrapped.rpc,
-      from(table: string) {
-        const q = wrapped.from(table);
-        if (table === "visits") q.maybeSingle = async () => ({ data: { deleted_at: null, is_sample: true }, error: null });
-        return q;
-      },
-    };
-    const sample = await releaseSelectedAction("v1", ["x"], "email");
-    if (!sample.ok) throw new Error(sample.error);
-    expect(sample.count).toBe(1);
-    expect(sample.notifiedCount).toBe(0);
+    fx.notice = { status: "failed", channels: [], reason: "sending failed" };
+    const failed = await releaseSelectedAction("v1", ["x"], "email");
+    if (!failed.ok) throw new Error(failed.error);
+    expect(failed.count).toBe(1);
+    expect(failed.notifiedCount).toBe(0);
   });
 
   it("mints a fresh batch id per call", async () => {
