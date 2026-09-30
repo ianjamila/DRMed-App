@@ -59,6 +59,8 @@ const KNOWN_WRITER_RPCS = new Set<string>([
   "restore_patient",
   "claim_panel_members", // panel-writes.ts claimPanelMembers — all-or-nothing panel claim (0191).
   "unclaim_panel_members", // panel-writes.ts unclaimPanelMembers — all-or-nothing panel hand-back (0191).
+  "reclaim_panel_members", // panel-writes.ts reclaimPanelMembers — all-or-nothing Undo of a panel hand-back (0200).
+  "restore_panel_members", // panel-writes.ts restorePanelMembers — all-or-nothing Undo of a panel queue delete (0200).
   "create_visit_encounter", // visits/new/actions.ts createVisitAction — visit, lines, PIN in one transaction (0184).
   "result_create_linked", // create-linked.ts — a result row and its links (0184).
   "record_hmo_settlement", // hmo-claims/actions.ts recordHmoSettlementAction (0184).
