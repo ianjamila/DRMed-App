@@ -199,15 +199,19 @@ async function performUnclaim(
   // queue-deleted line (0125) is refused even via a stale link — same rule as
   // claim and reassign. Retry once: this conditional UPDATE rolls back whole
   // on a P0072/40P01 lock race (0184), so a retry can't double-unclaim.
-  let update = supabase
-    .from("test_requests")
-    .update({ status: "requested", assigned_to: null, started_at: null })
-    .in("id", testRequestIds)
-    .eq("status", "in_progress")
-    .not("assigned_to", "is", null)
-    .is("deleted_at", null);
-  if (ownerId !== null) update = update.eq("assigned_to", ownerId);
-  const { data, error } = await withLifecycleRetry(() => update.select("id, visit_id"));
+  // The builder is rebuilt per attempt: `.select()` appends a Prefer header,
+  // so re-running one builder would send it twice.
+  const { data, error } = await withLifecycleRetry(() => {
+    let update = supabase
+      .from("test_requests")
+      .update({ status: "requested", assigned_to: null, started_at: null })
+      .in("id", testRequestIds)
+      .eq("status", "in_progress")
+      .not("assigned_to", "is", null)
+      .is("deleted_at", null);
+    if (ownerId !== null) update = update.eq("assigned_to", ownerId);
+    return update.select("id, visit_id");
+  });
 
   if (error) return { ok: false, error: translatePgError(error) };
   if (!data || data.length === 0) return { ok: false, error: refusal };
