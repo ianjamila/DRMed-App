@@ -31,6 +31,12 @@
 -- restore-and-re-delete by someone else since carries a different one), on
 -- that visit, top-level (components ride their header's cascade, 0125), and
 -- the visit itself live.
+--
+-- LOCK ORDER: both functions first lock their members' rows FOR UPDATE in id
+-- order — the order 0198's release_visit_results / undo_visit_release lock a
+-- visit's test_requests (ORDER BY id) — so a panel Undo racing a release on
+-- the same visit queues behind it instead of forming a lock cycle. The UPDATE's
+-- own predicates, re-evaluated after the locks, still decide all-or-nothing.
 -- =============================================================================
 
 create or replace function public.reclaim_panel_members(
@@ -70,6 +76,15 @@ begin
      and exists (select 1 from unnest(p_holders) as h(holder) where h.holder <> v_uid) then
     raise exception 'You can only put back a claim in your own name.' using errcode = 'P0082';
   end if;
+
+  -- Lock the members in id order first, like 0198's release/undo lock a
+  -- visit's test_requests (ORDER BY id): matching it removes the deadlock
+  -- window against a racing release. The UPDATE's own predicates below
+  -- still decide all-or-nothing.
+  perform 1 from public.test_requests t
+   where t.id = any (p_test_request_ids)
+   order by t.id
+     for update;
 
   update public.test_requests t
      set status      = 'in_progress',
@@ -130,6 +145,16 @@ begin
   if exists (select 1 from public.visits v where v.id = p_visit_id and v.deleted_at is not null) then
     raise exception 'The visit itself is deleted — restore the visit first.' using errcode = 'P0082';
   end if;
+
+  -- Lock the members in id order first, like 0198's release/undo lock a
+  -- visit's test_requests (ORDER BY id): matching it removes the deadlock
+  -- window against a racing release. The UPDATE's own predicates below
+  -- still decide all-or-nothing.
+  perform 1 from public.test_requests t
+   where t.id = any (p_test_request_ids)
+     and t.visit_id = p_visit_id
+   order by t.id
+     for update;
 
   update public.test_requests t
      set deleted_at    = null,
