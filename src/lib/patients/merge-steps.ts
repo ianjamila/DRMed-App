@@ -16,17 +16,14 @@
 // unreachable, and write-blocked because a_lifecycle_guard refuses writes
 // onto a merged patient. Worse, a re-run was refused ("already merged").
 //
-// The runner below stops at the FIRST move that still fails, then rolls the
-// COMPLETED steps back to source_id by their exact returned ids (0184 review
-// follow-up): re-running the whole merge afterwards is no longer the
-// recovery path by itself — a re-run is idempotent for rows that never
-// moved, but says nothing about rows that DID move and then got left on
-// keep_id if a later step failed, and Undo (undoMergeSteps) only restores
+// The runner below stops at the FIRST move that still fails, then rolls back
+// (0184 review follow-up): re-running the whole merge afterwards is no
+// longer the recovery path by itself — a re-run is idempotent for rows that
+// never moved, but says nothing about rows that DID move and then got left
+// on keep_id if a later step failed, and Undo (undoMergeSteps) only restores
 // what patient_merges.moved records, which for a stopped merge is nothing
 // (the ledger is never written on failure) — so without a rollback, those
 // completed moves would be invisible to Undo and silently under-reverted.
-// The rollback restores the pre-merge state so both patients are exactly as
-// they were, and reports if it (or the merge itself) fails.
 export const MERGE_MOVE_TABLES = [
   "visits",
   "appointments",
@@ -53,6 +50,10 @@ export function mergeMoveSteps(): MergeMoveStep[] {
 export interface MergeRollbackFailure {
   table: MergeMoveTable;
   error: string;
+  // The exact ids this rollback attempt tried to move back to source_id —
+  // reported by the caller as "stranded" when the rollback itself fails, so
+  // a manual fix has something precise to act on.
+  ids: unknown[];
 }
 
 export type MergeMoveOutcome<Row> =
@@ -69,6 +70,48 @@ export type MergeMoveOutcome<Row> =
       rollbackFailures: MergeRollbackFailure[];
     };
 
+function uniqueIds(ids: readonly unknown[]): unknown[] {
+  const seen = new Map<string, unknown>();
+  for (const id of ids) seen.set(String(id), id);
+  return [...seen.values()];
+}
+
+/**
+ * Rolls the given steps back to source_id, in the order given (the caller
+ * decides which steps and what order — see runMergeMoveSteps and
+ * mergePatientsAction's post-move failure paths for the two cases). For each
+ * step, the ids clawed back are `snapshot[table] ∪ moved[table]'s ids` —
+ * NOT just the acknowledged `moved` ids. The snapshot (every id that was on
+ * source_id BEFORE the merge started, read once per table before any move —
+ * see mergePatientsAction) covers the case a move actually committed but its
+ * HTTP response was lost: PostgREST then reports an error with `data: null`,
+ * so the row is on keep_id even though it was never added to `moved`. The
+ * union is exact and safe either way — `rollback`'s own
+ * `.eq("patient_id", keepId)` predicate makes moving an id that never left
+ * source_id a no-op. A rollback failure on one table does not stop the
+ * rest — every step still gets an attempt, and every failure is collected
+ * (with the exact ids that attempt used) so the caller can report precisely
+ * what's stranded.
+ */
+export async function rollbackMergeMoves<Row extends { id: unknown }>(
+  steps: readonly MergeMoveStep[],
+  moved: Partial<Record<MergeMoveTable, Row[]>>,
+  snapshot: Record<MergeMoveTable, readonly unknown[]>,
+  rollback: (step: MergeMoveStep, ids: unknown[]) => Promise<{ error: { message: string } | null }>,
+): Promise<{ rolledBack: boolean; rollbackFailures: MergeRollbackFailure[] }> {
+  const rollbackFailures: MergeRollbackFailure[] = [];
+  for (const step of steps) {
+    const ids = uniqueIds([
+      ...(snapshot[step.table] ?? []),
+      ...(moved[step.table] ?? []).map((r) => r.id),
+    ]);
+    if (ids.length === 0) continue;
+    const { error } = await rollback(step, ids);
+    if (error) rollbackFailures.push({ table: step.table, error: error.message, ids });
+  }
+  return { rolledBack: rollbackFailures.length === 0, rollbackFailures };
+}
+
 /**
  * Runs `steps` in order, calling `run(step)` for each. Stops at the first
  * step whose `run` reports an error — later steps never execute. `run` is
@@ -78,24 +121,25 @@ export type MergeMoveOutcome<Row> =
  * wrap its query in `withLifecycleRetry` so a single lock-race loss
  * (P0072/40P01) doesn't fail the whole merge.
  *
- * On failure, every step that DID complete is rolled back by calling
- * `rollback(step, ids)` with the EXACT ids that step's `run` returned —
- * never a broader "everything currently on keep_id" filter, which could
- * claw back a row a concurrent, unrelated write moved onto keep_id in the
- * meantime. Rollback runs the completed steps in the SAME order they were
- * performed (ascending — visits, then appointments, ..., then
- * critical_alerts if it got that far), NOT reversed: a_lifecycle_guard's
- * (a2') check re-validates a critical alert's patient_id against its test's
- * CURRENT visit patient_id on every write, so moving critical_alerts back to
- * source before its visit is already back would fail that same check for
- * the opposite reason the forward move can — exactly the invariant
- * UNDO_MERGE_TABLES documents and never reverses either. A rollback failure
- * on one table does not stop the rest — every completed step still gets a
- * rollback attempt, and every failure is collected in `rollbackFailures` so
- * the caller can report precisely which rows are stranded.
+ * `snapshot` must hold, for every table, the ids that were on source_id
+ * BEFORE any move ran (see rollbackMergeMoves above for why — the failing
+ * step's own outcome is UNKNOWN, not just "didn't happen": `run` reporting
+ * an error only means the response was lost, not that the UPDATE never
+ * committed).
+ *
+ * On failure, every step from the first one up to and including the
+ * failing step is rolled back — in the SAME order they were attempted
+ * (ascending — visits, then appointments, ..., then critical_alerts if it
+ * got that far), NOT reversed: a_lifecycle_guard's (a2') check re-validates
+ * a critical alert's patient_id against its test's CURRENT visit patient_id
+ * on every write, so moving critical_alerts back to source before its visit
+ * is already back would fail that same check for the opposite reason the
+ * forward move can — exactly the invariant UNDO_MERGE_TABLES documents and
+ * never reverses either.
  */
 export async function runMergeMoveSteps<Row extends { id: unknown }>(
   steps: readonly MergeMoveStep[],
+  snapshot: Record<MergeMoveTable, readonly unknown[]>,
   run: (step: MergeMoveStep) => Promise<{ data: Row[] | null; error: { message: string } | null }>,
   rollback: (step: MergeMoveStep, ids: unknown[]) => Promise<{ error: { message: string } | null }>,
 ): Promise<MergeMoveOutcome<Row>> {
@@ -105,20 +149,19 @@ export async function runMergeMoveSteps<Row extends { id: unknown }>(
     const step = steps[i]!;
     const { data, error } = await run(step);
     if (error) {
-      const rollbackFailures: MergeRollbackFailure[] = [];
-      for (const rbStep of completedSteps) {
-        const ids = (moved[rbStep.table] ?? []).map((r) => r.id);
-        if (ids.length === 0) continue;
-        const { error: rbError } = await rollback(rbStep, ids);
-        if (rbError) rollbackFailures.push({ table: rbStep.table, error: rbError.message });
-      }
+      const { rolledBack, rollbackFailures } = await rollbackMergeMoves(
+        [...completedSteps, step],
+        moved,
+        snapshot,
+        rollback,
+      );
       return {
         ok: false,
         failedAt: step,
         completed: i,
         error: error.message,
         moved,
-        rolledBack: rollbackFailures.length === 0,
+        rolledBack,
         rollbackFailures,
       };
     }
