@@ -27,6 +27,7 @@ import { stillCommittedRows, PARTIAL_PANEL_LEFTOVER_REASON, partiallyRestoredIds
 import { QUEUE_DELETE_ROLES } from "@/lib/visits/deletion";
 import { labQueueGate } from "@/lib/visits/lab-gate";
 import { loadOwnBatchRows } from "@/lib/audit/bulk-batch";
+import { readInChunks } from "@/lib/supabase/in-chunks";
 import { restoreTestRequestsForVisit, revalidateQueueSurfaces } from "@/lib/actions/visits/queue-restore-core";
 import {
   BULK_UNDO_VIA,
@@ -840,24 +841,21 @@ export async function undoBulkQueueAction(input: unknown): Promise<QueueUndoResu
       // deleted_by / delete_reason ride along too (finding 6): if a
       // partially-restored panel needs compensating back to deleted, this is
       // its prior state, not a synthetic one.
-      const { data: current } =
-        allIds.length > 0
-          ? await admin
-              .from("test_requests")
-              .select("id, deleted_at, deleted_by, delete_reason, visits ( deleted_at )")
-              .in("id", allIds)
-              .not("deleted_at", "is", null)
-          : {
-              data: [] as {
-                id: string;
-                deleted_at: string | null;
-                deleted_by: string | null;
-                delete_reason: string | null;
-              }[],
-            };
-      const currentDeletedAtById = new Map((current ?? []).map((r) => [r.id, r.deleted_at]));
+      // Read in IN_CHUNK slices (a batch can hold up to MAX_BULK_RECORDS ids).
+      // A failed slice leaves `current` empty, so EVERY group reads as stale
+      // and is refused (RESTORE_PANEL_CHANGED) before anything is restored —
+      // fail closed, never a restore against a partial picture.
+      const currentRead = await readInChunks(allIds, (chunk) =>
+        admin
+          .from("test_requests")
+          .select("id, deleted_at, deleted_by, delete_reason, visits ( deleted_at )")
+          .in("id", chunk)
+          .not("deleted_at", "is", null),
+      );
+      const current = currentRead.ok ? currentRead.rows : [];
+      const currentDeletedAtById = new Map(current.map((r) => [r.id, r.deleted_at]));
       const priorOf = new Map(
-        (current ?? []).map((r) => [r.id, { deleted_by: r.deleted_by, delete_reason: r.delete_reason }]),
+        current.map((r) => [r.id, { deleted_by: r.deleted_by, delete_reason: r.delete_reason }]),
       );
 
       const expectedDeletedAtOf = new Map<string, string>();

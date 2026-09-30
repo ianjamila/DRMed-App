@@ -1,5 +1,6 @@
 import "server-only";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { readInChunks } from "@/lib/supabase/in-chunks";
 import { UNDO_EXPIRED, undoWindowStartIso, type AuditRowForUndo } from "@/lib/ui/bulk-undo";
 
 // A generous bound for the two reads below — just enough to keep them on the
@@ -88,24 +89,35 @@ export async function loadOwnBatchRows(opts: {
     // newer changes", i.e. fail OPEN on exactly the check meant to stop Undo
     // from overwriting a newer change). `id` is the tie-break: without one,
     // `.range()` can drop or repeat rows across pages when `created_at` ties.
-    const laterRows: { resource_id: string | null; created_at: string; metadata: unknown }[] = [];
-    let from = 0;
-    for (;;) {
-      const { data, error: laterError } = await admin
-        .from("audit_log")
-        .select("resource_id, created_at, metadata")
-        .eq("resource_type", opts.resourceType)
-        .in("resource_id", resourceIds)
-        .gte("created_at", earliest)
-        .order("created_at", { ascending: true })
-        .order("id", { ascending: true })
-        .range(from, from + 999);
-      if (laterError) return { ok: false, error: "Could not read what that bulk change did — try again." };
-      const page = data ?? [];
-      laterRows.push(...page);
-      if (page.length < 1000) break;
-      from += 1000;
-    }
+    //
+    // `resourceIds` can hold up to MAX_BULK_RECORDS (500) ids, and `.in()`
+    // puts every value in the URL — so the ids go in IN_CHUNK-sized slices,
+    // each paged on its own (the total order above is per slice, which is all
+    // paging needs; the merge below is order-independent). Any failed page of
+    // any slice fails the whole read: closed, exactly as before.
+    const later = await readInChunks(resourceIds, async (chunk) => {
+      const slice: { resource_id: string | null; created_at: string; metadata: unknown }[] = [];
+      let from = 0;
+      for (;;) {
+        const { data, error: laterError } = await admin
+          .from("audit_log")
+          .select("resource_id, created_at, metadata")
+          .eq("resource_type", opts.resourceType)
+          .in("resource_id", chunk)
+          .gte("created_at", earliest)
+          .order("created_at", { ascending: true })
+          .order("id", { ascending: true })
+          .range(from, from + 999);
+        if (laterError) return { data: null, error: laterError };
+        const page = data ?? [];
+        slice.push(...page);
+        if (page.length < 1000) break;
+        from += 1000;
+      }
+      return { data: slice, error: null };
+    });
+    if (!later.ok) return { ok: false, error: "Could not read what that bulk change did — try again." };
+    const laterRows = later.rows;
     for (const r of laterRows) {
       if (!r.resource_id) continue;
       const ownCreatedAt = firstSeenAt.get(r.resource_id);

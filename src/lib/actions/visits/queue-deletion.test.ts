@@ -18,11 +18,12 @@ const body = src.slice(start, end === -1 ? undefined : end);
 describe("deleteTestRequestsManyCore refuses an all-stale selection", () => {
   it("returns ok:false when the candidate read finds no live rows", () => {
     expect(start, "deleteTestRequestsManyCore not found").toBeGreaterThan(-1);
-    expect(body).toMatch(/if \(!candidates \|\| candidates\.length === 0\) \{\s*return \{ ok: false, error: NOTHING_TO_DELETE_REFUSAL \};/);
+    expect(body).toMatch(/if \(candidates\.length === 0\) \{\s*return \{ ok: false, error: NOTHING_TO_DELETE_REFUSAL \};/);
   });
 
   it("refuses after the read-error handling and before any write", () => {
-    const readError = body.indexOf("if (readError)");
+    // The candidate read is chunked (readInChunks); a failed slice is a refusal, never an empty set.
+    const readError = body.indexOf("if (!read.ok)");
     const refusal = body.indexOf("candidates.length === 0");
     const firstWrite = body.indexOf("deleteTestRequestsForVisit(");
     expect(readError).toBeGreaterThan(-1);

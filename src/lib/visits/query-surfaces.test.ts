@@ -792,15 +792,36 @@ function collectChain(start: ts.CallExpression): {
   return { methods, calls };
 }
 
+/**
+ * Is this function the per-slice `fetch` callback handed straight to
+ * `readInChunks` (src/lib/supabase/in-chunks.ts)? That helper only splits a
+ * long id list into several identical reads; the callback is the caller's own
+ * query, run once per slice, so it is part of the caller's scope — the doctor
+ * / visit markers the caller applies around the read (e.g. claimTestsCore's
+ * isDoctorKind check) still speak for it. Without this, wrapping an existing
+ * read in the helper would silently shrink its scope to the arrow.
+ */
+function isChunkedReadCallback(fn: ts.Node): boolean {
+  const call = fn.parent;
+  return (
+    !!call &&
+    ts.isCallExpression(call) &&
+    ts.isIdentifier(call.expression) &&
+    call.expression.text === "readInChunks" &&
+    call.arguments.includes(fn as ts.Expression)
+  );
+}
+
 /** Nearest enclosing function-like node, for the cross-statement fallback. */
 function enclosingScope(node: ts.Node, src: ts.SourceFile): ts.Node {
   let current: ts.Node | undefined = node;
   while (current) {
     if (
-      ts.isFunctionDeclaration(current) ||
-      ts.isFunctionExpression(current) ||
-      ts.isArrowFunction(current) ||
-      ts.isMethodDeclaration(current)
+      (ts.isFunctionDeclaration(current) ||
+        ts.isFunctionExpression(current) ||
+        ts.isArrowFunction(current) ||
+        ts.isMethodDeclaration(current)) &&
+      !isChunkedReadCallback(current)
     ) {
       return current;
     }

@@ -16,6 +16,7 @@ import { translatePgError } from "@/lib/accounting/pg-errors";
 import { labQueueGate } from "@/lib/visits/lab-gate";
 import { canClaimSection, sectionsForRole } from "@/lib/auth/role-sections";
 import { scopeToAllowedSections } from "@/lib/visits/bulk-selection";
+import { readInChunks } from "@/lib/supabase/in-chunks";
 
 export type PanelOutcome = { ok: true } | { ok: false; error: string };
 type Supabase = Awaited<ReturnType<typeof createClient>>;
@@ -243,13 +244,17 @@ export async function readBenchStartedAt(
 ): Promise<{ ok: true; startedAtById: Map<string, string | null> } | { ok: false }> {
   const startedAtById = new Map<string, string | null>();
   if (testRequestIds.length === 0) return { ok: true, startedAtById };
-  const { data, error } = await supabase
-    .from("test_requests")
-    .select("id, started_at, visits!inner ( id )")
-    .in("id", [...testRequestIds])
-    .is("deleted_at", null)
-    .is("visits.deleted_at", null);
-  if (error || !data) return { ok: false };
-  for (const r of data) startedAtById.set(r.id, r.started_at);
+  // Up to MAX_BULK_RECORDS (500) members across the selected panels: read in
+  // IN_CHUNK slices, and any failed slice fails the whole read (closed).
+  const read = await readInChunks(testRequestIds, (chunk) =>
+    supabase
+      .from("test_requests")
+      .select("id, started_at, visits!inner ( id )")
+      .in("id", chunk)
+      .is("deleted_at", null)
+      .is("visits.deleted_at", null),
+  );
+  if (!read.ok) return { ok: false };
+  for (const r of read.rows) startedAtById.set(r.id, r.started_at);
   return { ok: true, startedAtById };
 }

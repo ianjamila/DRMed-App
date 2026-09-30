@@ -16,6 +16,7 @@ import { ipAndAgent } from "@/lib/server/action-helpers";
 import { QUEUE_DELETE_ROLES } from "@/lib/visits/deletion";
 import { QueueDeleteReasonSchema } from "@/lib/validations/accounting";
 import { revalidateQueueSurfaces } from "@/lib/actions/visits/queue-restore-core";
+import { readInChunks } from "@/lib/supabase/in-chunks";
 import {
   ALREADY_DELETED_REASON,
   NOTHING_TO_DELETE_REFUSAL,
@@ -162,16 +163,17 @@ export async function deleteTestRequestsManyCore(
 
   const admin = createAdminClient();
 
-  const { data: candidates, error: readError } = await admin
-    .from("test_requests")
-    .select("id, visit_id")
-    .in("id", ids)
-    .is("deleted_at", null);
-  if (readError) return { ok: false, error: translatePgError(readError) };
+  // Chunked (IN_CHUNK): a panel's member list can be long, and a failed slice
+  // refuses the call before any write (never "those ids are already gone").
+  const read = await readInChunks(ids, (chunk) =>
+    admin.from("test_requests").select("id, visit_id").in("id", chunk).is("deleted_at", null),
+  );
+  if (!read.ok) return { ok: false, error: translatePgError(read.error) };
+  const candidates = read.rows;
   // Every id already deleted (or gone) — refuse before any write or audit row,
   // so a stale selection reads as a clear error, not an empty "success".
   // panel-actions.ts relies on this ok:false shape.
-  if (!candidates || candidates.length === 0) {
+  if (candidates.length === 0) {
     return { ok: false, error: NOTHING_TO_DELETE_REFUSAL };
   }
   const visitOfSingle = new Map(candidates.map((c) => [c.id, c.visit_id]));

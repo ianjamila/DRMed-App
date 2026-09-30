@@ -22,6 +22,7 @@ import { translatePgError } from "@/lib/accounting/pg-errors";
 import { ipAndAgent } from "@/lib/server/action-helpers";
 import { evaluateClaim, evaluateUnclaim } from "@/lib/queue/claim-eligibility";
 import { isDoctorKind } from "@/lib/visits/order-lines";
+import { readInChunks } from "@/lib/supabase/in-chunks";
 import type { BulkQueueResult, SkippedRow } from "@/lib/queue/bulk-queue";
 
 type Supabase = Awaited<ReturnType<typeof createClient>>;
@@ -55,16 +56,20 @@ export async function claimTestsCore(
   const ids = Array.from(new Set(testIds));
   const { ip, ua } = await ipAndAgent();
 
-  const { data: rows, error: readError } = await supabase
-    .from("test_requests")
-    .select(
-      "id, is_package_header, services!inner ( kind, section, name ), visits!inner ( deleted_at, payment_status, hmo_provider_id )",
-    )
-    .in("id", ids)
-    // A queue-deleted line (0125) reads as not found.
-    .is("deleted_at", null);
-  if (readError) return { ok: false, error: translatePgError(readError) };
-  const byId = new Map((rows ?? []).map((r) => [r.id, r]));
+  // Chunked (IN_CHUNK): a caller may pass up to MAX_BULK_RECORDS ids, and a
+  // failed slice refuses the whole call before any write.
+  const read = await readInChunks(ids, (chunk) =>
+    supabase
+      .from("test_requests")
+      .select(
+        "id, is_package_header, services!inner ( kind, section, name ), visits!inner ( deleted_at, payment_status, hmo_provider_id )",
+      )
+      .in("id", chunk)
+      // A queue-deleted line (0125) reads as not found.
+      .is("deleted_at", null),
+  );
+  if (!read.ok) return { ok: false, error: translatePgError(read.error) };
+  const byId = new Map(read.rows.map((r) => [r.id, r]));
 
   const changed: Array<{ id: string; visit_id: string }> = [];
   const skipped: SkippedRow[] = [];
@@ -161,14 +166,16 @@ export async function unclaimTestsCore(
 
   const { ip, ua } = await ipAndAgent();
 
-  const { data: before, error: readError } = await supabase
-    .from("test_requests")
-    .select("id, assigned_to, status, started_at, visits!inner ( id )")
-    .in("id", ids)
-    .is("deleted_at", null)
-    .is("visits.deleted_at", null);
-  if (readError) return { ok: false, error: translatePgError(readError) };
-  const byId = new Map((before ?? []).map((r) => [r.id, r]));
+  const read = await readInChunks(ids, (chunk) =>
+    supabase
+      .from("test_requests")
+      .select("id, assigned_to, status, started_at, visits!inner ( id )")
+      .in("id", chunk)
+      .is("deleted_at", null)
+      .is("visits.deleted_at", null),
+  );
+  if (!read.ok) return { ok: false, error: translatePgError(read.error) };
+  const byId = new Map(read.rows.map((r) => [r.id, r]));
 
   const changed: Array<{
     id: string;
