@@ -32,11 +32,17 @@
 -- that visit, top-level (components ride their header's cascade, 0125), and
 -- the visit itself live.
 --
--- LOCK ORDER: both functions first lock their members' rows FOR UPDATE in id
--- order — the order 0198's release_visit_results / undo_visit_release lock a
--- visit's test_requests (ORDER BY id) — so a panel Undo racing a release on
--- the same visit queues behind it instead of forming a lock cycle. The UPDATE's
--- own predicates, re-evaluated after the locks, still decide all-or-nothing.
+-- LOCK ORDER: both functions first lock their members' rows FOR NO KEY UPDATE
+-- in id order (restore locks its visit first, FOR NO KEY UPDATE) — the order
+-- 0198's release_visit_results / undo_visit_release take a visit's locks
+-- (visit, then its test_requests ORDER BY id, FOR UPDATE, which this still
+-- conflicts with) — so a panel Undo racing a release on the same visit queues
+-- behind it, removing the row-order deadlock with 0198. NO KEY UPDATE keeps
+-- FK child inserts (a new result link) unblocked. The UPDATE's own predicates,
+-- re-evaluated after the locks, still decide all-or-nothing. One cycle
+-- remains by design: a queued EXCLUSIVE patient lifecycle lock (0184, patient
+-- delete/restore) can still end one side as 40P01, which callers retry once
+-- (withLifecycleRetry) — the class 0184 accepts.
 -- =============================================================================
 
 create or replace function public.reclaim_panel_members(
@@ -68,7 +74,8 @@ begin
   if v_wanted = 0 or v_wanted > 200
      or exists (select 1 from unnest(p_test_request_ids, p_holders) as x(id, holder)
                  where x.id is null or x.holder is null)
-     or (select count(distinct x.id) from unnest(p_test_request_ids) as x(id)) <> v_wanted then
+     or (select count(distinct x.id) from unnest(p_test_request_ids) as x(id)) <> v_wanted
+     or exists (select 1 from unnest(p_started_at) as s(v) where s.v > now()) then
     raise exception 'Nothing to put back in this report.' using errcode = 'P0082';
   end if;
 
@@ -78,13 +85,14 @@ begin
   end if;
 
   -- Lock the members in id order first, like 0198's release/undo lock a
-  -- visit's test_requests (ORDER BY id): matching it removes the deadlock
-  -- window against a racing release. The UPDATE's own predicates below
+  -- visit's test_requests (ORDER BY id): matching it removes the row-order
+  -- deadlock with 0198. NO KEY UPDATE still conflicts with 0198's FOR UPDATE
+  -- but does not block FK child inserts. The UPDATE's own predicates below
   -- still decide all-or-nothing.
   perform 1 from public.test_requests t
    where t.id = any (p_test_request_ids)
    order by t.id
-     for update;
+     for no key update;
 
   update public.test_requests t
      set status      = 'in_progress',
@@ -142,19 +150,24 @@ begin
     raise exception 'Nothing to restore in this report.' using errcode = 'P0082';
   end if;
 
+  -- Lock the visit, then the members in id order, like 0198's release/undo
+  -- (visit first, then the visit's test_requests ORDER BY id; the restore
+  -- cascade touches the visit too): removes the row-order deadlock with 0198.
+  -- NO KEY UPDATE still conflicts with 0198's locks but does not block FK
+  -- child inserts. The UPDATE's own predicates below still decide
+  -- all-or-nothing.
+  perform 1 from public.visits v where v.id = p_visit_id for no key update;
+
+  -- Checked AFTER the visit lock, so the answer cannot change under us.
   if exists (select 1 from public.visits v where v.id = p_visit_id and v.deleted_at is not null) then
     raise exception 'The visit itself is deleted — restore the visit first.' using errcode = 'P0082';
   end if;
 
-  -- Lock the members in id order first, like 0198's release/undo lock a
-  -- visit's test_requests (ORDER BY id): matching it removes the deadlock
-  -- window against a racing release. The UPDATE's own predicates below
-  -- still decide all-or-nothing.
   perform 1 from public.test_requests t
    where t.id = any (p_test_request_ids)
      and t.visit_id = p_visit_id
    order by t.id
-     for update;
+     for no key update;
 
   update public.test_requests t
      set deleted_at    = null,

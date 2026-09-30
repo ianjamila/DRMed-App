@@ -32,6 +32,15 @@
 --  12. a member on another visit → P0082, nothing restored.
 --  13. authenticated cannot execute restore (42501).
 --  14. ACLs on both functions.
+--  15. restore with a component member (parent_id not null) → P0082, nothing
+--      restored (components ride their header's cascade, 0125).
+--  16. restore malformed input (length mismatch, empty, repeated id, null
+--      deleted_at) → P0082.
+--  17. reclaim where a member is still 'requested' but has a holder → P0082
+--      (status alone must not mask it).
+--  18. reclaim with a started_at in the future → P0082.
+--  19. an admin mid-View-as (effective role medtech) putting back another
+--      medtech's claim → P0082 "own name".
 -- =============================================================================
 
 begin;
@@ -77,8 +86,14 @@ insert into public.test_requests (id, visit_id, service_id, requested_by, status
   ('f0000000-0000-4000-8000-000000000200', 'e0000000-0000-4000-8000-000000000200', 'c0000000-0000-4000-8000-000000000200', 'a0000000-0000-4000-8000-000000000200', 'requested'),
   ('f1000000-0000-4000-8000-000000000200', 'e0000000-0000-4000-8000-000000000200', 'c1000000-0000-4000-8000-000000000200', 'a0000000-0000-4000-8000-000000000200', 'requested'),
   ('f2000000-0000-4000-8000-000000000200', 'e0000000-0000-4000-8000-000000000200', 'c2000000-0000-4000-8000-000000000200', 'a0000000-0000-4000-8000-000000000200', 'requested'),
+  -- a package header + its component on the first visit (case 15)
+  ('f4000000-0000-4000-8000-000000000200', 'e0000000-0000-4000-8000-000000000200', 'c0000000-0000-4000-8000-000000000200', 'a0000000-0000-4000-8000-000000000200', 'requested'),
   -- a line on the OTHER visit (case 12)
   ('f3000000-0000-4000-8000-000000000200', 'e1000000-0000-4000-8000-000000000200', 'c0000000-0000-4000-8000-000000000200', 'a0000000-0000-4000-8000-000000000200', 'requested');
+
+update public.test_requests set is_package_header = true where id = 'f4000000-0000-4000-8000-000000000200';
+insert into public.test_requests (id, visit_id, service_id, requested_by, status, parent_id) values
+  ('f5000000-0000-4000-8000-000000000200', 'e0000000-0000-4000-8000-000000000200', 'c1000000-0000-4000-8000-000000000200', 'a0000000-0000-4000-8000-000000000200', 'requested', 'f4000000-0000-4000-8000-000000000200');
 
 -- helpers ---------------------------------------------------------------------
 
@@ -114,7 +129,7 @@ begin
   update public.test_requests
      set status = 'requested', assigned_to = null, started_at = null,
          deleted_at = null, deleted_by = null, delete_reason = null
-   where id = any (pg_temp.ids()) or id = 'f3000000-0000-4000-8000-000000000200';
+   where id = any (pg_temp.ids()) or id in ('f3000000-0000-4000-8000-000000000200', 'f4000000-0000-4000-8000-000000000200', 'f5000000-0000-4000-8000-000000000200');
 end $$;
 
 -- Switch to a runtime role the way the app's clients do. p_role is
@@ -374,6 +389,85 @@ select pg_temp.expect_err('13 authenticated restore', 'authenticated', 'a2000000
        array['f0000000-0000-4000-8000-000000000200']::uuid[],
        array['2026-09-30 03:00:00+00']::timestamptz[])$q$);
 select pg_temp.expect('13 nothing restored', 'requested:-:D,requested:-:D,requested:-:D');
+
+-- 15. restore with a component member → P0082, nothing restored -----------------
+select pg_temp.reset();
+update public.test_requests
+   set deleted_at = '2026-09-30 03:00:00+00', deleted_by = 'a0000000-0000-4000-8000-000000000200', delete_reason = 'smoke delete'
+ where id in ('f0000000-0000-4000-8000-000000000200', 'f1000000-0000-4000-8000-000000000200', 'f4000000-0000-4000-8000-000000000200');
+-- a component cannot be deleted on its own (P0044): deleting its header cascades
+-- the same deleted_at / reason to it.
+do $$ begin
+  if (select deleted_at from public.test_requests where id = 'f5000000-0000-4000-8000-000000000200') is distinct from '2026-09-30 03:00:00+00'::timestamptz then
+    raise exception 'FAIL: 15: fixture — the header delete did not cascade to the component';
+  end if;
+end $$;
+select pg_temp.expect_err('15 component member', 'service_role', null, 'P0082', 'nothing was restored',
+  $q$select public.restore_panel_members(
+       'e0000000-0000-4000-8000-000000000200'::uuid,
+       array['f0000000-0000-4000-8000-000000000200','f1000000-0000-4000-8000-000000000200','f5000000-0000-4000-8000-000000000200']::uuid[],
+       array['2026-09-30 03:00:00+00','2026-09-30 03:00:00+00','2026-09-30 03:00:00+00']::timestamptz[])$q$);
+select pg_temp.expect('15 nothing restored', 'requested:-:D,requested:-:D,requested:-');
+do $$ begin
+  if (select deleted_at from public.test_requests where id = 'f5000000-0000-4000-8000-000000000200') is null then
+    raise exception 'FAIL: 15: the component was restored';
+  end if;
+end $$;
+
+-- 16. restore malformed input → P0082 ---------------------------------------------
+select pg_temp.expect_err('16 length mismatch', 'service_role', null, 'P0082', 'refresh the queue',
+  $q$select public.restore_panel_members(
+       'e0000000-0000-4000-8000-000000000200'::uuid,
+       array['f0000000-0000-4000-8000-000000000200','f1000000-0000-4000-8000-000000000200']::uuid[],
+       array['2026-09-30 03:00:00+00']::timestamptz[])$q$);
+select pg_temp.expect_err('16 empty arrays', 'service_role', null, 'P0082', 'Nothing to restore',
+  $q$select public.restore_panel_members('e0000000-0000-4000-8000-000000000200'::uuid, '{}'::uuid[], '{}'::timestamptz[])$q$);
+select pg_temp.expect_err('16 repeated id', 'service_role', null, 'P0082', 'Nothing to restore',
+  $q$select public.restore_panel_members(
+       'e0000000-0000-4000-8000-000000000200'::uuid,
+       array['f0000000-0000-4000-8000-000000000200','f0000000-0000-4000-8000-000000000200']::uuid[],
+       array['2026-09-30 03:00:00+00','2026-09-30 03:00:00+00']::timestamptz[])$q$);
+select pg_temp.expect_err('16 null deleted_at', 'service_role', null, 'P0082', 'Nothing to restore',
+  $q$select public.restore_panel_members(
+       'e0000000-0000-4000-8000-000000000200'::uuid,
+       array['f0000000-0000-4000-8000-000000000200','f1000000-0000-4000-8000-000000000200']::uuid[],
+       array['2026-09-30 03:00:00+00',null]::timestamptz[])$q$);
+select pg_temp.expect('16 nothing restored', 'requested:-:D,requested:-:D,requested:-');
+
+-- 17. reclaim: a member is 'requested' but still has a holder → P0082 ---------------
+select pg_temp.reset();
+update public.test_requests set assigned_to = 'a1000000-0000-4000-8000-000000000200'
+ where id = 'f1000000-0000-4000-8000-000000000200';
+select pg_temp.expect('17 before', 'requested:-,requested:a1,requested:-');
+select pg_temp.expect_err('17 requested but held', 'authenticated', 'a2000000-0000-4000-8000-000000000200', 'P0082', 'nothing was put back',
+  $q$select public.reclaim_panel_members(
+       $a${f0000000-0000-4000-8000-000000000200,f1000000-0000-4000-8000-000000000200,f2000000-0000-4000-8000-000000000200}$a$::uuid[],
+       array['a0000000-0000-4000-8000-000000000200','a0000000-0000-4000-8000-000000000200','a0000000-0000-4000-8000-000000000200']::uuid[],
+       array[null,null,null]::timestamptz[])$q$);
+select pg_temp.expect('17 nothing changed', 'requested:-,requested:a1,requested:-');
+
+-- 18. reclaim with a future started_at → P0082 -------------------------------------
+select pg_temp.reset();
+select pg_temp.expect_err('18 future started_at', 'authenticated', 'a2000000-0000-4000-8000-000000000200', 'P0082', 'Nothing to put back',
+  $q$select public.reclaim_panel_members(
+       $a${f0000000-0000-4000-8000-000000000200,f1000000-0000-4000-8000-000000000200,f2000000-0000-4000-8000-000000000200}$a$::uuid[],
+       array['a0000000-0000-4000-8000-000000000200','a0000000-0000-4000-8000-000000000200','a0000000-0000-4000-8000-000000000200']::uuid[],
+       array[null,null,now() + interval '1 day']::timestamptz[])$q$);
+select pg_temp.expect('18 nothing changed', 'requested:-,requested:-,requested:-');
+
+-- 19. an admin mid-View-as (effective role medtech) is not an admin here -------------
+update public.staff_profiles
+   set view_as_role = 'medtech', view_as_until = now() + interval '1 hour'
+ where id = 'a2000000-0000-4000-8000-000000000200';
+select pg_temp.reset();
+select pg_temp.expect_err('19 admin viewing as medtech', 'authenticated', 'a2000000-0000-4000-8000-000000000200', 'P0082', 'own name',
+  $q$select public.reclaim_panel_members(
+       $a${f0000000-0000-4000-8000-000000000200,f1000000-0000-4000-8000-000000000200,f2000000-0000-4000-8000-000000000200}$a$::uuid[],
+       array['a1000000-0000-4000-8000-000000000200','a1000000-0000-4000-8000-000000000200','a1000000-0000-4000-8000-000000000200']::uuid[],
+       array[null,null,null]::timestamptz[])$q$);
+select pg_temp.expect('19 nothing changed', 'requested:-,requested:-,requested:-');
+update public.staff_profiles set view_as_role = null, view_as_until = null
+ where id = 'a2000000-0000-4000-8000-000000000200';
 
 -- 14. ACLs --------------------------------------------------------------------------
 do $$
