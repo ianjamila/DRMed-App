@@ -7790,6 +7790,15 @@ export type Database = {
         }
         Returns: Json
       }
+      release_visit_results: {
+        Args: {
+          p_actor?: string
+          p_medium: string
+          p_test_request_ids: string[]
+          p_visit_id: string
+        }
+        Returns: Json
+      }
       reschedule_closure_appointments: {
         Args: {
           p_actor: string
@@ -8118,6 +8127,14 @@ export type Database = {
       unclaim_panel_members: {
         Args: { p_holders: string[]; p_test_request_ids: string[] }
         Returns: number
+      }
+      undo_visit_release: {
+        Args: {
+          p_actor?: string
+          p_test_request_ids: string[]
+          p_visit_id: string
+        }
+        Returns: Json
       }
       view_as_end_for: {
         Args: {

@@ -16,7 +16,7 @@ const NOTHING_RELEASED = "The report was not released — release it from the qu
 /**
  * finalise-consolidated releases the report it just finalised through
  * releaseVisitSelection (whole report or nothing, patient notice + reception
- * alert for a report verified complete). This folds that outcome into what the
+ * alert once it went out). This folds that outcome into what the
  * entry form shows. The report is finalised either way; a deferral only means
  * it is not in the patient's hands yet.
  */
@@ -39,7 +39,7 @@ export function classifyFinaliseRelease(
     if (reason?.startsWith(NOT_FINISHED_PREFIX)) return deferred("signoff");
     return deferred("other", reason ?? NOTHING_RELEASED);
   }
-  // Part of the report went out (a race between the plan and the write).
+  // Part of the selection went out and part was refused.
   return deferred("other", out.warnings[0] ?? reason ?? NOTHING_RELEASED);
 }
 

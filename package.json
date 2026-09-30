@@ -54,7 +54,8 @@
     "sheet:sync": "tsx scripts/sheet-sync.ts",
     "patient-sources:db-proof": "tsx scripts/patient-sources-db-proof.ts",
     "ad-spend:concurrency-proof": "tsx scripts/ad-spend-concurrency-proof.ts",
-    "panel-claim:concurrency-proof": "tsx scripts/panel-claim-concurrency-proof.ts"
+    "panel-claim:concurrency-proof": "tsx scripts/panel-claim-concurrency-proof.ts",
+    "report-release:concurrency-proof": "tsx scripts/report-release-concurrency-proof.ts"
   },
   "dependencies": {
     "@base-ui/react": "^1.4.1",

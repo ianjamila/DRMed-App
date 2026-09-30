@@ -1,12 +1,25 @@
 // Test fixture — never imported by app code. An in-memory Supabase stand-in
-// for the release pipeline (releaseVisitSelection / releaseRows / the queue
-// and visit-page release actions). It HONOURS eq / neq / in / is / not filters
-// (dotted paths reach into embeds) and records every call, so a test that
-// drops a filter from the code under test fails instead of passing vacuously.
+// for the release pipeline (releaseVisitSelection, undoReleasedRows, the queue
+// and visit-page release actions).
 //
-// Tables: `test_requests` (select + update) and `result_test_requests`
-// (select: the links read by `test_request_id`, the membership read by
-// `result_id`). It ignores the select string and returns one superset shape.
+//  - `from("test_requests")` serves the callers' pre-reads (select only). It
+//    HONOURS eq / neq / in / is / not filters (dotted paths reach into embeds)
+//    and records every call, so a test that drops a filter from the code under
+//    test fails instead of passing vacuously.
+//  - `rpc("release_visit_results" | "undo_visit_release")` is a TypeScript
+//    model of migration 0198: same result shape, same refusal codes, same
+//    whole-report rule (a combined report goes out whole or not at all,
+//    deleted members counted). It writes the in-memory rows like the SQL does.
+//    It does NOT model the payment/consent triggers — inject those with
+//    `failNextRpc`.
+//
+// Failure injection is one-shot: `failNext(table, "read")` errors the next
+// SELECT, `failNextRpc(name, err)` errors the next call of that RPC,
+// `overrideNextRpc(name, data)` makes it return `data` instead (malformed
+// shapes), and `hooks.beforeRpc` runs just before the RPC plans — the place
+// to stage "someone else changed it between the page read and the write".
+
+import { sectionsForRole } from "@/lib/auth/role-sections";
 
 export interface FakeTestRow {
   id: string;
@@ -25,12 +38,14 @@ export interface FakeTestRow {
   patientId?: string;
   patientActive?: boolean;
   releasedAt?: string | null;
+  releaseMedium?: string | null;
 }
 
-export type FakeRow = Required<Omit<FakeTestRow, "hmoProviderId" | "releasedAt" | "parentId">> & {
+export type FakeRow = Required<Omit<FakeTestRow, "hmoProviderId" | "releasedAt" | "releaseMedium" | "parentId">> & {
   parentId: string | null;
   hmoProviderId: string | null;
   releasedAt: string | null;
+  releaseMedium: string | null;
 };
 
 export interface FakeLink {
@@ -38,34 +53,25 @@ export interface FakeLink {
   resultId: string;
 }
 
-/**
- * One-shot failure injection.
- *  - "read"           next SELECT on the table errors (either result_test_requests read)
- *  - "membership"     next result_test_requests read by result_id errors
- *  - "reread"         the SECOND and later membership reads error (the post-write check)
- *  - "truncate"       next membership read silently drops the last member of every report
- *                     (count follows the shortened list — an undetectable-by-count drop)
- *  - "cap"            next membership read drops the last member of every report but its
- *                     `count` stays the true total — PostgREST row capping
- *  - "cap-reread"     same as "cap", on the SECOND and later membership reads (post-write)
- *  - "update-error"   next UPDATE on the table errors
- *  - "update-partial" next UPDATE on the table applies to the first matching row only
- */
-export type FailPhase = "read" | "membership" | "reread" | "truncate" | "update-error" | "update-partial" | "cap" | "cap-reread";
+/** One-shot failure injection on the test_requests pre-read: "read" errors the next SELECT. */
+export type FailPhase = "read";
 
 export interface FakeCall {
   table: string;
-  op: "select" | "update";
+  op: "select";
   select?: string;
-  count?: string;
-  patch?: Record<string, unknown>;
   filters: Array<{ op: "eq" | "neq" | "in" | "is" | "not"; column: string; value: unknown; not?: string }>;
 }
 
 type Err = { code: string; message: string };
 const DEFAULT_ERR: Err = { code: "XX000", message: "fake failure" };
 
-export function makeFakeReleaseDb(seed: { rows: FakeTestRow[]; links?: FakeLink[] }) {
+export interface FakeRpcCall {
+  name: string;
+  args: Record<string, unknown>;
+}
+
+export function makeFakeReleaseDb(seed: { rows: FakeTestRow[]; links?: FakeLink[]; actorRole?: string | (() => string) }) {
   const rows: FakeRow[] = seed.rows.map((r) => ({
     visitId: "v1",
     status: "ready_for_release",
@@ -81,16 +87,26 @@ export function makeFakeReleaseDb(seed: { rows: FakeTestRow[]; links?: FakeLink[
     patientId: "p1",
     patientActive: true,
     releasedAt: null,
+    releaseMedium: null,
     ...r,
   }));
   const links: FakeLink[] = [...(seed.links ?? [])];
   const calls: FakeCall[] = [];
   const failures: Array<{ table: string; phase: FailPhase; error: Err }> = [];
-  let membershipReads = 0;
-  const hooks: { beforeRead?: (table: string, membershipRead: boolean) => void } = {};
+  const rpcCalls: FakeRpcCall[] = [];
+  const rpcFailures: Array<{ name: string; error: Err }> = [];
+  const rpcOverrides: Array<{ name: string; data: unknown }> = [];
+  const hooks: { beforeRead?: (table: string) => void; beforeRpc?: (name: string) => void } = {};
+  const roleOfActor = () => (typeof seed.actorRole === "function" ? seed.actorRole() : (seed.actorRole ?? "medtech"));
 
   const failNext = (table: string, phase: FailPhase, error: Err = DEFAULT_ERR) => {
     failures.push({ table, phase, error });
+  };
+  const failNextRpc = (name: string, error: Err = DEFAULT_ERR) => {
+    rpcFailures.push({ name, error });
+  };
+  const overrideNextRpc = (name: string, data: unknown) => {
+    rpcOverrides.push({ name, data });
   };
   const take = (table: string, phases: FailPhase[]) => {
     const i = failures.findIndex((f) => f.table === table && phases.includes(f.phase));
@@ -105,6 +121,7 @@ export function makeFakeReleaseDb(seed: { rows: FakeTestRow[]; links?: FakeLink[
     is_package_header: r.isPackageHeader,
     parent_id: r.parentId,
     released_at: r.releasedAt,
+    release_medium: r.releaseMedium,
     services: { section: r.section, kind: r.kind, name: r.name },
     visits: {
       deleted_at: r.visitDeleted ? "2026-01-01T00:00:00Z" : null,
@@ -138,19 +155,9 @@ export function makeFakeReleaseDb(seed: { rows: FakeTestRow[]; links?: FakeLink[
   const client = {
     from(table: string) {
       const call: FakeCall = { table, op: "select", filters: [] };
-      let selectWanted = false;
       const q: Record<string, unknown> = {};
-      q.select = (s?: string, opts?: { count?: string }) => {
-        selectWanted = true;
-        if (call.op === "select") {
-          call.select = s;
-          call.count = opts?.count;
-        }
-        return q;
-      };
-      q.update = (patch: Record<string, unknown>) => {
-        call.op = "update";
-        call.patch = patch;
+      q.select = (s?: string) => {
+        call.select = s;
         return q;
       };
       q.eq = (column: string, value: unknown) => (call.filters.push({ op: "eq", column, value }), q);
@@ -161,7 +168,7 @@ export function makeFakeReleaseDb(seed: { rows: FakeTestRow[]; links?: FakeLink[
       q.then = (resolve: (v: unknown) => unknown, reject?: (e: unknown) => unknown) => {
         try {
           calls.push(call);
-          return Promise.resolve(execute(call, selectWanted)).then(resolve, reject);
+          return Promise.resolve(execute(call)).then(resolve, reject);
         } catch (e) {
           return Promise.reject(e).then(resolve, reject);
         }
@@ -170,67 +177,140 @@ export function makeFakeReleaseDb(seed: { rows: FakeTestRow[]; links?: FakeLink[
     },
   };
 
-  function execute(call: FakeCall, selectWanted: boolean): { data: unknown; error: Err | null; count?: number | null } {
-    const { table } = call;
-    if (table === "test_requests") {
-      const live = rows.filter((r) => call.filters.every((f) => matches(project(r), f)));
-      if (call.op === "select") {
-        hooks.beforeRead?.(table, false);
-        const fail = take(table, ["read"]);
-        if (fail) return { data: null, error: fail.error };
-        return { data: live.map(project), error: null };
-      }
-      const fail = take(table, ["update-error"]);
-      if (fail) return { data: null, error: fail.error };
-      const partial = take(table, ["update-partial"]);
-      const targets = partial ? live.slice(0, 1) : live;
-      for (const r of targets) {
-        const p = call.patch ?? {};
-        if (typeof p.status === "string") r.status = p.status;
-        if (typeof p.released_at === "string" || p.released_at === null) r.releasedAt = p.released_at as string | null;
-      }
-      return { data: selectWanted ? targets.map(project) : null, error: null };
-    }
-    if (table === "result_test_requests") {
-      const byResult = call.filters.some((f) => f.column === "result_id");
-      hooks.beforeRead?.(table, byResult);
-      const fail = take(table, ["read"]);
-      if (fail) return { data: null, error: fail.error };
-      let out = links.filter((l) =>
-        call.filters.every((f) => {
-          if (f.column === "test_request_id") return matches({ test_request_id: l.testRequestId }, f);
-          if (f.column === "result_id") return matches({ result_id: l.resultId }, f);
-          return true;
-        }),
-      );
-      if (!byResult) return { data: out.map((l) => ({ test_request_id: l.testRequestId, result_id: l.resultId })), error: null };
-      membershipReads += 1;
-      const mFail = take(table, ["membership"]) ?? (membershipReads >= 2 ? take(table, ["reread"]) : null);
-      if (mFail) return { data: null, error: mFail.error };
-      const dropLast = () => {
-        const lastByResult = new Map<string, FakeLink>();
-        for (const l of out) lastByResult.set(l.resultId, l);
-        out = out.filter((l) => lastByResult.get(l.resultId) !== l);
-      };
-      const inner = (l: FakeLink) => rows.some((x) => x.id === l.testRequestId);
-      let trueTotal = out.filter(inner).length;
-      if (take(table, ["truncate"])) {
-        dropLast();
-        trueTotal = out.filter(inner).length;
-      } else if (take(table, ["cap"]) ?? (membershipReads >= 2 ? take(table, ["cap-reread"]) : null)) {
-        dropLast();
-      }
-      return {
-        count: call.count ? trueTotal : null,
-        data: out
-          .map((l) => ({ l, r: rows.find((x) => x.id === l.testRequestId) }))
-          .filter((x) => x.r !== undefined)
-          .map(({ l, r }) => ({ test_request_id: l.testRequestId, result_id: l.resultId, test_requests: project(r!) })),
-        error: null,
-      };
-    }
-    throw new Error(`fake db: unsupported table ${table}`);
+  function execute(call: FakeCall): { data: unknown; error: Err | null } {
+    if (call.table !== "test_requests") throw new Error(`fake db: unsupported table ${call.table}`);
+    hooks.beforeRead?.(call.table);
+    const fail = take(call.table, ["read"]);
+    if (fail) return { data: null, error: fail.error };
+    const live = rows.filter((r) => call.filters.every((f) => matches(project(r), f)));
+    return { data: live.map(project), error: null };
   }
 
-  return { client: client as never, rows, links, calls, hooks, failNext };
+  // ---- 0198 model ---------------------------------------------------------
+  const inSections = (r: FakeRow) => {
+    const sections = sectionsForRole(roleOfActor() as never);
+    return sections === null || sections.includes(r.section as never);
+  };
+  const isDoctor = (r: FakeRow) => r.kind === "doctor_consultation" || r.kind === "doctor_procedure";
+  const membersOf = (resultId: string) =>
+    links.filter((l) => l.resultId === resultId).flatMap((l) => rows.filter((r) => r.id === l.testRequestId));
+  const reportsOf = (ids: string[]) =>
+    Array.from(new Set(links.filter((l) => ids.includes(l.testRequestId)).map((l) => l.resultId))).sort();
+  const p0081 = (message: string): Err => ({ code: "P0081", message });
+
+  function lockAndAssert(visitId: string, ids: string[], deletedMessage: string): Err | null {
+    // Visit/patient state is read off the selected rows (a real visit has one state; fixtures may mix).
+    const visitRows = rows.filter((r) => r.visitId === visitId && (ids.length === 0 || ids.includes(r.id)));
+    if (visitRows.length === 0) return p0081("Visit not found.");
+    if (visitRows.some((r) => !r.patientActive)) return { code: "P0058", message: "patient is deleted or merged" };
+    if (visitRows.some((r) => r.visitDeleted)) return p0081(deletedMessage);
+    if (ids.length === 0) return p0081("Nothing was selected.");
+    return null;
+  }
+
+  function releaseVisitResults(args: Record<string, unknown>): { data: unknown; error: Err | null } {
+    const visitId = args.p_visit_id as string;
+    const ids = Array.from(new Set(args.p_test_request_ids as string[])).sort();
+    const err = lockAndAssert(visitId, ids, "This visit was deleted from the queue. Restore it before releasing results.");
+    if (err) return { data: null, error: err };
+    const refused: Array<{ id: string; code: string; report_id: string | null; count: number }> = [];
+    const combined = new Set<string>();
+    const okReports = new Map<string, string>(); // member id -> report id
+    const release = new Set<string>();
+    for (const rid of reportsOf(ids)) {
+      const mem = membersOf(rid);
+      if (mem.length <= 1) continue;
+      mem.forEach((m) => combined.add(m.id));
+      const unfinished = mem.filter((m) => !m.deleted && !["ready_for_release", "released"].includes(m.status)).length;
+      const code = mem.some((m) => !inSections(m)) ? "report_outside_sections"
+        : mem.some((m) => m.isPackageHeader) ? "report_package_header"
+        : mem.some((m) => m.visitId !== visitId) ? "report_other_visit"
+        : mem.some(isDoctor) ? "report_doctor_member"
+        : mem.some((m) => m.deleted && m.status !== "released") ? "report_deleted_member"
+        : unfinished > 0 ? "report_not_finished"
+        : null;
+      if (code) {
+        for (const m of mem.filter((x) => ids.includes(x.id))) {
+          refused.push({ id: m.id, code, report_id: rid, count: unfinished });
+        }
+      } else {
+        for (const m of mem) {
+          okReports.set(m.id, rid);
+          if (!m.deleted && m.status === "ready_for_release") release.add(m.id);
+        }
+      }
+    }
+    for (const id of ids.filter((x) => !combined.has(x))) {
+      const r = rows.find((x) => x.id === id);
+      if (!r || r.visitId !== visitId || r.deleted || r.isPackageHeader || isDoctor(r) || r.status !== "ready_for_release") continue;
+      if (!inSections(r)) refused.push({ id, code: "outside_sections", report_id: null, count: 0 });
+      else release.add(id);
+    }
+    const now = new Date().toISOString();
+    const released = Array.from(release).sort().map((id) => {
+      const r = rows.find((x) => x.id === id)!;
+      r.status = "released";
+      r.releasedAt = now;
+      r.releaseMedium = args.p_medium as string;
+      return { id, name: r.name, report_id: okReports.get(id) ?? null, selected: ids.includes(id) };
+    });
+    for (const id of ids) {
+      if (!release.has(id) && !refused.some((x) => x.id === id)) {
+        refused.push({ id, code: "not_ready", report_id: null, count: 0 });
+      }
+    }
+    return { data: { released, refused }, error: null };
+  }
+
+  function undoVisitRelease(args: Record<string, unknown>): { data: unknown; error: Err | null } {
+    const visitId = args.p_visit_id as string;
+    const ids = Array.from(new Set(args.p_test_request_ids as string[])).sort();
+    const err = lockAndAssert(visitId, ids, "This visit was deleted from the queue. Restore it before undoing a release.");
+    if (err) return { data: null, error: err };
+    const expanded = new Set(ids);
+    const okReports = new Map<string, string>();
+    for (const rid of reportsOf(ids)) {
+      const mem = membersOf(rid);
+      if (mem.length <= 1) continue;
+      if (mem.some((m) => !inSections(m))) return { data: null, error: p0081("This report has tests outside the sections you can act on, so it can't be undone from here — ask an admin.") };
+      if (mem.some((m) => m.isPackageHeader)) return { data: null, error: p0081("This report includes a package header, which shouldn't happen — ask an admin to check it.") };
+      if (mem.some((m) => m.visitId !== visitId)) return { data: null, error: p0081("This report spans more than one visit, which shouldn't happen — ask an admin to check it.") };
+      for (const m of mem) {
+        expanded.add(m.id);
+        okReports.set(m.id, rid);
+      }
+    }
+    const cands = rows.filter(
+      (r) => expanded.has(r.id) && r.visitId === visitId && r.status === "released" && !r.isPackageHeader && !r.deleted && inSections(r),
+    );
+    if (cands.length === 0) return { data: null, error: p0081("None of the selected tests can be unreleased.") };
+    const undone = cands
+      .sort((a, b) => a.id.localeCompare(b.id))
+      .map((r) => {
+        const prior = { id: r.id, prior_release_medium: r.releaseMedium, prior_released_at: r.releasedAt, report_id: okReports.get(r.id) ?? null };
+        r.status = "ready_for_release";
+        r.releasedAt = null;
+        r.releaseMedium = null;
+        return prior;
+      });
+    return { data: { undone }, error: null };
+  }
+
+  const models: Record<string, (args: Record<string, unknown>) => { data: unknown; error: Err | null }> = {
+    release_visit_results: releaseVisitResults,
+    undo_visit_release: undoVisitRelease,
+  };
+  const rpc = async (name: string, args: Record<string, unknown>) => {
+    rpcCalls.push({ name, args });
+    hooks.beforeRpc?.(name);
+    const fi = rpcFailures.findIndex((f) => f.name === name);
+    if (fi !== -1) return { data: null, error: rpcFailures.splice(fi, 1)[0].error };
+    const oi = rpcOverrides.findIndex((o) => o.name === name);
+    if (oi !== -1) return { data: rpcOverrides.splice(oi, 1)[0].data, error: null };
+    const model = models[name];
+    if (!model) throw new Error(`fake db: unsupported rpc ${name}`);
+    return model(args);
+  };
+
+  return { client: { ...client, rpc } as never, rows, links, calls, rpcCalls, hooks, failNext, failNextRpc, overrideNextRpc };
 }

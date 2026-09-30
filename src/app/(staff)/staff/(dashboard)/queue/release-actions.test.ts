@@ -42,12 +42,8 @@ vi.mock("@/lib/observability/report-error", () => ({ reportError: async () => {}
 import { RELEASE_BLOCKED_CONSENT, RELEASE_BLOCKED_UNPAID } from "@/lib/visits/release-messages";
 import { RELEASE_REFUSAL } from "@/lib/queue/release-eligibility";
 import { REPORT_REFUSAL } from "@/lib/queue/report-release-scope";
-import {
-  COULDNT_CHECK_REPORT,
-  REPORT_CHANGED_REASON,
-  TOO_MANY_AFTER_EXPANSION,
-  UNVERIFIED_WARNING,
-} from "@/lib/actions/visits/release-reports";
+import { COULDNT_CONFIRM_RELEASE, RACED_REASON } from "@/lib/actions/visits/release-reports";
+import { RELEASE_REFUSAL_PATIENT_INACTIVE } from "@/lib/visits/release-messages";
 import { makeFakeReleaseDb, type FakeLink, type FakeTestRow } from "@/lib/actions/visits/fake-release-db";
 
 const { releaseTestsAction } = await import("./actions");
@@ -62,7 +58,8 @@ function setup(rows: FakeTestRow[], links: FakeLink[] = []) {
   return fake;
 }
 const statusOf = (fake: ReturnType<typeof setup>, id: string) => fake.rows.find((r) => r.id === id)!.status;
-const updates = (fake: ReturnType<typeof setup>) => fake.calls.filter((c) => c.table === "test_requests" && c.op === "update");
+/** The release_visit_results calls made — the one write path. */
+const writes = (fake: ReturnType<typeof setup>) => fake.rpcCalls.filter((c) => c.name === "release_visit_results");
 const report = (result: string, ...ids: string[]): FakeLink[] => ids.map((id) => ({ testRequestId: id, resultId: result }));
 
 beforeEach(() => {
@@ -122,8 +119,9 @@ describe("releaseTestsAction — eligibility and the per-visit write", () => {
     const fake = setup([{ id: A, visitId: "v1" }, { id: B, visitId: "v2" }]);
     const res = await releaseTestsAction({ testRequestIds: [A, B], medium: "email" });
     expect(res).toMatchObject({ ok: true, changedIds: [A, B], skipped: [], alsoReleasedIds: [], warnings: [] });
-    expect(updates(fake)).toHaveLength(2);
-    expect(updates(fake).map((c) => c.filters.find((f) => f.column === "visit_id")!.value).sort()).toEqual(["v1", "v2"]);
+    expect(writes(fake)).toHaveLength(2);
+    expect(writes(fake).map((c) => c.args.p_visit_id).sort()).toEqual(["v1", "v2"]);
+    expect(writes(fake).every((c) => c.args.p_actor === "u1" && c.args.p_medium === "email")).toBe(true);
     expect(fx.audits.map((a) => (a.metadata as { source: string }).source)).toEqual(["queue", "queue"]);
     expect(fx.alerts.sort()).toEqual([["v1", 1], ["v2", 1]]);
     expect(fx.revalidate).toEqual([
@@ -183,7 +181,7 @@ describe("releaseTestsAction — eligibility and the per-visit write", () => {
 
   it("a DB consent refusal on the write skips that visit's ids with the consent text", async () => {
     const fake = setup([{ id: A, visitId: "v1" }, { id: B, visitId: "v2" }]);
-    fake.failNext("test_requests", "update-error", { code: "23514", message: "consent required" });
+    fake.failNextRpc("release_visit_results", { code: "23514", message: "consent required" });
     const res = await releaseTestsAction({ testRequestIds: [A, B], medium: "email" });
     // The first visit's write failed, the second went through.
     expect(res).toMatchObject({ ok: true, changedIds: [B], skipped: [{ id: A, reason: RELEASE_BLOCKED_CONSENT }] });
@@ -202,11 +200,11 @@ describe("releaseTestsAction — combined reports", () => {
     expect(fx.alerts).toEqual([["v1", 2]]);
   });
 
-  it("refuses a mixed report (sibling awaiting sign-off) and never writes", async () => {
+  it("refuses a mixed report (sibling awaiting sign-off): nothing is released", async () => {
     const fake = setup([{ id: A }, { id: B, status: "result_uploaded" }], report("r1", A, B));
     const res = await releaseTestsAction({ testRequestIds: [A], medium: "email" });
     expect(res).toMatchObject({ ok: true, changedIds: [], skipped: [{ id: A, reason: REPORT_REFUSAL.notFinished(1) }] });
-    expect(updates(fake)).toHaveLength(0);
+    expect(statusOf(fake, A)).toBe("ready_for_release");
     expect(fx.notifyOne.length + fx.notifyBulk.length).toBe(0);
     expect(fx.alerts).toHaveLength(0);
   });
@@ -215,7 +213,7 @@ describe("releaseTestsAction — combined reports", () => {
     const fake = setup([{ id: A }, { id: B, deleted: true }], report("r1", A, B));
     const res = await releaseTestsAction({ testRequestIds: [A], medium: "email" });
     expect(res).toMatchObject({ ok: true, changedIds: [], skipped: [{ id: A, reason: REPORT_REFUSAL.deletedMember }] });
-    expect(updates(fake)).toHaveLength(0);
+    expect(statusOf(fake, A)).toBe("ready_for_release");
   });
 
   it("releases a report whose only other member is already released", async () => {
@@ -236,36 +234,29 @@ describe("releaseTestsAction — combined reports", () => {
     expectPartition([A, C, E], res);
   });
 
-  it("race: the write releases only part of the report -> no notice, no alert, and a note", async () => {
+  it("a sibling going stale before the write: the database refuses the whole report, nothing goes out", async () => {
     const fake = setup([{ id: A }, { id: B }], report("r1", A, B));
-    fake.failNext("test_requests", "update-partial");
+    fake.hooks.beforeRpc = () => {
+      fake.rows.find((r) => r.id === B)!.status = "result_uploaded";
+    };
     const res = await releaseTestsAction({ testRequestIds: [A], medium: "email" });
-    expect(res).toMatchObject({ ok: true, changedIds: [A], warnings: [REPORT_CHANGED_REASON] });
+    expect(res).toMatchObject({ ok: true, changedIds: [], skipped: [{ id: A, reason: REPORT_REFUSAL.notFinished(1) }] });
+    expect(statusOf(fake, A)).toBe("ready_for_release");
     expect(fx.notifyOne.length + fx.notifyBulk.length).toBe(0);
     expect(fx.alerts).toHaveLength(0);
+    expectPartition([A], res);
   });
 
-  it("race where the selected row is the one left behind: it is skipped with the note", async () => {
-    const fake = setup([{ id: A }, { id: B }], report("r1", A, B));
-    fake.failNext("test_requests", "update-partial");
-    const res = await releaseTestsAction({ testRequestIds: [B], medium: "email" });
-    // rows are read in seed order, so the partial write releases A (pulled in), not B.
+  it("a whole-call refusal from the database (P0081) skips the visit's ids with its message", async () => {
+    const fake = setup([{ id: A }]);
+    fake.failNextRpc("release_visit_results", { code: "P0081", message: "Too many tests once whole reports are included — select fewer." });
+    const res = await releaseTestsAction({ testRequestIds: [A], medium: "email" });
     expect(res).toMatchObject({
       ok: true,
       changedIds: [],
-      alsoReleasedIds: [A],
-      skipped: [{ id: B, reason: REPORT_CHANGED_REASON }],
+      skipped: [{ id: A, reason: "Too many tests once whole reports are included — select fewer." }],
     });
-    expect(fx.notifyOne.length + fx.notifyBulk.length).toBe(0);
-    expectPartition([B], res);
-  });
-
-  it("refuses when whole-report expansion exceeds 500 tests", async () => {
-    const many = Array.from({ length: 501 }, (_, i) => ({ id: `m${i}` }));
-    const fake = setup([{ id: A }, ...many], report("r1", A, ...many.map((m) => m.id)));
-    const res = await releaseTestsAction({ testRequestIds: [A], medium: "email" });
-    expect(res).toMatchObject({ ok: true, changedIds: [], skipped: [{ id: A, reason: TOO_MANY_AFTER_EXPANSION }] });
-    expect(updates(fake)).toHaveLength(0);
+    expect(fx.alerts).toHaveLength(0);
   });
 
   it("partitions every id exactly once across a mixed selection", async () => {
@@ -280,65 +271,41 @@ describe("releaseTestsAction — combined reports", () => {
 });
 
 describe("releaseTestsAction — fail closed", () => {
-  it("links read error: the visit is skipped and nothing is written", async () => {
-    const fake = setup([{ id: A }, { id: B }], report("r1", A, B));
-    fake.failNext("result_test_requests", "read");
-    const res = await releaseTestsAction({ testRequestIds: [A], medium: "email" });
-    expect(res).toMatchObject({ ok: true, changedIds: [], skipped: [{ id: A, reason: COULDNT_CHECK_REPORT }] });
-    expect(updates(fake)).toHaveLength(0);
-    expect(fx.alerts).toHaveLength(0);
-  });
-
-  it("membership read error: the visit is skipped and nothing is written", async () => {
-    const fake = setup([{ id: A }, { id: B }], report("r1", A, B));
-    fake.failNext("result_test_requests", "membership");
-    const res = await releaseTestsAction({ testRequestIds: [A], medium: "email" });
-    expect(res).toMatchObject({ ok: true, changedIds: [], skipped: [{ id: A, reason: COULDNT_CHECK_REPORT }] });
-    expect(updates(fake)).toHaveLength(0);
-  });
-
-  it("membership read that returns fewer members than the links skips that report only", async () => {
-    const fake = setup([{ id: A }, { id: B }, { id: C }], [...report("r1", A, B), ...report("r2", C)]);
-    fake.failNext("result_test_requests", "truncate");
-    const res = await releaseTestsAction({ testRequestIds: [A, B, C], medium: "email" });
-    // truncate drops the last member of every report, so r1 loses B and r2 loses C: both skipped.
-    expect(res).toMatchObject({
-      ok: true,
-      changedIds: [],
-      skipped: [{ id: A }, { id: B }, { id: C }],
-    });
-    expect(updates(fake)).toHaveLength(0);
-  });
-
-  it("a failed membership read on one visit does not stop another visit", async () => {
-    const fake = setup([{ id: A, visitId: "v1" }, { id: B, visitId: "v2" }], [...report("r1", A), ...report("r2", B)]);
-    fake.failNext("result_test_requests", "membership");
+  it("a database error skips the visit and announces nothing; another visit still goes through", async () => {
+    const fake = setup([{ id: A, visitId: "v1" }, { id: B, visitId: "v2" }]);
+    fake.failNextRpc("release_visit_results", { code: "XX000", message: "boom" });
     const res = await releaseTestsAction({ testRequestIds: [A, B], medium: "email" });
-    expect(res).toMatchObject({ ok: true, changedIds: [B], skipped: [{ id: A, reason: COULDNT_CHECK_REPORT }] });
+    expect(res).toMatchObject({ ok: true, changedIds: [B], skipped: [{ id: A, reason: "boom" }] });
+    expect(statusOf(fake, A)).toBe("ready_for_release");
+    expect(fx.alerts).toEqual([["v2", 1]]);
   });
 
-  it("post-write read error: the release stands, no notice, verification warning", async () => {
-    const fake = setup([{ id: A }, { id: B }], report("r1", A, B));
-    fake.failNext("result_test_requests", "reread");
+  it("P0058 (patient deleted or merged mid-release) reads as the inactive-patient message", async () => {
+    const fake = setup([{ id: A }]);
+    fake.failNextRpc("release_visit_results", { code: "P0058", message: "patient gone" });
     const res = await releaseTestsAction({ testRequestIds: [A], medium: "email" });
-    expect(res).toMatchObject({ ok: true, changedIds: [A], alsoReleasedIds: [B], warnings: [UNVERIFIED_WARNING] });
-    expect(statusOf(fake, A)).toBe("released");
+    expect(res).toMatchObject({ ok: true, changedIds: [], skipped: [{ id: A, reason: RELEASE_REFUSAL_PATIENT_INACTIVE }] });
+  });
+
+  it("a serialization failure (40001) is retried once and then succeeds", async () => {
+    const fake = setup([{ id: A }]);
+    fake.failNextRpc("release_visit_results", { code: "40001", message: "changed" });
+    const res = await releaseTestsAction({ testRequestIds: [A], medium: "email" });
+    expect(res).toMatchObject({ ok: true, changedIds: [A], skipped: [] });
+    expect(writes(fake)).toHaveLength(2);
+  });
+
+  it("a malformed result is never announced: every id skipped with the confirm message", async () => {
+    const fake = setup([{ id: A }, { id: B }], report("r1", A, B));
+    fake.overrideNextRpc("release_visit_results", { released: [{ id: A }], refused: [] });
+    const res = await releaseTestsAction({ testRequestIds: [A], medium: "email" });
+    expect(res).toMatchObject({ ok: true, changedIds: [], skipped: [{ id: A, reason: COULDNT_CONFIRM_RELEASE }] });
     expect(fx.notifyOne.length + fx.notifyBulk.length).toBe(0);
     expect(fx.alerts).toHaveLength(0);
+    expect(fx.audits).toHaveLength(0);
   });
 
-  it("post-write read missing a member: same as an error", async () => {
-    const fake = setup([{ id: A }, { id: B }], report("r1", A, B));
-    let membershipReads = 0;
-    fake.hooks.beforeRead = (_t, membership) => {
-      if (membership && ++membershipReads === 2) fake.links.splice(fake.links.findIndex((l) => l.testRequestId === B), 1);
-    };
-    const res = await releaseTestsAction({ testRequestIds: [A], medium: "email" });
-    expect(res).toMatchObject({ ok: true, changedIds: [A], warnings: [UNVERIFIED_WARNING] });
-    expect(fx.notifyOne.length + fx.notifyBulk.length).toBe(0);
-  });
-
-  it("plain rows are still announced when the report check is not needed", async () => {
+  it("plain rows are still announced when no report is involved", async () => {
     setup([{ id: A }, { id: B }], []);
     const res = await releaseTestsAction({ testRequestIds: [A, B], medium: "email" });
     expect(res).toMatchObject({ ok: true, changedIds: [A, B], warnings: [] });
@@ -360,13 +327,13 @@ describe("releaseTestsAction — concurrency", () => {
     expect(fake.rows.every((r) => r.status === "released")).toBe(true);
   });
 
-  it("a member flipping to result_uploaded before the membership read refuses the report", async () => {
-    const fake = setup([{ id: A }, { id: B }], report("r1", A, B));
-    fake.hooks.beforeRead = (_t, membership) => {
-      if (membership) fake.rows.find((r) => r.id === B)!.status = "result_uploaded";
+  it("a selected test released by someone else just before the write is skipped as raced", async () => {
+    const fake = setup([{ id: A }, { id: B }]);
+    fake.hooks.beforeRpc = () => {
+      fake.rows.find((r) => r.id === B)!.status = "released";
     };
-    const res = await releaseTestsAction({ testRequestIds: [A], medium: "email" });
-    expect(res).toMatchObject({ ok: true, changedIds: [], skipped: [{ id: A, reason: REPORT_REFUSAL.notFinished(1) }] });
-    expect(updates(fake)).toHaveLength(0);
+    const res = await releaseTestsAction({ testRequestIds: [A, B], medium: "email" });
+    expect(res).toMatchObject({ ok: true, changedIds: [A], skipped: [{ id: B, reason: RACED_REASON }] });
+    expect(fx.notifyOne).toHaveLength(1);
   });
 });

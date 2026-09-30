@@ -247,7 +247,7 @@
 <div class="layout">
 <nav class="toc" aria-label="Contents">
   <p class="toc-brand">drmed<span>.</span>ph</p>
-  <p class="toc-tag">User guide · v2.51</p>
+  <p class="toc-tag">User guide · v2.54</p>
   <div class="filter" role="group" aria-label="Show chapters for">
     <button type="button" data-filter="all" aria-pressed="true">All roles</button>
     <button type="button" data-filter="reception">Reception</button>
@@ -927,6 +927,7 @@
     <p>Reception never releases: their screens show no Release button, and the server refuses with <q>Results are released by the lab team, not reception.</q></p>
     <p>The test page now shows a <b>Result on file</b> panel with <kbd class="ui">View / download result</kbd> (a 5-minute link; every view is logged) and <kbd class="ui">Edit result…</kbd>. The test is <span class="status">ready for release</span>. Releasing is what makes it visible to the patient, and it is your job, not reception's.</p>
     <div class="note why"><span class="k">Changed in v2.52: finalising a chemistry report tells the patient</span><div><p>When <kbd class="ui">Finalise + release</kbd> releases the report, the patient now gets the <q>your result is ready</q> message, as with every other release. Before, it went out silently. It also no longer releases part of a report while one of its tests waits for sign-off: the whole report waits.</p></div></div>
+    <div class="note why"><span class="k">Changed in v2.54: releasing and undoing can no longer split a report</span><div><p>A combined report (e.g. Chemistry) now goes out whole or not at all even when two people act on it at the same moment — one releasing while another undoes, two releasing at once, or reception voiding the payment. The second person simply waits a moment and then sees the result of the first. The old message <q>This combined report changed while releasing — some tests were released, the rest were not</q> can no longer appear. If someone else released the same tests first, you see <q>Released by someone else or changed just now.</q></p></div></div>
     <div class="note why"><span class="k">Changed in v2.49: the visit page releases a combined report whole</span><div><p>Releasing one test on a combined report (for example a chemistry panel) now releases every finished test on that report together — the visit page's button reads <kbd class="ui">Release report (N tests)</kbd>. If any test on the report is still waiting for a result or sign-off, the report can't be released yet: the page shows <q>Part of this combined report isn't finished — N tests are still awaiting a result or sign-off.</q> and offers no tick box for it. The Queue follows the same rule everywhere. Before, the visit page let you release a single chemistry test on its own.</p></div></div>
     <h4>Releasing from the Queue</h4>
     <ol class="steps">
@@ -1352,7 +1353,7 @@
 </section>
 
 <footer class="end">
-  <p>drmed.ph User Guide · v2.51 · 30 September 2026 · Matches the production release at migration 0186, plus 0193 (sync review fixes), 0192 (Results released email alert — applied before this deploy), 0189 (Patient Sources), 0191 (chemistry panels claimed and handed back whole), 0187 (View-as follow-ups), 0190 (claim-holder guard and End now), 0188 (why a patient notice failed, Retry notice), 0184 (patient lifecycle locks), 0183 (waived balance in the books), 0182, 0179 (corrected-result follow-ups), 0176 and 0170 (applied out of order) and 0167 (patient delete and restore). Every label in this guide was checked against the application code on that date. Print with <b>Ctrl/Cmd + P</b>; each chapter starts on a new page.</p>
+  <p>drmed.ph User Guide · v2.54 · 30 September 2026 · Matches the production release at migration 0186, plus 0198 (atomic report release and undo), 0194 (whole-list queue search), 0193 (sync review fixes), 0192 (Results released email alert — applied before this deploy), 0189 (Patient Sources), 0191 (chemistry panels claimed and handed back whole), 0187 (View-as follow-ups), 0190 (claim-holder guard and End now), 0188 (why a patient notice failed, Retry notice), 0184 (patient lifecycle locks), 0183 (waived balance in the books), 0182, 0179 (corrected-result follow-ups), 0176 and 0170 (applied out of order) and 0167 (patient delete and restore). Every label in this guide was checked against the application code on that date. Print with <b>Ctrl/Cmd + P</b>; each chapter starts on a new page.</p>
 </footer>
 </main>
 </div>
