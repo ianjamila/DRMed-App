@@ -15,7 +15,9 @@
 --     ('undone by an admin') now clear it. "Let the sync decide again"
 --     (sheet_sync_release_undo) DELETES the undo holds, so it needs no change,
 --     and the sync's own hold op (0193) is untouched — re-holding the same
---     deleted patient must keep the id.
+--     deleted patient must keep the id. These three are belt-and-braces: each
+--     site only matches link rows, which carry a pointer only if an earlier
+--     admin resolve left one (fixed above; the data fix below clears the rest).
 -- Bodies are the 0170 bodies (nothing later redefines either function) plus
 -- exactly these hunks. ACLs restated: service_role only.
 
