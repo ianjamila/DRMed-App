@@ -220,10 +220,13 @@ async function loadLabStats(
   const updated7dPromise =
     show("lab.updated_7d") &&
     (role === "medtech" || role === "pathologist" || role === "xray_technician")
-      ? supabase
+      ? activeEmbeddedPatients(supabase
           .from("result_amendments")
-          .select("id", { count: "exact", head: true })
-          .gte("amended_at", since7d)
+          // The archive hides a deleted or merged-away patient's tests, so the
+          // card must not count their corrections either (2026-09-30).
+          .select("id, test_requests!inner(id, visits!inner(id, patients!inner(id)))", { count: "exact", head: true })
+          .gte("amended_at", since7d),
+        "test_requests.visits.patients")
       : SKIP_COUNT;
 
   const sendOutAwaitingPromise =
