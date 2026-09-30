@@ -2,6 +2,9 @@
 -- 0191_claim_panel_members_smoke.sql
 -- =============================================================================
 -- DB proof for migration 0191 (claim_panel_members / unclaim_panel_members).
+-- Sequential only: the same functions under two sessions racing on one panel
+-- are proven by scripts/panel-claim-concurrency-proof.ts
+-- (npm run panel-claim:concurrency-proof).
 -- Runs inside BEGIN/ROLLBACK and leaves no state. Self-contained: mints its
 -- own auth users, staff, report group, services, patient, visit and
 -- test_requests. Calls run as `authenticated` with a JWT `sub`, the way the
