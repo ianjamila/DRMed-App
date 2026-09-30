@@ -322,14 +322,16 @@ const msgBox = (page: Page, name: string) =>
 
 const barButton = (page: Page, label: string) => page.locator(BAR).locator("button", { hasText: label });
 
-/** Most recent NON-Undo bulk batch of inbox status changes (single-message changes carry no batch id). */
-async function latestMessageBatchId(c: CheckContext): Promise<string | undefined> {
+/** Most recent NON-Undo bulk batch of inbox status changes by `actorId` (single-message changes carry no batch id). */
+async function latestMessageBatchId(c: CheckContext, actorId: string): Promise<string | undefined> {
   const rows = await c.sql(
     `select metadata->>'bulk_batch_id' as batch_id from audit_log
      where action = 'contact_message.status_changed'
        and metadata->>'bulk_batch_id' is not null
        and metadata->>'via' is distinct from 'bulk_undo'
+       and actor_id = $1
      order by created_at desc limit 1`,
+    [actorId],
   );
   return rows[0]?.batch_id as string | undefined;
 }
@@ -389,7 +391,7 @@ async function sectionMessages(c: CheckContext, admin: Page, med: Page): Promise
     await barButton(admin, "Mark closed (2)").click();
     await waitForCount(admin.locator('button:has-text("↶ Undo")'));
     const text = await outcomeText(admin);
-    m3Batch = await latestMessageBatchId(c);
+    m3Batch = await latestMessageBatchId(c, adminId);
     const one = await messageRow(c, "BSQ Sender One");
     const four = await messageRow(c, "BSQ Sender Four");
     const audit = m3Batch
@@ -469,6 +471,62 @@ async function sectionMessages(c: CheckContext, admin: Page, med: Page): Promise
     const expected = `Last changed by ${adminName ?? "a staff member"}`;
     const ok = one?.status === "replied" && one?.handled_by === adminId && body.includes(expected);
     return { ok, detail: { status: one?.status, handledBy: one?.handled_by, expected, hasText: body.includes(expected) } };
+  });
+
+  await check(c, "M6b a message that already had a handler: Mark closed then Undo restores handler and instant", async () => {
+    // M6 left One replied with handled_by = admin and a non-null handled_at —
+    // the non-null handler predicates (.eq handled_by / handled_at, PostgREST's
+    // "+00:00" spelling) on both the forward write and the Undo.
+    const instant = (v: unknown): number => (v instanceof Date ? v.getTime() : Date.parse(String(v)));
+    const before = await messageRow(c, "BSQ Sender One");
+    if (!before || before.handled_at === null) {
+      return { ok: false, detail: { precondition: "M6 must leave One replied with a handled_at", before } };
+    }
+    await goto(admin, MESSAGES_URL);
+    await msgBox(admin, "BSQ Sender One").check();
+    await admin.waitForSelector(BAR, { timeout: 10_000 });
+    await barButton(admin, "Mark closed (1)").click();
+    await waitForCount(admin.locator('button:has-text("↶ Undo")'));
+    const closedText = await outcomeText(admin);
+    const batch = await latestMessageBatchId(c, adminId);
+    const closed = await messageRow(c, "BSQ Sender One");
+    const audit = batch
+      ? await c.sql(
+          `select metadata->>'from' as from_status, metadata->>'to' as to_status,
+                  metadata->>'previous_handled_by' as prev_by, metadata->>'previous_handled_at' as prev_at
+           from audit_log
+           where action = 'contact_message.status_changed' and resource_id = $1 and metadata->>'bulk_batch_id' = $2`,
+          [before.id, batch],
+        )
+      : [];
+    const forwardOk =
+      !!closedText &&
+      closedText.includes("Marked 1 message closed.") &&
+      closed?.status === "closed" &&
+      audit.length === 1 &&
+      audit[0].from_status === "replied" &&
+      audit[0].to_status === "closed" &&
+      audit[0].prev_by === adminId &&
+      audit[0].prev_at !== null &&
+      instant(audit[0].prev_at) === instant(before.handled_at);
+
+    const hadUndo = await clickUndo(admin);
+    const undoText = await outcomeText(admin);
+    const after = await messageRow(c, "BSQ Sender One");
+    const undoRows = batch ? await undoRowCount(c, batch) : 0;
+    const undoOk =
+      hadUndo &&
+      !!undoText &&
+      undoText.includes("Undone — 1 message is back to what it was.") &&
+      after?.status === "replied" &&
+      after?.handled_by === adminId &&
+      after?.handled_at !== null &&
+      instant(after.handled_at) === instant(before.handled_at) &&
+      undoRows === 1;
+    return {
+      ok: forwardOk && undoOk,
+      detail: { forwardOk, undoOk, closedText, undoText, audit, before, closed, after, undoRows },
+    };
   });
 
   await check(c, "M7 390px: bar visible, 44px checkbox targets, no horizontal scroll", async () => {
