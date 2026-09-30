@@ -1,6 +1,7 @@
 "use server";
 
-import { fetchCompleteRowsByIds } from "@/lib/reports/paging";
+import { fetchCompleteRows, fetchCompleteRowsByIds } from "@/lib/reports/paging";
+import { chunkIds } from "@/lib/patients/require-active-core";
 import { headers } from "next/headers";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
@@ -480,10 +481,20 @@ export async function updateItemHmoResponseAction(input: unknown): Promise<Actio
   return { ok: true };
 }
 
+// Ids per bulk write chunk — same figure as require-active.ts's own CHUNK
+// (a plain `.in()` with hundreds of values is both a PostgREST/Postgres risk
+// and rides the GET query string uncapped).
+const HMO_BULK_CHUNK = 200;
+
 export async function bulkSetHmoResponseAction(
   input: unknown,
 ): Promise<
-  ActionResult<{ items_updated: number; items_skipped: number; items_skipped_inactive: number }>
+  ActionResult<{
+    items_updated: number;
+    items_skipped: number;
+    items_skipped_inactive: number;
+    items_skipped_changed: number;
+  }>
 > {
   const session = await requireAdminStaff();
   const parsed = BulkSetHmoResponseSchema.safeParse(input);
@@ -510,21 +521,30 @@ export async function bulkSetHmoResponseAction(
   // scope exclusion (e.g. "pending only" skipping an already-answered item)
   // so the UI never blames a deleted/merged patient for an ordinary scope
   // miss.
-  let candidateQuery = admin
-    .from("hmo_claim_items")
-    .select("id, test_request_id")
-    .eq("batch_id", parsed.data.batch_id);
-  if (parsed.data.scope === "pending_only") {
-    candidateQuery = candidateQuery.eq("hmo_response", "pending");
-  }
-  const { data: candidates, error: candidatesError } = await candidateQuery;
+  //
+  // Paged with a total order (id tie-break) rather than a bare select — a
+  // batch past PostgREST's 1000-row cap would otherwise silently leave the
+  // remainder out of the candidate set (and out of items_skipped_inactive).
+  const { data: candidates, error: candidatesError } = await fetchCompleteRows<
+    { id: string; test_request_id: string },
+    { message: string }
+  >((from, to) => {
+    let q = admin
+      .from("hmo_claim_items")
+      .select("id, test_request_id")
+      .eq("batch_id", parsed.data.batch_id);
+    if (parsed.data.scope === "pending_only") {
+      q = q.eq("hmo_response", "pending");
+    }
+    return q.order("id", { ascending: true }).range(from, to);
+  });
   if (candidatesError) return { ok: false, error: translatePgError(candidatesError) };
   const candidateRows = candidates ?? [];
 
   if (candidateRows.length === 0) {
     return {
       ok: true,
-      data: { items_updated: 0, items_skipped: totalCount, items_skipped_inactive: 0 },
+      data: { items_updated: 0, items_skipped: totalCount, items_skipped_inactive: 0, items_skipped_changed: 0 },
     };
   }
 
@@ -543,28 +563,54 @@ export async function bulkSetHmoResponseAction(
   if (activeItemIds.length === 0) {
     return {
       ok: true,
-      data: { items_updated: 0, items_skipped: totalCount, items_skipped_inactive: skippedInactive },
+      data: {
+        items_updated: 0,
+        items_skipped: totalCount,
+        items_skipped_inactive: skippedInactive,
+        items_skipped_changed: 0,
+      },
     };
   }
 
-  // Built fresh inside the closure so a retry re-issues a brand-new UPDATE
-  // (never re-awaits an already-mutated builder).
-  const { data: updatedRows, error } = await withLifecycleRetry(() =>
-    admin
-      .from("hmo_claim_items")
-      .update({
-        hmo_response: parsed.data.response,
-        hmo_response_date: parsed.data.response_date,
-        hmo_response_notes: parsed.data.notes ?? null,
-      })
-      .in("id", activeItemIds)
-      .select("id"),
-  );
-  if (error) return { ok: false, error: translatePgError(error) };
+  // Write in bounded chunks, and — on every chunk — re-apply the SAME
+  // batch/scope predicates the candidate read used (not just `.in("id", …)`
+  // of the ids it found). Without them, a concurrent admin who changed an
+  // item's response after the candidate read but before this write would
+  // have that change silently overwritten. Any candidate whose predicate no
+  // longer matches (its hmo_response moved off "pending" for a pending_only
+  // scope, most plausibly) is simply not in the returned rows — counted
+  // below as items_skipped_changed rather than claimed as updated. Each
+  // chunk's builder is rebuilt fresh inside withLifecycleRetry (`.select()`
+  // appends a Prefer header, so re-awaiting one builder on a retry would
+  // send it twice).
+  let items_updated = 0;
+  for (const idsChunk of chunkIds(activeItemIds, HMO_BULK_CHUNK)) {
+    const { data: updatedRows, error } = await withLifecycleRetry(() => {
+      let q = admin
+        .from("hmo_claim_items")
+        .update({
+          hmo_response: parsed.data.response,
+          hmo_response_date: parsed.data.response_date,
+          hmo_response_notes: parsed.data.notes ?? null,
+        })
+        .eq("batch_id", parsed.data.batch_id)
+        .in("id", idsChunk);
+      if (parsed.data.scope === "pending_only") {
+        q = q.eq("hmo_response", "pending");
+      }
+      return q.select("id");
+    });
+    if (error) return { ok: false, error: translatePgError(error) };
+    items_updated += updatedRows?.length ?? 0;
+  }
 
-  const items_updated = updatedRows?.length ?? 0;
   const items_skipped = totalCount - items_updated;
   const items_skipped_inactive = skippedInactive;
+  // Candidates that matched the scope predicate at read time but not at
+  // write time — e.g. another admin changed a pending_only candidate's
+  // response in between. Reported separately so the modal never claims more
+  // than it actually changed.
+  const items_skipped_changed = activeItemIds.length - items_updated;
 
   const meta = await auditMeta();
   await audit({
@@ -580,12 +626,16 @@ export async function bulkSetHmoResponseAction(
       items_updated,
       items_skipped,
       items_skipped_inactive,
+      items_skipped_changed,
     },
     ...meta,
   });
 
   revalidatePath(`${BASE_PATH}/batches/${parsed.data.batch_id}`);
-  return { ok: true, data: { items_updated, items_skipped, items_skipped_inactive } };
+  return {
+    ok: true,
+    data: { items_updated, items_skipped, items_skipped_inactive, items_skipped_changed },
+  };
 }
 
 // ============================================================

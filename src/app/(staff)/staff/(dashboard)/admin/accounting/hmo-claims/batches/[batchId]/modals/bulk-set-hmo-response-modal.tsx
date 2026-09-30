@@ -56,7 +56,9 @@ function BulkSetHmoResponseModalInner({
   const [scope, setScope] = useState<BulkScope>("pending_only");
   const [notes, setNotes] = useState<string>("");
   const [err, setErr] = useState<string | null>(null);
-  const [result, setResult] = useState<{ updated: number; skipped: number } | null>(null);
+  const [result, setResult] = useState<{ updated: number; skippedInactive: number; skippedChanged: number } | null>(
+    null,
+  );
   const [pending, startTransition] = useTransition();
 
   function onSave() {
@@ -77,10 +79,14 @@ function BulkSetHmoResponseModalInner({
       // failing the whole batch — surface that instead of silently closing,
       // same wording as the closures bulk reschedule's skip note.
       // items_skipped_inactive is the lifecycle-only count, never the
-      // ordinary "pending only" scope miss.
-      const skipped = res.data?.items_skipped_inactive ?? 0;
-      if (skipped > 0) {
-        setResult({ updated: res.data?.items_updated ?? 0, skipped });
+      // ordinary "pending only" scope miss. items_skipped_changed is a
+      // different reason — someone else changed the item between the
+      // candidate read and the write — and is reported separately so this
+      // modal never claims more than it actually updated.
+      const skippedInactive = res.data?.items_skipped_inactive ?? 0;
+      const skippedChanged = res.data?.items_skipped_changed ?? 0;
+      if (skippedInactive > 0 || skippedChanged > 0) {
+        setResult({ updated: res.data?.items_updated ?? 0, skippedInactive, skippedChanged });
         return;
       }
       onClose();
@@ -93,11 +99,20 @@ function BulkSetHmoResponseModalInner({
         <p className="text-sm text-[color:var(--color-brand-navy)]">
           Updated {result.updated} item(s).
         </p>
-        <p className="text-sm text-amber-700">
-          Skipped {result.skipped} item(s) on a deleted or merged patient —
-          restore the record from Admin Tools › Deleted Patients to update
-          those.
-        </p>
+        {result.skippedInactive > 0 ? (
+          <p className="text-sm text-amber-700">
+            Skipped {result.skippedInactive} item(s) on a deleted or merged
+            patient — restore the record from Admin Tools › Deleted Patients
+            to update those.
+          </p>
+        ) : null}
+        {result.skippedChanged > 0 ? (
+          <p className="text-sm text-amber-700">
+            Skipped {result.skippedChanged} item(s) that changed while this
+            was running — someone else updated them first. Reopen the batch
+            to check those.
+          </p>
+        ) : null}
         <div className="flex justify-end pt-2">
           <button
             type="button"
