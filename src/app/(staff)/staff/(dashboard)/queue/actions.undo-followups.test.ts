@@ -160,3 +160,18 @@ describe("the Undo message counts TESTS, not selection keys", () => {
     );
   });
 });
+
+describe("the Undo role gate runs before the batch is read", () => {
+  it("refuses a role that can do none of Claim / Unclaim / Delete before loadOwnBatchRows (admin client, un-scoped reads) is called", () => {
+    const body = bodyOf("undoBulkQueueAction");
+    const gate = body.search(
+      /!\(LAB_CAPABLE_ROLES as readonly string\[\]\)\.includes\(session\.role\) && !QUEUE_DELETE_ROLES\.has\(session\.role\)\) \{\s*return \{ ok: false, error: UNDO_ROLE_CHANGED \};/,
+    );
+    const read = body.indexOf("await loadOwnBatchRows(");
+    expect(gate, "role gate not found").toBeGreaterThan(-1);
+    expect(read, "loadOwnBatchRows call not found").toBeGreaterThan(-1);
+    expect(gate).toBeLessThan(read);
+    // ...and after the session, not before it.
+    expect(body.indexOf("await requireActiveStaff()")).toBeLessThan(gate);
+  });
+});

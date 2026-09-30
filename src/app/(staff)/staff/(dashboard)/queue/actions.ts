@@ -492,6 +492,14 @@ function isKind<K extends QueueUndoStep["kind"]>(
 
 export async function undoBulkQueueAction(input: unknown): Promise<QueueUndoResult> {
   const session = await requireActiveStaff();
+  // Role first, before ANY read of the batch: loadOwnBatchRows uses the admin
+  // client, and its alreadyUndone / later-rows reads are not scoped to the
+  // caller, so a role that can do none of Claim / Unclaim / Delete must not be
+  // able to probe whether an arbitrary batch id exists or was undone. Each
+  // branch below still re-checks the one role its own action needs.
+  if (!(LAB_CAPABLE_ROLES as readonly string[]).includes(session.role) && !QUEUE_DELETE_ROLES.has(session.role)) {
+    return { ok: false, error: UNDO_ROLE_CHANGED };
+  }
   const parsed = z.object({ batchId: z.string().uuid() }).safeParse(input);
   if (!parsed.success) return { ok: false, error: UNDO_EXPIRED };
   const loaded = await loadOwnBatchRows({
