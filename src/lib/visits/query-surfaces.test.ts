@@ -178,7 +178,7 @@ const SURFACES: Record<string, Surface> = {
   },
   "app/(staff)/staff/(dashboard)/queue/actions.ts": {
     meaning: "lab",
-    why: "Claim/unclaim/reassign bench work. A consultation has no bench step to claim, and claiming one would park it in in_progress forever.",
+    why: "Claim/unclaim/reassign bench work, and the reclaim / unclaim branches of undoBulkQueueAction. A consultation has no bench step to claim, and claiming one would park it in in_progress forever. ONE deliberate exception: undoBulkQueueAction's restore branch reads DELETED rows through the admin client with no doctor-kind exclusion (and no services embed at all, so this guard does not see it). That is intended, not an oversight: a bulk Delete means the whole bill line of any kind (deleteTestRequestsManyCore is \"all\"), so its Undo must be able to put back whichever kind was deleted. What bounds it is the id set — only test ids from the caller's OWN bulk-Delete audit rows for one batch (loadOwnBatchRows, 10-minute window) — plus the exact deleted_at that batch stamped; the write is restoreTestRequestsForVisit (\"all\"). Nothing here presents a restored row as lab work.",
   },
   "app/(staff)/staff/(dashboard)/queue/[id]/actions.ts": {
     meaning: "structural",
@@ -489,7 +489,7 @@ const LIFECYCLES: Record<string, LifecycleSurface> = {
   },
   "app/(staff)/staff/(dashboard)/queue/actions.ts": {
     lifecycle: "live",
-    why: "Claim/unclaim/reassign. Claiming a deleted line would park it in in_progress with nobody able to finish it.",
+    why: "Claim/unclaim/reassign. Claiming a deleted line would park it in in_progress with nobody able to finish it. ONE deliberate exception, classified here anyway because every other read in the file is live: undoBulkQueueAction's restore branch reads DELETED rows (.not(\"deleted_at\", \"is\", null)) through the admin client, since finding the deleted_at a bulk Delete stamped is its whole job. The guard only passes that chain on its selected deleted_at / visits ( deleted_at ) evidence, not because it filters live rows. The gate is the caller's own batch audit rows (ids), the exact-deleted_at comparison (sameInstant) before anything is written, and restoreTestRequestsForVisit's visit-deleted refusal.",
   },
   "app/(staff)/staff/(dashboard)/queue/[id]/actions.ts": {
     lifecycle: "live",
