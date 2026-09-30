@@ -42,7 +42,7 @@ import {
   manilaRangeUtc,
   todayManilaISODate,
 } from "@/lib/dates/manila";
-import { matchesAllTokens } from "@/lib/patients/search";
+import { applyLabSearch, labSearchPatterns } from "@/lib/queue/lab-search";
 import { visitNumberFilter } from "@/lib/visits/visit-number-filter";
 import { SampleBadge } from "@/components/staff/sample-badge";
 import { testDeletability, hasOpenHmoClaim } from "@/lib/visits/deletion";
@@ -195,14 +195,30 @@ const ORDER_COLUMN: Record<SortColumn, string> = {
 // either way rather than opening on a screenful of blanks.
 const NULLS_LAST_COLUMNS = new Set<SortColumn>(["released_at"]);
 
-/** Everything a free-text search should be able to hit on one queue card. */
-function cardHaystack(card: QueueCard): string {
-  const tests =
-    card.kind === "grouped"
-      ? `${card.groupCode} ${card.orderedTests.map((t) => `${t.code} ${t.name}`).join(" ")}`
-      : card.code;
-  return `${card.patientName} ${card.patientDrmId} ${card.visitNumber} ${card.label} ${tests}`;
-}
+const QUEUE_SELECT = `
+    id, status, requested_at, released_at, assigned_to, started_at, visit_id, parent_id,
+    hmo_claim_items ( batch_voided ),
+    services!inner ( id, code, name, kind, turnaround_hours, section, report_group_id,
+      report_groups ( code, name ) ),
+    visits!inner (
+      id, visit_number, payment_status, is_sample,
+      patients!inner ( id, drm_id, first_name, last_name )
+    )
+  `;
+
+// Same select plus the search embed (migration 0194). Only sent while there
+// are search words: an unconditional inner join would run the search view on
+// every page load. Both stay literal so query-surfaces.test.ts can read them.
+const QUEUE_SELECT_SEARCH = `
+    id, status, requested_at, released_at, assigned_to, started_at, visit_id, parent_id,
+    hmo_claim_items ( batch_voided ),
+    services!inner ( id, code, name, kind, turnaround_hours, section, report_group_id,
+      report_groups ( code, name ) ),
+    visits!inner (
+      id, visit_number, payment_status, is_sample,
+      patients!inner ( id, drm_id, first_name, last_name )
+    ),
+    lab_search!inner ( )`;
 
 interface SearchProps {
   searchParams: Promise<{
@@ -244,6 +260,8 @@ export default async function QueuePage({ searchParams }: SearchProps) {
   const start = isISODate(params.start) ? params.start : "";
   const end = isISODate(params.end) ? params.end : "";
   const q = params.q?.trim() ?? "";
+  const searchPatterns = labSearchPatterns(q);
+  const searching = searchPatterns.length > 0;
   const visit = params.visit?.trim() ?? "";
   const todayISO = todayManilaISODate();
 
@@ -278,17 +296,11 @@ export default async function QueuePage({ searchParams }: SearchProps) {
 
   let query = supabase
     .from("test_requests")
+    // The cast keeps the row type of the plain select: supabase-js cannot parse
+    // a union of two literals where one only adds an embed, and the search
+    // embed (`lab_search!inner ( )`) selects no columns anyway.
     .select(
-      `
-        id, status, requested_at, released_at, assigned_to, started_at, visit_id, parent_id,
-        hmo_claim_items ( batch_voided ),
-        services!inner ( id, code, name, kind, turnaround_hours, section, report_group_id,
-          report_groups ( code, name ) ),
-        visits!inner (
-          id, visit_number, payment_status, is_sample,
-          patients!inner ( id, drm_id, first_name, last_name )
-        )
-      `,
+      (searching ? QUEUE_SELECT_SEARCH : QUEUE_SELECT) as typeof QUEUE_SELECT,
       { count: "exact" },
     )
     // Soft-deleted lines — and every line of a soft-deleted visit — are out
@@ -400,6 +412,11 @@ export default async function QueuePage({ searchParams }: SearchProps) {
   } else if (visitFilter?.kind === "contains") {
     query = query.ilike("visits.visit_number", visitFilter.pattern);
   }
+
+  // Free-text search is a real filter like the rest: every word must match the
+  // row's patient / visit # / test / panel text (migration 0194), so it counts
+  // against the whole queue and the pager, not just the page in hand.
+  query = applyLabSearch(query, searchPatterns);
 
   const { data: rows, count } = await query;
   const queueTitle = queueTitleForRole(session.role);
@@ -566,21 +583,13 @@ export default async function QueuePage({ searchParams }: SearchProps) {
     }
   }
 
-  // Free-text search runs after the fold, not in the query: an ILIKE across the
-  // patients join is awkward in PostgREST (the same reason /staff/results
-  // post-filters), and folding first lets one typed test code match the whole
-  // consolidated chemistry card it belongs to.
-  const matched = q
-    ? cards.filter((c) => matchesAllTokens(cardHaystack(c), q))
-    : cards;
-
   // Admins see who holds each in-progress claim so stuck claims are visible
   // straight from the list (Unclaim is on the row; reassign lives on the
   // detail page).
   const claimerNames = new Map<string, string>();
   if (session.role === "admin") {
     const claimerIds = Array.from(
-      new Set(matched.map((c) => c.claimedBy).filter((v): v is string => !!v)),
+      new Set(cards.map((c) => c.claimedBy).filter((v): v is string => !!v)),
     );
     if (claimerIds.length > 0) {
       const { data: claimers } = await supabase
@@ -630,7 +639,7 @@ export default async function QueuePage({ searchParams }: SearchProps) {
   // server will do for the whole panel. Released today has no bench actions.
   const panelStates = new Map<string, PanelState>();
   if (selectable) {
-    const refs = matched.flatMap((card) =>
+    const refs = cards.flatMap((card) =>
       card.kind === "grouped" ? [{ visitId: card.visitId, groupId: card.groupId }] : [],
     );
     const read = await fetchPanelMembers(supabase, refs);
@@ -671,7 +680,7 @@ export default async function QueuePage({ searchParams }: SearchProps) {
   const selectionEntries: SelectionEntry[] = [];
   const rowsByKey: Record<string, QueueRowInfo> = {};
   if (selectable) {
-    for (const card of matched) {
+    for (const card of cards) {
       if (card.kind === "grouped") {
         const state = panelStateOf(card);
         const kinds = panelKinds(card);
@@ -716,10 +725,10 @@ export default async function QueuePage({ searchParams }: SearchProps) {
     String(size),
   ].join("|");
 
-  // `q` is applied after the fetch, so it can only narrow the page in hand —
-  // everything else is a real DB filter and counts against the whole table.
-  const hasServerFilters = hasDateRange || Boolean(visit);
-  const hasFilters = hasServerFilters || Boolean(q);
+  // Every filter, search included, is a real DB filter and counts against the
+  // whole table.
+  const hasServerFilters = hasDateRange || Boolean(visit) || searching;
+  const hasFilters = hasServerFilters;
   // A range that ends before today can't gain rows, so live refreshes would
   // only interrupt someone reading history. An open-ended `start` still runs up
   // to now, so that stays live.
@@ -792,7 +801,6 @@ export default async function QueuePage({ searchParams }: SearchProps) {
               ? " Visits waiting for payment appear once they're paid or HMO-covered."
               : null}
             {hasServerFilters ? ` · ${total} matching` : null}
-            {q ? ` · ${matched.length} on this page match “${q}”` : null}
             {filter === "released_today" && hasDateRange
               ? " · showing the dates you picked, not just today"
               : null}
@@ -998,18 +1006,6 @@ export default async function QueuePage({ searchParams }: SearchProps) {
         </p>
       ) : null}
 
-      {/* The search box filters the fetched page, so say so rather than let a
-          page-1 miss read as "not in the queue". */}
-      {q && totalPages > 1 ? (
-        <p
-          role="status"
-          className="mb-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900"
-        >
-          The search box only looks at the {size} tests on this page. Narrow
-          the dates or use Visit # to search the whole queue.
-        </p>
-      ) : null}
-
       <SelectionProvider resetKey={selectionResetKey}>
       <Panel className="overflow-x-auto">
         <table className="w-full text-sm">
@@ -1041,7 +1037,7 @@ export default async function QueuePage({ searchParams }: SearchProps) {
             </tr>
           </thead>
           <tbody className="divide-y divide-[color:var(--color-brand-bg-mid)]">
-            {matched.length === 0 ? (
+            {cards.length === 0 ? (
               <tr>
                 <td
                   colSpan={(receptionView ? 6 : 7) + (selectable ? 1 : 0)}
@@ -1057,7 +1053,7 @@ export default async function QueuePage({ searchParams }: SearchProps) {
                 </td>
               </tr>
             ) : (
-              matched.map((card) => {
+              cards.map((card) => {
                 if (card.kind === "single") {
                   const kinds = selectable ? singleKinds(card) : [];
                   return (

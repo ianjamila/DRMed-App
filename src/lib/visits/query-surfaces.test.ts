@@ -854,8 +854,12 @@ function scanSource(text: string, full: string): Chain[] {
       const identifiers: string[] = [];
       const selectLiterals: string[] = [];
       const conditionalSelects: string[][] = [];
+      // `(cond ? A : B) as typeof A` is still a conditional: the queue page casts
+      // its two-literal select to keep supabase-js from failing to parse the union.
+      const unwrap = (a: ts.Expression): ts.Expression =>
+        ts.isParenthesizedExpression(a) || ts.isAsExpression(a) ? unwrap(a.expression) : a;
       const leaves = (a: ts.Expression): string[] => {
-        const e = ts.isParenthesizedExpression(a) ? a.expression : a;
+        const e = unwrap(a);
         if (ts.isConditionalExpression(e)) return [...leaves(e.whenTrue), ...leaves(e.whenFalse)];
         if (ts.isStringLiteralLike(e)) return [e.text];
         if (ts.isIdentifier(e)) return [consts.get(e.text) ?? ""];
@@ -866,7 +870,7 @@ function scanSource(text: string, full: string): Chain[] {
         const isSelect = methods[i] === "select";
         for (const arg of call.arguments) {
           if (isSelect) {
-            const inner = ts.isParenthesizedExpression(arg) ? arg.expression : arg;
+            const inner = unwrap(arg);
             if (ts.isConditionalExpression(inner)) conditionalSelects.push(leaves(inner));
           }
           const collectArg = (a: ts.Node) => {
