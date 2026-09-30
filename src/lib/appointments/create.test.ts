@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { insertWithPatientRecovery, LOOKUP_AGAIN_ERROR } from "./patient-recovery";
+import { insertWithPatientRecovery, LOOKUP_AGAIN_ERROR, PORTAL_LOOKUP_AGAIN_ERROR } from "./patient-recovery";
 
 const p = (resolution: "existing" | "reused" | "created" | "walk_in", patientId = "p1") =>
   ({ patientId, drmId: null, email: null, resolution });
@@ -40,5 +40,25 @@ describe("insertWithPatientRecovery", () => {
     expect(r).toEqual({ ok: false, error: other.error });
     expect(resolveAgain).not.toHaveBeenCalled();
     expect(insert).toHaveBeenCalledTimes(1);
+  });
+  it("uses the caller's lookupAgainError instead of the staff wording when given (0184 review minor #5)", async () => {
+    const r = await insertWithPatientRecovery({
+      patient: p("existing"),
+      insert: vi.fn(async () => refused),
+      resolveAgain: vi.fn(),
+      lookupAgainError: PORTAL_LOOKUP_AGAIN_ERROR,
+    });
+    expect(r).toEqual({ ok: false, error: PORTAL_LOOKUP_AGAIN_ERROR });
+    expect(PORTAL_LOOKUP_AGAIN_ERROR).not.toMatch(/delet|merg/i);
+  });
+  it("also uses the caller's lookupAgainError after a failed re-resolve", async () => {
+    const insert = vi.fn(async () => refused);
+    const r = await insertWithPatientRecovery({
+      patient: p("created"),
+      insert,
+      resolveAgain: async () => ({ ok: true, patient: p("created", "p3") }),
+      lookupAgainError: PORTAL_LOOKUP_AGAIN_ERROR,
+    });
+    expect(r).toEqual({ ok: false, error: PORTAL_LOOKUP_AGAIN_ERROR });
   });
 });

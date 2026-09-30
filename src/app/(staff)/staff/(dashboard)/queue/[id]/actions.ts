@@ -828,9 +828,21 @@ export async function uploadResultAction(
     if (outcome.data) {
       resultId = outcome.data as string;
     } else {
-      // Committed but the response was lost: find the row by this attempt's path.
-      const { data: row } = await admin.from("results").select("id").eq("storage_path", path).single();
-      resultId = row!.id;
+      // Committed but the response was lost: find the row by this attempt's
+      // path. The commit is already confirmed at this point (commitWithUploads
+      // only reaches "committed" after its own probe proved it, or the RPC
+      // answered directly) — a failed or empty lookup here just means we
+      // can't hand the id back to this request, never that the save itself
+      // failed, so it must not crash the action (0184 review minor #3).
+      const { data: row, error: lookupError } = await admin
+        .from("results")
+        .select("id")
+        .eq("storage_path", path)
+        .maybeSingle();
+      if (lookupError || !row) {
+        return { ok: false, error: "Saved — reload the page to see the result." };
+      }
+      resultId = row.id;
     }
   }
 

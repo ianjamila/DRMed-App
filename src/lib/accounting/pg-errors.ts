@@ -40,7 +40,29 @@ export function translatePgError(err: PgError): string {
       if (/payment_status/i.test(m)) {
         return RELEASE_BLOCKED_UNPAID;
       }
-      return "Invalid value: that combination is not allowed by the schema.";
+      // A genuine table CHECK constraint (e.g. employee_loans_outstanding_nonneg,
+      // 0044) fails with Postgres's own generic "... violates check constraint
+      // <name> ..." wording — there is nothing case-specific to say, and the
+      // constraint's internal name is not for staff, so keep the generic
+      // message. A hand-written plpgsql `raise ... using errcode = '23514'` /
+      // `'check_violation'` (0001/0133's payment gate and 0086/0088's consent
+      // gate above; 0184's "a correction record stays on its result and
+      // test", "a critical alert stays on its result and test", "a payment
+      // correction stays linked to the payment it corrects", "a critical
+      // alert's patient must match its test's patient", "a result can only
+      // hold one patient's tests", "an alert can only be withdrawn by a
+      // correction of its own result") carries neither marker and IS written
+      // to be read by staff — pass it through instead of hiding it behind the
+      // generic line. (`err.constraint` would be another such marker, but the
+      // PostgrestError shape this app receives never carries one — only
+      // message/details/hint/code — so only the message/details text can be
+      // checked here.)
+      const isRealConstraintViolation =
+        /violates check constraint/i.test(m) || /violates check constraint/i.test(err.details ?? "");
+      if (isRealConstraintViolation || !m) {
+        return "Invalid value: that combination is not allowed by the schema.";
+      }
+      return m;
     }
     case "23503":
       // foreign_key_violation — caller referenced a row that doesn't exist or is locked from deletion.

@@ -168,7 +168,7 @@ const EXEMPT: Record<string, string> = {
   [`src/app/(staff)/staff/(dashboard)/admin/accounting/hmo-claims/actions.ts:voidBatchAction`]:
     "Same reasoning as submitBatchAction above; voiding also reduces work rather than adding it.",
   [`src/app/(staff)/staff/(dashboard)/admin/accounting/hmo-claims/actions.ts:bulkSetHmoResponseAction`]:
-    "Same reasoning as submitBatchAction above — a bulk item-response update on a batch whose items are already guarded at creation/edit time.",
+    "0184 review minor #1: resolves each scoped candidate item's patient via activeTestRequestIds and writes only the active ones — an inactive patient's item is excluded up front and counted in items_skipped, never a reason to fail the whole batch (same shape as bulkRescheduleForClosureAction's skip). activeTestRequestIds does not match GUARD_PATTERN (it classifies rather than asserts), so this stays listed here rather than being picked up as guarded.",
   [`src/app/(staff)/staff/(dashboard)/admin/closures/actions.ts:bulkRescheduleForClosureAction`]:
     "Deliberately unguarded: reschedule_closure_appointments locks every candidate patient and SKIPS deleted/merged ones inside the transaction (0184) — one inactive patient must never block rescheduling the whole closed day.",
 };

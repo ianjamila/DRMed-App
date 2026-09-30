@@ -48,6 +48,11 @@ export interface CreateAppointmentInput {
   attribution: Attribution | null;
   // Resolve the patient ONLY after timing/conflicts pass, to avoid orphan rows on failure.
   resolvePatient: () => Promise<{ ok: true; patient: PatientResolution } | { ok: false; error: string }>;
+  // Passed straight through to insertWithPatientRecovery — lets a
+  // patient-facing caller (the public/portal booking form) swap in wording
+  // that doesn't assume a staff patient picker (0184 review minor #5).
+  // Omit for the staff caller, which keeps the default staff wording.
+  lookupAgainError?: string;
 }
 
 export type CreateAppointmentResult =
@@ -195,6 +200,7 @@ export async function createAppointmentGroup(
         p_allow_concurrent: allowConcurrent || (input.mode === "relaxed" && input.override),
       }),
     resolveAgain: input.resolvePatient,
+    lookupAgainError: input.lookupAgainError,
   });
   if (!inserted.ok) {
     const e = inserted.error;
@@ -230,6 +236,9 @@ export interface CreateLabRequestOnlyInput {
   source: AppointmentSource | null;
   attribution: Attribution | null;
   resolvePatient: () => Promise<{ ok: true; patient: PatientResolution } | { ok: false; error: string }>;
+  // See CreateAppointmentInput.lookupAgainError — this booking path is
+  // public/portal-only (no staff caller), so it will always want this set.
+  lookupAgainError?: string;
 }
 
 // A booking where the patient uploaded a doctor's request form instead of
@@ -279,6 +288,7 @@ export async function createLabRequestOnlyBooking(
     patient,
     insert: (pt) => admin.rpc("appointments_insert_slot_guarded", { p_rows: [buildRow(pt)] }),
     resolveAgain: input.resolvePatient,
+    lookupAgainError: input.lookupAgainError,
   });
   if (!inserted.ok) {
     const e = inserted.error;

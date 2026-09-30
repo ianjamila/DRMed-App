@@ -32,6 +32,7 @@ import {
   assertClaimItemsPatientsActive,
   assertResolutionPatientActive,
   assertPaymentPatientActive,
+  activeTestRequestIds,
 } from "@/lib/patients/require-active";
 import { withLifecycleRetry } from "@/lib/patients/lifecycle-retry";
 
@@ -481,7 +482,9 @@ export async function updateItemHmoResponseAction(input: unknown): Promise<Actio
 
 export async function bulkSetHmoResponseAction(
   input: unknown,
-): Promise<ActionResult<{ items_updated: number; items_skipped: number }>> {
+): Promise<
+  ActionResult<{ items_updated: number; items_skipped: number; items_skipped_inactive: number }>
+> {
   const session = await requireAdminStaff();
   const parsed = BulkSetHmoResponseSchema.safeParse(input);
   if (!parsed.success) {
@@ -495,26 +498,73 @@ export async function bulkSetHmoResponseAction(
     .eq("batch_id", parsed.data.batch_id);
   const totalCount = totalItems ?? 0;
 
+  // Resolve the scope's candidate items up front. A single bulk UPDATE
+  // aborts wholesale (P0058) the instant any ONE row's patient is inactive
+  // (deleted or merged) — this can't happen in the ordinary case (a
+  // non-voided claim item blocks patient deletion, and merge repoints the
+  // visit before the source is tombstoned), but a voided batch's items skip
+  // that blocker, so it is not impossible. Exclude an inactive patient's item
+  // from the write instead of discovering it as a failed statement — same
+  // rule as the closures bulk reschedule and the queue's per-row bulk
+  // claim/unclaim. items_skipped_inactive is reported SEPARATELY from the
+  // scope exclusion (e.g. "pending only" skipping an already-answered item)
+  // so the UI never blames a deleted/merged patient for an ordinary scope
+  // miss.
+  let candidateQuery = admin
+    .from("hmo_claim_items")
+    .select("id, test_request_id")
+    .eq("batch_id", parsed.data.batch_id);
+  if (parsed.data.scope === "pending_only") {
+    candidateQuery = candidateQuery.eq("hmo_response", "pending");
+  }
+  const { data: candidates, error: candidatesError } = await candidateQuery;
+  if (candidatesError) return { ok: false, error: translatePgError(candidatesError) };
+  const candidateRows = candidates ?? [];
+
+  if (candidateRows.length === 0) {
+    return {
+      ok: true,
+      data: { items_updated: 0, items_skipped: totalCount, items_skipped_inactive: 0 },
+    };
+  }
+
+  const activeTestRequests = await activeTestRequestIds(
+    admin,
+    candidateRows.map((r) => r.test_request_id),
+  );
+  if (!activeTestRequests) {
+    return { ok: false, error: "Could not check the patient record. Try again." };
+  }
+  const activeItemIds = candidateRows
+    .filter((r) => activeTestRequests.has(r.test_request_id))
+    .map((r) => r.id);
+  const skippedInactive = candidateRows.length - activeItemIds.length;
+
+  if (activeItemIds.length === 0) {
+    return {
+      ok: true,
+      data: { items_updated: 0, items_skipped: totalCount, items_skipped_inactive: skippedInactive },
+    };
+  }
+
   // Built fresh inside the closure so a retry re-issues a brand-new UPDATE
   // (never re-awaits an already-mutated builder).
-  const { data: updatedRows, error } = await withLifecycleRetry(() => {
-    let query = admin
+  const { data: updatedRows, error } = await withLifecycleRetry(() =>
+    admin
       .from("hmo_claim_items")
       .update({
         hmo_response: parsed.data.response,
         hmo_response_date: parsed.data.response_date,
         hmo_response_notes: parsed.data.notes ?? null,
       })
-      .eq("batch_id", parsed.data.batch_id);
-    if (parsed.data.scope === "pending_only") {
-      query = query.eq("hmo_response", "pending");
-    }
-    return query.select("id");
-  });
+      .in("id", activeItemIds)
+      .select("id"),
+  );
   if (error) return { ok: false, error: translatePgError(error) };
 
   const items_updated = updatedRows?.length ?? 0;
   const items_skipped = totalCount - items_updated;
+  const items_skipped_inactive = skippedInactive;
 
   const meta = await auditMeta();
   await audit({
@@ -529,12 +579,13 @@ export async function bulkSetHmoResponseAction(
       scope: parsed.data.scope,
       items_updated,
       items_skipped,
+      items_skipped_inactive,
     },
     ...meta,
   });
 
   revalidatePath(`${BASE_PATH}/batches/${parsed.data.batch_id}`);
-  return { ok: true, data: { items_updated, items_skipped } };
+  return { ok: true, data: { items_updated, items_skipped, items_skipped_inactive } };
 }
 
 // ============================================================

@@ -21,6 +21,8 @@
 --   s12 reschedule_closure_appointments
 --   s13 current_patient_id JWT-only, set_patient_context gone, notification_skip_summary
 --   s14 catalog sweep: owners, search_path, ACLs, trigger order
+--   s15 undo-merge step order (undo-merge-steps.ts): marker-first succeeds,
+--       moving rows back before clearing the marker is refused
 -- =============================================================================
 
 begin;
@@ -2003,5 +2005,115 @@ begin
     || 'test_requests.parent_id,test_requests.visit_id,visit_pins.visit_id,visits.patient_id');
 end
 $s14$;
+
+-- --- s15: undo-merge step order (src/lib/patients/undo-merge-steps.ts) --------
+-- undoMergeSteps() clears the source's merge marker FIRST, then moves its
+-- rows back table by table, then clears the kept record's filled-in fields,
+-- then marks the ledger undone (0184 review minor #4). This proves both
+-- halves in one rolled-back transaction: the OLD (wrong) order — moving a
+-- row back to the still-merged source before clearing its marker — is
+-- refused by a_lifecycle_guard; the real (marker-first) order succeeds.
+do $s15$
+declare
+  k_admin  constant uuid := 'a0000000-0000-4000-8000-000000000184';
+  k_med    constant uuid := 'a2000000-0000-4000-8000-000000000184';
+  keep_pt  uuid := pg_temp.mk_patient('S15K');
+  src_pt   uuid := pg_temp.mk_patient('S15S');
+  v_id     uuid;
+  tpl      uuid;
+  prm      uuid;
+  tr_id    uuid;
+  res_id   uuid;
+  al_id    uuid;
+  att_id   uuid;
+  merge_id uuid;
+  v_disabled_move_ok boolean := false;
+begin
+  -- Fixture: a completed merge (src -> keep) that moved a visit, a critical
+  -- alert and an appointment_attachment onto the survivor — the same shape
+  -- undoMergeAction reads back from patient_merges.moved. The visit carries
+  -- a test/result only because critical_alerts.result_id/test_request_id are
+  -- NOT NULL — results/test_requests have no patient_id of their own (never
+  -- "moved"; they follow their visit).
+  v_id := pg_temp.mk_visit(keep_pt);
+  insert into public.result_templates (service_id, layout) values ('c0000000-0000-4000-8000-000000000184', 'simple')
+    returning id into tpl;
+  insert into public.result_template_params (template_id, sort_order, parameter_name, input_type)
+    values (tpl, 1, 'LK s15 param', 'numeric') returning id into prm;
+  tr_id := pg_temp.mk_line(v_id, 'in_progress', 100, null, false, 'c0000000-0000-4000-8000-000000000184');
+  insert into public.results (generation_kind, uploaded_by) values ('structured', k_med) returning id into res_id;
+  insert into public.result_test_requests (result_id, test_request_id) values (res_id, tr_id);
+  insert into public.critical_alerts (result_id, test_request_id, parameter_id, direction, parameter_name, patient_id)
+    values (res_id, tr_id, prm, 'high', 'LK s15 param', keep_pt) returning id into al_id;
+  insert into public.appointment_attachments (booking_group_id, patient_id, storage_path, filename, mime_type, size_bytes)
+    values (gen_random_uuid(), keep_pt, 'lab-request-forms/s15.pdf', 's15.pdf', 'application/pdf', 10) returning id into att_id;
+  perform pg_temp.merge_into(src_pt, keep_pt);
+  insert into public.patient_merges (keep_id, source_id, merged_by, moved, filled_from_source)
+    values (keep_pt, src_pt, k_admin,
+            jsonb_build_object('visits', jsonb_build_array(v_id::text),
+                                'appointments', '[]'::jsonb,
+                                'audit_log', '[]'::jsonb,
+                                'critical_alerts', jsonb_build_array(al_id::text),
+                                'patient_consents', '[]'::jsonb,
+                                'appointment_attachments', jsonb_build_array(att_id::text)),
+            '{}')
+    returning id into merge_id;
+
+  -- OLD order: move the visit back onto the still-merged source BEFORE
+  -- clearing its merge marker. a_lifecycle_guard resolves the visit's NEW
+  -- patient (src_pt) and finds it still inactive (merged_into_id = keep_pt).
+  perform pg_temp.expect('s15.1 OLD order: moving the visit back onto the still-merged source is refused',
+    pg_temp.state_of(format($q$update public.visits set patient_id = %L where id = %L$q$, src_pt, v_id)), 'P0058');
+  -- Differential proof (smoke rule, controller correction #4): with
+  -- a_lifecycle_guard disabled, the SAME move succeeds — proving it alone is
+  -- what refused it above. Always rolled back after (sentinel XXTMP);
+  -- a_lifecycle_guard is never left disabled for any later section.
+  begin
+    begin
+      set local lock_timeout = '5s';
+      alter table public.visits disable trigger a_lifecycle_guard;
+      update public.visits set patient_id = src_pt where id = v_id;
+      v_disabled_move_ok := true;
+      raise exception using errcode = 'XXTMP';
+    exception when others then
+      if sqlstate is distinct from 'XXTMP' then
+        v_disabled_move_ok := false;
+      end if;
+    end;
+    perform pg_temp.expect('s15.2 with a_lifecycle_guard disabled (rolled back after), the same move succeeds',
+      v_disabled_move_ok::text, 'true');
+  end;
+  perform pg_temp.expect('s15.3 a_lifecycle_guard is enabled again afterward and refuses the same move',
+    pg_temp.state_of(format($q$update public.visits set patient_id = %L where id = %L$q$, src_pt, v_id)), 'P0058');
+  -- Every attempt above either raised (its own implicit savepoint undid it)
+  -- or was itself rolled back — the fixture is untouched going into the real
+  -- (NEW) order below.
+  perform pg_temp.expect('s15.4 CONTROL fixture untouched by the old-order proof',
+    (select patient_id::text from public.visits where id = v_id), keep_pt::text);
+  perform pg_temp.expect('s15.5 CONTROL source is still merged',
+    (select merged_into_id::text from public.patients where id = src_pt), keep_pt::text);
+
+  -- NEW order: undoMergeSteps()'s actual sequence. This fixture has nothing
+  -- under appointments/audit_log/patient_consents (empty move_back — a no-op,
+  -- same as the app skipping an empty id list) and nothing filled_from_source
+  -- (empty clear_filled_fields), so only the four steps below do anything.
+  perform pg_temp.expect('s15.6 NEW order step 1 (clear_source_marker) succeeds',
+    pg_temp.state_of(format($q$update public.patients set merged_into_id = null, merged_at = null where id = %L$q$, src_pt)), 'ok');
+  perform pg_temp.expect('s15.7 NEW order step 2 (move_back visits) succeeds now the source is active',
+    pg_temp.state_of(format($q$update public.visits set patient_id = %L where id = %L$q$, src_pt, v_id)), 'ok');
+  perform pg_temp.expect('s15.8 NEW order step 3 (move_back critical_alerts) succeeds — the alert''s patient now matches its test''s (already-moved) visit',
+    pg_temp.state_of(format($q$update public.critical_alerts set patient_id = %L where id = %L$q$, src_pt, al_id)), 'ok');
+  perform pg_temp.expect('s15.9 NEW order step 4 (move_back appointment_attachments) succeeds',
+    pg_temp.state_of(format($q$update public.appointment_attachments set patient_id = %L where id = %L$q$, src_pt, att_id)), 'ok');
+  perform pg_temp.expect('s15.10 NEW order step 5 (mark_ledger_undone) succeeds',
+    pg_temp.state_of(format($q$update public.patient_merges set undone_at = now(), undone_by = %L where id = %L$q$, k_admin, merge_id)), 'ok');
+
+  perform pg_temp.expect('s15.11 the test/result (never itself "moved" — it follows its visit) resolves to the source patient after undo',
+    (select v.patient_id::text from public.test_requests tr join public.visits v on v.id = tr.visit_id where tr.id = tr_id),
+    src_pt::text);
+  perform pg_temp.expect('s15.12 the merge ledger is marked undone',
+    (select (undone_at is not null)::text from public.patient_merges where id = merge_id), 'true');
+end
+$s15$;
 
 rollback;

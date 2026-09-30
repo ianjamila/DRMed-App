@@ -56,6 +56,7 @@ function BulkSetHmoResponseModalInner({
   const [scope, setScope] = useState<BulkScope>("pending_only");
   const [notes, setNotes] = useState<string>("");
   const [err, setErr] = useState<string | null>(null);
+  const [result, setResult] = useState<{ updated: number; skipped: number } | null>(null);
   const [pending, startTransition] = useTransition();
 
   function onSave() {
@@ -72,8 +73,42 @@ function BulkSetHmoResponseModalInner({
         setErr(res.error);
         return;
       }
+      // An inactive (deleted/merged) patient's item is skipped rather than
+      // failing the whole batch — surface that instead of silently closing,
+      // same wording as the closures bulk reschedule's skip note.
+      // items_skipped_inactive is the lifecycle-only count, never the
+      // ordinary "pending only" scope miss.
+      const skipped = res.data?.items_skipped_inactive ?? 0;
+      if (skipped > 0) {
+        setResult({ updated: res.data?.items_updated ?? 0, skipped });
+        return;
+      }
       onClose();
     });
+  }
+
+  if (result) {
+    return (
+      <div className="space-y-3">
+        <p className="text-sm text-[color:var(--color-brand-navy)]">
+          Updated {result.updated} item(s).
+        </p>
+        <p className="text-sm text-amber-700">
+          Skipped {result.skipped} item(s) on a deleted or merged patient —
+          restore the record from Admin Tools › Deleted Patients to update
+          those.
+        </p>
+        <div className="flex justify-end pt-2">
+          <button
+            type="button"
+            onClick={onClose}
+            className="min-h-[44px] rounded-md bg-[color:var(--color-brand-navy)] px-3 text-xs font-bold uppercase tracking-wider text-white"
+          >
+            Done
+          </button>
+        </div>
+      </div>
+    );
   }
 
   return (
