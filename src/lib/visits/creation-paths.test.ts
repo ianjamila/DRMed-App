@@ -22,9 +22,13 @@ function walk(dir: string): string[] {
   });
 }
 const files = walk(SRC).map((p) => ({ rel: relative(process.cwd(), p).split(sep).join("/"), text: readFileSync(p, "utf8") }));
+// Double, single or backtick quotes around the table name — the same call in
+// any quote style is the same insert.
+const insertRe = (table: string) =>
+  new RegExp(`\\.from\\(\\s*(["'\\x60])${table}\\1\\s*\\)\\s*\\.\\s*(insert|upsert)\\(`);
 const insertsInto = (table: string) =>
   files
-    .filter((f) => new RegExp(`\\.from\\(\\s*"${table}"\\s*\\)\\s*\\.\\s*(insert|upsert)\\(`).test(f.text))
+    .filter((f) => insertRe(table).test(f.text))
     .map((f) => f.rel);
 
 describe("creation paths (0184)", () => {
@@ -35,7 +39,15 @@ describe("creation paths (0184)", () => {
     expect(insertsInto(table).sort()).toEqual([...ALLOWED[table]!].sort());
   });
   it("mutation proof: the matcher sees a multi-line insert", () => {
-    const re = /\.from\(\s*"visits"\s*\)\s*\.\s*(insert|upsert)\(/;
-    expect(re.test(`admin\n  .from("visits")\n  .insert({})`)).toBe(true);
+    expect(insertRe("visits").test(`admin\n  .from("visits")\n  .insert({})`)).toBe(true);
+  });
+  it("mutation proof: the matcher sees single-quoted and backtick table names", () => {
+    expect(insertRe("visits").test(`admin.from('visits').insert({})`)).toBe(true);
+    expect(insertRe("visits").test("admin.from(`visits`).upsert({})")).toBe(true);
+    expect(insertRe("results").test(`admin\n  .from( 'results' )\n  .insert({})`)).toBe(true);
+  });
+  it("mutation proof: mismatched quotes and other tables do not match", () => {
+    expect(insertRe("visits").test(`admin.from("visits').insert({})`)).toBe(false);
+    expect(insertRe("visits").test(`admin.from("visit_notes").insert({})`)).toBe(false);
   });
 });

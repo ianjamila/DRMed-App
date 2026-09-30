@@ -1,16 +1,15 @@
 import type { createAdminClient } from "@/lib/supabase/admin";
 import type { ReferralSourceId } from "@/lib/patients/referral-sources";
 import { withLifecycleRetry } from "@/lib/patients/lifecycle-retry";
+import type { DbErrorTranslator } from "@/lib/patients/public-db-error";
 
 // NOTE: no `import "server-only"` — the DB wrapper receives the admin client as
 // a param (never imports the service-role key), so this module stays unit-testable.
 // resolvePatient must only ever be called from server code (it is handed an admin client).
-// translatePgError (src/lib/accounting/pg-errors.ts) itself imports
-// "server-only", so it is dynamic-imported inside resolvePatient's error
-// branch rather than statically at the top — a static import would execute
-// at module load and break every test in resolve.test.ts (which only
-// exercises the pure resolvePatientCore), since "server-only" throws
-// unconditionally outside Next's react-server bundler condition.
+// The caller chooses how a database error reads: staff actions pass
+// translatePgError, the public /schedule and /register forms pass
+// publicDbError — translatePgError passes staff-only messages through, and
+// pg-errors-staff-only.test.ts fails if a public page can import it.
 
 export interface ResolvePatientFields {
   first_name: string;
@@ -69,7 +68,11 @@ type AdminClient = ReturnType<typeof createAdminClient>;
 // P0072 if it changed/was deleted/merged mid-flight — withLifecycleRetry
 // retries that (and a deadlock/serialization loss) once, in a fresh
 // transaction, before giving up.
-export async function resolvePatient(admin: AdminClient, fields: ResolvePatientFields): Promise<ResolvePatientResult> {
+export async function resolvePatient(
+  admin: AdminClient,
+  fields: ResolvePatientFields,
+  translateError: DbErrorTranslator,
+): Promise<ResolvePatientResult> {
   const email = fields.email.trim().toLowerCase();
   const { data, error } = await withLifecycleRetry(() =>
     admin.rpc("resolve_patient_guarded", {
@@ -82,8 +85,7 @@ export async function resolvePatient(admin: AdminClient, fields: ResolvePatientF
   const row = data?.[0];
   if (error || !row) {
     if (!error) return { ok: false, error: "Could not save patient details." };
-    const { translatePgError } = await import("@/lib/accounting/pg-errors");
-    return { ok: false, error: translatePgError(error) };
+    return { ok: false, error: translateError(error) };
   }
   return { ok: true, id: row.id, drm_id: row.drm_id, reused: row.reused };
 }
