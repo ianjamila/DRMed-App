@@ -73,3 +73,38 @@ describe("Patient Sources has one definition and one caller", () => {
   });
 });
 
+
+/**
+ * The first-night check proves the surfaces agree, so it must read numbers the
+ * way they do: the same loaders, the same formatters, never `.rpc(` of its own.
+ */
+describe("the first-night check reads exactly like the surfaces", () => {
+  const CHECK_FILES = ["src/lib/marketing/first-night-check.ts", "src/lib/marketing/first-night-check.server.ts"];
+  const engine = readFileSync(join(ROOT, "src/lib/marketing/first-night-check.server.ts"), "utf8");
+
+  it("never calls .rpc( or names a report RPC", () => {
+    for (const file of CHECK_FILES) {
+      const src = readFileSync(join(ROOT, file), "utf8");
+      expect(src, file).not.toContain(".rpc(");
+      for (const r of RPCS) expect(src, `${file} names ${r}`).not.toMatch(new RegExp(`["'\`]${r}["'\`]`));
+    }
+  });
+  it("uses the same three loaders as the Patient Sources page, Booking Sources page and dashboard", () => {
+    expect(engine).toContain('from "./patient-sources.server"');
+    for (const loader of ["loadPatientSourcesSummary", "loadPatientSourcesSeries", "loadNewPatientsToday"]) {
+      expect(engine, loader).toContain(`${loader}`);
+    }
+    // ...and the pages it reproduces still read through those very loaders.
+    expect(readFileSync(join(ROOT, `${S}/marketing/sources/page.tsx`), "utf8")).toContain("loadPatientSourcesSummary(");
+    expect(readFileSync(join(ROOT, `${S}/_dashboards/admin-dashboard.tsx`), "utf8")).toContain("loadNewPatientsToday(");
+  });
+  it("uses the surfaces' own formatters (dashboard tile, Booking Sources tile, Patient Sources card)", () => {
+    expect(engine).toContain("formatNewToday(");
+    expect(engine).toContain("newPatientsTile(");
+    const pure = readFileSync(join(ROOT, CHECK_FILES[0]), "utf8");
+    expect(pure).toContain("formatNewCounts(");
+    expect(readFileSync(join(ROOT, `${S}/marketing/patients/page.tsx`), "utf8")).toContain("formatNewCounts(");
+    expect(readFileSync(join(ROOT, `${S}/marketing/sources/page.tsx`), "utf8")).toContain("newPatientsTile(");
+    expect(readFileSync(join(ROOT, `${S}/_dashboards/admin-dashboard.tsx`), "utf8")).toContain("formatNewToday(");
+  });
+});
