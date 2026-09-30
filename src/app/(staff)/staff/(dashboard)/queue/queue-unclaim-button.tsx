@@ -8,12 +8,17 @@ import { unclaimFromQueueAction } from "./actions";
 // detail page's UnclaimOwnButton / ReassignPanel so the three read as one
 // feature. Takes every member id so a consolidated chemistry card hands back
 // its whole panel at once. The server action decides whose claim the caller
-// may release (admin: anyone's; everyone else: their own).
+// may release (admin: anyone's; everyone else: their own), and hands back
+// only while each test is still held by the holder sent here — the one the
+// operator saw — so a claim taken over in between is never released.
 export function QueueUnclaimButton({
   testRequestIds,
+  holders,
   entryLabel,
 }: {
   testRequestIds: string[];
+  /** Each test's holder as rendered, parallel to testRequestIds. */
+  holders: ReadonlyArray<string | null>;
   entryLabel: string;
 }) {
   const router = useRouter();
@@ -27,6 +32,7 @@ export function QueueUnclaimButton({
       setErr(null);
       const result = await unclaimFromQueueAction({
         testRequestIds,
+        holders,
         reason: reason.trim() || undefined,
       });
       if (!result.ok) {
@@ -44,7 +50,7 @@ export function QueueUnclaimButton({
       <button
         type="button"
         onClick={() => setConfirmOpen(true)}
-        className="min-h-[44px] text-xs font-semibold text-[color:var(--color-brand-text-soft)] hover:underline"
+        className="min-h-[44px] text-xs font-semibold text-red-700 hover:underline"
         aria-label={`Unclaim ${entryLabel}`}
       >
         Unclaim
@@ -72,7 +78,7 @@ export function QueueUnclaimButton({
           type="button"
           onClick={onUnclaim}
           disabled={pending}
-          className="min-h-[44px] rounded-md bg-[color:var(--color-brand-navy)] px-3 text-xs font-bold uppercase tracking-wider text-white disabled:opacity-50"
+          className="min-h-[44px] rounded-md bg-red-700 px-3 text-xs font-bold uppercase tracking-wider text-white disabled:opacity-50"
         >
           {pending ? "Unclaiming…" : "Confirm"}
         </button>

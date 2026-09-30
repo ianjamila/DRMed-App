@@ -7449,6 +7449,10 @@ export type Database = {
         Args: { p_business_date: string; p_shift_id: string }
         Returns: Json
       }
+      claim_panel_members: {
+        Args: { p_test_request_ids: string[] }
+        Returns: number
+      }
       claim_statement_email: {
         Args: {
           p_recipient: string
@@ -7933,6 +7937,10 @@ export type Database = {
         Returns: boolean
       }
       staff_role: { Args: never; Returns: string }
+      unclaim_panel_members: {
+        Args: { p_holders: string[]; p_test_request_ids: string[] }
+        Returns: number
+      }
       view_as_end_for: {
         Args: {
           p_actor: string

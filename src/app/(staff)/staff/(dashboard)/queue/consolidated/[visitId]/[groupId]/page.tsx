@@ -510,7 +510,11 @@ export default async function ConsolidatedQueuePage({
             <div className="mt-4 flex flex-wrap items-start justify-between gap-4 rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white p-5">
               <ClaimHistory remarks={history} />
               {canUnclaim ? (
-                <QueueUnclaimButton testRequestIds={testRequestIds} entryLabel={group.name} />
+                <QueueUnclaimButton
+                  testRequestIds={testRequestIds}
+                  holders={encodeRows.map((r) => r.assigned_to)}
+                  entryLabel={group.name}
+                />
               ) : null}
             </div>
           }

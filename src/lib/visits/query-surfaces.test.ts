@@ -188,9 +188,13 @@ const SURFACES: Record<string, Surface> = {
     meaning: "structural",
     why: "Scoped by services.report_group_id. Report groups are the consolidated chemistry panels; a doctor service carries no report_group_id, so it cannot appear in one.",
   },
-  "app/(staff)/staff/(dashboard)/queue/consolidated/[visitId]/[groupId]/actions.ts": {
+  "lib/actions/queue/panel-writes.ts": {
     meaning: "structural",
-    why: "Acts on ids sourced only from the report-group-scoped page above, which no doctor line can reach.",
+    why: "Claims a consolidated panel's members by id. The ids come only from the report-group-scoped panel page or from panel-members.ts (report-group scoped, doctor kinds excluded) — no doctor line can reach it.",
+  },
+  "lib/queue/panel-members.ts": {
+    meaning: "lab",
+    why: "The whole membership of a chemistry panel for the lab queue's Claim / Unclaim / Delete. Scoped by services.report_group_id, and excludes doctor kinds explicitly.",
   },
   "lib/actions/results/finalise-consolidated.ts": {
     meaning: "structural",
@@ -483,9 +487,13 @@ const LIFECYCLES: Record<string, LifecycleSurface> = {
     lifecycle: "live",
     why: "The consolidated chemistry panel's entry screen — bench work, same rule as the queue it belongs to.",
   },
-  "app/(staff)/staff/(dashboard)/queue/consolidated/[visitId]/[groupId]/actions.ts": {
+  "lib/actions/queue/panel-writes.ts": {
     lifecycle: "live",
-    why: "Writes the consolidated panel's results. Same rule as the page that feeds it.",
+    why: "Claims a consolidated panel. A deleted line (or a line on a deleted visit) must not be claimed — the pre-read refuses both, and claim_panel_members (0191) re-checks deleted_at.",
+  },
+  "lib/queue/panel-members.ts": {
+    lifecycle: "live",
+    why: "Bench work on the lab queue. Deleted lines and every line of a deleted visit are out of a panel.",
   },
   "lib/actions/results/finalise-consolidated.ts": {
     lifecycle: "live",

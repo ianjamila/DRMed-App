@@ -72,7 +72,7 @@ export function ReassignPanel({
         <button
           type="button"
           onClick={() => setConfirmOpen(true)}
-          className="min-h-[44px] text-xs font-semibold text-[color:var(--color-brand-text-soft)] hover:underline"
+          className="min-h-[44px] text-xs font-semibold text-red-700 hover:underline"
         >
           Unclaim
         </button>
@@ -94,7 +94,7 @@ export function ReassignPanel({
               type="button"
               onClick={onUnclaim}
               disabled={pending}
-              className="min-h-[44px] rounded-md bg-[color:var(--color-brand-navy)] px-3 text-xs font-bold uppercase tracking-wider text-white disabled:opacity-50"
+              className="min-h-[44px] rounded-md bg-red-700 px-3 text-xs font-bold uppercase tracking-wider text-white disabled:opacity-50"
             >
               {pending ? "Unclaiming…" : "Confirm unclaim"}
             </button>

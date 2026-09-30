@@ -65,7 +65,14 @@ import { SelectionProvider } from "@/components/staff/row-selection/selection-co
 import { RowSelectCheckbox } from "@/components/staff/row-selection/row-select-checkbox";
 import { SelectAllCheckbox } from "@/components/staff/row-selection/select-all-checkbox";
 import type { SelectionEntry } from "@/lib/ui/bulk-selection";
-import { queueRowKinds, type QueueRowInfo } from "@/lib/queue/bulk-queue";
+import { panelRowKey, queueRowKinds, type QueueRowInfo } from "@/lib/queue/bulk-queue";
+import {
+  fetchPanelMembers,
+  panelActionLabel,
+  seenBench,
+  summarizePanel,
+  type PanelState,
+} from "@/lib/queue/panel-members";
 import { QueueBulkBar } from "./queue-bulk-bar";
 
 const LAB_QUEUE_SUBSCRIPTIONS = [
@@ -110,6 +117,9 @@ type QueueCardGrouped = {
   visitId: string;
   groupId: string;
   groupCode: string;
+  // The report group's own name — panel confirmations count the WHOLE panel
+  // (panelActionLabel), while `label` counts the members on this page.
+  groupName: string;
   label: string;
   orderedTests: Array<{ code: string; name: string }>;
   requestedAt: string;
@@ -121,11 +131,13 @@ type QueueCardGrouped = {
   status: string;
   claimedBy: string | null;
   href: string;
-  // All member test ids — the group deletes as one bulk action.
+  // The member test ids on THIS page — for the Remarks column only.
   memberIds: string[];
-  // Only when EVERY member is deletable (a package component in the panel
-  // makes the whole group non-deletable; the package deletes from the visit).
-  canDelete: boolean;
+  // The first member's section — names the owner role when the panel is
+  // outside the viewer's claim (ClaimOwnerHint), like a single row.
+  section: string | null;
+  // Claim / Unclaim / Delete are decided on the WHOLE panel (panelStates),
+  // never on the members this page happens to show.
   // One consolidated report is ONE PDF shared by every member, so any member
   // with a file prints the whole panel. null when none qualifies.
   printTestId: string | null;
@@ -485,7 +497,6 @@ export default async function QueuePage({ searchParams }: SearchProps) {
       if (existing) {
         existing.orderedTests.push(test);
         existing.memberIds.push(r.id);
-        existing.canDelete = existing.canDelete && rowDeletable;
         if (!existing.printTestId && printable) existing.printTestId = r.id;
         existing.hasFile = existing.hasFile || pdfState !== undefined;
         existing.label = `${rg.name} (${existing.orderedTests.length} tests)`;
@@ -509,6 +520,7 @@ export default async function QueuePage({ searchParams }: SearchProps) {
           visitId: r.visit_id,
           groupId: svc.report_group_id,
           groupCode: rg.code,
+          groupName: rg.name,
           label: `${rg.name} (1 test)`,
           orderedTests: [test],
           requestedAt: r.requested_at,
@@ -523,7 +535,7 @@ export default async function QueuePage({ searchParams }: SearchProps) {
             ? visitHref
             : `/staff/queue/consolidated/${r.visit_id}/${svc.report_group_id}`,
           memberIds: [r.id],
-          canDelete: rowDeletable,
+          section: svc.section,
           printTestId: printable ? r.id : null,
           hasFile: pdfState !== undefined,
         };
@@ -606,10 +618,50 @@ export default async function QueuePage({ searchParams }: SearchProps) {
   // Bulk selection (spec §6). Reception never gets checkboxes (it only sees
   // Released today), and Released today is a record, not a worklist. A row's
   // kinds come from the SAME predicates that render its buttons below, so
-  // the bar never offers what the row itself wouldn't. Chemistry panel cards
-  // get no checkbox: paging happens before the fold, so a visible card can
-  // hold part of a panel.
+  // the bar never offers what the row itself wouldn't. A chemistry panel card
+  // is keyed by (visit, report group) and judged on its FULL membership
+  // (panelStates below): paging happens before the fold, so a visible card
+  // can hold part of a panel, and panel-actions.ts acts on the whole panel.
   const selectable = !receptionView && !releasedTab;
+
+  // Whole-panel state for every chemistry card on a worklist tab — the same
+  // read + rule the server actions use (src/lib/queue/panel-members.ts), so
+  // the row's Claim / Unclaim / Delete and its checkbox only offer what the
+  // server will do for the whole panel. Released today has no bench actions.
+  const panelStates = new Map<string, PanelState>();
+  if (selectable) {
+    const refs = matched.flatMap((card) =>
+      card.kind === "grouped" ? [{ visitId: card.visitId, groupId: card.groupId }] : [],
+    );
+    const read = await fetchPanelMembers(supabase, refs);
+    if (read.ok) {
+      const memberIds = [...read.byKey.values()].flatMap((ms) => ms.map((m) => m.id));
+      // Same finished-combined-report lock the single rows use (P0067).
+      const panelShared = await fetchSharedReportTestIds(supabase, memberIds);
+      for (const [key, members] of read.byKey) {
+        panelStates.set(
+          key,
+          summarizePanel(members, {
+            role: session.role,
+            userId: session.user_id,
+            sharedReportIds: panelShared,
+          }),
+        );
+      }
+    }
+  }
+  const panelStateOf = (card: QueueCardGrouped) =>
+    panelStates.get(panelRowKey(card.visitId, card.groupId));
+  const panelKinds = (card: QueueCardGrouped) => {
+    const state = panelStateOf(card);
+    return state
+      ? queueRowKinds({
+          claimable: state.claimable,
+          unclaimable: state.unclaimable,
+          deletable: state.deletable,
+        })
+      : [];
+  };
   const singleKinds = (card: QueueCardSingle) =>
     queueRowKinds({
       claimable: card.status === "requested" && canClaimSection(session.role, card.section),
@@ -620,7 +672,24 @@ export default async function QueuePage({ searchParams }: SearchProps) {
   const rowsByKey: Record<string, QueueRowInfo> = {};
   if (selectable) {
     for (const card of matched) {
-      if (card.kind !== "single") continue;
+      if (card.kind === "grouped") {
+        const state = panelStateOf(card);
+        const kinds = panelKinds(card);
+        if (!state || kinds.length === 0) continue;
+        const rowKey = panelRowKey(card.visitId, card.groupId);
+        // Weighed by EVERY member (what Delete acts on), so the selection
+        // caps count the records the server will actually touch.
+        selectionEntries.push({ rowKey, kinds, weight: state.allIds.length });
+        rowsByKey[rowKey] = {
+          visitId: card.visitId,
+          label: `${card.label} — ${card.patientName}`,
+          assignedTo: state.holder,
+          testCount: state.allIds.length,
+          benchCount: state.benchIds.length,
+          bench: seenBench(state),
+        };
+        continue;
+      }
       const kinds = singleKinds(card);
       if (kinds.length === 0) continue;
       selectionEntries.push({ rowKey: card.testRequestId, kinds, weight: 1 });
@@ -631,7 +700,6 @@ export default async function QueuePage({ searchParams }: SearchProps) {
       };
     }
   }
-  const hasPanels = matched.some((card) => card.kind === "grouped");
   // Any change to what the list shows or its order drops the selection —
   // SelectionProvider resets itself on this string WITHOUT remounting the
   // table (never put a React key on the provider).
@@ -1090,6 +1158,7 @@ export default async function QueuePage({ searchParams }: SearchProps) {
                           <div className="mt-1 flex justify-end">
                             <QueueUnclaimButton
                               testRequestIds={[card.testRequestId]}
+                              holders={[card.claimedBy]}
                               entryLabel={card.label}
                             />
                           </div>
@@ -1118,7 +1187,18 @@ export default async function QueuePage({ searchParams }: SearchProps) {
                     key={card.cardKey}
                     className="hover:bg-[color:var(--color-brand-bg)]"
                   >
-                    {selectable ? <td className="px-2 py-3" aria-hidden /> : null}
+                    {selectable ? (
+                      <td className="px-2 py-3 align-middle">
+                        {panelKinds(card).length > 0 ? (
+                          <RowSelectCheckbox
+                            rowKey={panelRowKey(card.visitId, card.groupId)}
+                            kinds={panelKinds(card)}
+                            weight={panelStateOf(card)!.allIds.length}
+                            label={`${card.label}, ${card.patientName}`}
+                          />
+                        ) : null}
+                      </td>
+                    ) : null}
                     <td className="px-4 py-3 text-[color:var(--color-brand-text-mid)]">
                       {manilaDateTime(releasedTab ? card.releasedAt : card.requestedAt)}
                     </td>
@@ -1181,29 +1261,50 @@ export default async function QueuePage({ searchParams }: SearchProps) {
                           stale={staleFor(card.printTestId)}
                         />
                       ) : null}
-                      {receptionView ? null : (
-                        <Link
-                          href={card.href}
-                          className="text-xs font-bold text-[color:var(--color-brand-cyan)] hover:underline"
-                        >
-                          Open →
-                        </Link>
+                      {receptionView ? null : panelStateOf(card)?.claimable ? (
+                        <ClaimButton
+                          panel={{ visitId: card.visitId, groupId: card.groupId }}
+                          navigateOnClaim
+                        />
+                      ) : (
+                        <>
+                          <Link
+                            href={card.href}
+                            className="text-xs font-bold text-[color:var(--color-brand-cyan)] hover:underline"
+                          >
+                            Open →
+                          </Link>
+                          {card.status === "requested" ? (
+                            <ClaimOwnerHint section={card.section} />
+                          ) : null}
+                        </>
                       )}
-                      {canUnclaim(card) ? (
+                      {/* Unclaim / Delete act on the WHOLE panel, not the members
+                          this page happens to show. */}
+                      {panelStateOf(card)?.unclaimable ? (
                         <div className="mt-1 flex justify-end">
                           <QueueUnclaimButton
-                            testRequestIds={card.memberIds}
-                            entryLabel={card.label}
+                            testRequestIds={panelStateOf(card)!.benchIds}
+                            holders={panelStateOf(card)!.benchHolders}
+                            entryLabel={panelActionLabel(
+                              card.groupName,
+                              panelStateOf(card)!.benchIds,
+                              card.memberIds,
+                            )}
                           />
                         </div>
                       ) : null}
-                      {card.canDelete ? (
+                      {panelStateOf(card)?.deletable ? (
                         <div className="mt-1.5 flex justify-end">
                           <QueueDeleteDialog
                             visitId={card.visitId}
-                            testRequestIds={card.memberIds}
+                            testRequestIds={panelStateOf(card)!.allIds}
                             mode="delete"
-                            entryLabel={card.label}
+                            entryLabel={panelActionLabel(
+                              card.groupName,
+                              panelStateOf(card)!.allIds,
+                              card.memberIds,
+                            )}
                           />
                         </div>
                       ) : null}
@@ -1218,7 +1319,7 @@ export default async function QueuePage({ searchParams }: SearchProps) {
           </tbody>
         </table>
       </Panel>
-        {selectable ? <QueueBulkBar rowsByKey={rowsByKey} hasPanels={hasPanels} /> : null}
+        {selectable ? <QueueBulkBar rowsByKey={rowsByKey} /> : null}
       </SelectionProvider>
 
       {/* The pager counts TESTS, which is what `.range()` slices; a
