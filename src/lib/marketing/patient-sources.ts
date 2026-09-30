@@ -262,3 +262,20 @@ export function seriesCsvRows(
     ...series.map((r) => [r.bucket_start, channelLabel(r.channel), Number(r.confirmed), Number(r.unconfirmed)]),
   ];
 }
+
+/**
+ * The "New patients" tile on Booking Sources. Patient Sources refuses a period
+ * that starts before PATIENT_SOURCES_MIN_DATE (0193), so that page skips the
+ * summary call (`summary === null`) and says so instead of showing an error.
+ */
+export function newPatientsTile(
+  summary: ReportResult<SummaryRow> | null,
+): { value: string; error: boolean; linked: boolean } {
+  if (summary === null) return { value: "Not available before Dec 2023", error: false, linked: false };
+  if (!summary.ok) return { value: "—", error: true, linked: true };
+  return {
+    value: `${summary.data.new_confirmed.toLocaleString("en-PH")} confirmed · ${summary.data.new_unconfirmed.toLocaleString("en-PH")} unconfirmed`,
+    error: false,
+    linked: true,
+  };
+}

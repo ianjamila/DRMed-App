@@ -226,6 +226,31 @@ describe("summary rows vs real campaigns named Total… (Codex C2)", () => {
     if (!r.ok) throw new Error();
     expect(r.rows.map((x) => x.campaign_key)).toEqual(["brand"]);
   });
+  it("skips an exact Total / Total: … row whose date cell is a placeholder, without counting it as rejected", () => {
+    const r = parseAdSpendCsv(
+      [row("2026-09-01", "Brand"), row(" --", "Total"), row("—", "Total: Account"), row("n/a", "total:campaigns")],
+      H,
+    );
+    expect(r).toMatchObject({ ok: true, rejected: [] });
+    if (!r.ok) throw new Error();
+    expect(r.rows.map((x) => x.campaign_key)).toEqual(["brand"]);
+    const meta = parseAdSpendCsv(
+      [
+        { "Reporting starts": "2026-09-01", "Reporting ends": "2026-09-01", "Campaign name": "Brand", "Amount spent (PHP)": "5" },
+        { "Reporting starts": "—", "Reporting ends": "—", "Campaign name": "Total", "Amount spent (PHP)": "5" },
+      ],
+      ["Reporting starts", "Reporting ends", "Campaign name", "Amount spent (PHP)"],
+    );
+    expect(meta).toMatchObject({ ok: true, rejected: [] });
+  });
+  it("still keeps a dated 'Total Health' and rejects an undated / placeholder-dated one", () => {
+    const kept = parseAdSpendCsv([row("2026-09-01", "Total Health", "7")], H);
+    expect(kept).toMatchObject({ ok: true, rejected: [] });
+    if (!kept.ok) throw new Error();
+    expect(kept.rows).toHaveLength(1);
+    expect(parseAdSpendCsv([row("2026-09-01", "Brand"), row(" --", "Total Health")], H))
+      .toMatchObject({ ok: true, rejected: [{ reason: "bad_date", count: 1 }] });
+  });
   it("REJECTS visibly (never skips) an ambiguous 'Total Health' row with no date", () => {
     const r = parseAdSpendCsv([row("2026-09-01", "Brand"), row("", "Total Health", "999")], H);
     expect(r).toMatchObject({ ok: true, rejected: [{ reason: "bad_date", count: 1 }] });

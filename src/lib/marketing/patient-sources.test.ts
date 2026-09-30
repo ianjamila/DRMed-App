@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  NOT_RECORDED, bucketLabel, channelLabel, channelTable, chartData, classifyReportError,
+  NOT_RECORDED, bucketLabel, channelLabel, channelTable, newPatientsTile, chartData, classifyReportError,
   costPerNewPatient, formatNewToday, parseGrain, parseMode, previousPeriod, seriesCsvRows, sheetBanner,
   type SeriesRow, type SummaryRow,
 } from "./patient-sources";
@@ -33,6 +33,18 @@ describe("previousPeriod", () => {
     expect(previousPeriod("2026-09-01", "2026-09-30")).toEqual({ from: "2026-08-02", to: "2026-08-31" });
     expect(previousPeriod("2026-09-28", "2026-09-28")).toEqual({ from: "2026-09-27", to: "2026-09-27" });
     expect(previousPeriod("2026-01-01", "2026-01-07")).toEqual({ from: "2025-12-25", to: "2025-12-31" });
+  });
+});
+
+describe("newPatientsTile (Booking Sources)", () => {
+  it("says 'Not available before Dec 2023' with no error and no link when the summary was skipped", () => {
+    expect(newPatientsTile(null)).toEqual({ value: "Not available before Dec 2023", error: false, linked: false });
+  });
+  it("shows the counts, or the error state when the load failed", () => {
+    const ok = newPatientsTile({ ok: true, data: { new_confirmed: 1200, new_unconfirmed: 3 } as never });
+    expect(ok).toMatchObject({ error: false, linked: true });
+    expect(ok.value).toMatch(/confirmed · 3 unconfirmed/);
+    expect(newPatientsTile({ ok: false, kind: "error", message: "x" })).toEqual({ value: "—", error: true, linked: true });
   });
 });
 

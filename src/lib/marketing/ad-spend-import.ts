@@ -199,16 +199,17 @@ export function parseAdSpendCsv(
     // campaign's name alone (C2): a real campaign called "Total Health" with a
     // date is spend and is kept. A summary row is (a) "Total…" sitting in the
     // date column itself (Google's "Total: Account" lands in Day), or (b) a
-    // campaign cell that is exactly "Total" / "Total: …" on a row with NO date
-    // at all. Anything else that starts with "Total" but has no readable date
-    // falls through to the date check below and is REJECTED visibly (bad_date)
+    // campaign cell that is exactly "Total" / "Total: …" on a row with NO VALID
+    // date (blank, or a placeholder such as " --" or "—"). Anything else that
+    // starts with "Total" but has no readable date (e.g. "Total Health") falls
+    // through to the date check below and is REJECTED visibly (bad_date)
     // instead of being dropped silently.
     const dateCellText = dayCol ? String(r[dayCol] ?? "").trim() : "";
-    const noDateAtAll =
-      dateCellText === "" &&
-      !(startCol && String(r[startCol] ?? "").trim()) &&
-      !(endCol && String(r[endCol] ?? "").trim());
-    if (/^total\b/i.test(dateCellText) || (noDateAtAll && /^total(?:\s*:.*)?$/i.test(campaign))) continue;
+    const validDateCell = (v: unknown) => parseDateCell(String(v ?? "")).ok;
+    const hasValidDate =
+      (dayCol !== undefined && validDateCell(r[dayCol])) ||
+      (startCol !== undefined && endCol !== undefined && validDateCell(r[startCol]) && validDateCell(r[endCol]));
+    if (/^total\b/i.test(dateCellText) || (!hasValidDate && /^total(?:\s*:.*)?$/i.test(campaign))) continue;
 
     let platform: AdPlatform;
     if (platformCol) {
