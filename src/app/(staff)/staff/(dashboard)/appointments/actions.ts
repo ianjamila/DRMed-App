@@ -8,6 +8,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { audit } from "@/lib/audit/log";
 import { requireActiveStaff } from "@/lib/auth/require-staff";
 import { resolvePatient } from "@/lib/patients/resolve";
+import { translatePgError } from "@/lib/accounting/pg-errors";
 import { activePatients } from "@/lib/patients/active";
 import { assertAppointmentsPatientsActive } from "@/lib/patients/require-active";
 import { AttachPatientSchema, type AttachPatientInput } from "@/lib/appointments/attach-patient";
@@ -550,7 +551,7 @@ export async function attachPatientToAppointmentAction(
       phone: parsed.data.phone,
       email: parsed.data.email,
       address: parsed.data.address,
-    });
+    }, translatePgError);
     if (!r.ok) return { ok: false, error: r.error };
     patientId = r.id;
     drmId = r.drm_id;

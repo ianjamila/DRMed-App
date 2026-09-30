@@ -18,6 +18,7 @@ import { sendNewBookingAlert } from "@/lib/appointments/booking-alert";
 import { after } from "next/server";
 import { checkRateLimit, RATE_LIMITS } from "@/lib/rate-limit/check";
 import { resolvePatient } from "@/lib/patients/resolve";
+import { publicDbError } from "@/lib/patients/public-db-error";
 import { activePatients } from "@/lib/patients/active";
 import { createAppointmentGroup, createLabRequestOnlyBooking, type PatientResolution } from "@/lib/appointments/create";
 import { PORTAL_LOOKUP_AGAIN_ERROR } from "@/lib/appointments/patient-recovery";
@@ -353,7 +354,7 @@ export async function submitBookingAction(_prev: BookingResult | null, formData:
         address: data.address,
         // Saved only if this booking creates the patient (0158).
         referral_source: data.referral_source,
-      });
+      }, publicDbError);
       if (!res.ok) return { ok: false, error: res.error };
       return { ok: true, patient: { patientId: res.id, drmId: res.drm_id, email: data.email, resolution: res.reused ? "reused" : "created" } };
     }
@@ -381,6 +382,7 @@ export async function submitBookingAction(_prev: BookingResult | null, formData:
         attribution,
         resolvePatient: resolveThunk,
         lookupAgainError: PORTAL_LOOKUP_AGAIN_ERROR,
+        translateError: publicDbError,
       })
     : await createAppointmentGroup(admin, {
         branch: data.branch,
@@ -395,6 +397,7 @@ export async function submitBookingAction(_prev: BookingResult | null, formData:
         attribution,
         resolvePatient: resolveThunk,
         lookupAgainError: PORTAL_LOOKUP_AGAIN_ERROR,
+        translateError: publicDbError,
       });
 
   if (!result.ok) {

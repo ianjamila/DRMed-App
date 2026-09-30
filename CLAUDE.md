@@ -241,7 +241,7 @@ All Server Actions return `{ ok: true, data } | { ok: false, error }`. User-faci
 | Patient storage signed URLs (single service-role choke point) | `src/lib/storage/signed-url.ts` |
 | Audit-log writer — call from every write action | `src/lib/audit/log.ts` (`audit()`) |
 | Server Action helpers (`ipAndAgent`, `firstIssue`) | `src/lib/server/action-helpers.ts` |
-| PG error → user-facing message translator | `src/lib/accounting/pg-errors.ts` (`translatePgError`) |
+| PG error → user-facing message translator — **staff only** (it passes hand-written 23514/P00NN text through); the public `/schedule` and `/register` forms use `publicDbError`, and `pg-errors-staff-only.test.ts` fails if any non-staff page under `src/app` can import `pg-errors.ts` | `src/lib/accounting/pg-errors.ts` (`translatePgError`), `src/lib/patients/public-db-error.ts` |
 | Manila/PHT date helpers (`todayManilaISODate`, `manilaISODate`, `manilaParts`, `isISODate`, `shiftISODate`, `manilaRangeUtc`), the calendar arithmetic (`isoDateParts`, `firstOfMonthISO`, `lastOfMonthISO`, `daysInMonth`) + the canonical display formatters `manilaDate` / `manilaDateTime` / `manilaTime` / `manilaLongDate` / `friendlyManilaDate` — never build a date format in a page; `date-render-surfaces.test.ts` enforces the display half and `manila-usage.test.ts` the computation half | `src/lib/dates/manila.ts` |
 | The long-form appointment stamp used in patient comms (`formatManilaDateTime`) | `src/lib/notifications/format-manila-datetime.ts` |
 | Report period presets (`buildPeriodPresets`, `buildAsOfPresets`, `priorYearRange`) and carrying a period across a tab bar (`carryParams`, `statementPeriodQueries`) | `src/lib/reports/{period-presets,statement-period}.ts` |

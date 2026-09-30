@@ -44,7 +44,7 @@ import {
 } from "@/lib/actions/results/result-edit-core";
 import {
   callResultCreateLinked,
-  canContinueRacedStructuredDraft,
+  racedStructuredDraftOutcome,
   createLinkedResult,
 } from "@/lib/actions/results/create-linked";
 import { translatePgError } from "@/lib/accounting/pg-errors";
@@ -218,7 +218,7 @@ async function prepareStructured(
   // Ensure a draft results row exists (one per test_request).
   const { data: existingLink } = await admin
     .from("result_test_requests")
-    .select("result_id, results!inner(id, generation_kind, finalised_at)")
+    .select("result_id, results!inner(id, generation_kind, finalised_at, report_group_id)")
     .eq("test_request_id", testRequestId)
     .maybeSingle();
   const existing = existingLink
@@ -243,20 +243,26 @@ async function prepareStructured(
       isNewResult = true;
     } else if (created.code === "P0066") {
       // Someone created it a moment ago (two tabs, a double click): use theirs
-      // if it is still an unfinished structured draft.
+      // if it is still an unfinished single-test structured draft — not the
+      // combined report someone started for the whole panel.
       const { data: raced } = await admin
         .from("result_test_requests")
-        .select("result_id, results!inner(id, generation_kind, finalised_at)")
+        .select("result_id, results!inner(id, generation_kind, finalised_at, report_group_id)")
         .eq("test_request_id", testRequestId)
         .maybeSingle();
       const r = raced ? (Array.isArray(raced.results) ? raced.results[0] : raced.results) ?? null : null;
-      if (!canContinueRacedStructuredDraft(r)) {
-        return { ok: false, error: created.error };
-      }
+      const members = r ? await resultMemberCount(admin, r.id) : 0;
+      const outcome = racedStructuredDraftOutcome(r, members);
+      if (outcome === "combined_report") return { ok: false, error: COMBINED_REPORT_ENTRY_ERROR };
+      if (outcome !== "continue") return { ok: false, error: created.error };
       resultId = r!.id;
     } else {
       return { ok: false, error: created.error };
     }
+  } else if (existing?.report_group_id) {
+    // Already part of a combined report (a consolidated draft someone started
+    // for the whole panel): values go in there, never over it from here.
+    return { ok: false, error: COMBINED_REPORT_ENTRY_ERROR };
   } else if (existing?.generation_kind !== "structured") {
     return {
       ok: false,
@@ -885,6 +891,18 @@ export type AmendResult =
 const SHARED_REPORT_AMEND_ERROR =
   "This test is part of a combined report (such as Chemistry), so it can't be edited on its own.";
 
+// Structured entry on one test reached a result shared with its panel.
+const COMBINED_REPORT_ENTRY_ERROR =
+  "This test is part of a combined report (such as Chemistry). Enter its values on the combined report.";
+
+async function resultMemberCount(admin: ReturnType<typeof createAdminClient>, resultId: string): Promise<number> {
+  const { count } = await admin
+    .from("result_test_requests")
+    .select("test_request_id", { count: "exact", head: true })
+    .eq("result_id", resultId);
+  return count ?? 0;
+}
+
 async function isSharedReport(
   admin: ReturnType<typeof createAdminClient>,
   resultId: string,
@@ -892,11 +910,7 @@ async function isSharedReport(
   resultReportGroupId: string | null,
 ): Promise<boolean> {
   if (serviceReportGroupId || resultReportGroupId) return true;
-  const { count } = await admin
-    .from("result_test_requests")
-    .select("test_request_id", { count: "exact", head: true })
-    .eq("result_id", resultId);
-  return (count ?? 0) > 1;
+  return (await resultMemberCount(admin, resultId)) > 1;
 }
 
 // The form carries the amendment_count it was opened on; result_edit_commit
