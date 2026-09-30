@@ -9,8 +9,9 @@ import { audit } from "@/lib/audit/log";
 import { reportError } from "@/lib/observability/report-error";
 import { requireAdminStaff } from "@/lib/auth/require-admin";
 import { runUndoSteps, undoMergeSteps } from "@/lib/patients/undo-merge-steps";
-import { mergeMoveSteps, runMergeMoveSteps } from "@/lib/patients/merge-steps";
+import { mergeMoveSteps, runMergeMoveSteps, type MergeMoveStep } from "@/lib/patients/merge-steps";
 import { withLifecycleRetry } from "@/lib/patients/lifecycle-retry";
+import { chunkIds } from "@/lib/patients/require-active-core";
 import { sendEmail } from "@/lib/notifications/email";
 import { checkPatientRecipient } from "@/lib/notifications/active-patient-recipient";
 import { auditSkippedInactiveRecipient } from "@/lib/notifications/inactive-recipient-audit";
@@ -135,6 +136,47 @@ export async function lookupPatientForMergeAction(
   return { ok: true, patient: preview };
 }
 
+// Ids per rollback chunk — same figure as require-active.ts's own CHUNK (a
+// plain `.in()` with hundreds of values is both a PostgREST/Postgres risk
+// and rides the GET query string uncapped). A single merge's row counts are
+// ordinarily tiny, but this keeps the rollback safe if they aren't.
+const MERGE_ROLLBACK_CHUNK = 200;
+
+// Claws exact ids back from keep_id to source_id for one completed move
+// step, called by runMergeMoveSteps only when a LATER step failed. Chunked,
+// each chunk retried once on a lock race, with a fresh builder per attempt
+// (same Prefer-header trap as the forward move). `.eq("patient_id", keepId)`
+// is a safety predicate: only claw back rows still on the kept patient,
+// never a row some unrelated concurrent write already moved elsewhere.
+// audit_log.id is bigserial (number), not uuid — cast before `.in()`, same
+// as undoMergeAction's own move-back case.
+async function rollbackMergeMoveStep(
+  admin: ReturnType<typeof createAdminClient>,
+  step: MergeMoveStep,
+  ids: unknown[],
+  keepId: string,
+  sourceId: string,
+): Promise<{ error: { message: string } | null }> {
+  const failures: string[] = [];
+  // audit_log.id is bigserial (number), not uuid (string) like the other
+  // five tables — normalise to string for chunking, same as the other
+  // moves' ids, then cast back to Number for THIS table's `.in()`, same as
+  // undoMergeAction's own move-back case.
+  const idStrings = ids.map((id) => String(id));
+  for (const idsChunk of chunkIds(idStrings, MERGE_ROLLBACK_CHUNK)) {
+    const queryIds = step.table === "audit_log" ? idsChunk.map(Number) : idsChunk;
+    const { error } = await withLifecycleRetry(() =>
+      admin
+        .from(step.table)
+        .update({ patient_id: sourceId })
+        .in("id", queryIds)
+        .eq("patient_id", keepId),
+    );
+    if (error) failures.push(error.message);
+  }
+  return failures.length > 0 ? { error: { message: failures.join("; ") } } : { error: null };
+}
+
 export async function mergePatientsAction(
   _prev: MergeResult | null,
   formData: FormData,
@@ -189,35 +231,77 @@ export async function mergePatientsAction(
   // lock first), P0072 (the record moved mid-save) or 23514 (a critical
   // alert's patient must match its test's patient — it can only move back
   // once its visit already has). The runner stops at the FIRST move that
-  // still fails and reports which ones completed; each move is retried once
-  // on a lock race, with a fresh builder per attempt (re-awaiting one
-  // PostgREST builder with `.select()` would re-append its Prefer header and
-  // send the mutation twice). Nothing below this — filling fields,
-  // tombstoning the source, writing the undo ledger — runs unless every move
-  // actually landed (0184 review finding P1): a merge that stopped part-way
-  // used to tombstone the source anyway and strand the rows that didn't
-  // move on a now-inactive patient. A re-run after a stopped merge is safe —
-  // already-moved rows no longer match patient_id = source.
-  const moveOutcome = await runMergeMoveSteps(mergeMoveSteps(), (step) =>
-    withLifecycleRetry(() =>
-      admin.from(step.table).update({ patient_id: keep_id }).eq("patient_id", source_id).select("id"),
-    ),
+  // still fails; each move is retried once on a lock race, with a fresh
+  // builder per attempt (re-awaiting one PostgREST builder with `.select()`
+  // would re-append its Prefer header and send the mutation twice). Nothing
+  // below this — filling fields, tombstoning the source, writing the undo
+  // ledger — runs unless every move actually landed (0184 review finding
+  // P1): a merge that stopped part-way used to tombstone the source anyway
+  // and strand the rows that didn't move on a now-inactive patient.
+  //
+  // On a stop, the runner also rolls the COMPLETED moves back to source_id
+  // by their exact returned ids (0184 review follow-up): a re-run is only a
+  // full recovery for rows that never moved at all — patient_merges.moved is
+  // never written on a failed merge, so Undo has nothing to restore, and
+  // without a rollback any row a completed step DID move would be stranded
+  // on keep_id, invisible to Undo, and silently under-reverted. Both
+  // patients are still active at this point, so the guard allows moving
+  // rows back. If the rollback itself fully succeeds, both records end up
+  // exactly as they were and the admin can just try again. If the rollback
+  // can't complete either, some rows are left in an inconsistent state and
+  // this needs a human to look at it — never silently re-attempted.
+  const moveOutcome = await runMergeMoveSteps(
+    mergeMoveSteps(),
+    (step) =>
+      withLifecycleRetry(() =>
+        admin.from(step.table).update({ patient_id: keep_id }).eq("patient_id", source_id).select("id"),
+      ),
+    (step, ids) => rollbackMergeMoveStep(admin, step, ids, keep_id, source_id),
   );
   if (!moveOutcome.ok) {
+    if (moveOutcome.rolledBack) {
+      // Recovered fully — nothing changed from the admin's point of view.
+      await reportError({
+        scope: "mergePatientsAction:move",
+        error: new Error(moveOutcome.error),
+        metadata: {
+          keep_id,
+          source_id,
+          failed_table: moveOutcome.failedAt.table,
+          completed_moves: moveOutcome.completed,
+          rolled_back: true,
+        },
+      });
+      return {
+        ok: false,
+        error:
+          "The merge couldn't finish because another change was being saved at the same moment. Nothing was changed — please try again.",
+      };
+    }
+    // The rollback itself couldn't fully complete — some rows may now be on
+    // the wrong patient. Report exactly which ones so this can be fixed by
+    // hand, and refuse a re-run rather than risk compounding the mess.
     await reportError({
-      scope: "mergePatientsAction:move",
+      scope: "mergePatientsAction:rollback",
       error: new Error(moveOutcome.error),
       metadata: {
         keep_id,
         source_id,
         failed_table: moveOutcome.failedAt.table,
         completed_moves: moveOutcome.completed,
+        rollback_failures: moveOutcome.rollbackFailures,
+        stranded_ids: Object.fromEntries(
+          moveOutcome.rollbackFailures.map((f) => [
+            f.table,
+            (moveOutcome.moved[f.table] ?? []).map((r) => r.id),
+          ]),
+        ),
       },
     });
     return {
       ok: false,
       error:
-        "The merge stopped part-way because another change was being saved. Nothing is lost — both records are still active. Run the merge again to finish it.",
+        "The merge stopped part-way and some records could not be put back automatically. Don't run it again — the error has been reported for a manual fix.",
     };
   }
   const {

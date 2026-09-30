@@ -50,7 +50,7 @@ const FK_TABLES = [
 describe("patient merge moves every patient_id FK table", () => {
   it("app-level merge (mergePatientsAction) runs the shared merge-steps runner, whose table list matches FK_TABLES", () => {
     expect(actionsSrc, "mergePatientsAction must use runMergeMoveSteps/mergeMoveSteps").toMatch(
-      /runMergeMoveSteps\(mergeMoveSteps\(\)/,
+      /runMergeMoveSteps\(\s*mergeMoveSteps\(\)/,
     );
     // The runner re-points every table via the step's own table name
     // (step.table) — a single generic UPDATE, not one hand-written call per
