@@ -32,7 +32,7 @@ export interface RevenueRow { channel: string; confirmed_php: number; unconfirme
 export interface OverlapRow { patient_id: string; drm_id: string; service_date: string; app_php: number; sheet_php: number }
 export interface ReferrerRow { doctor_label: string; new_confirmed: number; new_unconfirmed: number }
 
-/** Every section of the Patient Sources page from ONE `patient_sources_report` call (0206). */
+/** Every section of the Patient Sources page from ONE report call (0206). */
 export interface PatientSourcesReport {
   summary: SummaryRow;
   series: SeriesRow[];
@@ -88,7 +88,7 @@ function referrerRow(o: Record<string, unknown>): ReferrerRow | null {
   return { doctor_label: o.doctor_label, new_confirmed: c, new_unconfirmed: u };
 }
 
-/** Validates the jsonb reply of `patient_sources_report`; null when it is not the expected shape. */
+/** Validates the jsonb reply of the report RPC; null when it is not the expected shape. */
 export function parsePatientSourcesReport(raw: unknown): PatientSourcesReport | null {
   if (!isObj(raw) || !isObj(raw.summary)) return null;
   const sm = raw.summary;
