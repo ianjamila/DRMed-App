@@ -237,3 +237,223 @@ drop trigger if exists trg_patients_live_merge_guard on public.patients;
 create trigger trg_patients_live_merge_guard
   before update of merged_into_id on public.patients
   for each row execute function public.guard_live_merge_marker();
+
+-- ---------------------------------------------------------------------------
+-- (6) merge_patients_guarded — one transaction. Refusals: P0078 (actor),
+-- P0079 (pair / context), P0058 (inactive or missing record), P0072 (the
+-- chain or the affected results changed while waiting — the caller retries
+-- once). Anything else aborts the whole merge; there is no partial merge.
+-- ---------------------------------------------------------------------------
+create or replace function public.merge_patients_guarded(
+  p_keep uuid, p_source uuid, p_actor uuid, p_context jsonb default null
+)
+returns jsonb
+language plpgsql
+volatile
+security definer
+set search_path = pg_catalog, public, pg_temp
+as $$
+declare
+  k_fill constant text[] := array['middle_name', 'sex', 'phone', 'email', 'address', 'birthdate'];
+  v_ip        inet;
+  v_ctx       jsonb;
+  v_chain     uuid[];
+  v_chain2    uuid[];
+  v_results   uuid[];
+  v_results2  uuid[];
+  v_keep      public.patients%rowtype;
+  v_source    public.patients%rowtype;
+  v_visits    uuid[];
+  v_appts     uuid[];
+  v_audit     bigint[];
+  v_alerts    uuid[];
+  v_consents  uuid[];
+  v_attach    uuid[];
+  v_counts    jsonb;
+  v_kj        jsonb;
+  v_sj        jsonb;
+  v_after     jsonb;
+  v_filled    text[] := '{}';
+  v_fill      jsonb := '{}'::jsonb;
+  v_rechained uuid[];
+  v_merge_id  uuid;
+  f           text;
+begin
+  -- (1) Validate.
+  if p_actor is null or not exists (
+    select 1 from public.staff_profiles s
+     where s.id = p_actor and s.role = 'admin' and s.is_active and s.deleted_at is null
+  ) then
+    raise exception 'only an active admin can merge patient records' using errcode = 'P0078';
+  end if;
+  if p_keep is null or p_source is null or p_keep = p_source then
+    raise exception 'pick two different patient records to merge' using errcode = 'P0079';
+  end if;
+  if p_context is not null and (
+       jsonb_typeof(p_context) <> 'object'
+       or exists (select 1 from jsonb_object_keys(p_context) k where k not in ('ip', 'user_agent', 'source', 'tier'))
+       or coalesce(p_context->>'source', 'admin') not in ('admin', 'candidates', 'dedup-cli')
+       or length(coalesce(p_context->>'tier', '')) > 40
+     ) then
+    raise exception 'unexpected merge context' using errcode = 'P0079';
+  end if;
+  begin
+    v_ip := nullif(p_context->>'ip', '')::inet;
+  exception when invalid_text_representation then
+    v_ip := null;
+  end;
+  v_ctx := jsonb_strip_nulls(jsonb_build_object(
+    'source', coalesce(p_context->>'source', 'admin'),
+    'tier', nullif(p_context->>'tier', '')));
+
+  -- (2) Lock: result membership → patients → rows, then re-resolve.
+  select coalesce(array_agg(p.id order by p.id), '{}') into v_chain
+    from public.patients p where p.merged_into_id = p_source;
+  select coalesce(array_agg(distinct x.r order by x.r), '{}') into v_results
+    from (
+      select rtr.result_id as r
+        from public.result_test_requests rtr
+        join public.test_requests t on t.id = rtr.test_request_id
+        join public.visits v on v.id = t.visit_id
+       where v.patient_id = p_source
+      union
+      select ca.result_id from public.critical_alerts ca where ca.patient_id = p_source
+    ) x;
+
+  perform public.lifecycle_lock_results(v_results, false);
+  perform public.lifecycle_lock(array[p_keep, p_source] || v_chain, true);
+  perform 1 from public.patients p
+    where p.id = any(array[p_keep, p_source] || v_chain)
+    order by p.id
+    for no key update;
+
+  select coalesce(array_agg(p.id order by p.id), '{}') into v_chain2
+    from public.patients p where p.merged_into_id = p_source;
+  select coalesce(array_agg(distinct x.r order by x.r), '{}') into v_results2
+    from (
+      select rtr.result_id as r
+        from public.result_test_requests rtr
+        join public.test_requests t on t.id = rtr.test_request_id
+        join public.visits v on v.id = t.visit_id
+       where v.patient_id = p_source
+      union
+      select ca.result_id from public.critical_alerts ca where ca.patient_id = p_source
+    ) x;
+  if v_chain2 is distinct from v_chain or not (v_results2 <@ v_results) then
+    raise exception 'the patient records changed while the merge was waiting — try again'
+      using errcode = 'P0072';
+  end if;
+
+  -- (3) Both records exist and are active.
+  select * into v_keep from public.patients where id = p_keep;
+  if not found then
+    raise exception 'the patient record to keep was not found' using errcode = 'P0058';
+  end if;
+  select * into v_source from public.patients where id = p_source;
+  if not found then
+    raise exception 'the patient record to merge in was not found' using errcode = 'P0058';
+  end if;
+  if v_keep.deleted_at is not null or v_source.deleted_at is not null then
+    raise exception '% is deleted — restore it from Admin Tools › Deleted Patients before merging',
+      case when v_keep.deleted_at is not null then v_keep.drm_id else v_source.drm_id end
+      using errcode = 'P0058';
+  end if;
+  if v_keep.merged_into_id is not null or v_source.merged_into_id is not null then
+    raise exception '% has already been merged into another record — refresh and try again',
+      case when v_keep.merged_into_id is not null then v_keep.drm_id else v_source.drm_id end
+      using errcode = 'P0058';
+  end if;
+
+  -- (4) Move, in this order (visits before critical_alerts: 0184's
+  -- alert-matches-its-test check). Each UPDATE fires a_lifecycle_guard, whose
+  -- exclusive locks on old ∪ new are already held.
+  with m as (update public.visits set patient_id = p_keep where patient_id = p_source returning id)
+  select coalesce(array_agg(id order by id), '{}') into v_visits from m;
+  with m as (update public.appointments set patient_id = p_keep where patient_id = p_source returning id)
+  select coalesce(array_agg(id order by id), '{}') into v_appts from m;
+  with m as (update public.audit_log set patient_id = p_keep where patient_id = p_source returning id)
+  select coalesce(array_agg(id order by id), '{}') into v_audit from m;
+  -- patient_drm_id is the copy three staff surfaces print; an open alert must
+  -- not send staff to a retired DRM-ID.
+  with m as (update public.critical_alerts set patient_id = p_keep, patient_drm_id = v_keep.drm_id
+              where patient_id = p_source returning id)
+  select coalesce(array_agg(id order by id), '{}') into v_alerts from m;
+  with m as (update public.patient_consents set patient_id = p_keep where patient_id = p_source returning id)
+  select coalesce(array_agg(id order by id), '{}') into v_consents from m;
+  with m as (update public.appointment_attachments set patient_id = p_keep where patient_id = p_source returning id)
+  select coalesce(array_agg(id order by id), '{}') into v_attach from m;
+
+  v_counts := jsonb_build_object(
+    'visits', cardinality(v_visits), 'appointments', cardinality(v_appts),
+    'audit_log', cardinality(v_audit), 'critical_alerts', cardinality(v_alerts),
+    'patient_consents', cardinality(v_consents), 'appointment_attachments', cardinality(v_attach));
+
+  -- (5) Consent cache for both — the source BEFORE it becomes a tombstone.
+  perform public.recompute_patient_consent_cache(p_source);
+  perform public.recompute_patient_consent_cache(p_keep);
+
+  -- The repeat flag is set on visit INSERT only; the kept record may now
+  -- have several visits. Set-only, like the trigger.
+  update public.patients set is_repeat_patient = true
+   where id = p_keep and not is_repeat_patient
+     and (select count(*) from public.visits v where v.patient_id = p_keep) > 1;
+
+  -- (6) Fill NULL/blank fields on keep from source; never overwrite.
+  select to_jsonb(p) into v_kj from public.patients p where p.id = p_keep;
+  v_sj := to_jsonb(v_source);
+  foreach f in array k_fill loop
+    if nullif(btrim(coalesce(v_kj->>f, '')), '') is null
+       and nullif(btrim(coalesce(v_sj->>f, '')), '') is not null then
+      v_filled := v_filled || f;
+    end if;
+  end loop;
+  if cardinality(v_filled) > 0 then
+    update public.patients p set
+      middle_name = case when 'middle_name' = any(v_filled) then v_source.middle_name else p.middle_name end,
+      sex         = case when 'sex' = any(v_filled) then v_source.sex else p.sex end,
+      phone       = case when 'phone' = any(v_filled) then v_source.phone else p.phone end,
+      email       = case when 'email' = any(v_filled) then v_source.email else p.email end,
+      address     = case when 'address' = any(v_filled) then v_source.address else p.address end,
+      birthdate   = case when 'birthdate' = any(v_filled) then v_source.birthdate else p.birthdate end
+     where p.id = p_keep;
+    -- "after" is what the row holds once its normalising triggers ran.
+    select to_jsonb(p) into v_after from public.patients p where p.id = p_keep;
+    foreach f in array v_filled loop
+      v_fill := v_fill || jsonb_build_object(f, jsonb_build_object('before', v_kj->f, 'after', v_after->f));
+    end loop;
+  end if;
+
+  -- (7) Flatten the chain: older tombstones of the source now point at keep.
+  with c as (update public.patients set merged_into_id = p_keep where merged_into_id = p_source returning id)
+  select coalesce(array_agg(id order by id), '{}') into v_rechained from c;
+
+  -- (8) Tombstone the source.
+  update public.patients set merged_into_id = p_keep, merged_at = now() where id = p_source;
+
+  -- (9) Ledger (version 2).
+  insert into public.patient_merges (keep_id, source_id, merged_by, moved, filled_from_source,
+                                     snapshot_version, fill_snapshot, rechained, context)
+  values (p_keep, p_source, p_actor,
+          jsonb_build_object(
+            'visits', to_jsonb(v_visits), 'appointments', to_jsonb(v_appts),
+            'audit_log', to_jsonb(v_audit), 'critical_alerts', to_jsonb(v_alerts),
+            'patient_consents', to_jsonb(v_consents), 'appointment_attachments', to_jsonb(v_attach)),
+          v_filled, 2, v_fill, v_rechained, v_ctx)
+  returning id into v_merge_id;
+
+  -- (10) Audit, same transaction.
+  insert into public.audit_log (actor_id, actor_type, patient_id, action, resource_type, resource_id,
+                                metadata, ip_address, user_agent)
+  values (p_actor, 'staff', p_keep, 'patient.merged', 'patient', p_keep,
+          jsonb_build_object(
+            'merge_id', v_merge_id, 'kept_drm_id', v_keep.drm_id, 'merged_drm_id', v_source.drm_id,
+            'merged_patient_id', p_source, 'moved', v_counts, 'filled_from_source', to_jsonb(v_filled),
+            'rechained', cardinality(v_rechained)) || v_ctx,
+          v_ip, left(nullif(p_context->>'user_agent', ''), 512));
+
+  return jsonb_build_object(
+    'merge_id', v_merge_id, 'keep_id', p_keep, 'source_id', p_source,
+    'kept_drm_id', v_keep.drm_id, 'merged_drm_id', v_source.drm_id,
+    'moved', v_counts, 'filled', to_jsonb(v_filled), 'rechained', cardinality(v_rechained));
+end;
+$$;

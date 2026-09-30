@@ -339,4 +339,203 @@ begin
 end
 $s11$;
 
+-- s3 ---------------------------------------------------------------------------
+do $s3$
+declare
+  k uuid; s uuid; t uuid; vk uuid; vs1 uuid; vs2 uuid; ls1 uuid; ls2 uuid; r1 uuid; al uuid;
+  ap uuid; att uuid; au bigint; grp uuid := gen_random_uuid();
+  res jsonb; m public.patient_merges%rowtype; kp public.patients%rowtype; sp public.patients%rowtype;
+  run uuid; k2 uuid; s2 uuid; res2 jsonb;
+begin
+  k := pg_temp.mk_patient('S3K');
+  update public.patients set address = '   ', sex = 'female' where id = k;   -- blank address counts as missing
+  s := pg_temp.mk_patient('S3S', '09171112222', 'mg-s3s@example.test');
+  update public.patients set address = 'MG street', middle_name = 'Q', sex = 'male' where id = s;
+  t := pg_temp.mk_patient('S3T');
+  perform pg_temp.mark_merged(t, s);                                          -- an older tombstone of s
+
+  vk := pg_temp.mk_visit(k);
+  vs1 := pg_temp.mk_visit(s);
+  vs2 := pg_temp.mk_visit(s);
+  ls1 := pg_temp.mk_line(vs1);
+  ls2 := pg_temp.mk_line(vs2);
+  r1 := pg_temp.mk_result(array[ls1]);
+  al := pg_temp.mk_alert(r1, ls1, s);
+  ap := pg_temp.mk_appt(s, grp);
+  att := pg_temp.mk_attach(s, grp);
+  au := pg_temp.mk_audit(s);
+  perform pg_temp.grant_consent(s);
+
+  res := pg_temp.merge(k, s);
+  select * into m from public.patient_merges where id = (res->>'merge_id')::uuid;
+  select * into kp from public.patients where id = k;
+  select * into sp from public.patients where id = s;
+
+  perform pg_temp.expect('s3.1 nothing left on the source',
+    ((select count(*) from public.visits where patient_id = s) + (select count(*) from public.appointments where patient_id = s)
+     + (select count(*) from public.audit_log where patient_id = s) + (select count(*) from public.critical_alerts where patient_id = s)
+     + (select count(*) from public.patient_consents where patient_id = s)
+     + (select count(*) from public.appointment_attachments where patient_id = s))::text, '0');
+  perform pg_temp.expect('s3.2 ledger records the exact moved ids',
+    (m.moved->'visits' @> to_jsonb(array[vs1, vs2]) and jsonb_array_length(m.moved->'visits') = 2
+     and m.moved->'appointments' = to_jsonb(array[ap]) and m.moved->'critical_alerts' = to_jsonb(array[al])
+     and m.moved->'appointment_attachments' = to_jsonb(array[att]) and m.moved->'audit_log' @> to_jsonb(array[au])
+     and jsonb_array_length(m.moved->'patient_consents') = 1)::text, 'true');
+  perform pg_temp.expect('s3.3 returned counts = ledger lengths',
+    (res->'moved' = jsonb_build_object(
+       'visits', jsonb_array_length(m.moved->'visits'), 'appointments', jsonb_array_length(m.moved->'appointments'),
+       'audit_log', jsonb_array_length(m.moved->'audit_log'), 'critical_alerts', jsonb_array_length(m.moved->'critical_alerts'),
+       'patient_consents', jsonb_array_length(m.moved->'patient_consents'),
+       'appointment_attachments', jsonb_array_length(m.moved->'appointment_attachments')))::text, 'true');
+  perform pg_temp.expect('s3.4 keep''s own visit untouched', (select patient_id from public.visits where id = vk)::text, k::text);
+  perform pg_temp.expect('s3.5 moved alert re-stamped with the kept DRM-ID',
+    (select patient_drm_id from public.critical_alerts where id = al), 'DRM-MGS3K');
+  perform pg_temp.expect('s3.6 fill: phone, email, address (blank), middle name copied; sex kept',
+    concat_ws('|', kp.phone, kp.email, kp.address, kp.middle_name, kp.sex),
+    '09171112222|mg-s3s@example.test|MG street|Q|female');
+  perform pg_temp.expect('s3.7 filled_from_source',
+    (select string_agg(x, ',' order by x) from unnest(m.filled_from_source) x), 'address,email,middle_name,phone');
+  perform pg_temp.expect('s3.8 fill snapshot before/after',
+    (m.fill_snapshot->'address'->>'before') || '|' || (m.fill_snapshot->'address'->>'after') || '|' ||
+    coalesce(m.fill_snapshot->'phone'->>'before', 'null') || '|' || (m.fill_snapshot->'phone'->>'after'),
+    '   |MG street|null|09171112222');
+  perform pg_temp.expect('s3.9 phone_normalized recomputed on keep', (kp.phone_normalized is not null)::text, 'true');
+  perform pg_temp.expect('s3.10 chain flattened + recorded',
+    (select merged_into_id from public.patients where id = t)::text || '|' || m.rechained::text, k::text || '|{' || t::text || '}');
+  perform pg_temp.expect('s3.11 source tombstoned', (sp.merged_into_id = k and sp.merged_at is not null)::text, 'true');
+  perform pg_temp.expect('s3.12 consent re-synced on both',
+    kp.consent_current::text || '|' || pg_temp.consent5(s), 'true|false||||');
+  perform pg_temp.expect('s3.13 repeat flag set on keep', kp.is_repeat_patient::text, 'true');
+  perform pg_temp.expect('s3.14 ledger header',
+    concat_ws('|', m.snapshot_version, m.merged_by, m.context->>'source', m.undone_at),
+    '2|' || pg_temp.admin() || '|admin');
+  perform pg_temp.expect('s3.15 audit row written in the same transaction',
+    (select count(*) from public.audit_log a
+      where a.action = 'patient.merged' and a.patient_id = k and a.actor_id = pg_temp.admin()
+        and a.metadata->>'merge_id' = m.id::text and a.ip_address = '127.0.0.1'::inet
+        and a.user_agent = 'smoke')::text, '1');
+  perform pg_temp.expect('s3.16 return value names both records',
+    (res->>'kept_drm_id') || '|' || (res->>'merged_drm_id') || '|' || (res->>'rechained'), 'DRM-MGS3K|DRM-MGS3S|1');
+  perform pg_temp.expect('s3.17 writes to the tombstone are refused afterwards (0184 guard)',
+    pg_temp.state_of(format('select pg_temp.mk_visit(%L)', s)), 'P0058');
+
+  -- dedup CLI context + birthdate fill (only legacy-import records may lack one)
+  insert into public.legacy_import_runs (source, dry_run) values ('mg-smoke', true) returning id into run;
+  insert into public.patients (drm_id, first_name, last_name, birthdate, legacy_import_run_id)
+  values ('DRM-MGS3K2', 'Smoke', 'MgS3K2', null, run) returning id into k2;
+  s2 := pg_temp.mk_patient('S3S2', null, null, '1985-05-05');
+  res2 := pg_temp.merge(k2, s2, pg_temp.admin(), '{"source":"dedup-cli","tier":"exact_dup"}'::jsonb);
+  perform pg_temp.expect('s3.18 birthdate filled + CLI context recorded',
+    (select birthdate::text from public.patients where id = k2) || '|' ||
+    (select context->>'source' || ',' || (context->>'tier') from public.patient_merges where id = (res2->>'merge_id')::uuid) || '|' ||
+    (select a.metadata->>'tier' from public.audit_log a where a.action = 'patient.merged' and a.patient_id = k2),
+    '1985-05-05|dedup-cli,exact_dup|exact_dup');
+end
+$s3$;
+
+-- s4 ---------------------------------------------------------------------------
+do $s4$
+declare
+  k uuid; s uuid; d uuid; x uuid; y uuid;
+  sig constant text := 'public.merge_patients_guarded(uuid, uuid, uuid, jsonb)';
+begin
+  k := pg_temp.mk_patient('S4K');
+  s := pg_temp.mk_patient('S4S');
+  perform pg_temp.mk_visit(s);
+
+  perform pg_temp.expect('s4.1 reception actor refused',
+    pg_temp.state_of(format('select pg_temp.merge(%L, %L, %L)', k, s, 'a1000000-0000-4000-8000-000000000196')), 'P0078');
+  perform pg_temp.expect('s4.2 inactive admin refused',
+    pg_temp.state_of(format('select pg_temp.merge(%L, %L, %L)', k, s, 'a3000000-0000-4000-8000-000000000196')), 'P0078');
+  perform pg_temp.expect('s4.3 NULL actor refused (no NULL-actor path)',
+    pg_temp.state_as('service_role', format('select public.merge_patients_guarded(%L, %L, null, null)', k, s)), 'P0078');
+  perform pg_temp.expect('s4.4 same record twice refused',
+    pg_temp.state_of(format('select pg_temp.merge(%L, %L)', k, k)), 'P0079');
+  perform pg_temp.expect('s4.5 NULL keep refused',
+    pg_temp.state_as('service_role', format('select public.merge_patients_guarded(null, %L, %L, null)', s, pg_temp.admin())), 'P0079');
+  perform pg_temp.expect('s4.6 unknown context key refused',
+    pg_temp.state_of(format('select pg_temp.merge(%L, %L, %L, %L)', k, s, pg_temp.admin(), '{"sneaky":1}')), 'P0079');
+  perform pg_temp.expect('s4.7 unknown context source refused',
+    pg_temp.state_of(format('select pg_temp.merge(%L, %L, %L, %L)', k, s, pg_temp.admin(), '{"source":"cron"}')), 'P0079');
+
+  d := pg_temp.mk_patient('S4D');
+  perform pg_temp.kill(d);
+  perform pg_temp.expect('s4.8 deleted keep refused',
+    pg_temp.state_of(format('select pg_temp.merge(%L, %L)', d, s)), 'P0058');
+  perform pg_temp.expect('s4.9 deleted source refused',
+    pg_temp.state_of(format('select pg_temp.merge(%L, %L)', k, d)), 'P0058');
+  x := pg_temp.mk_patient('S4X');
+  y := pg_temp.mk_patient('S4Y');
+  perform pg_temp.mark_merged(x, y);
+  perform pg_temp.expect('s4.10 already-merged source refused',
+    pg_temp.state_of(format('select pg_temp.merge(%L, %L)', k, x)), 'P0058');
+  perform pg_temp.expect('s4.11 tombstone as keep refused',
+    pg_temp.state_of(format('select pg_temp.merge(%L, %L)', x, s)), 'P0058');
+  perform pg_temp.expect('s4.12 missing record refused',
+    pg_temp.state_of(format('select pg_temp.merge(%L, %L)', k, gen_random_uuid())), 'P0058');
+
+  perform pg_temp.expect('s4.13 nothing changed by the refusals',
+    ((select count(*) from public.visits where patient_id = s) = 1
+     and (select merged_into_id from public.patients where id = s) is null
+     and not exists (select 1 from public.patient_merges where keep_id = k or source_id = s))::text, 'true');
+
+  perform pg_temp.expect('s4.14 anon cannot execute', has_function_privilege('anon', sig, 'execute')::text, 'false');
+  perform pg_temp.expect('s4.15 authenticated cannot execute', has_function_privilege('authenticated', sig, 'execute')::text, 'false');
+  perform pg_temp.expect('s4.16 service_role can', has_function_privilege('service_role', sig, 'execute')::text, 'true');
+  perform pg_temp.expect('s4.17 authenticated call is denied (42501)',
+    pg_temp.state_as('authenticated', format('select public.merge_patients_guarded(%L, %L, %L, null)', k, s, pg_temp.admin())), '42501');
+end
+$s4$;
+
+-- s5 ---------------------------------------------------------------------------
+-- A failure in the LAST write (the ledger insert) must leave both records
+-- exactly as they were: no partial merge exists any more.
+create function public.mg_smoke_boom() returns trigger language plpgsql as $f$
+begin
+  raise exception 'forced failure' using errcode = 'XX000';
+end $f$;
+
+do $s5$
+declare
+  k uuid; s uuid; t uuid; vs uuid; ls uuid; r uuid; al uuid; grp uuid := gen_random_uuid();
+  before_k text; before_s text;
+begin
+  k := pg_temp.mk_patient('S5K');
+  s := pg_temp.mk_patient('S5S', '09175550000');
+  t := pg_temp.mk_patient('S5T');
+  perform pg_temp.mark_merged(t, s);
+  vs := pg_temp.mk_visit(s);
+  ls := pg_temp.mk_line(vs);
+  r := pg_temp.mk_result(array[ls]);
+  al := pg_temp.mk_alert(r, ls, s);
+  perform pg_temp.mk_appt(s, grp);
+  perform pg_temp.mk_attach(s, grp);
+  perform pg_temp.grant_consent(s);
+  select to_jsonb(p) - 'updated_at' - 'row_version' into before_k from public.patients p where id = k;
+  select to_jsonb(p) - 'updated_at' - 'row_version' into before_s from public.patients p where id = s;
+
+  execute format('create trigger mg_smoke_boom before insert on public.patient_merges for each row '
+                 'when (new.keep_id = %L) execute function public.mg_smoke_boom()', k);
+  perform pg_temp.expect('s5.1 forced failure in the ledger insert surfaces',
+    pg_temp.state_of(format('select pg_temp.merge(%L, %L)', k, s)), 'XX000');
+  drop trigger mg_smoke_boom on public.patient_merges;
+
+  perform pg_temp.expect('s5.2 both records unchanged',
+    ((select to_jsonb(p) - 'updated_at' - 'row_version' from public.patients p where id = k)::text = before_k
+     and (select to_jsonb(p) - 'updated_at' - 'row_version' from public.patients p where id = s)::text = before_s)::text, 'true');
+  perform pg_temp.expect('s5.3 every child row still on the source, chain intact',
+    ((select patient_id from public.visits where id = vs) = s
+     and (select patient_id || '|' || patient_drm_id from public.critical_alerts where id = al) = s || '|DRM-MGS5S'
+     and (select count(*) from public.appointments where patient_id = s) = 1
+     and (select count(*) from public.appointment_attachments where patient_id = s) = 1
+     and (select count(*) from public.patient_consents where patient_id = s) = 1
+     and (select merged_into_id from public.patients where id = t) = s)::text, 'true');
+  perform pg_temp.expect('s5.4 no audit row, no ledger row',
+    ((select count(*) from public.audit_log where action = 'patient.merged' and patient_id = k)
+     + (select count(*) from public.patient_merges where keep_id = k))::text, '0');
+  perform pg_temp.expect('s5.5 the same merge then succeeds',
+    pg_temp.state_of(format('select pg_temp.merge(%L, %L)', k, s)), 'ok');
+end
+$s5$;
+
 rollback;
