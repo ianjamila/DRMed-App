@@ -12,7 +12,8 @@ function member(id: string, over: Partial<PanelMember> = {}): PanelMember {
     assignedTo: null,
     section: "chemistry",
     parentId: null,
-    visitPaymentStatus: "unpaid",
+    visitPaymentStatus: "paid",
+    visitHmoProviderId: null,
     hasOpenHmoClaim: false,
     resultId: null,
     hasPdf: false,
@@ -38,6 +39,15 @@ describe("summarizePanel — claim", () => {
     );
     expect(s.claimable).toBe(false);
     expect(s.unclaimable).toBe(false);
+  });
+
+  it("refuses Claim while the visit is waiting for payment (Pending release is ungated)", () => {
+    const unpaid = { visitPaymentStatus: "unpaid" };
+    expect(summarizePanel([member("a", unpaid), member("b", unpaid)], medtech).claimable).toBe(false);
+    // An HMO visit never pays at the counter — it passes the lab gate.
+    expect(
+      summarizePanel([member("a", { ...unpaid, visitHmoProviderId: "hmo-1" })], medtech).claimable,
+    ).toBe(true);
   });
 
   it("refuses Claim outside the role's sections (reception has none)", () => {
@@ -85,16 +95,16 @@ describe("summarizePanel — unclaim", () => {
     expect(summarizePanel(held(OTHER), medtech).unclaimable).toBe(false);
   });
 
-  it("refuses when the panel is split between two holders", () => {
-    const s = summarizePanel(
-      [
-        member("a", { status: "in_progress", assignedTo: ME }),
-        member("b", { status: "in_progress", assignedTo: OTHER }),
-      ],
-      admin,
-    );
+  it("lets an admin recover a panel split between two holders — per-member holders — but not the holder of half of it", () => {
+    const split = [
+      member("a", { status: "in_progress", assignedTo: ME }),
+      member("b", { status: "in_progress", assignedTo: OTHER }),
+    ];
+    const s = summarizePanel(split, admin);
     expect(s.holder).toBeNull();
-    expect(s.unclaimable).toBe(false);
+    expect(s.unclaimable).toBe(true);
+    expect(s.benchHolders).toEqual([ME, OTHER]);
+    expect(summarizePanel(split, medtech).unclaimable).toBe(false);
   });
 
   it("refuses once any member has a result uploaded", () => {
@@ -110,24 +120,30 @@ describe("summarizePanel — unclaim", () => {
 });
 
 describe("summarizePanel — delete", () => {
+  const unpaid = { visitPaymentStatus: "unpaid" };
+
   it("offers Delete to admin when every member is deletable", () => {
-    expect(summarizePanel([member("a"), member("b")], admin).deletable).toBe(true);
+    expect(summarizePanel([member("a", unpaid), member("b", unpaid)], admin).deletable).toBe(true);
   });
 
   it("never offers Delete to a lab role", () => {
-    expect(summarizePanel([member("a")], medtech).deletable).toBe(false);
+    expect(summarizePanel([member("a", unpaid)], medtech).deletable).toBe(false);
   });
 
   it("refuses Delete when ANY member is locked (paid visit, HMO claim, shared report)", () => {
     expect(
-      summarizePanel([member("a"), member("b", { visitPaymentStatus: "paid" })], admin).deletable,
-    ).toBe(false);
-    expect(
-      summarizePanel([member("a"), member("b", { hasOpenHmoClaim: true })], admin).deletable,
-    ).toBe(false);
-    expect(
-      summarizePanel([member("a"), member("b")], { ...admin, sharedReportIds: new Set(["b"]) })
+      summarizePanel([member("a", unpaid), member("b", { visitPaymentStatus: "paid" })], admin)
         .deletable,
+    ).toBe(false);
+    expect(
+      summarizePanel([member("a", unpaid), member("b", { ...unpaid, hasOpenHmoClaim: true })], admin)
+        .deletable,
+    ).toBe(false);
+    expect(
+      summarizePanel([member("a", unpaid), member("b", unpaid)], {
+        ...admin,
+        sharedReportIds: new Set(["b"]),
+      }).deletable,
     ).toBe(false);
   });
 });

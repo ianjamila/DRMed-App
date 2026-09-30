@@ -45,8 +45,10 @@ const PanelSchema = z.object({
   groupId: z.string().uuid(),
 });
 const HeldPanelSchema = PanelSchema.extend({
-  // The holder the operator SAW — the hand-back only lands while it still holds.
-  assignedTo: z.string().uuid(),
+  // The single holder the operator SAW, or null when they saw the panel split
+  // between people (an admin recovering it). The hand-back only lands while
+  // every member is still held as it was when this action read the panel.
+  assignedTo: z.string().uuid().nullable(),
 });
 
 const rowsWithin = (n: number) => n > 0 && n <= MAX_BULK_ROWS;
@@ -216,7 +218,7 @@ export async function unclaimQueueSelectionAction(input: unknown): Promise<BulkQ
       skipped.push({ id: panel.key, reason: NOTHING_ON_BENCH });
       continue;
     }
-    if (state.holder !== null && state.holder !== panel.assignedTo) {
+    if (state.holder !== panel.assignedTo) {
       skipped.push({ id: panel.key, reason: "Someone else holds this report now — refresh the queue." });
       continue;
     }
@@ -225,8 +227,7 @@ export async function unclaimQueueSelectionAction(input: unknown): Promise<BulkQ
       continue;
     }
     const result = await unclaimPanelMembers(session, supabase, {
-      testRequestIds: state.benchIds,
-      holder: panel.assignedTo,
+      members: state.benchIds.map((id, i) => ({ id, holder: state.benchHolders[i]! })),
       visitIdOf: () => panel.visitId,
       reason: reason ?? null,
       selfService: session.role !== "admin",

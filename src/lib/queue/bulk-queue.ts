@@ -40,8 +40,10 @@ export interface QueueRowInfo {
   label: string;
   /** The holder the operator SAW (unclaim sends it as a predicate); null when unclaimed. */
   assignedTo: string | null;
-  /** Tests the row stands for — a chemistry panel row's members on screen. 1 when absent. */
+  /** Tests Delete acts on — every live member of a chemistry panel row. 1 when absent. */
   testCount?: number;
+  /** Tests Claim / Unclaim act on — a panel's members still on the bench. testCount when absent. */
+  benchCount?: number;
 }
 
 // A chemistry panel row is selected as ONE row but claimed server-side by
@@ -88,17 +90,25 @@ export function combineClaimResults(
 
 /**
  * How many TESTS a bulk action was sent: every changed test once, plus each
- * skipped row weighted by the tests it stands for. Equal to the key count
- * when every row is a single test.
+ * skipped row weighted by the tests that action would have changed — its
+ * bench members for Claim / Unclaim, every member for Delete. Equal to the
+ * key count when every row is a single test.
  */
 export function sentTestCount(
   result: { changedIds: readonly string[]; skipped: readonly SkippedRow[] },
   rowsByKey: Readonly<Record<string, QueueRowInfo>>,
+  scope: "bench" | "all" = "all",
 ): number {
   return (
     result.changedIds.length +
-    result.skipped.reduce((n, s) => n + (rowsByKey[s.id]?.testCount ?? 1), 0)
+    result.skipped.reduce((n, s) => n + rowTestCount(rowsByKey[s.id], scope), 0)
   );
+}
+
+/** Tests one selected row stands for, for the action's scope. */
+export function rowTestCount(row: QueueRowInfo | undefined, scope: "bench" | "all"): number {
+  if (!row) return 1;
+  return scope === "bench" ? (row.benchCount ?? row.testCount ?? 1) : (row.testCount ?? 1);
 }
 
 function tests(n: number): string {

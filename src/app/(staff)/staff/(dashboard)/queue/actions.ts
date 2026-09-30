@@ -158,18 +158,12 @@ async function performUnclaim(
   // saw, or nothing — a member that changes in between raises P0077 instead
   // of leaving the report half returned.
   if (testRequestIds.length > 1) {
-    const holders = new Set(before.map((r) => r.assigned_to));
-    const holder = holders.size === 1 ? [...holders][0] : null;
-    if (!holder) {
-      return {
-        ok: false,
-        error: "The tests in this report are held by different people — refresh the queue.",
-      };
-    }
+    // Every member's own holder, as the pre-read saw it — evaluateUnclaim
+    // above already proved each is in progress and, for a non-admin, theirs.
+    // An admin can so recover a panel split between two people.
     const visitOf = new Map(before.map((r) => [r.id, r.visits.id]));
     const result = await unclaimPanelMembers(session, supabase, {
-      testRequestIds,
-      holder,
+      members: before.map((r) => ({ id: r.id, holder: r.assigned_to! })),
       visitIdOf: (id) => visitOf.get(id) ?? null,
       reason: reason?.trim() || null,
       selfService: ownerId !== null,

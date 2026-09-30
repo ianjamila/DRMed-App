@@ -675,6 +675,7 @@ export default async function QueuePage({ searchParams }: SearchProps) {
           label: `${card.label} — ${card.patientName}`,
           assignedTo: state.holder,
           testCount: state.allIds.length,
+          benchCount: state.benchIds.length,
         };
         continue;
       }

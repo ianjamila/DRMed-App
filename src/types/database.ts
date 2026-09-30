@@ -7648,7 +7648,7 @@ export type Database = {
       }
       staff_role: { Args: never; Returns: string }
       unclaim_panel_members: {
-        Args: { p_holder: string; p_test_request_ids: string[] }
+        Args: { p_holders: string[]; p_test_request_ids: string[] }
         Returns: number
       }
       view_as_end_for: {

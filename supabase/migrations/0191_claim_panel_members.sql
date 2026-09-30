@@ -85,16 +85,19 @@ grant  execute on function public.claim_panel_members(uuid[]) to authenticated, 
 -- performUnclaim / the queue list's bulk Unclaim hand a panel back with a
 -- filtered multi-row UPDATE too, so a member that changed in between (a result
 -- uploaded, someone else's unclaim) left the panel half returned.
--- unclaim_panel_members() only lands when EVERY member is still in progress
--- under p_holder — the holder the operator saw — and otherwise raises P0077
--- and changes nothing. A non-admin may only hand back their own claim; an
--- admin (effective role, so not while viewing the app as another role) may
--- hand back anyone's, as the row's Unclaim already allows.
+-- unclaim_panel_members() takes each member's EXPECTED holder — what the
+-- operator saw, member by member — and only lands when every member is still
+-- in progress under exactly that holder; otherwise it raises P0077 and changes
+-- nothing. Per-member holders keep an admin able to recover a panel whose
+-- members ended up held by different people (the old admin Unclaim could).
+-- A non-admin may only hand back members they hold themselves; an admin
+-- (effective role, so not while viewing the app as another role) may hand
+-- back anyone's, as the row's Unclaim already allows.
 -- -----------------------------------------------------------------------------
 
 create or replace function public.unclaim_panel_members(
   p_test_request_ids uuid[],
-  p_holder uuid
+  p_holders uuid[]
 )
 returns integer
 language plpgsql
@@ -109,29 +112,36 @@ begin
   if v_uid is null then
     raise exception 'Sign in to unclaim tests.' using errcode = '42501';
   end if;
-  if p_holder is null then
-    raise exception 'Nobody holds this report.' using errcode = 'P0077';
+  if p_test_request_ids is null or p_holders is null
+     or cardinality(p_test_request_ids) <> cardinality(p_holders) then
+    raise exception 'Could not read this report — refresh the queue.' using errcode = 'P0077';
   end if;
-  if p_holder <> v_uid and not public.has_role(array['admin']) then
+
+  -- One expected holder per member: no nulls, no repeated member.
+  select count(*) into v_wanted
+    from unnest(p_test_request_ids, p_holders) as x(id, holder);
+  if v_wanted = 0 or v_wanted > 200
+     or exists (select 1 from unnest(p_test_request_ids, p_holders) as x(id, holder)
+                 where x.id is null or x.holder is null)
+     or (select count(distinct x.id) from unnest(p_test_request_ids) as x(id)) <> v_wanted then
+    raise exception 'Nothing to unclaim in this report.' using errcode = 'P0077';
+  end if;
+
+  if not public.has_role(array['admin'])
+     and exists (select 1 from unnest(p_holders) as h(holder) where h.holder <> v_uid) then
     raise exception 'You can only unclaim a report you currently hold.'
       using errcode = 'P0077';
   end if;
 
-  select count(distinct t.id) into v_wanted
-    from unnest(coalesce(p_test_request_ids, '{}'::uuid[])) as t(id)
-   where t.id is not null;
-  if v_wanted = 0 or v_wanted > 200 then
-    raise exception 'Nothing to unclaim in this report.' using errcode = 'P0077';
-  end if;
-
-  update public.test_requests
+  update public.test_requests t
      set status      = 'requested',
          assigned_to = null,
          started_at  = null
-   where id = any (p_test_request_ids)
-     and status = 'in_progress'
-     and assigned_to = p_holder
-     and deleted_at is null;
+    from unnest(p_test_request_ids, p_holders) as x(id, holder)
+   where t.id = x.id
+     and t.status = 'in_progress'
+     and t.assigned_to = x.holder
+     and t.deleted_at is null;
   get diagnostics v_unclaimed = row_count;
 
   if v_unclaimed <> v_wanted then
@@ -144,8 +154,8 @@ begin
 end;
 $$;
 
-comment on function public.unclaim_panel_members(uuid[], uuid) is
-  'All-or-nothing hand-back of a consolidated report''s members held by p_holder. Non-admins may only pass themselves. Raises P0077 and changes nothing when any member is no longer in progress under p_holder. Invoker rights: RLS applies.';
+comment on function public.unclaim_panel_members(uuid[], uuid[]) is
+  'All-or-nothing hand-back of a consolidated report''s members, each still held by its expected holder (p_holders, parallel to p_test_request_ids). Non-admins may only hand back their own. Raises P0077 and changes nothing otherwise. Invoker rights: RLS applies.';
 
-revoke execute on function public.unclaim_panel_members(uuid[], uuid) from public, anon;
-grant  execute on function public.unclaim_panel_members(uuid[], uuid) to authenticated, service_role;
+revoke execute on function public.unclaim_panel_members(uuid[], uuid[]) from public, anon;
+grant  execute on function public.unclaim_panel_members(uuid[], uuid[]) to authenticated, service_role;

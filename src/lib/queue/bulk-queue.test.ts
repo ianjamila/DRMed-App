@@ -6,6 +6,7 @@ import {
   panelRowKey,
   parsePanelRowKey,
   queueRowKinds,
+  rowTestCount,
   sentTestCount,
   type QueueRowInfo,
 } from "./bulk-queue";
@@ -156,5 +157,33 @@ describe("sentTestCount", () => {
     expect(bulkQueueMessage("Claimed", sentTestCount(result, withPanel), result, withPanel)).toBe(
       "Claimed 1 of 11 tests.\nNot changed (1):\n• Chemistry (10 tests) — Jamila, Ian: Some tests in this report were already claimed or changed status.",
     );
+  });
+});
+
+describe("rowTestCount / sentTestCount scope", () => {
+  // Ten tests on a finished report plus one new test on the bench.
+  const panel: QueueRowInfo = {
+    visitId: V,
+    label: "Chemistry (11 tests) — Jamila, Ian",
+    assignedTo: null,
+    testCount: 11,
+    benchCount: 1,
+  };
+
+  it("counts only bench members for Claim / Unclaim, every member for Delete", () => {
+    expect(rowTestCount(panel, "bench")).toBe(1);
+    expect(rowTestCount(panel, "all")).toBe(11);
+  });
+
+  it("falls back to 1 for a single test and testCount when no benchCount", () => {
+    expect(rowTestCount(rows.a, "bench")).toBe(1);
+    expect(rowTestCount({ ...panel, benchCount: undefined }, "bench")).toBe(11);
+  });
+
+  it("weights a skipped panel by the action's scope", () => {
+    const key = panelRowKey(V, G);
+    const result = { changedIds: [], skipped: [{ id: key, reason: "x" }] };
+    expect(sentTestCount(result, { [key]: panel }, "bench")).toBe(1);
+    expect(sentTestCount(result, { [key]: panel }, "all")).toBe(11);
   });
 });

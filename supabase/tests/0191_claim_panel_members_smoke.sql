@@ -24,6 +24,9 @@
 --   6. An admin hands back anyone's panel.
 --   7. One member moved on mid-unclaim → P0077, nothing handed back.
 --   8. ACLs: authenticated + service_role may execute; anon and PUBLIC may not.
+--   9. A panel split between two holders: a non-admin holding part of it is
+--      refused; an admin hands it back whole with per-member holders.
+--  10. Malformed input (holder list length mismatch, repeated member) → P0077.
 -- =============================================================================
 
 begin;
@@ -137,7 +140,7 @@ do $$
 declare n integer;
 begin
   n := pg_temp.run_as('a0000000-0000-4000-8000-000000000191',
-    $q$select public.unclaim_panel_members($a${f0000000-0000-4000-8000-000000000191,f1000000-0000-4000-8000-000000000191,f2000000-0000-4000-8000-000000000191}$a$::uuid[], 'a0000000-0000-4000-8000-000000000191')$q$);
+    $q$select public.unclaim_panel_members($a${f0000000-0000-4000-8000-000000000191,f1000000-0000-4000-8000-000000000191,f2000000-0000-4000-8000-000000000191}$a$::uuid[], array['a0000000-0000-4000-8000-000000000191','a0000000-0000-4000-8000-000000000191','a0000000-0000-4000-8000-000000000191']::uuid[])$q$);
   if n <> 3 then raise exception '2: expected 3 handed back, got %', n; end if;
   perform pg_temp.expect('2 unclaim', 'requested:-,requested:-,requested:-');
   if exists (select 1 from public.test_requests where id = any (pg_temp.ids()) and started_at is not null) then
@@ -156,12 +159,12 @@ select pg_temp.expect('3 nothing claimed', 'in_progress:a1,requested:-,requested
 update public.test_requests set status = 'in_progress', assigned_to = 'a1000000-0000-4000-8000-000000000191'
  where id = any (pg_temp.ids());
 select pg_temp.expect_p0077('4 not the holder', 'a0000000-0000-4000-8000-000000000191',
-  $q$select public.unclaim_panel_members($a${f0000000-0000-4000-8000-000000000191,f1000000-0000-4000-8000-000000000191,f2000000-0000-4000-8000-000000000191}$a$::uuid[], 'a1000000-0000-4000-8000-000000000191')$q$);
+  $q$select public.unclaim_panel_members($a${f0000000-0000-4000-8000-000000000191,f1000000-0000-4000-8000-000000000191,f2000000-0000-4000-8000-000000000191}$a$::uuid[], array['a1000000-0000-4000-8000-000000000191','a1000000-0000-4000-8000-000000000191','a1000000-0000-4000-8000-000000000191']::uuid[])$q$);
 select pg_temp.expect('4 still held', 'in_progress:a1,in_progress:a1,in_progress:a1');
 
 -- 5. stale holder → nothing handed back -----------------------------------------
 select pg_temp.expect_p0077('5 stale holder', 'a2000000-0000-4000-8000-000000000191',
-  $q$select public.unclaim_panel_members($a${f0000000-0000-4000-8000-000000000191,f1000000-0000-4000-8000-000000000191,f2000000-0000-4000-8000-000000000191}$a$::uuid[], 'a0000000-0000-4000-8000-000000000191')$q$);
+  $q$select public.unclaim_panel_members($a${f0000000-0000-4000-8000-000000000191,f1000000-0000-4000-8000-000000000191,f2000000-0000-4000-8000-000000000191}$a$::uuid[], array['a0000000-0000-4000-8000-000000000191','a0000000-0000-4000-8000-000000000191','a0000000-0000-4000-8000-000000000191']::uuid[])$q$);
 select pg_temp.expect('5 still held', 'in_progress:a1,in_progress:a1,in_progress:a1');
 
 -- 6. admin hands back anyone's panel --------------------------------------------
@@ -169,7 +172,7 @@ do $$
 declare n integer;
 begin
   n := pg_temp.run_as('a2000000-0000-4000-8000-000000000191',
-    $q$select public.unclaim_panel_members($a${f0000000-0000-4000-8000-000000000191,f1000000-0000-4000-8000-000000000191,f2000000-0000-4000-8000-000000000191}$a$::uuid[], 'a1000000-0000-4000-8000-000000000191')$q$);
+    $q$select public.unclaim_panel_members($a${f0000000-0000-4000-8000-000000000191,f1000000-0000-4000-8000-000000000191,f2000000-0000-4000-8000-000000000191}$a$::uuid[], array['a1000000-0000-4000-8000-000000000191','a1000000-0000-4000-8000-000000000191','a1000000-0000-4000-8000-000000000191']::uuid[])$q$);
   if n <> 3 then raise exception '6: expected 3 handed back, got %', n; end if;
   perform pg_temp.expect('6 admin unclaim', 'requested:-,requested:-,requested:-');
 end $$;
@@ -178,14 +181,40 @@ end $$;
 update public.test_requests set status = 'in_progress', assigned_to = 'a0000000-0000-4000-8000-000000000191'
  where id in ('f0000000-0000-4000-8000-000000000191', 'f2000000-0000-4000-8000-000000000191');
 select pg_temp.expect_p0077('7 partial unclaim', 'a0000000-0000-4000-8000-000000000191',
-  $q$select public.unclaim_panel_members($a${f0000000-0000-4000-8000-000000000191,f1000000-0000-4000-8000-000000000191,f2000000-0000-4000-8000-000000000191}$a$::uuid[], 'a0000000-0000-4000-8000-000000000191')$q$);
+  $q$select public.unclaim_panel_members($a${f0000000-0000-4000-8000-000000000191,f1000000-0000-4000-8000-000000000191,f2000000-0000-4000-8000-000000000191}$a$::uuid[], array['a0000000-0000-4000-8000-000000000191','a0000000-0000-4000-8000-000000000191','a0000000-0000-4000-8000-000000000191']::uuid[])$q$);
 select pg_temp.expect('7 nothing handed back', 'in_progress:a0,requested:-,in_progress:a0');
+
+-- 9. a panel split between two holders: the medtech holding part of it is
+--    refused; an admin recovers it whole with per-member holders ------------
+update public.test_requests set status = 'requested', assigned_to = null
+ where id = any (pg_temp.ids());
+update public.test_requests set status = 'in_progress', assigned_to = 'a0000000-0000-4000-8000-000000000191'
+ where id in ('f0000000-0000-4000-8000-000000000191', 'f1000000-0000-4000-8000-000000000191');
+update public.test_requests set status = 'in_progress', assigned_to = 'a1000000-0000-4000-8000-000000000191'
+ where id = 'f2000000-0000-4000-8000-000000000191';
+select pg_temp.expect_p0077('9 split: medtech refused', 'a0000000-0000-4000-8000-000000000191',
+  $q$select public.unclaim_panel_members($a${f0000000-0000-4000-8000-000000000191,f1000000-0000-4000-8000-000000000191,f2000000-0000-4000-8000-000000000191}$a$::uuid[], array['a0000000-0000-4000-8000-000000000191','a0000000-0000-4000-8000-000000000191','a1000000-0000-4000-8000-000000000191']::uuid[])$q$);
+select pg_temp.expect('9 split still held', 'in_progress:a0,in_progress:a0,in_progress:a1');
+do $$
+declare n integer;
+begin
+  n := pg_temp.run_as('a2000000-0000-4000-8000-000000000191',
+    $q$select public.unclaim_panel_members($a${f0000000-0000-4000-8000-000000000191,f1000000-0000-4000-8000-000000000191,f2000000-0000-4000-8000-000000000191}$a$::uuid[], array['a0000000-0000-4000-8000-000000000191','a0000000-0000-4000-8000-000000000191','a1000000-0000-4000-8000-000000000191']::uuid[])$q$);
+  if n <> 3 then raise exception '9: expected 3 handed back, got %', n; end if;
+  perform pg_temp.expect('9 admin recovers split panel', 'requested:-,requested:-,requested:-');
+end $$;
+
+-- 10. malformed input (length mismatch, repeated member) → P0077 -----------
+select pg_temp.expect_p0077('10 length mismatch', 'a2000000-0000-4000-8000-000000000191',
+  $q$select public.unclaim_panel_members($a${f0000000-0000-4000-8000-000000000191,f1000000-0000-4000-8000-000000000191,f2000000-0000-4000-8000-000000000191}$a$::uuid[], array['a0000000-0000-4000-8000-000000000191']::uuid[])$q$);
+select pg_temp.expect_p0077('10 repeated member', 'a2000000-0000-4000-8000-000000000191',
+  $q$select public.unclaim_panel_members(array['f0000000-0000-4000-8000-000000000191','f0000000-0000-4000-8000-000000000191']::uuid[], array['a0000000-0000-4000-8000-000000000191','a0000000-0000-4000-8000-000000000191']::uuid[])$q$);
 
 -- 8. ACLs -----------------------------------------------------------------------
 do $$
 declare f text;
 begin
-  foreach f in array array['public.claim_panel_members(uuid[])', 'public.unclaim_panel_members(uuid[], uuid)'] loop
+  foreach f in array array['public.claim_panel_members(uuid[])', 'public.unclaim_panel_members(uuid[], uuid[])'] loop
     if not has_function_privilege('authenticated', f, 'execute') then
       raise exception '8: authenticated cannot execute %', f;
     end if;

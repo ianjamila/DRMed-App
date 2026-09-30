@@ -10,6 +10,7 @@ import {
   QUEUE_KIND,
   bulkQueueMessage,
   parsePanelRowKey,
+  rowTestCount,
   sentTestCount,
   type BulkQueueResult,
   type QueueRowInfo,
@@ -63,8 +64,11 @@ export function QueueBulkBar({ rowsByKey }: Props) {
   const known = (keys: string[] | undefined) =>
     (keys ?? []).filter((key) => rowsByKey[key] !== undefined);
   const claimKeys = known(keysByKind[QUEUE_KIND.claim]);
+  // A single test sends the holder the operator saw, so it needs one. A
+  // panel may be split between holders (an admin recovering it): null is
+  // then what was seen, and the server compares it the same way.
   const unclaimKeys = known(keysByKind[QUEUE_KIND.unclaim]).filter(
-    (key) => rowsByKey[key]!.assignedTo !== null,
+    (key) => parsePanelRowKey(key) !== null || rowsByKey[key]!.assignedTo !== null,
   );
   const deleteKeys = known(keysByKind[QUEUE_KIND.delete]);
 
@@ -81,8 +85,10 @@ export function QueueBulkBar({ rowsByKey }: Props) {
       else alert(result.error);
       return;
     }
-    // Counted in TESTS: a panel row stands for several (sentTestCount).
-    setOutcome(bulkQueueMessage(verb, sentTestCount(result, rowsByKey), result, rowsByKey));
+    // Counted in TESTS: a panel row stands for several (sentTestCount) — its
+    // bench members for Claim / Unclaim, all of them for Delete.
+    const scope = verb === "Deleted" ? "all" : "bench";
+    setOutcome(bulkQueueMessage(verb, sentTestCount(result, rowsByKey, scope), result, rowsByKey));
     // Pruning wins (spec §4): clear everything sent; the outcome panel is the record.
     clearKeys(keys);
     closePanel();
@@ -119,7 +125,7 @@ export function QueueBulkBar({ rowsByKey }: Props) {
     }));
     const heldPanels = panels.map((p) => ({
       ...p,
-      assignedTo: rowsByKey[p.key]!.assignedTo!,
+      assignedTo: rowsByKey[p.key]!.assignedTo,
     }));
     setRunning("unclaim");
     start(async () =>
@@ -159,10 +165,14 @@ export function QueueBulkBar({ rowsByKey }: Props) {
   }
 
   // In TESTS, not rows: a chemistry panel row stands for all its members.
-  const testsIn = (keys: string[]) =>
-    keys.reduce((n, key) => n + (rowsByKey[key]?.testCount ?? 1), 0);
+  const testsIn = (keys: string[], scope: "bench" | "all") =>
+    keys.reduce((n, key) => n + rowTestCount(rowsByKey[key], scope), 0);
   const panelCount =
-    panel === "unclaim" ? testsIn(unclaimKeys) : panel === "delete" ? testsIn(deleteKeys) : 0;
+    panel === "unclaim"
+      ? testsIn(unclaimKeys, "bench")
+      : panel === "delete"
+        ? testsIn(deleteKeys, "all")
+        : 0;
   // The rows behind an open panel can vanish under it (a realtime refresh
   // prunes them). Close it then, so it never reopens by itself — with the old
   // reason — over a later, unrelated selection. Render-time adjustment, the
@@ -204,7 +214,7 @@ export function QueueBulkBar({ rowsByKey }: Props) {
     <BulkBar noun="test">
       {claimKeys.length > 0 ? (
         <Button type="button" size="sm" variant="brand" disabled={pending} onClick={claim}>
-          {pending && running === "claim" ? "Claiming…" : `Claim (${testsIn(claimKeys)})`}
+          {pending && running === "claim" ? "Claiming…" : `Claim (${testsIn(claimKeys, "bench")})`}
         </Button>
       ) : null}
       {unclaimKeys.length > 0 ? (
@@ -219,7 +229,7 @@ export function QueueBulkBar({ rowsByKey }: Props) {
             setPanel(panel === "unclaim" ? null : "unclaim");
           }}
         >
-          Unclaim ({testsIn(unclaimKeys)})
+          Unclaim ({testsIn(unclaimKeys, "bench")})
         </Button>
       ) : null}
       {deleteKeys.length > 0 ? (
@@ -234,7 +244,7 @@ export function QueueBulkBar({ rowsByKey }: Props) {
             setPanel(panel === "delete" ? null : "delete");
           }}
         >
-          Delete ({testsIn(deleteKeys)})
+          Delete ({testsIn(deleteKeys, "all")})
         </Button>
       ) : null}
       {panel !== null && panelCount > 0 ? (

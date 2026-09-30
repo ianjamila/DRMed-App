@@ -15,6 +15,7 @@ import type { StaffSession } from "@/lib/auth/require-staff";
 import { DOCTOR_KINDS_PG_LIST } from "@/lib/visits/classification";
 import { partitionConsolidatedMembers } from "@/lib/results/consolidated-reports";
 import { hasOpenHmoClaim, testDeletability } from "@/lib/visits/deletion";
+import { labQueueGate } from "@/lib/visits/lab-gate";
 import { panelRowKey } from "@/lib/queue/bulk-queue";
 
 export interface PanelRef {
@@ -29,6 +30,7 @@ export interface PanelMember {
   section: string | null;
   parentId: string | null;
   visitPaymentStatus: string;
+  visitHmoProviderId: string | null;
   hasOpenHmoClaim: boolean;
   resultId: string | null;
   hasPdf: boolean;
@@ -37,9 +39,11 @@ export interface PanelMember {
 export interface PanelState {
   /** Live members still on the bench (no finished report) — what Claim / Unclaim act on. */
   benchIds: string[];
+  /** Each bench member's holder, parallel to benchIds (what Unclaim sends as "the holder I saw"). */
+  benchHolders: Array<string | null>;
   /** Every live member — what Delete acts on (a panel is deleted whole). */
   allIds: string[];
-  /** The one holder of every bench member, when there is exactly one. */
+  /** The one holder of every bench member, when there is exactly one (null when unheld or split). */
   holder: string | null;
   claimable: boolean;
   unclaimable: boolean;
@@ -71,19 +75,25 @@ export function summarizePanel(
   const holders = new Set(bench.map((m) => m.assignedTo));
   const holder = holders.size === 1 ? ([...holders][0] ?? null) : null;
 
+  // The lab payment gate (labQueueGate) as claimPanelMembers applies it: the
+  // worklist tabs already hide unpaid visits, but Pending release does not,
+  // and a panel there can have a new bench test on an unpaid visit.
   const claimable =
     bench.length > 0 &&
     bench.every(
       (m) =>
         m.status === "requested" &&
         m.assignedTo === null &&
-        canClaimSection(viewer.role, m.section),
+        canClaimSection(viewer.role, m.section) &&
+        labQueueGate({ payment_status: m.visitPaymentStatus, hmo_provider_id: m.visitHmoProviderId })
+          .ok,
     );
+  // Every bench member in progress; a non-admin must hold ALL of them, an
+  // admin may hand back a panel split between people (per-member holders).
   const unclaimable =
     bench.length > 0 &&
     bench.every((m) => m.status === "in_progress" && m.assignedTo !== null) &&
-    holder !== null &&
-    (viewer.role === "admin" || holder === viewer.userId);
+    (viewer.role === "admin" || bench.every((m) => m.assignedTo === viewer.userId));
   const deletable =
     members.length > 0 &&
     members.every(
@@ -101,6 +111,7 @@ export function summarizePanel(
 
   return {
     benchIds: bench.map((m) => m.id),
+    benchHolders: bench.map((m) => m.assignedTo),
     allIds: members.map((m) => m.id),
     holder,
     claimable,
@@ -135,7 +146,7 @@ export async function fetchPanelMembers(
         `id, status, assigned_to, visit_id, parent_id,
          hmo_claim_items ( batch_voided ),
          services!inner ( section, report_group_id, kind ),
-         visits!inner ( payment_status, deleted_at ),
+         visits!inner ( payment_status, hmo_provider_id, deleted_at ),
          result_test_requests ( result_id, results ( storage_path ) )`,
       )
       .in("visit_id", visitIds)
@@ -173,6 +184,7 @@ export async function fetchPanelMembers(
         section: svc.section,
         parentId: r.parent_id,
         visitPaymentStatus: visit.payment_status,
+        visitHmoProviderId: visit.hmo_provider_id,
         hasOpenHmoClaim: hasOpenHmoClaim(r.hmo_claim_items),
         resultId: link?.result_id ?? null,
         hasPdf: Boolean(result?.storage_path),

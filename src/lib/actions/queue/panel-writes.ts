@@ -109,18 +109,18 @@ export async function claimPanelMembers(
 }
 
 /**
- * Hand a panel's bench members back to the queue in one statement. `holder`
- * is the claim the operator SAW; unclaim_panel_members refuses (P0077) unless
- * every member is still in progress under it, and a non-admin may only pass
- * themselves. One audit row per test, keyed by resource_id, so the queue's
+ * Hand a panel's bench members back to the queue in one statement. Each
+ * member carries the holder the operator SAW; unclaim_panel_members refuses
+ * (P0077) unless every member is still in progress under exactly that holder,
+ * and a non-admin may only hand back their own. Per-member holders let an
+ * admin recover a panel split between two people. One audit row per test, keyed by resource_id, so the queue's
  * Remarks column (queue_claim_remarks, 0160) reads it like any unclaim.
  */
 export async function unclaimPanelMembers(
   session: StaffSession,
   supabase: Supabase,
   args: {
-    testRequestIds: string[];
-    holder: string;
+    members: ReadonlyArray<{ id: string; holder: string }>;
     visitIdOf: (testRequestId: string) => string | null;
     reason: string | null;
     selfService: boolean;
@@ -128,13 +128,13 @@ export async function unclaimPanelMembers(
   },
 ): Promise<PanelOutcome> {
   const { error } = await supabase.rpc("unclaim_panel_members", {
-    p_test_request_ids: args.testRequestIds,
-    p_holder: args.holder,
+    p_test_request_ids: args.members.map((m) => m.id),
+    p_holders: args.members.map((m) => m.holder),
   });
   if (error) return { ok: false, error: translatePgError(error) };
 
   const h = await headers();
-  for (const id of args.testRequestIds) {
+  for (const { id, holder } of args.members) {
     await audit({
       actor_id: session.user_id,
       actor_type: "staff",
@@ -143,7 +143,7 @@ export async function unclaimPanelMembers(
       resource_id: id,
       metadata: {
         visit_id: args.visitIdOf(id),
-        previous_assignee: args.holder,
+        previous_assignee: holder,
         reason: args.reason,
         self_service: args.selfService,
         grouped: true,
