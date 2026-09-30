@@ -504,20 +504,32 @@ async function main() {
   const P_LONG = { from: "2025-08-27", to: "2026-09-30" }; // exactly 400 days
   const PERIODS = [P_EARLY, P_JUNE, P_LONG];
 
-  async function seedWorld(): Promise<void> {
+  interface World { del: string; dup: string; surv: string; regOnly: string; old: string; imp: string; }
+  async function seedWorld(): Promise<World> {
     const sources = ["walk_in", "online_facebook", "online_google", null] as const;
     const days = ["2023-12-05", "2024-01-20", "2025-09-10", "2026-02-14", "2026-06-03", "2026-06-17", "2026-06-28", "2026-09-29"];
     // App-native patients, one per (source, day), with a priced visit that day.
     let n = 0;
+    const firstDayIds: string[] = [];
     for (const source of sources) {
       for (const d of days) {
         n += 1;
         const id = await patient(`World${n}`, `App${n}`, { source: source ?? undefined, createdAt: `${d}T09:00:00+08:00` });
         await visit(id, d, 300 + n);
+        if (d === days[0]) firstDayIds.push(id);
         if (n % 3 === 0) await visit(id, "2026-06-20", 150); // a repeat visit inside June
         if (n % 4 === 0) await q(`update public.patients set referred_by_doctor = $1 where id = $2`, [`Dr. World ${n % 3}`, id]);
       }
     }
+    // An early referrer, so referrers is non-empty for P_EARLY too.
+    await q(`update public.patients set referred_by_doctor = 'Dr. Early' where id = $1`, [firstDayIds[0]]);
+    // Activity inside both previous windows used by the report-sections check.
+    const prevA = await patient("WorldPrevA", "Pia", { source: "walk_in", createdAt: "2026-05-15T09:00:00+08:00" });
+    await visit(prevA, "2026-05-15", 260);
+    await sheetLine("2026-05-20", loose("WorldPrevSheetA", "Pam"), null, 90);
+    const prevB = await patient("WorldPrevB", "Pio", { source: "online_facebook", createdAt: "2025-03-01T09:00:00+08:00" });
+    await visit(prevB, "2025-03-01", 270);
+    await sheetLine("2025-03-05", loose("WorldPrevSheetB", "Pat"), null, 95);
     // Imported patient with a sheet registration + returning flag, linked sheet lines, and a same-day app visit (overlap).
     const imp = await patient("WorldImported", "Ivy", { source: "online_google", imported: true });
     await facts(imp, "2026-06-05", "repeat");
@@ -546,7 +558,11 @@ async function main() {
     // Pre-window visitor with a later registration: never New.
     const old = await patient("WorldOld", "Ola", { source: "walk_in", createdAt: "2026-06-11T10:00:00+08:00" });
     await visit(old, "2023-06-01", 100);
+    return { del, dup, surv, regOnly, old, imp };
   }
+
+  /** Which labels the seed guarantees non-empty for a period (overlaps only exist from June on). */
+  const mustBeNonEmpty = (label: string, p: { from: string; to: string }) => !(label.startsWith("overlaps") && p === P_EARLY);
 
   // Both sides go through node-pg's jsonb parsing (so numeric 1500.00 and 1500
   // both become 1500) and are sorted AFTER that, in JS — sorting on jsonb text
@@ -2006,16 +2022,30 @@ async function main() {
     }));
     // ---- 0206: one call per page view ---------------------------------
     await check("0206: seeded world makes every section non-empty", () => scoped(async () => {
-      await seedWorld();
+      const w = await seedWorld();
       await asAdmin();
       for (const p of PERIODS) {
         for (const c of gridCalls("public", p)) {
-          if (c.label.startsWith("overlaps") && p !== P_JUNE) continue; // overlaps only seeded in June
-          if (c.label.startsWith("referrers") && p === P_EARLY) continue; // no referrers seeded that early
+          if (!mustBeNonEmpty(c.label, p)) continue;
           const n = Number((await q<{ n: string }>(`select count(*)::text as n from (${c.sql}) t`, c.params)).rows[0].n);
           assert(n > 0, `${c.label} ${p.from}..${p.to} is empty — the equivalence below would be vacuous`);
         }
       }
+      // Pinned: each seeded case really landed (summary always returns a row, so count(*) proves nothing).
+      const sm = await summary(P_JUNE.from, P_JUNE.to);
+      assert(sm.new_unconfirmed > 0, `new_unconfirmed must be > 0: ${JSON.stringify(sm)}`);
+      assert(sm.returning_first_recorded > 0, `returning_first_recorded must be > 0: ${JSON.stringify(sm)}`);
+      assert(sm.undated_registrations > 0, `undated_registrations must be > 0: ${JSON.stringify(sm)}`);
+      assert(sm.source_total > sm.source_recorded, `source_total must exceed source_recorded: ${JSON.stringify(sm)}`);
+      await setRole("postgres", null);
+      const ids = (await q<{ identity: string }>(`select identity from public._patient_sources_identities()`)).rows.map((r) => r.identity);
+      assert(!ids.includes(`patient:${w.del}`), "the deleted patient must not be an identity");
+      assert(!ids.includes(`patient:${w.dup}`), "the merged duplicate must not be an identity");
+      assert(ids.includes(`patient:${w.surv}`), "the merge survivor must be an identity");
+      const oldRow = await identityRow(`patient:${w.old}`);
+      assert(oldRow?.basis === "before_window", `pre-window visitor basis: ${JSON.stringify(oldRow)}`);
+      const regRow = await identityRow(`patient:${w.regOnly}`);
+      assert(regRow?.basis === "registration", `registration-only basis: ${JSON.stringify(regRow)}`);
     }));
 
     await check("0206: every wrapper returns exactly the pre-0206 rows", () => scoped(async () => {
@@ -2029,6 +2059,7 @@ async function main() {
         for (let i = 0; i < now.length; i++) {
           const a = await rowsJson(now[i].sql, now[i].params);
           const b = await rowsJson(old[i].sql, old[i].params);
+          if (mustBeNonEmpty(now[i].label, p)) assert(JSON.parse(b).length > 0, `${now[i].label} ${p.from}..${p.to} is empty on both sides — vacuous`);
           if (a !== b) diffs.push(`${now[i].label} ${p.from}..${p.to}: new=${a.slice(0, 300)} old=${b.slice(0, 300)}`);
         }
       }
@@ -2055,6 +2086,8 @@ async function main() {
         const same = async (label: string, section: unknown, sql: string, params: unknown[]) => {
           const a = await sortedJson(section);
           const b = await rowsJson(sql, params);
+          const needs = label !== "overlaps" || c.p !== P_EARLY;
+          if (needs && label !== "summary") assert(JSON.parse(b).length > 0, `${tag} ${label} is empty — vacuous`);
           assert(a === b, `${tag} ${label}: report=${a.slice(0, 300)} rpc=${b.slice(0, 300)}`);
         };
         await same("summary", [rep.summary], `select * from public.patient_sources_summary($1,$2)`, [c.p.from, c.p.to]);
@@ -2065,6 +2098,7 @@ async function main() {
         await same("overlaps", rep.overlaps, `select * from public.patient_sources_overlaps($1,$2)`, [c.p.from, c.p.to]);
         await same("referrers", rep.referrers, `select * from public.patient_sources_referrers($1,$2,20)`, [c.p.from, c.p.to]);
         if (c.prev) {
+          assert(Array.isArray(rep.previous) && (rep.previous as unknown[]).length > 0, `${tag}: previous is empty — vacuous`);
           await same("previous", rep.previous, `select * from public.patient_sources_series($1,$2,'period',$3)`, [c.prev.from, c.prev.to, c.mode]);
         } else {
           assert(rep.previous === null, `${tag}: previous must be null without a previous period, got ${JSON.stringify(rep.previous)}`);
@@ -2073,6 +2107,10 @@ async function main() {
         const series = rep.series as { bucket_start: string; channel: string }[];
         const sorted = [...series].sort((x, y) => (x.bucket_start + x.channel < y.bucket_start + y.channel ? -1 : 1));
         assert(JSON.stringify(series) === JSON.stringify(sorted), `${tag}: series is not ordered by bucket_start, channel`);
+        const revs = (rep.revenue as { channel: string }[]).map((r) => r.channel);
+        assert(JSON.stringify(revs) === JSON.stringify([...revs].sort((x, y) => (x < y ? -1 : x > y ? 1 : 0))), `${tag}: revenue not ordered by channel: ${JSON.stringify(revs)}`);
+        const ovs = (rep.overlaps as { service_date: string; drm_id: string }[]).map((r) => r.service_date + "|" + r.drm_id);
+        assert(JSON.stringify(ovs) === JSON.stringify([...ovs].sort((x, y) => (x < y ? -1 : x > y ? 1 : 0))), `${tag}: overlaps not ordered by (service_date, drm_id): ${JSON.stringify(ovs)}`);
         const refs = (rep.referrers as { doctor_label: string }[]).map((r) => r.doctor_label);
         const rpcRefs = (await q<{ doctor_label: string }>(`select doctor_label from public.patient_sources_referrers($1,$2,20)`, [c.p.from, c.p.to])).rows.map((r) => r.doctor_label);
         assert(JSON.stringify(refs) === JSON.stringify(rpcRefs), `${tag}: referrers order ${JSON.stringify(refs)} vs ${JSON.stringify(rpcRefs)}`);

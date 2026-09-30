@@ -2,6 +2,10 @@
 -- (generated with pg_get_functiondef from a stack at head 0204), re-homed in schema
 -- ps_old. scripts/patient-sources-db-proof.ts loads this INSIDE its rolled-back
 -- transaction and proves the 0206 wrappers return identical rows. Never applied anywhere.
+-- NOTE: these ps_old bodies still call the LIVE public core (_patient_sources_identities,
+-- _patient_sources_encounters, _ps_revenue_lines, _ps_bucket, _ps_survivors). So the
+-- equivalence proves the wrapper/helper refactor only; 0206 must not touch that core
+-- (spec section 2 non-goal). Pinned values in the proof anchor the numbers themselves.
 create schema if not exists ps_old;
 grant usage on schema ps_old to authenticated;
 CREATE OR REPLACE FUNCTION ps_old.patient_sources_overlaps(p_from date, p_to date)
