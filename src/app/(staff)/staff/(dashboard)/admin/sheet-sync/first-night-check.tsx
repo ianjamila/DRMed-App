@@ -4,11 +4,12 @@ import { Panel } from "@/components/ui/panel";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { manilaDate, manilaDateTime, todayManilaISODate } from "@/lib/dates/manila";
 import {
-  cliCommand, DEFAULT_THRESHOLD, MAX_THRESHOLD, PANEL_MAX_DAYS, parseCheckParams,
+  busiestSentence, cliCommand, DEFAULT_THRESHOLD, describeLoadErrorGroup, groupLoadErrors, MAX_THRESHOLD, PANEL_MAX_DAYS, parseCheckParams,
   type CheckReport, type Counts, type Verdict,
 } from "@/lib/marketing/first-night-check";
 import { runFirstNightCheck } from "@/lib/marketing/first-night-check.server";
 import { formatNewCounts } from "@/lib/marketing/patient-sources";
+import { firstParam } from "@/lib/marketing/period";
 
 const BASE_PATH = "/staff/admin/sheet-sync";
 
@@ -19,19 +20,21 @@ interface FormValues { from: string; to: string; threshold: string }
  * the (slow, ~3 calls per day) check runs when the form is submitted
  * (`run=1`), so the result is a linkable address and costs nothing to open.
  */
-export async function FirstNightCheck({ searchParams }: { searchParams: Record<string, string | undefined> }) {
+export async function FirstNightCheck({ searchParams }: { searchParams: Record<string, string | string[] | undefined> }) {
   const today = todayManilaISODate();
+  // Repeated query params arrive as string[]; take the first, like the other pages.
+  const sp = { from: firstParam(searchParams.from), to: firstParam(searchParams.to), threshold: firstParam(searchParams.threshold), run: firstParam(searchParams.run) };
   const parsed = parseCheckParams(
-    { from: searchParams.from, to: searchParams.to, threshold: searchParams.threshold },
+    { from: sp.from, to: sp.to, threshold: sp.threshold },
     { maxDays: PANEL_MAX_DAYS, today },
   );
   // The form echoes what was typed; with nothing typed it shows the defaults (last 7 days).
-  const typed = Boolean(searchParams.from || searchParams.to || searchParams.threshold);
+  const typed = Boolean(sp.from || sp.to || sp.threshold);
   const shown = parsed.ok ? parsed.params : null;
   const form: FormValues = typed || !shown
-    ? { from: searchParams.from ?? "", to: searchParams.to ?? "", threshold: searchParams.threshold ?? String(DEFAULT_THRESHOLD) }
+    ? { from: sp.from ?? "", to: sp.to ?? "", threshold: sp.threshold ?? String(DEFAULT_THRESHOLD) }
     : { from: shown.from, to: shown.to, threshold: String(shown.threshold) };
-  if (searchParams.run !== "1") return <FirstNightCheckView form={form} paramErrors={[]} result={null} />;
+  if (sp.run !== "1") return <FirstNightCheckView form={form} paramErrors={[]} result={null} />;
   if (!parsed.ok) return <FirstNightCheckView form={form} paramErrors={parsed.errors} result={null} />;
 
   const supabase = await createClient();
@@ -139,10 +142,8 @@ function Report({ report: r, durationMs }: { report: CheckReport; durationMs: nu
           )}
           {r.errors.length > 0 && (
             <ul className="mt-2 list-disc pl-5">
-              {r.errors.map((e, i) => (
-                <li key={`${e.what}-${e.date ?? ""}-${i}`}>
-                  {e.what}{e.date ? ` (${manilaDate(e.date)})` : ""}: {e.message}
-                </li>
+              {groupLoadErrors(r.errors).map((g) => (
+                <li key={`${g.what}-${g.message}`}>{describeLoadErrorGroup(g)}</li>
               ))}
             </ul>
           )}
@@ -155,9 +156,7 @@ function Report({ report: r, durationMs }: { report: CheckReport; durationMs: nu
       </Alert>
 
       <p className={SOFT}>
-        {manilaDate(from)} to {manilaDate(to)} · {r.days.length} day{r.days.length === 1 ? "" : "s"} · a normal day has{" "}
-        {r.stats.median.toLocaleString("en-PH")} (typical) and the busiest had {r.stats.max.toLocaleString("en-PH")}
-        {r.stats.maxDate ? ` on ${manilaDate(r.stats.maxDate)}` : ""} · spike threshold {threshold.toLocaleString("en-PH")} ·
+        {manilaDate(from)} to {manilaDate(to)} · {r.days.length} day{r.days.length === 1 ? "" : "s"} · {busiestSentence(r.stats)} · spike threshold {threshold.toLocaleString("en-PH")} ·
         took {(durationMs / 1000).toFixed(1)}s
       </p>
 
@@ -193,7 +192,7 @@ function Report({ report: r, durationMs }: { report: CheckReport; durationMs: nu
               <tr>
                 <th className={TH}>Date</th>
                 <th className={TH}>Patient Sources</th>
-                <th className={TH}>Chart</th>
+                <th className={TH}>Day-by-day chart</th>
                 <th className={TH}>Dashboard tile</th>
                 <th className={TH}>Records created (app / imported)</th>
                 <th className={TH}>Flag</th>

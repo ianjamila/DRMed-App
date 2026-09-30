@@ -91,8 +91,15 @@ describe("the first-night check reads exactly like the surfaces", () => {
   });
   it("uses the same three loaders as the Patient Sources page, Booking Sources page and dashboard", () => {
     expect(engine).toContain('from "./patient-sources.server"');
-    for (const loader of ["loadPatientSourcesSummary", "loadPatientSourcesSeries", "loadNewPatientsToday"]) {
-      expect(engine, loader).toContain(`${loader}`);
+    // Wired in as the engine's defaults (the fetch goes through deps.* so the tests can inject)...
+    const wiring: Record<string, string> = {
+      loadSummary: "loadPatientSourcesSummary", loadSeries: "loadPatientSourcesSeries", loadToday: "loadNewPatientsToday",
+    };
+    for (const [dep, loader] of Object.entries(wiring)) {
+      expect(engine, `${dep} default`).toMatch(new RegExp(`\\b${dep}:\\s*${loader}\\b`));
+      // ...and actually CALLED: a real call expression, not just the name in an import or a comment.
+      const code = engine.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "");
+      expect(code, `${dep} is called`).toMatch(new RegExp(`deps\\.${dep}\\(`));
     }
     // ...and the pages it reproduces still read through those very loaders.
     expect(readFileSync(join(ROOT, `${S}/marketing/sources/page.tsx`), "utf8")).toContain("loadPatientSourcesSummary(");

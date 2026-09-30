@@ -6,7 +6,8 @@ vi.mock("server-only", () => ({}));
 vi.mock("@/lib/supabase/server", () => ({ createClient: vi.fn() }));
 
 import { FirstNightCheckView } from "./first-night-check";
-import { evaluateCheck, type CheckInput, type Counts, type DayInput } from "@/lib/marketing/first-night-check";
+import { shiftISODate } from "@/lib/dates/manila";
+import { evaluateCheck, FORBIDDEN_CHECK_MESSAGE, type CheckInput, type Counts, type DayInput } from "@/lib/marketing/first-night-check";
 
 afterEach(cleanup);
 
@@ -51,7 +52,7 @@ describe("FirstNightCheckView", () => {
     expect(alert.className).toContain("emerald");
     expect(screen.getAllByText("Patient Sources").length).toBeGreaterThan(0);
     expect(screen.getByText("Booking Sources")).toBeTruthy();
-    expect(screen.getAllByText("Patient Sources chart").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Patient Sources day-by-day chart").length).toBeGreaterThan(0);
     expect(screen.getByText("Dashboard “New today”")).toBeTruthy();
     expect(screen.getByText("Day-by-day total")).toBeTruthy();
     const row = screen.getByText("Sep 30, 2026").closest("tr")!;
@@ -88,12 +89,28 @@ describe("FirstNightCheckView", () => {
     expect(screen.getByText("The check couldn't finish — the dashboard tile could not be loaded")).toBeTruthy();
     const row = screen.getByText("Sep 29, 2026").closest("tr")!;
     expect(within(row).getAllByText("Unknown").length).toBeGreaterThan(0);
-    expect(screen.getByText(/the dashboard tile \(Sep 29, 2026\)/)).toBeTruthy();
+    expect(screen.getByText(/The dashboard tile — couldn't load \(Sep 29, 2026\)/)).toBeTruthy();
   });
 
-  it("View-as refusal is shown as the loader's own plain message", () => {
-    const msg = "Patient Sources is for admins only. If you are using View as, switch back to Admin.";
-    view(report([day("2026-09-30", c(0))], { patientSourcesCard: null, loadErrors: [{ what: "Patient Sources", message: msg }] }));
-    expect(screen.getByText(new RegExp("switch back to Admin"))).toBeTruthy();
+  it("View-as refusal: a couple of lines (not one per day) and it says plainly an admin not viewing as another role is needed", () => {
+    const dates = Array.from({ length: 31 }, (_, i) => shiftISODate("2026-09-01", i));
+    const loadErrors = [
+      { what: "Patient Sources", message: FORBIDDEN_CHECK_MESSAGE },
+      ...dates.flatMap((date) => [
+        { what: "the dashboard tile", date, message: FORBIDDEN_CHECK_MESSAGE },
+        { what: "the day-by-day Patient Sources figures", date, message: FORBIDDEN_CHECK_MESSAGE },
+      ]),
+    ];
+    view(report([day("2026-09-30", c(0))], { patientSourcesCard: null, loadErrors }));
+    const alert = screen.getByText(/^The check couldn't finish/).closest('[data-slot="alert"]')!;
+    const items = within(alert as HTMLElement).getAllByRole("listitem");
+    expect(items).toHaveLength(3);
+    expect(screen.getByText("The dashboard tile — couldn't load (31 days): " + FORBIDDEN_CHECK_MESSAGE)).toBeTruthy();
+    expect(screen.getAllByText(/admin who is not viewing as another role/, { selector: "li" })).toHaveLength(3);
+  });
+
+  it("shows the busiest-day sentence in plain English", () => {
+    view(report([day("2026-09-29", c(3)), day("2026-09-30", c(5))]));
+    expect(screen.getByText(/Most days had about 4 new patients; the busiest had 5 \(Sep 30, 2026\)\./)).toBeTruthy();
   });
 });

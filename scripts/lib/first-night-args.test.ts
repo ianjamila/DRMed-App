@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { resolveCliArgs } from "./first-night-args";
+import { EXIT_USAGE, resolveCliArgs } from "./first-night-args";
 
 const TODAY = "2026-09-30";
 const ok = (argv: string[]) => {
@@ -27,6 +27,13 @@ describe("first-night CLI arguments", () => {
     const r = ok(["--json", "--prod"]);
     expect(r.json).toBe(true);
     expect(r.params.to).toBe(TODAY);
+  });
+  it("accepts --yes (the env-guard flag that skips the prod countdown) and ignores it", () => {
+    expect(ok(["--prod", "--yes"]).params.to).toBe(TODAY);
+    expect(ok(["--yes", "--days", "2"]).params).toMatchObject({ from: "2026-09-29", to: TODAY });
+  });
+  it("usage errors exit 64, distinct from the check's own 1 (mismatch/error) and 2 (spike)", () => {
+    expect(EXIT_USAGE).toBe(64);
   });
   it("refuses --days together with --from, a bad --days, and unknown flags", () => {
     const err = (argv: string[]) => { const r = resolveCliArgs(argv, TODAY); return r.ok ? [] : r.errors; };

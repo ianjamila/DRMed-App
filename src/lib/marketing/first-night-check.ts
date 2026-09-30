@@ -9,7 +9,7 @@
  * check reports both numbers and which screens they came from.
  */
 import { daysBetweenISO, daysInMonth, isISODate, isoDateParts, manilaDate, shiftISODate } from "@/lib/dates/manila";
-import { PATIENT_SOURCES_MIN_DATE } from "./period";
+import { firstParam, PATIENT_SOURCES_MIN_DATE } from "./period";
 import { formatNewCounts } from "./patient-sources";
 
 export const DEFAULT_THRESHOLD = 40;
@@ -40,10 +40,15 @@ const blank = (v: string | null | undefined) => v === undefined || v === null ||
  * the clinic owner, one per problem.
  */
 export function parseCheckParams(
-  raw: { from?: string | null; to?: string | null; threshold?: string | number | null },
+  rawIn: {
+    from?: string | string[] | null; to?: string | string[] | null; threshold?: string | string[] | number | null;
+  },
   opts: { maxDays: number; today: string },
 ): ParseResult {
   const errors: string[] = [];
+  // Next hands repeated query params (?from=a&from=b) over as string[]; the first one wins, as on the other pages.
+  const one = (v: string | string[] | null | undefined) => firstParam(v ?? undefined) ?? null;
+  const raw = { from: one(rawIn.from), to: one(rawIn.to), threshold: Array.isArray(rawIn.threshold) ? rawIn.threshold[0] : rawIn.threshold };
   const toRaw = blank(raw.to) ? opts.today : raw.to!.trim();
   const fromRaw = blank(raw.from) ? (isRealDate(toRaw) ? shiftISODate(toRaw, -(DEFAULT_DAYS - 1)) : "") : raw.from!.trim();
 
@@ -100,6 +105,33 @@ export interface DayInput {
 }
 
 export interface LoadError { what: string; date?: string; message: string }
+
+/** What the check says when the report functions refuse it (an admin is required, and View as counts as not-admin). */
+export const FORBIDDEN_CHECK_MESSAGE =
+  "This check needs an admin who is not viewing as another role. Switch back to Admin (end View as), then run it again.";
+
+export interface LoadErrorGroup { what: string; message: string; dates: string[]; count: number }
+
+/** One entry per (what, message) with the days it affected — 64 identical refusals become one line. */
+export function groupLoadErrors(errors: readonly LoadError[]): LoadErrorGroup[] {
+  const groups = new Map<string, LoadErrorGroup>();
+  for (const e of errors) {
+    const key = JSON.stringify([e.what, e.message]);
+    const g = groups.get(key) ?? { what: e.what, message: e.message, dates: [], count: 0 };
+    g.count += 1;
+    if (e.date) g.dates.push(e.date);
+    groups.set(key, g);
+  }
+  return [...groups.values()];
+}
+
+const capitalise = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
+
+/** "The dashboard tile — couldn't load (31 days): message" — one line per group. */
+export function describeLoadErrorGroup(g: LoadErrorGroup): string {
+  const where = g.dates.length === 1 && g.count === 1 ? ` (${dayLabel(g.dates[0])})` : g.count > 1 ? ` (${g.count} days)` : "";
+  return `${capitalise(g.what)} — couldn't load${where}: ${g.message}`;
+}
 
 export interface SyncInfo {
   paused: boolean | null;
@@ -174,7 +206,7 @@ const text = (c: Counts) => formatNewCounts(c.confirmed, c.unconfirmed);
 export const SURFACE = {
   patientSources: "Patient Sources",
   booking: "Booking Sources",
-  chart: "Patient Sources chart",
+  chart: "Patient Sources day-by-day chart",
   dashboard: "Dashboard “New today”",
   sumOfDays: "Day-by-day total",
 } as const;
@@ -193,7 +225,7 @@ function median(nums: number[]): number {
   return s.length % 2 ? s[mid] : (s[mid - 1] + s[mid]) / 2;
 }
 
-const dayLabel = (iso: string) => manilaDate(iso);
+function dayLabel(iso: string): string { return manilaDate(iso); }
 
 export function evaluateCheck(input: CheckInput): CheckReport {
   const { params } = input;
@@ -302,12 +334,18 @@ export function cliCommand(p: CheckParams): string {
   return `npm run first-night:check -- --from ${p.from} --to ${p.to} --threshold ${p.threshold}`;
 }
 
+/** "Most days had about 5 new patients; the busiest had 41 (Sep 30, 2026)." */
+export function busiestSentence(s: { median: number; max: number; maxDate: string | null }): string {
+  const n = (v: number) => (Number.isInteger(v) ? v : Math.round(v * 10) / 10).toLocaleString("en-PH");
+  return `Most days had about ${n(s.median)} new patient${s.median === 1 ? "" : "s"}; the busiest had ${n(s.max)}${s.maxDate ? ` (${dayLabel(s.maxDate)})` : ""}.`;
+}
+
 /** Plain-text report for the terminal. */
 export function formatReportText(r: CheckReport): string {
   const L: string[] = [];
   L.push(r.headline, r.advice, "");
   L.push(`Range: ${r.params.from} to ${r.params.to} · spike threshold ${r.params.threshold}`);
-  L.push(`Daily New patients: median ${r.stats.median}, highest ${r.stats.max}${r.stats.maxDate ? ` (${r.stats.maxDate})` : ""}`, "");
+  L.push(`${busiestSentence(r.stats)}`, "");
   L.push("Whole range");
   for (const t of r.totals) {
     const mark = t.agrees === null ? " " : t.agrees ? "=" : "!";
@@ -325,7 +363,7 @@ export function formatReportText(r: CheckReport): string {
   L.push(head.map((h, i) => h.padEnd(widths[i])).join("  "));
   for (const row of rows) L.push(row.map((c, i) => c.padEnd(widths[i])).join("  ").trimEnd());
   if (r.mismatches.length > 0) { L.push("", "Disagreements"); for (const m of r.mismatches) L.push(`  - ${m.message}`); }
-  if (r.errors.length > 0) { L.push("", "Could not load"); for (const e of r.errors) L.push(`  - ${e.what}${e.date ? ` (${e.date})` : ""}: ${e.message}`); }
+  if (r.errors.length > 0) { L.push("", "Could not load"); for (const g of groupLoadErrors(r.errors)) L.push(`  - ${describeLoadErrorGroup(g)}`); }
   if (r.sync) {
     L.push("", `Sheet sync: ${r.sync.paused ? "paused" : r.sync.paused === false ? "on" : "unknown"} · last synced ${r.sync.lastSyncedAt ?? "never"} · last run ${r.sync.lastRunStatus ?? "none"} · ${r.sync.undatedRegistrations} undated registrations (not on any day)`);
   }

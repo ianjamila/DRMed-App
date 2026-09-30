@@ -1,7 +1,7 @@
 /**
  * Argument parsing for `scripts/first-night-check.ts`. Pure (no env, no
  * clients), so it can be unit-tested. Runner flags owned by env-guard
- * (`--prod`) are ignored here.
+ * (`--prod`, `--yes`) are ignored here.
  */
 import { CLI_MAX_DAYS, parseCheckParams, type CheckParams } from "../../src/lib/marketing/first-night-check";
 import { shiftISODate } from "../../src/lib/dates/manila";
@@ -9,7 +9,10 @@ import { shiftISODate } from "../../src/lib/dates/manila";
 export type CliArgs = { ok: true; params: CheckParams; json: boolean } | { ok: false; errors: string[] };
 
 const VALUE_FLAGS = new Set(["from", "to", "days", "threshold"]);
-const BOOL_FLAGS = new Set(["json", "prod"]);
+const BOOL_FLAGS = new Set(["json", "prod", "yes"]);
+
+/** Exit code for a usage error (bad flag or value) — distinct from 1 (screens disagree / a load failed). sysexits EX_USAGE. */
+export const EXIT_USAGE = 64;
 
 export function resolveCliArgs(argv: readonly string[], today: string): CliArgs {
   const errors: string[] = [];

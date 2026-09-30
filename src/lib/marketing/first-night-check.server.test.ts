@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 vi.mock("server-only", () => ({}));
 
 import { countPatientsCreated, runFirstNightCheck, type CheckDeps } from "./first-night-check.server";
+import { FORBIDDEN_CHECK_MESSAGE, groupLoadErrors } from "./first-night-check";
 import type { ReportResult, SeriesRow, SummaryRow } from "./patient-sources";
 
 const summaryRow = (c: number, u = 0, over: Partial<SummaryRow> = {}): SummaryRow => ({
@@ -71,6 +72,35 @@ describe("runFirstNightCheck", () => {
         ok([{ bucket_start: d, channel: "walk_in", confirmed: 100, unconfirmed: 0 }])) as CheckDeps["loadToday"],
     }));
     expect(report.spikes.length).toBe(2);
+    // The dashboard tile (100) also disagrees with Patient Sources, so mismatch outranks the spike.
+    expect(report.verdict).toBe("mismatch");
+    expect(report.mismatches.map((m) => m.kind)).toContain("day_dashboard");
+  });
+
+  it("a day every screen agrees on, above the threshold, is a spike (and only a spike)", async () => {
+    perDay["2026-09-30"] = { c: 560, u: 0, ch: "walk_in" };
+    try {
+      const { report } = await runFirstNightCheck(client, params, deps());
+      expect(report.verdict).toBe("spike");
+      expect(report.mismatches).toEqual([]);
+      expect(report.spikes).toEqual([{ date: "2026-09-30", count: 560 }]);
+    } finally {
+      perDay["2026-09-30"] = { c: 2, u: 0, ch: "walk_in" };
+    }
+  });
+
+  it("a View-as refusal on every day collapses to a plain admin-only message, not one line per day", async () => {
+    const forbidden = { ok: false as const, kind: "forbidden" as const, message: "Patient Sources is for admins only. If you are using View as, switch back to Admin." };
+    const { report } = await runFirstNightCheck(client, params, deps({
+      loadSummary: (async () => forbidden) as CheckDeps["loadSummary"],
+      loadToday: (async () => forbidden) as CheckDeps["loadToday"],
+    }));
+    expect(report.verdict).toBe("error");
+    expect(report.errors.every((e) => e.message === FORBIDDEN_CHECK_MESSAGE)).toBe(true);
+    const groups = groupLoadErrors(report.errors);
+    expect(groups.length).toBeLessThan(report.errors.length);
+    expect(groups.find((g) => g.what === "the dashboard tile")).toMatchObject({ count: 2 });
+    expect(FORBIDDEN_CHECK_MESSAGE).toMatch(/admin who is not viewing as another role/);
   });
 
   it("names each load that failed and never treats it as zero", async () => {
@@ -81,7 +111,7 @@ describe("runFirstNightCheck", () => {
     }));
     expect(report.verdict).toBe("error");
     expect(report.errors.map((e) => e.what)).toEqual(expect.arrayContaining([
-      "the Patient Sources chart", "the dashboard tile", "the patient records count",
+      "the Patient Sources day-by-day chart", "the dashboard tile", "the patient records count",
     ]));
     expect(report.days[0].chart).toBeNull();
     expect(report.days[1].tile).toBeNull();

@@ -6,27 +6,30 @@
  *   npm run first-night:check                          last 7 days, LOCAL database
  *   npm run first-night:check -- --days 14 --threshold 60
  *   npm run first-night:check -- --from 2026-09-24 --to 2026-09-30 --json
- *   npm run first-night:check -- --prod                the live database (reads counts only)
+ *   npm run first-night:check -- --prod                the live database (reads counts only; add --yes to skip the countdown)
  *
  * Exit code: 0 all screens agree · 1 screens disagree or a figure could not be
- * loaded · 2 a day is above the threshold (screens agree).
+ * loaded · 2 a day is above the threshold (screens agree) · 64 bad flags or
+ * values (nothing was checked).
  * Needs migration 0199 (the report functions accept the service key).
  */
 import "./lib/load-env";
 import { requireLocalOrExplicitProd } from "./lib/env-guard";
-import { resolveCliArgs } from "./lib/first-night-args";
+import { EXIT_USAGE, resolveCliArgs } from "./lib/first-night-args";
 
 async function main() {
+  // Read-only: still guarded (counts of real patients), banner says "will read".
   requireLocalOrExplicitProd("first-night:check", {
-    writes: "nothing — reads New-patient counts and patient created counts",
+    readOnly: true,
+    writes: "New-patient counts and patient-record created counts (nothing is written)",
   });
 
   const { todayManilaISODate } = await import("../src/lib/dates/manila");
   const args = resolveCliArgs(process.argv.slice(2), todayManilaISODate());
   if (!args.ok) {
     for (const e of args.errors) console.error(e);
-    console.error("Options: --from YYYY-MM-DD  --to YYYY-MM-DD  --days N  --threshold N  --json  --prod");
-    process.exit(1);
+    console.error("Options: --from YYYY-MM-DD  --to YYYY-MM-DD  --days N  --threshold N  --json  --prod  --yes");
+    process.exit(EXIT_USAGE);
   }
 
   const { createClient } = await import("@supabase/supabase-js");

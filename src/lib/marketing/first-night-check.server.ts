@@ -17,7 +17,7 @@ import {
 } from "./patient-sources.server";
 import { PATIENT_SOURCES_MIN_DATE } from "./period";
 import {
-  enumerateDays, evaluateCheck,
+  enumerateDays, evaluateCheck, FORBIDDEN_CHECK_MESSAGE,
   type CheckParams, type CheckReport, type Counts, type DayInput, type LoadError,
 } from "./first-night-check";
 
@@ -69,7 +69,8 @@ export async function runFirstNightCheck(
 ): Promise<{ report: CheckReport; durationMs: number }> {
   const started = Date.now();
   const errors: LoadError[] = [];
-  const fail = (what: string, r: { message: string }, date?: string) => errors.push({ what, date, message: r.message });
+  const fail = (what: string, r: { message: string; kind?: string }, date?: string) =>
+    errors.push({ what, date, message: r.kind === "forbidden" ? FORBIDDEN_CHECK_MESSAGE : r.message });
 
   const dates = enumerateDays(params.from, params.to);
 
@@ -87,9 +88,9 @@ export async function runFirstNightCheck(
 
   let chartByDay: Map<string, Counts> | null = null;
   let chartTotal: Counts | null = null;
-  if (!series.ok) fail("the Patient Sources chart", series);
+  if (!series.ok) fail("the Patient Sources day-by-day chart", series);
   else if (series.data.truncated) {
-    errors.push({ what: "the Patient Sources chart", message: "The chart data was cut off at the row limit — pick a shorter range." });
+    errors.push({ what: "the Patient Sources day-by-day chart", message: "The chart data was cut off at the row limit — pick a shorter range." });
   } else {
     chartByDay = new Map();
     chartTotal = { confirmed: 0, unconfirmed: 0 };

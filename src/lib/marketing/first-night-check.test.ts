@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
-  cliCommand, enumerateDays, evaluateCheck, exitCodeFor, formatReportText, parseCheckParams,
+  busiestSentence, cliCommand, describeLoadErrorGroup, enumerateDays, evaluateCheck, exitCodeFor, FORBIDDEN_CHECK_MESSAGE,
+  formatReportText, groupLoadErrors, parseCheckParams,
   type CheckInput, type Counts, type DayInput,
 } from "./first-night-check";
+import { shiftISODate } from "@/lib/dates/manila";
 
 const c = (confirmed: number, unconfirmed = 0): Counts => ({ confirmed, unconfirmed });
 const TODAY = "2026-09-30";
@@ -30,6 +32,11 @@ describe("parseCheckParams", () => {
     expect(bad({ from: "2026-09-10", to: "2026-09-05" })).toEqual(["The first day must be on or before the last day."]);
     expect(bad({ from: "2026-09-10", to: "2026-10-01" })[0]).toMatch(/can't be in the future/);
     expect(bad({ from: "2023-11-30", to: "2023-12-05" })[0]).toMatch(/1 December 2023/);
+  });
+  it("takes the first value of a repeated query param (Next passes string[]) instead of crashing", () => {
+    const r = parseCheckParams({ from: ["2026-09-01", "2026-09-05"], to: ["2026-09-10", "2026-09-30"], threshold: ["70", "5"] }, opts);
+    expect(r).toEqual({ ok: true, params: { from: "2026-09-01", to: "2026-09-10", threshold: 70 } });
+    expect(parseCheckParams({ from: [] as string[], to: "2026-09-10" }, opts).ok).toBe(true); // empty array = blank = default
   });
   it("caps the range at maxDays (inclusive)", () => {
     expect(parseCheckParams({ from: "2026-08-31", to: "2026-09-30" }, opts).ok).toBe(true); // 31 days
@@ -177,6 +184,26 @@ describe("evaluateCheck", () => {
   });
 });
 
+describe("load-error grouping", () => {
+  it("collapses identical (what, message) pairs across days into one line with the day count", () => {
+    const errs = Array.from({ length: 31 }, (_, i) => ({ what: "the dashboard tile", date: shiftISODate("2026-09-01", i), message: FORBIDDEN_CHECK_MESSAGE }));
+    errs.push({ what: "the dashboard tile", date: "2026-09-02", message: "other" });
+    const groups = groupLoadErrors(errs);
+    expect(groups).toHaveLength(2);
+    expect(describeLoadErrorGroup(groups[0])).toBe(`The dashboard tile — couldn't load (31 days): ${FORBIDDEN_CHECK_MESSAGE}`);
+    expect(describeLoadErrorGroup(groups[1])).toBe("The dashboard tile — couldn't load (Sep 2, 2026): other");
+    expect(describeLoadErrorGroup(groupLoadErrors([{ what: "Patient Sources", message: "x" }])[0])).toBe("Patient Sources — couldn't load: x");
+  });
+});
+
+describe("busiest-day sentence", () => {
+  it("reads as plain English", () => {
+    expect(busiestSentence({ median: 5, max: 41, maxDate: "2026-09-30" })).toBe("Most days had about 5 new patients; the busiest had 41 (Sep 30, 2026).");
+    expect(busiestSentence({ median: 1, max: 1, maxDate: null })).toBe("Most days had about 1 new patient; the busiest had 1.");
+    expect(busiestSentence({ median: 4.5, max: 9, maxDate: null })).toContain("about 4.5 new");
+  });
+});
+
 describe("text output", () => {
   it("prints the verdict, the totals and one line per day, and the CLI command round-trips", () => {
     const r = evaluateCheck(input([day("2026-09-29", c(3)), day("2026-09-30", c(41), { created: { app: 1, imported: 560 } })]));
@@ -185,6 +212,8 @@ describe("text output", () => {
     expect(out).toContain("2026-09-30");
     expect(out).toContain("1 / 560");
     expect(out).toContain("SPIKE");
+    expect(out).toContain("Most days had about");
+    expect(out).toContain("day-by-day chart");
     expect(cliCommand(r.params)).toBe("npm run first-night:check -- --from 2026-09-29 --to 2026-09-30 --threshold 40");
   });
 });
