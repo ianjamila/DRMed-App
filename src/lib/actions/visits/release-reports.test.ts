@@ -75,7 +75,13 @@ describe("releaseVisitSelection", () => {
     expect(fake.rpcCalls).toEqual([
       {
         name: "release_visit_results",
-        args: { p_visit_id: "v1", p_test_request_ids: ["a", "b"], p_medium: "email", p_actor: "u1" },
+        args: {
+          p_visit_id: "v1",
+          p_test_request_ids: ["a", "b"],
+          p_medium: "email",
+          p_actor: "u1",
+          p_audit: { metadata: { source: "queue" }, ip: "1.2.3.4", user_agent: "ua" },
+        },
       },
     ]);
   });
@@ -107,17 +113,20 @@ describe("releaseVisitSelection", () => {
     expect(fx.alerts).toEqual([["v1", 1]]);
   });
 
-  it("audits every released row (pulled-in ones too) with the exact metadata, ip and user agent, and nothing else", async () => {
-    const { out } = run([{ id: "a" }, { id: "b" }, { id: "c", status: "result_uploaded" }], report("r1", "a", "b"), ["a", "c"]);
+  it("hands the audit to the database as p_audit (caller extras + first forwarded ip + user agent) and writes no released row itself", async () => {
+    const { fake, out } = run([{ id: "a" }, { id: "b" }, { id: "c", status: "result_uploaded" }], report("r1", "a", "b"), ["a", "c"]);
     await out;
-    expect(fx.audits.map((a) => a.resource_id)).toEqual(["a", "b"]);
-    for (const a of fx.audits) {
-      expect(a).toEqual({
+    // Exactly one call, the extras exactly as passed (no visit_id / released_at: the SQL adds those).
+    expect(fake.rpcCalls).toHaveLength(1);
+    expect(fake.rpcCalls[0].args.p_audit).toEqual({ metadata: { source: "queue" }, ip: "1.2.3.4", user_agent: "ua" });
+    // The database owns test_request.released now: a TypeScript copy would double-write.
+    expect(fx.audits.filter((a) => a.action === "test_request.released")).toEqual([]);
+    // What the fake's model of the SQL writes (a, b released; c is not ready).
+    expect(fake.dbAudits.map((a) => a.resource_id)).toEqual(["a", "b"]);
+    for (const a of fake.dbAudits) {
+      expect(a).toMatchObject({
         actor_id: "u1",
-        actor_type: "staff",
         action: "test_request.released",
-        resource_type: "test_request",
-        resource_id: a.resource_id,
         metadata: { visit_id: "v1", release_medium: "email", bulk: true, selection: true, source: "queue", released_at: FAKE_RELEASED_AT },
         ip_address: "1.2.3.4",
         user_agent: "ua",
@@ -125,7 +134,7 @@ describe("releaseVisitSelection", () => {
     }
   });
 
-  it("each audit row carries the exact released_at string the RPC returned, unchanged (never through a JS Date)", async () => {
+  it("the released_at the RPC returns is not echoed into p_audit (the database stamps and writes it itself)", async () => {
     const stamp = "2026-09-30T07:00:00.987654+00:00";
     const { fake, out } = run([{ id: "a" }, { id: "b" }], [], ["a", "b"]);
     fake.overrideNextRpc("release_visit_results", {
@@ -135,24 +144,26 @@ describe("releaseVisitSelection", () => {
       ],
       refused: [],
     });
-    await out;
-    const at = (id: string) => (fx.audits.find((a) => a.resource_id === id)!.metadata as { released_at: string }).released_at;
-    expect(at("a")).toBe(stamp);
-    expect(at("b")).toBe("2026-09-30T07:00:01.000001+00:00");
+    const o = await out;
+    expect(o.changedIds).toEqual(["a", "b"]);
+    expect(fake.rpcCalls[0].args.p_audit).toEqual({ metadata: { source: "queue" }, ip: "1.2.3.4", user_agent: "ua" });
+    expect(fx.audits.filter((a) => a.action === "test_request.released")).toEqual([]);
   });
 
-  it("stamps bulk_batch_id on every released row's audit (report-mates too) and passes it to the notice", async () => {
-    const { out } = run([{ id: "a" }, { id: "b" }, { id: "c" }], report("r1", "a", "b"), ["a", "c"], undefined, "batch-1");
+  it("sends bulk_batch_id in p_audit.metadata (the database stamps it on report-mates too) and passes it to the notice", async () => {
+    const { fake, out } = run([{ id: "a" }, { id: "b" }, { id: "c" }], report("r1", "a", "b"), ["a", "c"], undefined, "batch-1");
     await out;
-    expect(fx.audits.map((a) => a.resource_id)).toEqual(["a", "b", "c"]);
-    for (const a of fx.audits) expect(a.metadata).toMatchObject({ bulk_batch_id: "batch-1", source: "queue" });
+    expect(fake.rpcCalls[0].args.p_audit).toEqual({ metadata: { source: "queue", bulk_batch_id: "batch-1" }, ip: "1.2.3.4", user_agent: "ua" });
+    expect(fake.dbAudits.map((a) => a.resource_id)).toEqual(["a", "b", "c"]);
+    for (const a of fake.dbAudits) expect(a.metadata).toMatchObject({ bulk_batch_id: "batch-1", source: "queue" });
     expect(fx.notified).toEqual([expect.objectContaining({ bulkBatchId: "batch-1" })]);
   });
 
-  it("without a bulkBatchId the audit rows carry no bulk_batch_id", async () => {
-    const { out } = run([{ id: "a" }], [], ["a"]);
+  it("without a bulkBatchId p_audit.metadata carries no bulk_batch_id", async () => {
+    const { fake, out } = run([{ id: "a" }], [], ["a"]);
     await out;
-    expect(fx.audits[0].metadata).not.toHaveProperty("bulk_batch_id");
+    expect(fake.rpcCalls[0].args.p_audit).toEqual({ metadata: { source: "queue" }, ip: "1.2.3.4", user_agent: "ua" });
+    expect(fake.dbAudits[0].metadata).not.toHaveProperty("bulk_batch_id");
   });
 
   it.each([
@@ -209,7 +220,7 @@ describe("releaseVisitSelection", () => {
     expect(o.changedIds).toEqual(["c"]);
     expect(o.skipped).toEqual([{ id: "a", reason: REPORT_REFUSAL.notFinished(1) }]);
     expect(fx.alerts).toEqual([["v1", 1]]);
-    expect(fx.audits.map((a) => a.resource_id)).toEqual(["c"]);
+    expect(fake.dbAudits.map((a) => a.resource_id)).toEqual(["c"]);
     expect(fake.rows.find((r) => r.id === "a")!.status).toBe("ready_for_release");
   });
 

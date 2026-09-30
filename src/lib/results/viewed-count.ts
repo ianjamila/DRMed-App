@@ -12,6 +12,8 @@ import { createAdminClient } from "@/lib/supabase/admin";
 // New rows additionally carry normalized metadata.test_request_ids (all
 // writers as of this change). The shapes are NOT disjoint — a single-test
 // row matches (1), (2) and the normalized array — so union by audit row id.
+// SQL twin: result_view_count() (0205), which stamps viewed_count on the
+// undo audit rows — keep the shapes in step (viewed-count.test.ts pins both).
 export async function countResultViews(testRequestId: string): Promise<number> {
   const admin = createAdminClient();
   const ids = new Set<number>();

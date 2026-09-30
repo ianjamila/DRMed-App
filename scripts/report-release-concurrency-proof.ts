@@ -1,5 +1,7 @@
 // Hand-run local CONCURRENCY proof for the atomic report release functions
-// (supabase/migrations/0198_atomic_report_release.sql, P0081):
+// (supabase/migrations/0198_atomic_report_release.sql, P0081; re-created by
+// 0205_release_audit_in_rpc.sql, which adds the in-transaction audit rows, the
+// required undo reason and the null-safe batch-Undo check):
 // release_visit_results / undo_visit_release (+ their private helpers
 // release_actor and release_report_locks).
 //
@@ -32,6 +34,13 @@
 //       all three (each release journal entry reversed, none left posted).
 //   B2  undo holds -> release WAITS -> undo commits -> release releases all
 //       three (one posted journal entry each). The report is never split.
+//   B4c batch Undo map with a JSON null for one member: refused at once (P0081,
+//       before any lock is taken, even while another session holds the report);
+//       nothing changes, no release_undone audit rows.
+//   B4d batch Undo when a released member has released_at NULL: waits, then the
+//       whole report is skipped changed_since (never split); no audit rows.
+//   A/B1/B2 also assert the test_request.released / release_undone audit rows
+//   0205 writes in the same transaction (loser / refused calls write none).
 //   C1  a member held (in_progress) by M2 and being handed back: the release
 //       WAITS (it locks every member), then is refused report_not_finished.
 //   C2  the release holds first: refused report_not_finished at once, and the
@@ -84,7 +93,7 @@
 // entries the payment/release bridges posted for it) and proves nothing tagged
 // is left. It never touches rows it did not mint.
 //
-// Run (local stack, 0198 applied):
+// Run (local stack, 0198 + 0205 applied):
 //   npm run report-release:concurrency-proof               # 2 modes, 25 free rounds
 //   npm run report-release:concurrency-proof -- --control  # + control rounds
 //   RRC_ROUNDS=100 npm run report-release:concurrency-proof
@@ -94,7 +103,10 @@
 // guard removed, reruns the named forced scenarios against the copy, and
 // passes only if they FAIL in both modes (see MUTANTS): M1 drops the row locks
 // (B1/B2), M2 drops the whole-report rule (C1), M3 drops the visit lock (D1),
-// M4 drops the package-header lock (E). The control rounds do NOT cover the
+// M4 drops the package-header lock (E), M5 drops the exact-release condition
+// from the batch Undo's report check (B4b), M6 drops 0205's string-type check on
+// the batch Undo map (B4c), M7 reverts the report check to the null-unsafe
+// `not (...)` form (B4d). The control rounds do NOT cover the
 // guards that live in triggers on public tables (the payment gate, the consent
 // gate, the GL bridge's one-posted-entry unique index, fn_release_header_when_
 // components_done): a trigger on a public table fires for every session, so a
@@ -253,9 +265,16 @@ function release(a: Actor, visit: string, ids: readonly string[]): Promise<Out<R
 
 // undo release -> rpc("undo_visit_release")
 // `expected` = the batch Undo map (id -> released_at of the release it made).
-function undo(a: Actor, visit: string, ids: readonly string[], expected?: Record<string, string>): Promise<Out<UndoJson>> {
+// 0205: a reason is REQUIRED (5th positional arg). `expected` may carry a JSON
+// null value (B4c) - the function refuses that map whole.
+function undo(
+  a: Actor,
+  visit: string,
+  ids: readonly string[],
+  expected?: Record<string, string | null>,
+): Promise<Out<UndoJson>> {
   return settle(
-    a.c.query(`select ${fnSchema}.undo_visit_release($1::uuid, $2::uuid[], null, $3::jsonb) as r`, [
+    a.c.query(`select ${fnSchema}.undo_visit_release($1::uuid, $2::uuid[], null, $3::jsonb, 'rrc proof') as r`, [
       visit,
       ids,
       expected ? JSON.stringify(expected) : null,
@@ -611,6 +630,45 @@ async function expectJes(label: string, ids: readonly string[], want: JeCount[])
   if (fmt(got) !== fmt(want)) throw new Fail(`${label}: journal entries expected [${fmt(want)}], got [${fmt(got)}]`);
 }
 
+// 0205: the RPCs write test_request.released / test_request.release_undone
+// audit rows in the same transaction. Counted from the monitor (committed state)
+// for the given test_requests only.
+async function auditCounts(
+  ids: readonly string[],
+): Promise<{ released: number; undone: number; releasedActors: string[] }> {
+  const { rows } = await monitor.query<{ action: string; actor_id: string | null; n: number }>(
+    `select action, actor_id, count(*)::int as n from public.audit_log
+      where resource_type = 'test_request' and resource_id = any($1::uuid[])
+        and action in ('test_request.released', 'test_request.release_undone')
+      group by 1, 2`,
+    [ids],
+  );
+  const sum = (action: string) => rows.filter((r) => r.action === action).reduce((t, r) => t + r.n, 0);
+  return {
+    released: sum("test_request.released"),
+    undone: sum("test_request.release_undone"),
+    releasedActors: rows.filter((r) => r.action === "test_request.released").map((r) => r.actor_id ?? "null"),
+  };
+}
+
+async function expectAudit(
+  label: string,
+  ids: readonly string[],
+  want: { released: number; undone: number; releasedBy?: string },
+): Promise<void> {
+  const got = await auditCounts(ids);
+  if (got.released !== want.released || got.undone !== want.undone) {
+    throw new Fail(
+      `${label}: audit rows expected ${want.released} released / ${want.undone} release_undone, got ${got.released} / ${got.undone}`,
+    );
+  }
+  if (want.releasedBy && got.releasedActors.some((a) => a !== want.releasedBy)) {
+    throw new Fail(
+      `${label}: released audit rows should all carry actor ${NAMES[want.releasedBy] ?? want.releasedBy}, got [${got.releasedActors.map((a) => NAMES[a] ?? a).join(",")}]`,
+    );
+  }
+}
+
 async function visitMoney(visit: string): Promise<{ status: string; paid: number }> {
   const { rows } = await monitor.query<{ payment_status: string; paid_php: string }>(
     "select payment_status, paid_php from public.visits where id = $1",
@@ -692,6 +750,30 @@ const none3: JeCount[] = [
   { posted: 0, reversed: 0 },
 ];
 
+// Fixture surgery for B4d: a released line whose released_at is NULL (no
+// constraint forbids it). Only the given, run-minted row is touched. If a
+// trigger refuses the plain update, retry inside one transaction with triggers
+// off (session_replication_role = replica), as the teardown does.
+async function nullReleasedAt(id: string): Promise<string> {
+  if (!made.tests.includes(id)) throw new Error("nullReleasedAt: not a row this run minted");
+  try {
+    await monitor.query("update public.test_requests set released_at = null where id = $1 and status = 'released'", [id]);
+    return "plain update";
+  } catch {
+    /* a trigger refused it - fall through */
+  }
+  await monitor.query("begin");
+  try {
+    await monitor.query("set local session_replication_role = replica");
+    await monitor.query("update public.test_requests set released_at = null where id = $1 and status = 'released'", [id]);
+    await monitor.query("commit");
+    return "session_replication_role = replica";
+  } catch (e) {
+    await monitor.query("rollback").catch(() => undefined);
+    throw e;
+  }
+}
+
 async function forcedScenarios(mode: Mode): Promise<void> {
   const sc = (id: string, title: string, body: () => Promise<string | void>) =>
     scenario(`[${mode}] ${id} ${title}`, id, body);
@@ -711,6 +793,8 @@ async function forcedScenarios(mode: Mode): Promise<void> {
     await b.c.query("rollback");
     await expectState("after", f.ids, ["rel:M1", "rel:M1", "rel:M1"]);
     await expectJes("journal", f.ids, three);
+    // Exactly the winner's three audit rows; the loser (nothing released) wrote none.
+    await expectAudit("audit", f.ids, { released: 3, undone: 0, releasedBy: fx.med1 });
   });
 
   // --- B. release vs undo on a PARTIAL report (the pre-0198 split) -----------
@@ -733,6 +817,8 @@ async function forcedScenarios(mode: Mode): Promise<void> {
       { posted: 0, reversed: 1 },
       { posted: 0, reversed: 1 },
     ]);
+    // a was released by the fixture (no audit row); the RPC released b and c, then undid all three.
+    await expectAudit("audit", f.ids, { released: 2, undone: 3 });
   });
 
   await sc("B2", "partial report: undo holds -> release WAITS -> release releases all three, one entry each", async () => {
@@ -754,6 +840,8 @@ async function forcedScenarios(mode: Mode): Promise<void> {
       { posted: 1, reversed: 0 },
       { posted: 1, reversed: 0 },
     ]);
+    // The undo touched only a (the sole released line); the release then released all three.
+    await expectAudit("audit", f.ids, { released: 3, undone: 1 });
   });
 
   // --- B3-B5. the 10-minute batch Undo (p_expected_released_at) ----------------
@@ -825,6 +913,61 @@ async function forcedScenarios(mode: Mode): Promise<void> {
     await m.c.query("commit");
     await expectState("after", f.ids, ["rel:M1", "rel:M1", "rel:M1"]);
     await expectJes("journal", f.ids, three);
+  });
+
+  // 0205: a map value that is not a JSON string is refused before any lock is
+  // taken - so it answers at once even while another session holds the report.
+  await sc("B4c", "batch Undo map with a JSON null for one member -> refused at once (P0081), nothing changes", async () => {
+    const f = await mkFix({ states: ["ready", "ready", "ready"] });
+    const holder = await actor("A", fx.admin1); // first, so it is closed first on a failure
+    const m = await actor("M1", fx.med1);
+    await begin(m, mode);
+    const map = releasedMap(expectOk("M1 release", await release(m, f.visit, f.ids)));
+    await m.c.query("commit");
+    await expectAudit("audit before", f.ids, { released: 3, undone: 0, releasedBy: fx.med1 });
+    await begin(holder, mode);
+    if (expectOk("A undo (holder)", await undo(holder, f.visit, [f.ids[0]])).undone.length !== 3) {
+      throw new Fail("A undo: expected 3 undone (held open)");
+    }
+    const bad: Record<string, string | null> = { ...map, [f.ids[1]]: null };
+    await begin(m, mode);
+    expectCode(
+      "M1 batch undo (null map value)",
+      await mustNotWait(m, undo(m, f.visit, f.ids, bad), "the map check runs before any lock is taken"),
+      "P0081",
+    );
+    await m.c.query("rollback");
+    await holder.c.query("rollback");
+    await expectState("after", f.ids, ["rel:M1", "rel:M1", "rel:M1"]);
+    await expectJes("journal", f.ids, three);
+    await expectAudit("audit after", f.ids, { released: 3, undone: 0, releasedBy: fx.med1 });
+  });
+
+  // 0205: a released member whose released_at is NULL makes the report check
+  // unknown, not false; `is not true` counts that as changed, so the report is
+  // skipped whole (the pre-0205 `not (...)` form undid the other two: a split).
+  await sc("B4d", "batch Undo when a released member has released_at NULL -> whole report skipped, never split", async () => {
+    const f = await mkFix({ states: ["ready", "ready", "ready"] });
+    const holder = await actor("A", fx.admin1);
+    const m = await actor("M1", fx.med1);
+    await begin(m, mode);
+    const map = releasedMap(expectOk("M1 release", await release(m, f.visit, f.ids)));
+    await m.c.query("commit");
+    const via = await nullReleasedAt(f.ids[2]);
+    await begin(holder, mode);
+    if (expectOk("A undo (holder)", await undo(holder, f.visit, [f.ids[0]])).undone.length !== 3) {
+      throw new Fail("A undo: expected 3 undone (held open)");
+    }
+    await begin(m, mode);
+    const pb = undo(m, f.visit, f.ids, map);
+    await mustWait(m, "the batch undo queues behind the holder's row locks");
+    await holder.c.query("rollback");
+    expectAllSkipped("M1 batch undo", await pb, f.ids);
+    await m.c.query("commit");
+    await expectState("after", f.ids, ["rel:M1", "rel:M1", "rel:M1"]);
+    await expectUniform("uniform", f.ids);
+    await expectAudit("audit", f.ids, { released: 3, undone: 0, releasedBy: fx.med1 });
+    return `released_at nulled via ${via}`;
   });
 
   await sc("B5", "batch Undo (exact map) holds -> release WAITS -> releases all three again, one entry each", async () => {
@@ -1209,6 +1352,10 @@ async function sweepTagged(like: string): Promise<void> {
             and j.id not in (select id from rrc_je)`,
       `delete from public.journal_lines where entry_id in (select id from rrc_je)`,
       `delete from public.journal_entries where id in (select id from rrc_je)`,
+      // 0205: the release / undo RPCs write test_request.released /
+      // release_undone rows for the fixture lines - delete them BEFORE the lines.
+      `delete from public.audit_log
+        where resource_type = 'test_request' and resource_id in (select id from rrc_tr)`,
       `delete from public.audit_log
         where actor_id in (select id from rrc_staff)
            or resource_id in (select id from rrc_tr) or resource_id in (select id from rrc_pay)
@@ -1246,7 +1393,9 @@ async function countTagged(like: string): Promise<number> {
           + (select count(*) from public.payments where id = any($7::uuid[]))
           + (select count(*) from public.results where id = any($8::uuid[]))
           + (select count(*) from public.journal_entries
-              where source_id = any($6::uuid[]) or source_id = any($7::uuid[])) as n`,
+              where source_id = any($6::uuid[]) or source_id = any($7::uuid[]))
+          + (select count(*) from public.audit_log
+              where resource_type = 'test_request' and resource_id = any($6::uuid[])) as n`,
     [`${like}%@example.test`, `${like}%`, `${up}%`, `DRM-${up}%`, `V-${up}%`, made.tests, made.payments, made.results],
   );
   return Number(rows[0].n);
@@ -1368,8 +1517,8 @@ interface Mutant {
   key: string;
   what: string;
   fn: FnName;
-  from: string;
-  to: string;
+  // [from, to] replacements applied in order; each must match exactly once-or-more (first is replaced).
+  edits: Array<[string, string]>;
   mustFail: string[];
 }
 
@@ -1378,49 +1527,66 @@ const MUTANTS: Mutant[] = [
     key: "M1",
     what: "no row locks (release_report_locks drops FOR UPDATE)",
     fn: "release_report_locks",
-    from: "      for update;",
-    to: ";",
+    edits: [["      for update;", ";"]],
     mustFail: ["B1", "B2"],
   },
   {
     key: "M2",
     what: "no whole-report rule (release never refuses an unfinished report)",
     fn: "release_visit_results",
-    from: "when r.n_unfinished > 0   then 'report_not_finished'",
-    to: "when false then 'report_not_finished'",
+    edits: [["when r.n_unfinished > 0   then 'report_not_finished'", "when false then 'report_not_finished'"]],
     mustFail: ["C1"],
   },
   {
     key: "M3",
     what: "no visit lock (release_report_locks drops FOR SHARE)",
     fn: "release_report_locks",
-    from: "for share;",
-    to: ";",
+    edits: [["for share;", ";"]],
     mustFail: ["D1"],
   },
   {
     key: "M4",
     what: "no header lock (release_report_locks drops the parent_id union)",
     fn: "release_report_locks",
-    from: "and tr.parent_id is not null);",
-    to: "and false);",
+    edits: [["and tr.parent_id is not null);", "and false);"]],
     mustFail: ["E1"],
   },
   {
     key: "M5",
     what: "batch Undo ignores released_at (report check drops the exact-release condition; the per-line check still guards a fully changed report, so B4b is the discriminator)",
     fn: "undo_visit_release",
-    from: "and tr.released_at = (p_expected_released_at ->> m::text)::timestamptz)) then",
-    to: "and true)) then",
+    edits: [
+      [
+        "and tr.released_at = (p_expected_released_at ->> m::text)::timestamptz) is not true) then",
+        "and true) is not true) then",
+      ],
+    ],
     mustFail: ["B4b"],
+  },
+  {
+    key: "M6",
+    what: "batch Undo accepts a null map value (drops 0205's string-type check)",
+    fn: "undo_visit_release",
+    edits: [["where jsonb_typeof(e.value) <> 'string') then", "where false) then"]],
+    mustFail: ["B4c"],
+  },
+  {
+    key: "M7",
+    what: "report check reverts to not (...) (null-unsafe: an unknown answer no longer counts as changed)",
+    fn: "undo_visit_release",
+    edits: [
+      ["where (p_expected_released_at ? m::text", "where not (p_expected_released_at ? m::text"],
+      ["(p_expected_released_at ->> m::text)::timestamptz) is not true) then", "(p_expected_released_at ->> m::text)::timestamptz)) then"],
+    ],
+    mustFail: ["B4d"],
   },
 ];
 
 const FN_SIGS: Record<FnName, string> = {
   release_actor: "uuid",
   release_report_locks: "uuid, uuid[], text",
-  release_visit_results: "uuid, uuid[], text, uuid",
-  undo_visit_release: "uuid, uuid[], uuid, jsonb",
+  release_visit_results: "uuid, uuid[], text, uuid, jsonb",
+  undo_visit_release: "uuid, uuid[], uuid, jsonb, text, jsonb",
 };
 
 async function controlRounds(): Promise<void> {
@@ -1438,12 +1604,16 @@ async function controlRounds(): Promise<void> {
   }
 
   for (const m of MUTANTS) {
-    if (!defs[m.fn].includes(m.from)) throw new Error(`control ${m.key}: "${m.from}" not found in ${m.fn}`);
+    let mutated = defs[m.fn];
+    for (const [from, to] of m.edits) {
+      if (!mutated.includes(from)) throw new Error(`control ${m.key}: "${from}" not found in ${m.fn}`);
+      mutated = mutated.replace(from, () => to);
+    }
     await monitor.query(`drop schema if exists ${schema} cascade`);
     await monitor.query(`create schema ${schema}`);
     try {
       for (const fn of names) {
-        await monitor.query(fn === m.fn ? defs[fn].replace(m.from, m.to) : defs[fn]);
+        await monitor.query(fn === m.fn ? mutated : defs[fn]);
       }
       await monitor.query(`grant usage on schema ${schema} to authenticated, service_role`);
       await monitor.query(`grant execute on all functions in schema ${schema} to authenticated, service_role`);
@@ -1521,6 +1691,11 @@ async function main(): Promise<void> {
       "select count(*) as n from pg_proc where proname in ('release_visit_results', 'undo_visit_release', 'release_report_locks', 'release_actor')",
     );
     if (Number(fn[0].n) !== 4) throw new Error("0198 is not applied to the local stack");
+    const { rows: v205 } = await monitor.query<{ ok: boolean }>(
+      `select to_regprocedure('public.release_visit_results(uuid,uuid[],text,uuid,jsonb)') is not null
+          and to_regprocedure('public.undo_visit_release(uuid,uuid[],uuid,jsonb,text,jsonb)') is not null as ok`,
+    );
+    if (!v205[0].ok) throw new Error("0205 is not applied to the local stack");
 
     await sweepTagged("rrc-");
     // Control-round schemas a crashed run left behind (always rrc_ctl_<hex>).

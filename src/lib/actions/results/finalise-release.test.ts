@@ -67,14 +67,22 @@ describe("finalise-consolidated release (step 9)", () => {
     expect(fake.rpcCalls).toHaveLength(1);
     expect(fake.rpcCalls[0]).toEqual({
       name: "release_visit_results",
-      args: { p_visit_id: "v1", p_test_request_ids: ids, p_medium: "other", p_actor: "u1" },
+      args: {
+        p_visit_id: "v1",
+        p_test_request_ids: ids,
+        p_medium: "other",
+        p_actor: "u1",
+        // The database writes the audit rows (0205): exactly the caller extras
+        // (finalise mints no Undo batch), plus the request's ip / user agent.
+        p_audit: { metadata: { source: "finalise_consolidated", result_id: "r1" }, ip: null, user_agent: "ua" },
+      },
     });
-    const lineAudits = audits.filter((a) => a.action === "test_request.released");
-    expect(lineAudits).toHaveLength(3);
-    for (const a of lineAudits) {
-      expect(a.metadata).toMatchObject({ source: "finalise_consolidated", result_id: "r1", release_medium: "other" });
-      // The exact database stamp, unchanged; finalise mints no Undo batch.
-      expect(a.metadata).toMatchObject({ released_at: FAKE_RELEASED_AT });
+    // The TypeScript side no longer writes the row: a copy would double-write.
+    expect(audits.filter((a) => a.action === "test_request.released")).toHaveLength(0);
+    // What the database (as modelled by the fake) writes from that argument.
+    expect(fake.dbAudits).toHaveLength(3);
+    for (const a of fake.dbAudits) {
+      expect(a.metadata).toMatchObject({ source: "finalise_consolidated", result_id: "r1", release_medium: "other", released_at: FAKE_RELEASED_AT });
       expect(a.metadata).not.toHaveProperty("bulk_batch_id");
     }
   });
