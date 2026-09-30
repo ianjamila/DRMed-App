@@ -148,6 +148,9 @@ export async function releaseTestAction(
     return { ok: false, error: "Invalid release medium." };
   }
   const session = await requireActiveStaff();
+  // The lab releases results, never reception (owner rule 2026-09-15) — the
+  // same refusal the Queue gives (evaluateRelease), not a misleading "not ready".
+  if (session.role === "reception") return { ok: false, error: RELEASE_REFUSAL.reception };
   const supabase = await createClient();
 
   const visitDeleted = await refuseIfVisitDeleted(supabase, visitId);
@@ -219,6 +222,9 @@ export async function releaseAllReadyComponentsAction(
     return { ok: false, error: "Invalid release medium." };
   }
   const session = await requireActiveStaff();
+  // The lab releases results, never reception (owner rule 2026-09-15) — the
+  // same refusal the Queue gives (evaluateRelease), not a misleading "not ready".
+  if (session.role === "reception") return { ok: false, error: RELEASE_REFUSAL.reception };
   const supabase = await createClient();
 
   const visitDeleted = await refuseIfVisitDeleted(supabase, visitId);
@@ -256,7 +262,10 @@ export async function releaseAllReadyComponentsAction(
   const componentIds = scopeToAllowedSections(readyRows ?? [], allowedSections).map((r) => r.id);
   if (componentIds.length === 0) {
     revalidateReleaseSurfaces(visitId);
-    return { ok: false, error: "No components are ready to release." };
+    return {
+      ok: false,
+      error: (readyRows ?? []).length > 0 ? RELEASE_REFUSAL.section : "No components are ready to release.",
+    };
   }
 
   const out = await releaseVisitSelection({
@@ -393,6 +402,9 @@ export async function releaseSelectedAction(
   }
 
   const session = await requireActiveStaff();
+  // The lab releases results, never reception (owner rule 2026-09-15) — the
+  // same refusal the Queue gives (evaluateRelease), not a misleading "not ready".
+  if (session.role === "reception") return { ok: false, error: RELEASE_REFUSAL.reception };
   const supabase = await createClient();
 
   const visitDeleted = await refuseIfVisitDeleted(supabase, visitId);
@@ -418,7 +430,13 @@ export async function releaseSelectedAction(
   );
   if (scoped.size === 0) {
     revalidateReleaseSurfaces(visitId);
-    return { ok: false, error: "None of the selected tests are ready to release." };
+    return {
+      ok: false,
+      // Ready rows the role may not release get the section reason, not "not ready".
+      error: (readyRows ?? []).length > 0
+        ? RELEASE_REFUSAL.section
+        : "None of the selected tests are ready to release.",
+    };
   }
   const requested = Array.from(new Set(testRequestIds));
   const scopedIds = requested.filter((id) => scoped.has(id));
@@ -853,7 +871,7 @@ export async function deleteSampleVisitAction(
       { bulk: true, sample_visit_delete: true },
     );
     if (!undo.ok) {
-      revalidatePath(`/staff/visits/${visitId}`);
+      revalidateReleaseSurfaces(visitId);
       return { ok: false, error: undo.error };
     }
     unreleased = undo.undoneIds.length;
@@ -864,7 +882,7 @@ export async function deleteSampleVisitAction(
     `Sample visit: ${trimmedReason}`.slice(0, 500),
   );
   if (!deleted.ok) {
-    revalidatePath(`/staff/visits/${visitId}`);
+    revalidateReleaseSurfaces(visitId);
     return {
       ok: false,
       error:
@@ -873,6 +891,9 @@ export async function deleteSampleVisitAction(
           : deleted.error,
     };
   }
+  // deleteVisitAction refreshes the queue lists; the undone releases also
+  // change the dashboard tiles and the queue report pages.
+  if (unreleased > 0) revalidateReleaseSurfaces(visitId);
   return { ok: true, count: unreleased };
 }
 
@@ -911,7 +932,7 @@ export async function waiveVisitBalanceAction(
     }),
   );
   if (error) {
-    revalidatePath(`/staff/visits/${visitId}`);
+    revalidateReleaseSurfaces(visitId);
     return {
       ok: false,
       error: error.code === "P0002" ? WAIVE_CLOSED_MONTH_MESSAGE : translatePgError(error),
@@ -949,7 +970,7 @@ export async function waiveVisitBalanceAction(
     user_agent: ua,
   });
 
-  revalidatePath(`/staff/visits/${visitId}`);
+  revalidateReleaseSurfaces(visitId);
   return { ok: true };
 }
 
@@ -1050,7 +1071,7 @@ async function markDoctorLineDoneAction(
   if (!updated || updated.length === 0) {
     // 0 rows matched — a concurrent action (e.g. a bulk package release)
     // already completed it. Never audit a write that didn't happen.
-    revalidatePath(`/staff/visits/${visitId}`);
+    revalidateReleaseSurfaces(visitId);
     return { ok: false, error: notPendingError };
   }
 
@@ -1066,7 +1087,7 @@ async function markDoctorLineDoneAction(
     user_agent: h.get("user-agent"),
   });
 
-  revalidatePath(`/staff/visits/${visitId}`);
+  revalidateReleaseSurfaces(visitId);
   return { ok: true };
 }
 
