@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, render, screen } from "@testing-library/react";
+import { act, cleanup, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -22,14 +22,21 @@ const ROWS: Record<string, MessageRowInfo> = {
   m3: { label: "Cy Ong", status: "closed" },
 };
 
-function Harness({ resetKey = "k" }: { resetKey?: string }) {
+function Harness({
+  resetKey = "k",
+  barRows = ROWS,
+}: {
+  resetKey?: string;
+  /** What the bar is handed — a test can empty it to mimic the post-action refresh dropping rows. */
+  barRows?: Record<string, MessageRowInfo>;
+}) {
   return (
     <SelectionProvider resetKey={resetKey}>
       {Object.entries(ROWS).map(([key, r]) => (
         // RowSelectCheckbox prefixes "Select " to its label itself.
         <RowSelectCheckbox key={key} rowKey={key} kinds={[r.status]} label={r.label} />
       ))}
-      <MessagesBulkBar rowsByKey={ROWS} />
+      <MessagesBulkBar rowsByKey={barRows} />
     </SelectionProvider>
   );
 }
@@ -93,11 +100,12 @@ describe("MessagesBulkBar", () => {
     await userEvent.click(screen.getByLabelText("Select Ana Cruz"));
     await userEvent.click(screen.getByRole("button", { name: "Mark closed (1)" }));
     expect(alertSpy).toHaveBeenCalledWith("nope");
+    expect(router.refresh).toHaveBeenCalled();
     expect((screen.getByLabelText("Select Ana Cruz") as HTMLInputElement).checked).toBe(true);
     alertSpy.mockRestore();
   });
 
-  it("Undo names what came back and what did not; an expired Undo hides the button", async () => {
+  it("Undo names what came back and what did not, and then goes away", async () => {
     vi.mocked(updateMessageStatusManyAction).mockResolvedValue({ ok: true, changedIds: ["m1", "m2"], skipped: [], batchId: "b-1" });
     vi.mocked(undoMessageStatusManyAction).mockResolvedValueOnce({
       ok: true, restoredIds: ["m1"], notRestored: [{ id: "m2", reason: "changed again since — refresh to see its status" }],
@@ -123,6 +131,96 @@ describe("MessagesBulkBar", () => {
     await userEvent.click(await screen.findByRole("button", { name: "↶ Undo" }));
     expect((await screen.findByRole("status")).textContent).toContain(UNDO_EXPIRED);
     expect(screen.queryByRole("button", { name: "↶ Undo" })).toBeNull();
+  });
+
+  it("a partial action keeps the outcome inline in the bar until a new tick drops it", async () => {
+    vi.mocked(updateMessageStatusManyAction).mockResolvedValue({ ok: true, changedIds: ["m1"], skipped: [], batchId: "b-1" });
+    render(<Harness />);
+    await userEvent.click(screen.getByLabelText("Select Ana Cruz"));
+    await userEvent.click(screen.getByLabelText("Select Cy Ong"));
+    await userEvent.click(screen.getByRole("button", { name: "Mark replied (1)" }));
+    // Cy is still selected, so the bar is still up and the outcome sits INSIDE it.
+    const region = screen.getByRole("region", { name: "Selected rows" });
+    expect(within(region).getByRole("status").textContent).toContain("Marked 1 message replied.");
+    await userEvent.click(screen.getByLabelText("Select Ben Diaz"));
+    expect(screen.queryByRole("status")).toBeNull();
+  });
+
+  it("a retryable Undo failure keeps the Undo button", async () => {
+    vi.mocked(updateMessageStatusManyAction).mockResolvedValue({ ok: true, changedIds: ["m1"], skipped: [], batchId: "b-1" });
+    vi.mocked(undoMessageStatusManyAction).mockResolvedValueOnce({ ok: false, error: "could not be undone just now — try again" });
+    render(<Harness />);
+    await userEvent.click(screen.getByLabelText("Select Ana Cruz"));
+    await userEvent.click(screen.getByRole("button", { name: "Mark closed (1)" }));
+    await userEvent.click(await screen.findByRole("button", { name: "↶ Undo" }));
+    expect((await screen.findByRole("status")).textContent).toContain("could not be undone just now — try again");
+    expect(screen.getByRole("button", { name: "↶ Undo" })).toBeTruthy();
+  });
+
+  it("offers no Undo when the result has no batchId", async () => {
+    vi.mocked(updateMessageStatusManyAction).mockResolvedValue({ ok: true, changedIds: ["m1"], skipped: [] });
+    render(<Harness />);
+    await userEvent.click(screen.getByLabelText("Select Ana Cruz"));
+    await userEvent.click(screen.getByRole("button", { name: "Mark closed (1)" }));
+    expect(await screen.findByRole("status")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "↶ Undo" })).toBeNull();
+  });
+
+  it("offers no Undo when nothing changed", async () => {
+    vi.mocked(updateMessageStatusManyAction).mockResolvedValue({
+      ok: true, changedIds: [], skipped: [{ id: "m1", reason: "changed since you selected it — refresh to see its status" }], batchId: "b-1",
+    });
+    render(<Harness />);
+    await userEvent.click(screen.getByLabelText("Select Ana Cruz"));
+    await userEvent.click(screen.getByRole("button", { name: "Mark closed (1)" }));
+    expect((await screen.findByRole("status")).textContent).toContain("Nothing marked closed.");
+    expect(screen.queryByRole("button", { name: "↶ Undo" })).toBeNull();
+  });
+
+  it("disables the bulk buttons while the action is in flight", async () => {
+    let resolve!: (v: Awaited<ReturnType<typeof updateMessageStatusManyAction>>) => void;
+    vi.mocked(updateMessageStatusManyAction).mockReturnValue(new Promise((r) => { resolve = r; }));
+    render(<Harness />);
+    await userEvent.click(screen.getByLabelText("Select Ana Cruz"));
+    await userEvent.click(screen.getByRole("button", { name: "Mark closed (1)" }));
+    expect((screen.getByRole("button", { name: "Mark closed (1)" }) as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole("button", { name: "Mark replied (1)" }) as HTMLButtonElement).disabled).toBe(true);
+    await userEvent.click(screen.getByRole("button", { name: "Mark closed (1)" }));
+    expect(updateMessageStatusManyAction).toHaveBeenCalledTimes(1);
+    await act(async () => resolve({ ok: true, changedIds: ["m1"], skipped: [], batchId: "b-1" }));
+    expect(await screen.findByRole("status")).toBeTruthy();
+  });
+
+  it("a second Undo click while one is in flight does not call the action twice", async () => {
+    vi.mocked(updateMessageStatusManyAction).mockResolvedValue({ ok: true, changedIds: ["m1"], skipped: [], batchId: "b-1" });
+    let resolve!: (v: Awaited<ReturnType<typeof undoMessageStatusManyAction>>) => void;
+    vi.mocked(undoMessageStatusManyAction).mockReturnValue(new Promise((r) => { resolve = r; }));
+    render(<Harness />);
+    await userEvent.click(screen.getByLabelText("Select Ana Cruz"));
+    await userEvent.click(screen.getByRole("button", { name: "Mark closed (1)" }));
+    await userEvent.click(await screen.findByRole("button", { name: "↶ Undo" }));
+    const inFlight = screen.getByRole("button", { name: "Undoing…" }) as HTMLButtonElement;
+    expect(inFlight.disabled).toBe(true);
+    await userEvent.click(inFlight);
+    expect(undoMessageStatusManyAction).toHaveBeenCalledTimes(1);
+    await act(async () => resolve({ ok: true, restoredIds: ["m1"], notRestored: [] }));
+    expect((await screen.findByRole("status")).textContent).toContain("Undone");
+  });
+
+  it("names a not-restored message from the snapshot even after the refresh drops its row", async () => {
+    vi.mocked(updateMessageStatusManyAction).mockResolvedValue({ ok: true, changedIds: ["m1", "m2"], skipped: [], batchId: "b-1" });
+    vi.mocked(undoMessageStatusManyAction).mockResolvedValueOnce({
+      ok: true, restoredIds: ["m1"], notRestored: [{ id: "m2", reason: "changed again since — refresh to see its status" }],
+    });
+    const { rerender } = render(<Harness />);
+    await userEvent.click(screen.getByLabelText("Select Ana Cruz"));
+    await userEvent.click(screen.getByLabelText("Select Ben Diaz"));
+    await userEvent.click(screen.getByRole("button", { name: "Mark closed (2)" }));
+    const undo = await screen.findByRole("button", { name: "↶ Undo" });
+    rerender(<Harness barRows={{}} />); // the page refresh no longer lists either message
+    await userEvent.click(undo);
+    const text = (await screen.findByRole("status")).textContent ?? "";
+    expect(text).toContain("Ben Diaz: changed again since");
   });
 
   it("a resetKey change drops the selection and the bar", async () => {
