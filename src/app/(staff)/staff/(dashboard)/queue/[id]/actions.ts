@@ -259,9 +259,11 @@ async function prepareStructured(
     } else {
       return { ok: false, error: created.error };
     }
-  } else if (existing?.report_group_id) {
+  } else if (existing?.report_group_id || (existing && (await resultMemberCount(admin, existing.id)) > 1)) {
     // Already part of a combined report (a consolidated draft someone started
-    // for the whole panel): values go in there, never over it from here.
+    // for the whole panel — report_group_id set, or linked to more than one
+    // test, the same rule as the race branch above): values go in there,
+    // never over it from here.
     return { ok: false, error: COMBINED_REPORT_ENTRY_ERROR };
   } else if (existing?.generation_kind !== "structured") {
     return {

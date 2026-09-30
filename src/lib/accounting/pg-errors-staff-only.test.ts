@@ -17,8 +17,17 @@ const TARGET = join(ROOT, "src", "lib", "accounting", "pg-errors.ts");
 
 // Staff-only trees under src/app. Everything else is treated as reachable by a
 // patient or the public: (patient)/portal, (marketing), display, review,
-// register-poster, auth, api/cron, the root layout and error pages.
+// register-poster, auth, api/cron, the root layout and error pages — plus the
+// code that runs on every request outside src/app (the proxy, instrumentation
+// and the Sentry configs).
 const STAFF_ONLY = [join(APP, "(staff)"), join(APP, "api", "admin")];
+const REQUEST_WIDE = [
+  "src/proxy.ts",
+  "src/instrumentation.ts",
+  "src/instrumentation-client.ts",
+  "sentry.server.config.ts",
+  "sentry.edge.config.ts",
+].map((p) => join(ROOT, p));
 
 const isSource = (f: string) => /\.tsx?$/.test(f) && !/\.test\.tsx?$/.test(f);
 
@@ -83,7 +92,10 @@ function chainsToTarget(roots: string[]): string[][] {
 }
 
 const rel = (p: string) => relative(ROOT, p).split(sep).join("/");
-const roots = walk(APP).filter((f) => !STAFF_ONLY.some((d) => f.startsWith(d + sep)));
+const roots = [
+  ...walk(APP).filter((f) => !STAFF_ONLY.some((d) => f.startsWith(d + sep))),
+  ...REQUEST_WIDE.filter((f) => existsSync(f)),
+];
 
 describe("translatePgError stays staff-only", () => {
   it("scans the patient-facing trees (guard against a bad walk)", () => {
@@ -91,6 +103,7 @@ describe("translatePgError stays staff-only", () => {
     expect(relRoots.some((r) => r.startsWith("src/app/(patient)/portal/"))).toBe(true);
     expect(relRoots.some((r) => r.startsWith("src/app/(marketing)/"))).toBe(true);
     expect(relRoots.some((r) => r.startsWith("src/app/(staff)/"))).toBe(false);
+    expect(relRoots).toContain("src/proxy.ts");
   });
 
   it("no patient-facing or public entry can import pg-errors.ts", () => {
