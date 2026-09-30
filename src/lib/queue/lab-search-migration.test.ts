@@ -28,7 +28,7 @@ const fn = sql.slice(
 describe("0194_lab_search.sql", () => {
   it("(a) searches name, DRM-ID, visit #, test and report group", () => {
     for (const field of [
-      "p.last_name", "p.first_name", "p.drm_id", "v.visit_number",
+      "p.last_name", "p.first_name", "p.middle_name", "p.drm_id", "v.visit_number",
       "s.code", "s.name", "rg.code", "rg.name", "s2.code", "s2.name",
     ]) {
       expect(view, field).toContain(field);

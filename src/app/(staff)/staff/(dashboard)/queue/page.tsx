@@ -74,6 +74,7 @@ import {
   type PanelState,
 } from "@/lib/queue/panel-members";
 import { QueueBulkBar } from "./queue-bulk-bar";
+import { receptionQueueHref } from "@/lib/queue/reception-redirect";
 
 const LAB_QUEUE_SUBSCRIPTIONS = [
   { table: "test_requests", event: "INSERT" },
@@ -248,10 +249,11 @@ export default async function QueuePage({ searchParams }: SearchProps) {
   // released result (owner decision 2026-09-24). Every other tab is the lab's
   // bench worklist — work reception must not see — so any other tab sends it
   // to "Released today". Its sidebar link lands here too, so the redirect is
-  // the normal way in, not an edge case.
+  // the normal way in, not an edge case. The redirect keeps the link's search,
+  // visit #, dates, size and sort (receptionQueueHref).
   const receptionView = session.role === "reception";
   if (receptionView && params.filter !== "released_today") {
-    redirect(`${BASE_PATH}?filter=released_today`);
+    redirect(receptionQueueHref(params));
   }
 
   const filter = params.filter ?? "all";

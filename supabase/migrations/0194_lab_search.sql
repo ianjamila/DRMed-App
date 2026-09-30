@@ -22,7 +22,7 @@ with (security_invoker = on) as
 select
   tr.id as test_request_id,
   concat_ws(' ',
-    p.last_name, p.first_name, p.drm_id,
+    p.last_name, p.first_name, p.middle_name, p.drm_id,
     v.visit_number,
     s.code, s.name,
     rg.code, rg.name,

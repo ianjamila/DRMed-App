@@ -34,7 +34,7 @@ Every whitespace/comma-separated word must appear (case-insensitive substring, a
 - its report group `code`, `name` (chemistry only)
 - **the other live members of the same chemistry panel** (same visit + same `report_group_id`, `deleted_at is null`) **in the same tab bucket** — bench (`requested`/`in_progress`) or the same status otherwise. This keeps today's behaviour that typing one member's code (e.g. `GLU`) brings back the whole panel card, not a one-test card.
 
-The results archive gains visit # and group/panel matching (it used to match name + DRM-ID + test code/name only). Middle name is NOT matched (parity with today's queue; Visit Records matches it — possible follow-up).
+The results archive gains visit # and group/panel matching (it used to match name + DRM-ID + test code/name only). Middle name is matched too (added on review, 2026-09-30 — Visit Records already matched it).
 
 Wildcards `\ % _ *` in a word are escaped like `archive-search.ts` (PostgREST maps every `*` to `%`, so `*` searches a literal `%`; harmless, and consistent with the sibling helper).
 
