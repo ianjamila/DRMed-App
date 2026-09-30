@@ -10,7 +10,7 @@ import { describe, expect, it } from "vitest";
 const ROOT = join(__dirname, "../../..");
 const RPCS = [
   "patient_sources_summary", "patient_sources_series", "patient_sources_revenue", "patient_sources_overlaps",
-  "patient_sources_referrers", "patient_sources_people", "ad_spend_daily_totals", "ad_spend_coverage",
+  "patient_sources_referrers", "patient_sources_report", "patient_sources_people", "ad_spend_daily_totals", "ad_spend_coverage",
   "ad_spend_import", "ad_spend_delete", "ad_spend_rows",
 ];
 const CALLERS: Record<string, string> = {
