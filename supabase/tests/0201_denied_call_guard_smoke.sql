@@ -25,10 +25,16 @@
 --      the guard itself; the guard's message matches Postgres's own.
 --   4. As anon, /rpc/<an anon-executable function>, a missing function, a
 --      table path and no path at all pass the guard.
---   5. A Content-Profile header naming another schema is honoured.
+--   5. The schema is chosen the way PostgREST chooses it: Content-Profile on a
+--      POST, Accept-Profile on a GET/HEAD — the OTHER header is ignored, so a
+--      GET carrying Content-Profile: graphql_public still means public.
+--   5b. request.path is raw: an encoded name (zz%5Fguard...) and any other
+--      non-identifier name is refused, not looked up.
 --   6. As service_role, the service_role-only function passes.
 --   7. No function taking a table row (a PostgREST computed field or
 --      relationship) is denied to a role that can SELECT that table.
+--   8. Every function in public/graphql_public has a plain identifier name
+--      (the guard refuses any other).
 -- =============================================================================
 
 begin;
@@ -66,6 +72,7 @@ declare
 begin
   -- 3
   perform set_config('request.path', '/rpc/zz_guard_probe_denied', true);
+  perform set_config('request.method', 'POST', true);
   perform set_config('request.headers', '{}', true);
   begin
     perform public.api_request_guard();
@@ -85,11 +92,40 @@ begin
   perform public.api_request_guard();
   perform set_config('request.path', '', true);
   perform public.api_request_guard();
-  -- 5: the denied name, but asked for in a schema that has no such function
+  -- 5: a POST's Content-Profile is honoured — graphql_public has no such function
   perform set_config('request.path', '/rpc/zz_guard_probe_denied', true);
   perform set_config('request.headers', '{"content-profile":"graphql_public"}', true);
   perform public.api_request_guard();
-  raise notice 'ok 3-5';
+  -- ...but a GET ignores Content-Profile (PostgREST runs it in public): refused
+  perform set_config('request.method', 'GET', true);
+  begin
+    perform public.api_request_guard();
+    raise exception 'FAIL 5: a GET with Content-Profile slipped past the guard';
+  exception when insufficient_privilege then null;
+  end;
+  -- ...and a POST ignores Accept-Profile
+  perform set_config('request.method', 'POST', true);
+  perform set_config('request.headers', '{"accept-profile":"graphql_public"}', true);
+  begin
+    perform public.api_request_guard();
+    raise exception 'FAIL 5: a POST with Accept-Profile slipped past the guard';
+  exception when insufficient_privilege then null;
+  end;
+  -- 5b: an encoded or otherwise non-identifier name is refused outright
+  perform set_config('request.headers', '{}', true);
+  perform set_config('request.path', '/rpc/zz%5Fguard%5Fprobe%5Fdenied', true);
+  begin
+    perform public.api_request_guard();
+    raise exception 'FAIL 5b: an encoded name slipped past the guard';
+  exception when insufficient_privilege then null;
+  end;
+  perform set_config('request.path', '/rpc/ZZ_GUARD_PROBE_OK', true);
+  begin
+    perform public.api_request_guard();
+    raise exception 'FAIL 5b: a non-identifier name slipped past the guard';
+  exception when insufficient_privilege then null;
+  end;
+  raise notice 'ok 3-5b';
 end;
 $$;
 
@@ -125,7 +161,17 @@ begin
   if v_bad is not null then
     raise exception 'FAIL 7: %', v_bad;
   end if;
-  raise notice 'ok 7 — all 0201 checks passed';
+  -- 8
+  select string_agg(format('%I.%s', n.nspname, p.proname), ', ')
+    into v_bad
+    from pg_proc p
+    join pg_namespace n on n.oid = p.pronamespace
+   where n.nspname in ('public', 'graphql_public')
+     and p.proname !~ '^[a-z_][a-z0-9_]*$';
+  if v_bad is not null then
+    raise exception 'FAIL 8: %', v_bad;
+  end if;
+  raise notice 'ok 7-8 — all 0201 checks passed';
 end;
 $$;
 

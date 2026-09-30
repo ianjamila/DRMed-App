@@ -12,8 +12,10 @@
 -- ticket. Until then:
 --
 -- 1. api_request_guard() runs before EVERY PostgREST request (db-pre-request).
---    For /rpc/<name> it refuses with the normal 42501 when no overload of
---    <name> in the request's schema is executable by the request role — so the
+--    For /rpc/<name> it refuses with the normal 42501 when <name> in the
+--    schema PostgREST will use is closed to the request role (any overload),
+--    or when <name> is not a plain identifier (request.path is raw, so an
+--    encoded name like lab%5Fsearch would otherwise slip past) — so the
 --    executor's own refusal (the crashing path) is never reached. It is
 --    SECURITY INVOKER on purpose: has_function_privilege() must answer for the
 --    request role, and it only reads the catalog (a boolean, no refusal).
@@ -40,6 +42,8 @@ set search_path = ''
 as $$
 declare
   v_path    text := pg_catalog.current_setting('request.path', true);
+  v_method  text := pg_catalog.upper(coalesce(pg_catalog.current_setting('request.method', true), ''));
+  v_raw     text := pg_catalog.current_setting('request.headers', true);
   v_headers jsonb;
   v_schema  text;
   v_fn      text;
@@ -48,25 +52,32 @@ begin
     return;
   end if;
   v_fn := pg_catalog.substr(v_path, 6);
-  -- PostgREST picks the schema from Content-Profile (POST) / Accept-Profile
-  -- (GET, HEAD); with neither it uses the first exposed schema, public.
-  begin
-    v_headers := nullif(pg_catalog.current_setting('request.headers', true), '')::jsonb;
-  exception when others then
-    v_headers := null;
-  end;
-  v_schema := coalesce(nullif(v_headers ->> 'content-profile', ''),
-                       nullif(v_headers ->> 'accept-profile', ''),
-                       'public');
+  -- request.path is the RAW path: /rpc/lab%5Fsearch reaches lab_search while
+  -- the text here still reads "lab%5Fsearch". Every function in the exposed
+  -- schemas has a plain lower-case name (the post-condition below keeps it
+  -- that way), so anything else is refused rather than decoded.
+  if v_fn !~ '^[a-z_][a-z0-9_]*$' then
+    raise exception 'permission denied for function %', v_fn using errcode = '42501';
+  end if;
+  -- The schema PostgREST will use: Accept-Profile for GET/HEAD, Content-Profile
+  -- for every other method (the other header is ignored), else public.
+  if v_raw is not null and pg_catalog.pg_input_is_valid(v_raw, 'jsonb') then
+    v_headers := v_raw::jsonb;
+  end if;
+  v_schema := case when v_method in ('GET', 'HEAD') then v_headers ->> 'accept-profile'
+                   else v_headers ->> 'content-profile' end;
+  if v_schema is null or v_schema = ''
+     or not exists (select 1 from pg_catalog.pg_namespace n where n.nspname = v_schema) then
+    v_schema := 'public';
+  end if;
+  -- Refuse when ANY overload of the name is closed to the request role:
+  -- which overload PostgREST picks depends on the arguments, and a wrong
+  -- guess here is a crash. (No name in the exposed schemas has overloads.)
   if exists (select 1
                from pg_catalog.pg_proc p
                join pg_catalog.pg_namespace n on n.oid = p.pronamespace
-              where n.nspname = v_schema and p.proname = v_fn)
-     and not exists (select 1
-                       from pg_catalog.pg_proc p
-                       join pg_catalog.pg_namespace n on n.oid = p.pronamespace
-                      where n.nspname = v_schema and p.proname = v_fn
-                        and pg_catalog.has_function_privilege(p.oid, 'EXECUTE')) then
+              where n.nspname = v_schema and p.proname = v_fn
+                and not pg_catalog.has_function_privilege(p.oid, 'EXECUTE')) then
     -- Same SQLSTATE and wording as Postgres's own refusal, so PostgREST answers
     -- exactly as it would have (401 for anon, 403 for a signed-in role).
     raise exception 'permission denied for function %', v_fn using errcode = '42501';
@@ -101,6 +112,18 @@ begin
                   where s.setrole = 'authenticator'::regrole and s.setdatabase = 0
                     and 'pgrst.db_pre_request=public.api_request_guard' = any(s.setconfig)) then
     raise exception '0201: authenticator must carry pgrst.db_pre_request=public.api_request_guard';
+  end if;
+
+  -- The guard refuses any /rpc name that is not a plain identifier, so every
+  -- function PostgREST can expose must have one.
+  select string_agg(format('%I.%s', n.nspname, p.proname), ', ')
+    into v_bad
+    from pg_proc p
+    join pg_namespace n on n.oid = p.pronamespace
+   where n.nspname in ('public', 'graphql_public')
+     and p.proname !~ '^[a-z_][a-z0-9_]*$';
+  if v_bad is not null then
+    raise exception '0201: api_request_guard refuses these names — rename them or widen its identifier rule: %', v_bad;
   end if;
 
   select string_agg(format('%s can SELECT %s but not run %s', r.role, c.relname, p.oid::regprocedure), '; ')
