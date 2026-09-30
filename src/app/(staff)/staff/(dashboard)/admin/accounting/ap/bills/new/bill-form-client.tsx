@@ -319,8 +319,10 @@ export function BillFormClient(props: Props) {
               : await createBillPaidOnEntryAction(buildPaidOnEntryPayload());
 
       if (!r.ok) {
-        setError(r.error);
-        setFieldError(r.field ?? null);
+        startTransition(() => {
+          setError(r.error);
+          setFieldError(r.field ?? null);
+        });
         return;
       }
 

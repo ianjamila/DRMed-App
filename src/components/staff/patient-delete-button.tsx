@@ -79,11 +79,15 @@ export function PatientDeleteButton({
     startLoading(async () => {
       const res = await previewPatientDeleteAction(patientId);
       if (!res.ok) {
-        setError(res.error);
+        startLoading(() => {
+          setError(res.error);
+        });
         return;
       }
-      setPreview(res.data);
-      setBlockers(res.data.blockers);
+      startLoading(() => {
+        setPreview(res.data);
+        setBlockers(res.data.blockers);
+      });
     });
   }
 
@@ -101,11 +105,18 @@ export function PatientDeleteButton({
     startDelete(async () => {
       const res = await deletePatientAction({ patientId, reason, note });
       if (!res.ok) {
-        setError(res.error);
-        if (res.blockers) setBlockers(res.blockers);
+        startDelete(() => {
+          setError(res.error);
+        });
+        if (res.blockers) {
+          const blockers = res.blockers;
+          startDelete(() => setBlockers(blockers));
+        }
         return;
       }
-      setOpen(false);
+      startDelete(() => {
+        setOpen(false);
+      });
       const deleted = res.data.drmId;
       toast.success(`${deleted} deleted`, {
         duration: 10_000,

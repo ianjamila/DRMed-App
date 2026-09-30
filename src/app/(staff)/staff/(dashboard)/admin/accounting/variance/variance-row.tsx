@@ -67,10 +67,14 @@ export function VarianceRow({
         notes: null,
       });
       if (!r.ok) {
-        setError(r.error);
+        startTransition(() => {
+          setError(r.error);
+        });
         return;
       }
-      setEditing(false);
+      startTransition(() => {
+        setEditing(false);
+      });
       router.refresh();
     });
   }

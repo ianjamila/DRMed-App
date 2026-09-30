@@ -388,18 +388,22 @@ function AddEmployeeDrawer({
         tax_status: "standard",
       });
       if (!result.ok) {
-        setError(result.error);
+        startTransition(() => {
+          setError(result.error);
+        });
         return;
       }
       // Reset and close.
-      setStaffProfileId("");
-      setEmployeeNumber("");
-      setHireDate(todayManila());
-      setRegularizationDate("");
-      setDailyRate("");
-      setMonthlySalaryCredit("");
-      setScheduleKind("fixed_6day_mon_sat");
-      setPaymentMethod("cash");
+      startTransition(() => {
+        setStaffProfileId("");
+        setEmployeeNumber("");
+        setHireDate(todayManila());
+        setRegularizationDate("");
+        setDailyRate("");
+        setMonthlySalaryCredit("");
+        setScheduleKind("fixed_6day_mon_sat");
+        setPaymentMethod("cash");
+      });
       onCreated();
     });
   };

@@ -38,10 +38,14 @@ export function CancelButton({ appointmentId }: Props) {
             setError(null);
             const result = await cancelAppointmentAction(appointmentId);
             if (!result.ok) {
-              setError(result.error);
+              start(() => {
+                setError(result.error);
+              });
               return;
             }
-            setCancelledCount(result.cancelledCount);
+            start(() => {
+              setCancelledCount(result.cancelledCount);
+            });
           })
         }
       >

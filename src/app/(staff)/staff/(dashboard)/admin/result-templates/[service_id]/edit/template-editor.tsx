@@ -140,7 +140,9 @@ export function TemplateEditor(props: Props) {
         params,
       };
       const result = await saveTemplateAndParamsAction(payload);
-      setFeedback(result);
+      start(() => {
+        setFeedback(result);
+      });
       if (result.ok) router.refresh();
     });
   }

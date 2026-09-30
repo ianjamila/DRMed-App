@@ -128,11 +128,15 @@ export function EditPaymentDialog({
         expected: paymentSnapshot({ amount_php: amount, method, reference_number: referenceNumber, notes }),
       });
       if (!result.ok) {
-        setErr(result.error);
+        startTransition(() => {
+          setErr(result.error);
+        });
         return;
       }
-      setOpen(false);
-      setReason("");
+      startTransition(() => {
+        setOpen(false);
+        setReason("");
+      });
     });
   }
 

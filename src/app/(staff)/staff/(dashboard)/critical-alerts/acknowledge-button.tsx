@@ -14,7 +14,9 @@ export function AcknowledgeButton({ alertId }: { alertId: string }) {
       setErr(null);
       const result = await acknowledgeCriticalAlertAction(alertId);
       if (!result.ok) {
-        setErr(result.error);
+        startTransition(() => {
+          setErr(result.error);
+        });
         return;
       }
       router.refresh();

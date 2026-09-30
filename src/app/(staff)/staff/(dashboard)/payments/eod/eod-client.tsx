@@ -232,7 +232,7 @@ export function EodClient(props: {
         counts,
         variance === 0 ? null : reason,
       );
-      if (!r.ok) setErr(r.error);
+      if (!r.ok) start(() => setErr(r.error));
       else router.refresh();
     });
   };

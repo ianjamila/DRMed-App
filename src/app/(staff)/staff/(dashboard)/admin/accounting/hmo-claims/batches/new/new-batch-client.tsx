@@ -82,7 +82,9 @@ export function NewBatchClient({
           test_request_ids: Array.from(selected),
         });
         if (!res.ok) {
-          setErr(res.error);
+          startTransition(() => {
+            setErr(res.error);
+          });
           return;
         }
         router.push(
@@ -95,7 +97,9 @@ export function NewBatchClient({
         test_request_ids: Array.from(selected),
       });
       if (!res.ok) {
-        setErr(res.error);
+        startTransition(() => {
+          setErr(res.error);
+        });
         return;
       }
       if (res.data) {

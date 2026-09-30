@@ -97,10 +97,14 @@ export function AlertCard({
     setSavingRow("__enabled__");
     startTransition(async () => {
       const res = await setAlertEnabledAction(alertKey, next);
-      setSavingRow(null);
+      startTransition(() => {
+        setSavingRow(null);
+      });
       if (!res.ok) {
-        setEnabled(prev);
-        setError(res.error);
+        startTransition(() => {
+          setEnabled(prev);
+          setError(res.error);
+        });
       }
     });
   }
@@ -113,15 +117,19 @@ export function AlertCard({
     setSavingRow(staffId);
     startTransition(async () => {
       const res = await setStaffAlertAction(alertKey, staffId, next);
-      setSavingRow(null);
+      startTransition(() => {
+        setSavingRow(null);
+      });
       if (!res.ok) {
-        setOverrides((o) => {
-          const copy = { ...o };
-          if (hadOverride) copy[staffId] = prevValue;
-          else delete copy[staffId];
-          return copy;
+        startTransition(() => {
+          setOverrides((o) => {
+            const copy = { ...o };
+            if (hadOverride) copy[staffId] = prevValue;
+            else delete copy[staffId];
+            return copy;
+          });
+          setError(res.error);
         });
-        setError(res.error);
       }
     });
   }
@@ -131,13 +139,19 @@ export function AlertCard({
     setSavingRow("__reset__");
     startTransition(async () => {
       const res = await resetStaffAlertDefaultsAction(alertKey);
-      setSavingRow(null);
+      startTransition(() => {
+        setSavingRow(null);
+      });
       if (!res.ok) {
-        setError(res.error);
+        startTransition(() => {
+          setError(res.error);
+        });
         return;
       }
-      setOverrides({});
-      setResetting(false);
+      startTransition(() => {
+        setOverrides({});
+        setResetting(false);
+      });
     });
   }
 
@@ -155,13 +169,19 @@ export function AlertCard({
     setAddingEmail(true);
     startTransition(async () => {
       const res = await addAlertEmailAction(alertKey, trimmed);
-      setAddingEmail(false);
+      startTransition(() => {
+        setAddingEmail(false);
+      });
       if (!res.ok) {
-        setEmailError(res.error);
+        startTransition(() => {
+          setEmailError(res.error);
+        });
         return;
       }
-      setExtras((prev) => [...prev, { id: res.data.id, email: trimmed, subscribed: true }]);
-      setEmailDraft("");
+      startTransition(() => {
+        setExtras((prev) => [...prev, { id: res.data.id, email: trimmed, subscribed: true }]);
+        setEmailDraft("");
+      });
     });
   }
 
@@ -172,10 +192,14 @@ export function AlertCard({
     setSavingRow(id);
     startTransition(async () => {
       const res = await setAlertEmailSubscribedAction(id, next);
-      setSavingRow(null);
+      startTransition(() => {
+        setSavingRow(null);
+      });
       if (!res.ok) {
-        setExtras(prev);
-        setError(res.error);
+        startTransition(() => {
+          setExtras(prev);
+          setError(res.error);
+        });
       }
     });
   }
@@ -187,10 +211,14 @@ export function AlertCard({
     setSavingRow(id);
     startTransition(async () => {
       const res = await removeAlertEmailAction(id);
-      setSavingRow(null);
+      startTransition(() => {
+        setSavingRow(null);
+      });
       if (!res.ok) {
-        setExtras(prev);
-        setError(res.error);
+        startTransition(() => {
+          setExtras(prev);
+          setError(res.error);
+        });
       }
     });
   }
@@ -201,21 +229,31 @@ export function AlertCard({
     setTesting(true);
     startTransition(async () => {
       const res = await sendTestAlertAction(alertKey);
-      setTesting(false);
+      startTransition(() => {
+        setTesting(false);
+      });
       if (!res.ok) {
-        setTestError(res.error);
+        startTransition(() => {
+          setTestError(res.error);
+        });
         return;
       }
       if (res.data.sent > 0) {
-        setTestResult(
-          `Sent to ${res.data.sent} address${res.data.sent === 1 ? "" : "es"}.${
-            res.data.failed > 0 ? ` ${res.data.failed} failed.` : ""
-          }`,
-        );
+        startTransition(() => {
+          setTestResult(
+            `Sent to ${res.data.sent} address${res.data.sent === 1 ? "" : "es"}.${
+              res.data.failed > 0 ? ` ${res.data.failed} failed.` : ""
+            }`,
+          );
+        });
       } else if (res.data.skipped) {
-        setTestResult("Not sent — notifications are off in this environment.");
+        startTransition(() => {
+          setTestResult("Not sent — notifications are off in this environment.");
+        });
       } else {
-        setTestError(`Could not send the test (${res.data.failed} failed).`);
+        startTransition(() => {
+          setTestError(`Could not send the test (${res.data.failed} failed).`);
+        });
       }
     });
   }

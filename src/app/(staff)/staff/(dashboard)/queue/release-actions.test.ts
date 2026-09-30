@@ -122,7 +122,12 @@ describe("releaseTestsAction — eligibility and the per-visit write", () => {
     expect(writes(fake)).toHaveLength(2);
     expect(writes(fake).map((c) => c.args.p_visit_id).sort()).toEqual(["v1", "v2"]);
     expect(writes(fake).every((c) => c.args.p_actor === "u1" && c.args.p_medium === "email")).toBe(true);
-    expect(fx.audits.map((a) => (a.metadata as { source: string }).source)).toEqual(["queue", "queue"]);
+    // Each visit's write hands the database the queue's extras + the request's ip / user agent (0205).
+    expect(writes(fake).map((c) => c.args.p_audit)).toEqual([
+      { metadata: { source: "queue" }, ip: "1.2.3.4", user_agent: "ua" },
+      { metadata: { source: "queue" }, ip: "1.2.3.4", user_agent: "ua" },
+    ]);
+    expect(fx.audits.filter((a) => a.action === "test_request.released")).toEqual([]);
     expect(fx.alerts.sort()).toEqual([["v1", 1], ["v2", 1]]);
     expect(fx.revalidate).toEqual([
       ["/(staff)/staff/(dashboard)/queue", "layout"],
@@ -318,12 +323,14 @@ describe("releaseTestsAction — fail closed", () => {
     expect(fx.audits).toHaveLength(0);
   });
 
-  it("every release audit row carries the RPC's exact released_at; the queue mints no Undo batch", async () => {
-    setup([{ id: A }, { id: B }], report("r1", A, B));
+  it("the queue sends only {source: queue} in p_audit (no Undo batch); the database's rows carry the RPC's exact released_at", async () => {
+    const fake = setup([{ id: A }, { id: B }], report("r1", A, B));
     await releaseTestsAction({ testRequestIds: [A], medium: "email" });
-    expect(fx.audits.map((a) => a.resource_id).sort()).toEqual([A, B]);
-    for (const a of fx.audits) {
-      expect(a.metadata).toMatchObject({ released_at: FAKE_RELEASED_AT });
+    expect(writes(fake).map((c) => c.args.p_audit)).toEqual([{ metadata: { source: "queue" }, ip: "1.2.3.4", user_agent: "ua" }]);
+    expect(fx.audits.filter((a) => a.action === "test_request.released")).toEqual([]);
+    expect(fake.dbAudits.map((a) => a.resource_id).sort()).toEqual([A, B]);
+    for (const a of fake.dbAudits) {
+      expect(a.metadata).toMatchObject({ released_at: FAKE_RELEASED_AT, source: "queue" });
       expect(a.metadata).not.toHaveProperty("bulk_batch_id");
     }
     expect((fx.notifyBulk[0] as { bulkBatchId?: string }).bulkBatchId).toBeUndefined();

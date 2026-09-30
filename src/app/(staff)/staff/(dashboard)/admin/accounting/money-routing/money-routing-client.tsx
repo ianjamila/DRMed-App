@@ -363,8 +363,8 @@ function PaymentRow(props: {
     start(async () => {
       setErr(null);
       const r = await updatePaymentRoutingAction(rule.id, accountId, notes.trim() || null);
-      if (!r.ok) setErr(r.error);
-      else setEditing(false);
+      if (!r.ok) start(() => setErr(r.error));
+      else start(() => setEditing(false));
     });
 
   const idBase = `payment-${rule.payment_method}`;
@@ -428,8 +428,8 @@ function CashRow(props: {
         requires_user_choice: staffPicks,
         notes: notes.trim() || null,
       });
-      if (!r.ok) setErr(r.error);
-      else setEditing(false);
+      if (!r.ok) start(() => setErr(r.error));
+      else start(() => setEditing(false));
     });
 
   const choices = accountChoicesFor({ side: "cash", key: rule.kind }, props.accounts, rule.account_id);
@@ -535,8 +535,8 @@ function StartingCash(props: { amount: number; lastChange?: LastChange }) {
     start(async () => {
       setErr(null);
       const r = await updateDefaultChangeFundAction(amount);
-      if (!r.ok) setErr(r.error);
-      else setEditing(false);
+      if (!r.ok) start(() => setErr(r.error));
+      else start(() => setEditing(false));
     });
   };
 
@@ -609,8 +609,8 @@ function EodRemindersStart(props: { start: string | null; lastChange?: LastChang
     start(async () => {
       setErr(null);
       const r = await updateEodRemindersStartAction(next);
-      if (!r.ok) setErr(r.error);
-      else setEditing(false);
+      if (!r.ok) start(() => setErr(r.error));
+      else start(() => setEditing(false));
     });
   };
 

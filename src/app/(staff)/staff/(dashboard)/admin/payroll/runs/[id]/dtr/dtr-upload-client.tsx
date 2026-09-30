@@ -227,10 +227,14 @@ export function DtrUploadClient({
         return;
       }
       if (!result.ok) {
-        setParseError(result.error);
+        startParseTransition(() => {
+          setParseError(result.error);
+        });
         return;
       }
-      setParseSummary(result.data);
+      startParseTransition(() => {
+        setParseSummary(result.data);
+      });
       // Pull in the freshly-inserted rows on the server.
       router.refresh();
     });
@@ -242,14 +246,18 @@ export function DtrUploadClient({
     startCommitTransition(async () => {
       const result = await commitDtrAction(parseSummary.import_id);
       if (!result.ok) {
-        setCommitError(result.error);
+        startCommitTransition(() => {
+          setCommitError(result.error);
+        });
         return;
       }
-      setCommitted(true);
-      // Reset the picker so the next upload starts clean.
-      setCsvText("");
-      setFilename("");
-      setParseSummary(null);
+      startCommitTransition(() => {
+        setCommitted(true);
+        // Reset the picker so the next upload starts clean.
+        setCsvText("");
+        setFilename("");
+        setParseSummary(null);
+      });
       if (fileInputRef.current) {
         fileInputRef.current.value = "";
       }
@@ -652,10 +660,14 @@ function ReconcileRow({
     startTransition(async () => {
       const result = await reconcileDtrEmployeeAction(row.id, employeeId);
       if (!result.ok) {
-        setMessage({ kind: "err", text: result.error });
+        startTransition(() => {
+          setMessage({ kind: "err", text: result.error });
+        });
         return;
       }
-      setMessage({ kind: "ok", text: "Matched." });
+      startTransition(() => {
+        setMessage({ kind: "ok", text: "Matched." });
+      });
       router.refresh();
     });
   };

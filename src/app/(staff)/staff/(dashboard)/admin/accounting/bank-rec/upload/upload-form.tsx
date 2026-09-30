@@ -47,7 +47,9 @@ export function UploadForm({
         csv_text: csvText,
       });
       if (!r.ok) {
-        setError(r.error);
+        startTransition(() => {
+          setError(r.error);
+        });
         return;
       }
       router.push(`/staff/admin/accounting/bank-rec/${r.data.id}`);

@@ -22,6 +22,7 @@ const fx = vi.hoisted(() => ({
   // What the mocked notifiers report for a message that actually goes out.
   notice: { status: "sent", channels: ["email"], reason: null } as { status: string; channels: string[]; reason: string | null },
   alerts: [] as Array<[string, number]>,
+  viewCountReads: [] as string[],
 }));
 vi.mock("next/cache", () => ({
   revalidatePath: (p: string, t?: string) => void fx.revalidate.push([p, t]),
@@ -34,7 +35,6 @@ vi.mock("@/lib/supabase/server", () => ({ createClient: async () => fx.db }));
 vi.mock("@/lib/supabase/admin", () => ({ createAdminClient: () => ({}) }));
 vi.mock("@/lib/patients/require-active", () => ({ assertVisitPatientActive: async () => ({ ok: true }) }));
 vi.mock("@/lib/audit/log", () => ({ audit: async (e: Record<string, unknown>) => void fx.audits.push(e) }));
-vi.mock("@/lib/server/action-helpers", () => ({ ipAndAgent: async () => ({ ip: null, ua: null }) }));
 vi.mock("@/lib/observability/report-error", () => ({ reportError: async () => {} }));
 vi.mock("@/lib/actions/visits/queue-deletion", () => ({ deleteVisitAction: async () => ({ ok: true }) }));
 vi.mock("@/lib/notifications/notify-released", () => ({
@@ -49,7 +49,8 @@ vi.mock("@/lib/notifications/notify-released-bulk", () => ({
     return noticeFor(a.releaseMedium);
   },
 }));
-vi.mock("@/lib/results/viewed-count", () => ({ countResultViews: async (id: string) => (id === "a" ? 3 : 0) }));
+// A spy: the undo's viewed_count is computed in SQL (0205), so TypeScript must never read it.
+vi.mock("@/lib/results/viewed-count", () => ({ countResultViews: async (id: string) => { fx.viewCountReads.push(id); return 0; } }));
 vi.mock("@/lib/notifications/release-staff-alert", () => ({
   scheduleReleaseStaffAlert: (v: string, n: number) => void fx.alerts.push([v, n]),
 }));
@@ -68,8 +69,8 @@ const NONE_READY = "None of the selected tests are ready to release.";
  * actions also read `visits` (deleted check) and use `.maybeSingle()`, so wrap
  * the fake: a live visit, and maybeSingle = first row of the fake's result.
  */
-function setup(rows: FakeTestRow[], links: FakeLink[] = []) {
-  const fake = makeFakeReleaseDb({ rows, links, actorRole: () => fx.role });
+function setup(rows: FakeTestRow[], links: FakeLink[] = [], viewedCounts?: Record<string, number>) {
+  const fake = makeFakeReleaseDb({ rows, links, actorRole: () => fx.role, viewedCounts });
   const inner = fake.client as { from: (t: string) => Record<string, unknown>; rpc: unknown };
   fx.db = {
     rpc: inner.rpc,
@@ -111,7 +112,7 @@ const REVALIDATED = [
 ];
 
 /** report r1 = a,b; plain x; package h with c1 (plain) and c2 (on r2 with d, outside the package). */
-function seed(over: Record<string, Partial<FakeTestRow>> = {}) {
+function seed(over: Record<string, Partial<FakeTestRow>> = {}, viewedCounts?: Record<string, number>) {
   const rows: FakeTestRow[] = [
     { id: "a" },
     { id: "b" },
@@ -121,7 +122,7 @@ function seed(over: Record<string, Partial<FakeTestRow>> = {}) {
     { id: "c2", parentId: "h" },
     { id: "d" },
   ].map((r) => ({ ...r, ...(over[r.id] ?? {}) }));
-  return setup(rows, [...report("r1", "a", "b"), ...report("r2", "c2", "d")]);
+  return setup(rows, [...report("r1", "a", "b"), ...report("r2", "c2", "d")], viewedCounts);
 }
 
 beforeEach(() => {
@@ -132,6 +133,7 @@ beforeEach(() => {
   fx.notifyBulk.length = 0;
   fx.alerts.length = 0;
   fx.notice = { status: "sent", channels: ["email"], reason: null };
+  fx.viewCountReads.length = 0;
 });
 
 describe("releaseTestAction — whole-report rule", () => {
@@ -144,7 +146,9 @@ describe("releaseTestAction — whole-report rule", () => {
     expect(fx.notifyBulk[0].testRequestIds.sort()).toEqual(["a", "b"]);
     expect(fx.notifyOne).toEqual([]);
     expect(fx.alerts).toEqual([["v1", 2]]);
-    expect(fx.audits.every((a) => (a.metadata as { source: string }).source === "visit_page")).toBe(true);
+    expect(writes(fake)).toHaveLength(1);
+    expect((writes(fake)[0].args.p_audit as { metadata: { source: string } }).metadata.source).toBe("visit_page");
+    expect(fx.audits.filter((a) => a.action === "test_request.released")).toEqual([]);
   });
 
   it("2. refuses when a sibling is unfinished: nothing released, no notice, no alert", async () => {
@@ -186,7 +190,8 @@ describe("releaseTestAction — whole-report rule", () => {
     expect(fx.notifyOne).toEqual([{ testRequestId: "x", visitId: "v1", releaseMedium: "email" }]);
     expect(fx.notifyBulk).toEqual([]);
     expect(fx.alerts).toEqual([["v1", 1]]);
-    expect(fx.audits[0].metadata).toMatchObject({ source: "visit_page", bulk: false, selection: false });
+    expect(writes(fake)[0].args.p_audit).toEqual({ metadata: { source: "visit_page", bulk: false, selection: false }, ip: "1.2.3.4", user_agent: "ua" });
+    expect(fx.audits.filter((a) => a.action === "test_request.released")).toEqual([]);
   });
 
   it("keeps the not-ready and section messages", async () => {
@@ -303,15 +308,22 @@ describe("releaseSelectedAction — whole-report rule", () => {
 });
 
 describe("releaseSelectedAction — Undo handle (bulk-select follow-ups)", () => {
-  it("stamps ONE server-minted batch id and the exact released_at on every released row's audit row, report-mates included", async () => {
+  it("sends ONE server-minted batch id in p_audit; the database stamps it and the exact released_at on every released row, report-mates included", async () => {
     const fake = seed();
     const res = await releaseSelectedAction("v1", ["a", "x"], "email");
     if (!res.ok) throw new Error(res.error);
     expect(res.batchId).toMatch(/^[0-9a-f-]{36}$/);
     expect(res.notifiedCount).toBe(3);
-    const released = fx.audits.filter((e) => e.action === "test_request.released");
+    expect(writes(fake)).toHaveLength(1);
+    expect(writes(fake)[0].args.p_audit).toEqual({
+      metadata: { source: "visit_page", bulk: true, selection: true, bulk_batch_id: res.batchId },
+      ip: "1.2.3.4",
+      user_agent: "ua",
+    });
+    expect(fx.audits.filter((e) => e.action === "test_request.released")).toEqual([]);
+    const released = fake.dbAudits;
     // "b" was not selected: the whole-report rule pulled it in, and Undo must
-    // see it as this batch's own row.
+    // see it as this batch's own row (the database stamps the batch id on it).
     expect(released.map((e) => e.resource_id).sort()).toEqual(["a", "b", "x"]);
     for (const e of released) {
       const meta = e.metadata as Record<string, unknown>;
@@ -385,7 +397,11 @@ describe("releaseAllReadyComponentsAction — whole-report rule", () => {
     // The page sends the ready components; d is pulled in by the database, not selected.
     expect(writes(fake)).toHaveLength(1);
     expect((writes(fake)[0].args.p_test_request_ids as string[]).slice().sort()).toEqual(["c1", "c2"]);
-    expect(fx.audits.every((a) => (a.metadata as { package_header_id?: string }).package_header_id === "h")).toBe(true);
+    expect(writes(fake)[0].args.p_audit).toEqual({ metadata: { source: "visit_page", bulk: true, package_header_id: "h" }, ip: "1.2.3.4", user_agent: "ua" });
+    expect(fx.audits.filter((a) => a.action === "test_request.released")).toEqual([]);
+    // The database's rows (as modelled) carry the package id on the pulled-in report member too.
+    expect(fake.dbAudits.map((a) => a.resource_id)).toEqual(["c1", "c2", "d"]);
+    expect(fake.dbAudits.every((a) => a.metadata.package_header_id === "h")).toBe(true);
     expect(fx.alerts).toEqual([["v1", 3]]);
   });
 
@@ -473,29 +489,44 @@ describe("14. every action refreshes every surface", () => {
 
 describe("undoReleaseSelectedAction — undo_visit_release", () => {
   const undoCalls = (fake: Fake) => fake.rpcCalls.filter((c) => c.name === "undo_visit_release");
-  const releasedSeed = (over: Record<string, Partial<FakeTestRow>> = {}) =>
+  const releasedSeed = (over: Record<string, Partial<FakeTestRow>> = {}, viewedCounts?: Record<string, number>) =>
     seed({
       a: { status: "released", releasedAt: "2026-09-01T02:00:00.000Z", releaseMedium: "email" },
       b: { status: "released", releasedAt: "2026-09-02T02:00:00.000Z", releaseMedium: "viber" },
       x: { status: "released", releasedAt: "2026-09-03T02:00:00.000Z", releaseMedium: "physical" },
       ...over,
-    });
+    }, viewedCounts);
 
   it("calls the RPC once with the visit, the selection and the acting staff id", async () => {
     const fake = releasedSeed();
     await undoReleaseSelectedAction("v1", ["x"], "  wrong patient ");
     expect(undoCalls(fake)).toEqual([
-      { name: "undo_visit_release", args: { p_visit_id: "v1", p_test_request_ids: ["x"], p_actor: "u1", p_expected_released_at: null } },
+      {
+        name: "undo_visit_release",
+        args: {
+          p_visit_id: "v1",
+          p_test_request_ids: ["x"],
+          p_actor: "u1",
+          p_expected_released_at: null,
+          // Trimmed; the database writes it on every audit row.
+          p_reason: "wrong patient",
+          // A hand-picked undo adds nothing beyond {bulk: true}.
+          p_audit: { metadata: { bulk: true }, ip: "1.2.3.4", user_agent: "ua" },
+        },
+      },
     ]);
   });
 
-  it("audits every undone row with the prior medium/time FROM THE RPC, the viewed-count snapshot and the report id; the report's other member is audited too", async () => {
-    const fake = releasedSeed();
+  it("the database audits every undone row (prior medium/time, viewed count, report id; the report's other member too); TypeScript writes none and never reads view counts", async () => {
+    const fake = releasedSeed({}, { a: 3 });
     const res = await undoReleaseSelectedAction("v1", ["a"], "wrong patient");
     expect(res).toEqual({ ok: true, count: 2 });
     expect([statusOf(fake, "a"), statusOf(fake, "b")]).toEqual(["ready_for_release", "ready_for_release"]);
-    expect(fx.audits.map((e) => e.resource_id)).toEqual(["a", "b"]);
-    expect(fx.audits[0]).toMatchObject({
+    // No TypeScript copy (it would double-write), and the SQL computes viewed_count.
+    expect(fx.audits.filter((e) => e.action === "test_request.release_undone")).toEqual([]);
+    expect(fx.viewCountReads).toEqual([]);
+    expect(fake.dbAudits.map((e) => e.resource_id)).toEqual(["a", "b"]);
+    expect(fake.dbAudits[0]).toMatchObject({
       actor_id: "u1",
       actor_type: "staff",
       action: "test_request.release_undone",
@@ -513,7 +544,7 @@ describe("undoReleaseSelectedAction — undo_visit_release", () => {
         report_result_id: "r1",
       },
     });
-    expect(fx.audits[1].metadata).toMatchObject({
+    expect(fake.dbAudits[1].metadata).toMatchObject({
       prior_release_medium: "viber",
       prior_released_at: "2026-09-02T02:00:00.000Z",
       viewed_count: 0,
@@ -522,10 +553,11 @@ describe("undoReleaseSelectedAction — undo_visit_release", () => {
   });
 
   it("a plain row is undone alone with report_result_id null", async () => {
-    releasedSeed();
+    const fake = releasedSeed();
     expect(await undoReleaseSelectedAction("v1", ["x"], "typo")).toEqual({ ok: true, count: 1 });
-    expect(fx.audits).toHaveLength(1);
-    expect(fx.audits[0].metadata).toMatchObject({ prior_release_medium: "physical", report_result_id: null });
+    expect(fx.audits.filter((e) => e.action === "test_request.release_undone")).toEqual([]);
+    expect(fake.dbAudits).toHaveLength(1);
+    expect(fake.dbAudits[0].metadata).toMatchObject({ prior_release_medium: "physical", report_result_id: null });
   });
 
   it("a whole-request refusal (P0081) passes the database's message through; nothing is audited", async () => {

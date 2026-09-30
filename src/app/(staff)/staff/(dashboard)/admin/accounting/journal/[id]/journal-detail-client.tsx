@@ -59,7 +59,7 @@ export function JournalDetailClient({ je }: { je: Je }) {
     setErr(null);
     startTransition(async () => {
       const r = await postJournalEntryAction(je.id);
-      if (!r.ok) setErr(r.error);
+      if (!r.ok) startTransition(() => setErr(r.error));
       else router.refresh();
     });
   }
@@ -72,7 +72,7 @@ export function JournalDetailClient({ je }: { je: Je }) {
     setErr(null);
     startTransition(async () => {
       const r = await deleteDraftJournalEntryAction(je.id);
-      if (!r.ok) setErr(r.error);
+      if (!r.ok) startTransition(() => setErr(r.error));
       else router.push("/staff/admin/accounting/journal");
     });
   }

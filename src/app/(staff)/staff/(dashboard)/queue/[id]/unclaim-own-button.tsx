@@ -19,11 +19,15 @@ export function UnclaimOwnButton({ testRequestId }: { testRequestId: string }) {
       setErr(null);
       const result = await unclaimOwnTestAction(testRequestId, reason.trim());
       if (!result.ok) {
-        setErr(result.error);
+        startTransition(() => {
+          setErr(result.error);
+        });
         return;
       }
-      setConfirmOpen(false);
-      setReason("");
+      startTransition(() => {
+        setConfirmOpen(false);
+        setReason("");
+      });
       router.refresh();
     });
   }

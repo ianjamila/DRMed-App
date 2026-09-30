@@ -15,6 +15,7 @@ const fx = vi.hoisted(() => ({
   db: null as unknown,
   revalidate: [] as Array<[string, string | undefined]>,
   audits: [] as Array<Record<string, unknown>>,
+  viewCountReads: [] as string[],
   reported: [] as Array<{ scope: string }>,
   loadArgs: [] as Array<Record<string, unknown>>,
   loaded: null as unknown,
@@ -36,14 +37,14 @@ vi.mock("@/lib/audit/bulk-batch", () => ({
     return fx.loaded;
   },
 }));
-vi.mock("@/lib/server/action-helpers", () => ({ ipAndAgent: async () => ({ ip: null, ua: null }) }));
 vi.mock("@/lib/observability/report-error", () => ({
   reportError: async (a: { scope: string }) => void fx.reported.push(a),
 }));
 vi.mock("@/lib/actions/visits/queue-deletion", () => ({ deleteVisitAction: async () => ({ ok: true }) }));
 vi.mock("@/lib/notifications/notify-released", () => ({ notifyResultReleased: async () => {} }));
 vi.mock("@/lib/notifications/notify-released-bulk", () => ({ notifyResultsReleasedBulk: async () => {} }));
-vi.mock("@/lib/results/viewed-count", () => ({ countResultViews: async (id: string) => (id === "a" ? 3 : 0) }));
+// A spy: the undo's viewed_count is computed in SQL (0205), so TypeScript must never read it.
+vi.mock("@/lib/results/viewed-count", () => ({ countResultViews: async (id: string) => { fx.viewCountReads.push(id); return 0; } }));
 vi.mock("@/lib/notifications/release-staff-alert", () => ({ scheduleReleaseStaffAlert: () => {} }));
 
 import { BULK_UNDO_VIA, CHANGED_SINCE_REASON, UNDO_ALREADY, UNDO_EXPIRED } from "@/lib/ui/bulk-undo";
@@ -57,8 +58,8 @@ const REASON = "Undone within 10 minutes of release";
 const OTHER_AT = "2026-09-30T07:05:00.654321+00:00";
 
 /** Live visit v1 + fake test_requests/RPCs (the visit page's actions also read `visits`, via maybeSingle). */
-function setup(rows: FakeTestRow[], links: FakeLink[] = []) {
-  const fake = makeFakeReleaseDb({ rows, links, actorRole: () => fx.role });
+function setup(rows: FakeTestRow[], links: FakeLink[] = [], viewedCounts?: Record<string, number>) {
+  const fake = makeFakeReleaseDb({ rows, links, actorRole: () => fx.role, viewedCounts });
   const inner = fake.client as { from: (t: string) => Record<string, unknown>; rpc: unknown };
   fx.db = {
     rpc: inner.rpc,
@@ -78,14 +79,14 @@ type Fake = ReturnType<typeof setup>;
 
 const REL = { status: "released", releasedAt: FAKE_RELEASED_AT, releaseMedium: "email" } as const;
 /** report r1 = a,b; report r2 = c,d; plain x, y, z — every line released by the batch unless overridden. */
-function seed(over: Record<string, Partial<FakeTestRow>> = {}) {
+function seed(over: Record<string, Partial<FakeTestRow>> = {}, viewedCounts?: Record<string, number>) {
   const rows: FakeTestRow[] = ["a", "b", "c", "d", "x", "y", "z"].map((id) => ({ id, ...REL, ...(over[id] ?? {}) }));
   return setup(rows, [
     { testRequestId: "a", resultId: "r1" },
     { testRequestId: "b", resultId: "r1" },
     { testRequestId: "c", resultId: "r2" },
     { testRequestId: "d", resultId: "r2" },
-  ]);
+  ], viewedCounts);
 }
 const statusOf = (fake: Fake, id: string) => fake.rows.find((r) => r.id === id)!.status;
 const undoCalls = (fake: Fake) => fake.rpcCalls.filter((c) => c.name === "undo_visit_release");
@@ -106,12 +107,15 @@ function loadBatch(ids: string[], opts: { changedSince?: string[]; at?: Record<s
     }),
   };
 }
-const undoAudits = () => fx.audits.filter((a) => a.action === "test_request.release_undone");
+/** The release_undone rows the database (as the fake models it) wrote; TypeScript writes none. */
+const undoAudits = (fake: Fake) => fake.dbAudits.filter((a) => a.action === "test_request.release_undone");
+const tsUndoAudits = () => fx.audits.filter((a) => a.action === "test_request.release_undone");
 
 beforeEach(() => {
   fx.role = "admin";
   fx.revalidate.length = 0;
   fx.audits.length = 0;
+  fx.viewCountReads.length = 0;
   fx.reported.length = 0;
   fx.loadArgs.length = 0;
   fx.loaded = null;
@@ -141,7 +145,7 @@ describe("undoReleaseBatchAction — reports", () => {
     expect(res.notRestored.every((n) => n.reason === CHANGED_SINCE_REASON)).toBe(true);
     expect([statusOf(fake, "a"), statusOf(fake, "b")]).toEqual(["released", "released"]);
     expect(statusOf(fake, "x")).toBe("ready_for_release");
-    expect(undoAudits().map((a) => a.resource_id)).toEqual(["x"]);
+    expect(undoAudits(fake).map((a) => a.resource_id)).toEqual(["x"]);
   });
 
   it("a report-mate this batch did NOT release keeps the report released and is not named", async () => {
@@ -165,7 +169,7 @@ describe("undoReleaseBatchAction — reports", () => {
     expect(res.notRestored.map((n) => n.id).sort()).toEqual(["a", "b"]);
     expect([statusOf(fake, "a"), statusOf(fake, "b")]).toEqual(["released", "released"]);
     expect(fake.rows.find((r) => r.id === "b")!.releasedAt).toBe(OTHER_AT);
-    expect(undoAudits()).toEqual([]);
+    expect(undoAudits(fake)).toEqual([]);
   });
 });
 
@@ -220,16 +224,29 @@ describe("undoReleaseBatchAction — plain lines", () => {
 });
 
 describe("undoReleaseBatchAction — audit and outcome", () => {
-  it("every undo audit row carries via, undo_of_batch, a NEW bulk_batch_id, the reason, the RPC's prior values and the report id", async () => {
-    seed({ a: { releaseMedium: "viber" } });
+  it("the batch Undo sends via, undo_of_batch and a NEW bulk_batch_id as p_audit, the reason as p_reason; the database rows carry them plus the prior values and the report id", async () => {
+    const fake = seed({ a: { releaseMedium: "viber" } }, { a: 3 });
     loadBatch(["a", "b", "x"]);
     const res = await undoReleaseBatchAction({ batchId: BATCH });
     if (!res.ok) throw new Error(res.error);
-    const audits = undoAudits();
+    const [call] = undoCalls(fake);
+    expect(call.args.p_reason).toBe(REASON);
+    const sent = call.args.p_audit as { metadata: Record<string, unknown>; ip: unknown; user_agent: unknown };
+    expect(sent).toEqual({
+      metadata: { bulk: true, via: BULK_UNDO_VIA, undo_of_batch: BATCH, bulk_batch_id: expect.stringMatching(/^[0-9a-f-]{36}$/) },
+      ip: "1.2.3.4",
+      user_agent: "ua",
+    });
+    expect(sent.metadata.bulk_batch_id).not.toBe(BATCH);
+    // The database owns the rows now: TypeScript neither writes them nor reads the view counts.
+    expect(tsUndoAudits()).toEqual([]);
+    expect(fx.viewCountReads).toEqual([]);
+    const audits = undoAudits(fake);
     expect(audits.map((a) => a.resource_id)).toEqual(["a", "b", "x"]);
     const newBatchIds = new Set<string>();
     for (const a of audits) {
       expect(a).toMatchObject({ actor_id: "u1", actor_type: "staff", resource_type: "test_request", ip_address: "1.2.3.4", user_agent: "ua" });
+      expect(a.metadata.bulk_batch_id).toBe(sent.metadata.bulk_batch_id);
       const m = a.metadata as Record<string, unknown>;
       expect(m).toMatchObject({ visit_id: "v1", reason: REASON, bulk: true, via: BULK_UNDO_VIA, undo_of_batch: BATCH, prior_released_at: FAKE_RELEASED_AT });
       expect(m.bulk_batch_id).toMatch(/^[0-9a-f-]{36}$/);
@@ -284,7 +301,7 @@ describe("undoReleaseBatchAction — audit and outcome", () => {
       ok: false,
       error: "Couldn't read which release to undo — try again.",
     });
-    expect(undoAudits()).toEqual([]);
+    expect(tsUndoAudits()).toEqual([]);
   });
 });
 
@@ -296,8 +313,13 @@ describe("undoReleaseSelectedAction", () => {
     const [call] = undoCalls(fake);
     expect(call.args).toHaveProperty("p_expected_released_at", null);
     expect(statusOf(fake, "x")).toBe("ready_for_release");
-    expect(undoAudits()[0].metadata).toMatchObject({ reason: "wrong patient", bulk: true, prior_released_at: OTHER_AT });
-    expect(undoAudits()[0].metadata).not.toHaveProperty("via");
+    expect(call.args).toMatchObject({
+      p_reason: "wrong patient",
+      p_audit: { metadata: { bulk: true }, ip: "1.2.3.4", user_agent: "ua" },
+    });
+    expect(tsUndoAudits()).toEqual([]);
+    expect(undoAudits(fake)[0].metadata).toMatchObject({ reason: "wrong patient", bulk: true, prior_released_at: OTHER_AT });
+    expect(undoAudits(fake)[0].metadata).not.toHaveProperty("via");
   });
 
   it("with nothing to undo it is still an error (only a batch Undo may restore nothing)", async () => {

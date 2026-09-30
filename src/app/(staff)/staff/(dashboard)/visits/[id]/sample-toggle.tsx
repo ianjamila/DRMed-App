@@ -21,10 +21,14 @@ export function SampleToggle({
       setErr(null);
       const result = await setVisitSampleAction(visitId, !isSample);
       if (!result.ok) {
-        setErr(result.error);
+        startTransition(() => {
+          setErr(result.error);
+        });
         return;
       }
-      setOpen(false);
+      startTransition(() => {
+        setOpen(false);
+      });
     });
   }
 
