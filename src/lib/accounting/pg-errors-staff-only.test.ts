@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, join, relative, resolve, sep } from "node:path";
+import ts from "typescript";
 
 // translatePgError passes a hand-written 23514 message through verbatim (0184's
 // "a result can only hold one patient's tests", "a critical alert's patient
@@ -51,15 +52,46 @@ function resolveSpecifier(from: string, spec: string): string | null {
   return null;
 }
 
-// Static imports, re-exports, side-effect imports and dynamic import(). Type-only
-// imports are skipped: they are erased at build time and carry no runtime code.
-const IMPORT_RE =
-  /(?:^|[\s;])(?:import|export)\s+(?!type\s)(?:[^'"`;]*?\sfrom\s+)?["']([^"']+)["']|import\(\s*["']([^"']+)["']\s*\)/g;
+// Module specifiers read with the TypeScript parser, not a regex: it accepts every
+// form the compiler does (compact `import{x}from"m"`, backtick and comment-laden
+// import(), `import x = require()`, `export * from`) and ignores text inside
+// strings and comments. Type-only imports/exports (`import type`, `export type`)
+// are skipped: they are erased at build time and carry no runtime code. An inline
+// `import { type X }` is still counted — conservative, the guard errs toward flagging.
+function specifiersOf(text: string): string[] {
+  const sf = ts.createSourceFile("x.tsx", text, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+  const out: string[] = [];
+  const literal = (n: ts.Node | undefined) => {
+    if (n && (ts.isStringLiteral(n) || ts.isNoSubstitutionTemplateLiteral(n))) out.push(n.text);
+  };
+  const visit = (n: ts.Node): void => {
+    if (ts.isImportDeclaration(n)) {
+      if (!n.importClause?.isTypeOnly) literal(n.moduleSpecifier);
+    } else if (ts.isExportDeclaration(n)) {
+      if (!n.isTypeOnly) literal(n.moduleSpecifier);
+    } else if (ts.isImportEqualsDeclaration(n)) {
+      if (!n.isTypeOnly && ts.isExternalModuleReference(n.moduleReference)) {
+        literal(n.moduleReference.expression);
+      }
+    } else if (ts.isCallExpression(n)) {
+      const callee = n.expression;
+      if (
+        callee.kind === ts.SyntaxKind.ImportKeyword ||
+        (ts.isIdentifier(callee) && callee.text === "require")
+      ) {
+        literal(n.arguments[0]);
+      }
+    }
+    ts.forEachChild(n, visit);
+  };
+  visit(sf);
+  return out;
+}
 
 function importsOf(file: string, text = readFileSync(file, "utf8")): string[] {
   const out: string[] = [];
-  for (const m of text.matchAll(IMPORT_RE)) {
-    const r = resolveSpecifier(file, (m[1] ?? m[2])!);
+  for (const spec of specifiersOf(text)) {
+    const r = resolveSpecifier(file, spec);
     if (r) out.push(r);
   }
   return out;
@@ -129,5 +161,27 @@ describe("translatePgError stays staff-only", () => {
     expect(found(`export { translatePgError } from "@/lib/accounting/pg-errors";`)).toEqual([target]);
     expect(found(`const m = await import("@/lib/accounting/pg-errors");`)).toEqual([target]);
     expect(found(`import type { X } from "@/lib/accounting/pg-errors";`)).toEqual([]);
+  });
+
+  it("mutation proof: compact, backtick, commented and re-export forms are all read", () => {
+    const from = join(APP, "(patient)", "portal", "x.ts");
+    const found = (src: string) => importsOf(from, src).map(rel);
+    const target = "src/lib/accounting/pg-errors.ts";
+    expect(found(`import{translatePgError}from"@/lib/accounting/pg-errors"`)).toEqual([target]);
+    expect(found("const m = await import(`@/lib/accounting/pg-errors`);")).toEqual([target]);
+    expect(
+      found(`const m = import(/* webpackChunkName: "x" */ "@/lib/accounting/pg-errors");`),
+    ).toEqual([target]);
+    expect(found(`import "@/lib/accounting/pg-errors";`)).toEqual([target]);
+    expect(found(`export * from "@/lib/accounting/pg-errors";`)).toEqual([target]);
+    expect(found(`export * as pg from "@/lib/accounting/pg-errors";`)).toEqual([target]);
+    expect(found(`const m = require("@/lib/accounting/pg-errors");`)).toEqual([target]);
+    expect(found(`import pg = require("@/lib/accounting/pg-errors");`)).toEqual([target]);
+    expect(found(`import { type X, translatePgError } from "@/lib/accounting/pg-errors";`)).toEqual([target]);
+    // Type-only forms are erased at build time: no runtime code, so not a leak.
+    expect(found(`export type { X } from "@/lib/accounting/pg-errors";`)).toEqual([]);
+    // Text that merely looks like an import (string / comment) is not one.
+    expect(found(`const s = 'import x from "@/lib/accounting/pg-errors"';`)).toEqual([]);
+    expect(found(`// import x from "@/lib/accounting/pg-errors"\nconst a = 1;`)).toEqual([]);
   });
 });
