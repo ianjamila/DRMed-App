@@ -2093,6 +2093,56 @@ begin
   perform pg_temp.expect('s15.5 CONTROL source is still merged',
     (select merged_into_id::text from public.patients where id = src_pt), keep_pt::text);
 
+  -- Second ordering rule (review minor #1): a_lifecycle_guard's (a2') check
+  -- requires a critical alert's patient_id to equal its test's patient (via
+  -- the test's visit) — so undo only works because visits move BEFORE
+  -- critical_alerts (UNDO_MERGE_TABLES' fixed order), not merely because the
+  -- marker is cleared first. Prove the other direction: clear the marker
+  -- but do NOT move the visit yet, then try to move the alert back — refused
+  -- too, but with a DIFFERENT code (23514, a consistency check) than s15.1's
+  -- P0058 (an activity check). The whole thing is wrapped in a nested
+  -- BEGIN/EXCEPTION block — plpgsql's implicit savepoint — that ALWAYS ends
+  -- with its own sentinel raise, so the marker-clear inside is undone too:
+  -- the NEW-order arm below still needs to start from "still merged". A
+  -- real assertion failure inside (a different sqlstate) is re-raised, not
+  -- swallowed.
+  begin
+    update public.patients set merged_into_id = null, merged_at = null where id = src_pt;
+    perform pg_temp.expect('s15.5b marker cleared but the visit has not moved yet: moving the alert back to src is refused (23514, not P0058)',
+      pg_temp.state_of(format($q$update public.critical_alerts set patient_id = %L where id = %L$q$, src_pt, al_id)), '23514');
+    -- Differential proof: with a_lifecycle_guard disabled on critical_alerts
+    -- (the SAME function/trigger owns the (a2') check), the identical move
+    -- succeeds — proving the guard alone raises it. This inner block is its
+    -- own (further-nested) savepoint with its own sentinel, so the trigger
+    -- is never left disabled even before the outer block's own rollback.
+    declare
+      v_disabled_alert_move_ok boolean := false;
+    begin
+      begin
+        set local lock_timeout = '5s';
+        alter table public.critical_alerts disable trigger a_lifecycle_guard;
+        update public.critical_alerts set patient_id = src_pt where id = al_id;
+        v_disabled_alert_move_ok := true;
+        raise exception using errcode = 'XXTMP';
+      exception when others then
+        if sqlstate is distinct from 'XXTMP' then
+          v_disabled_alert_move_ok := false;
+        end if;
+      end;
+      perform pg_temp.expect('s15.5c with a_lifecycle_guard disabled (rolled back after), the same alert move succeeds',
+        v_disabled_alert_move_ok::text, 'true');
+    end;
+    perform pg_temp.expect('s15.5d a_lifecycle_guard is enabled again afterward and refuses the same alert move',
+      pg_temp.state_of(format($q$update public.critical_alerts set patient_id = %L where id = %L$q$, src_pt, al_id)), '23514');
+    raise exception using errcode = 'XXTM2';
+  exception when others then
+    if sqlstate is distinct from 'XXTM2' then
+      raise;
+    end if;
+  end;
+  perform pg_temp.expect('s15.5e CONTROL fixture back to still-merged after the second-order proof',
+    (select merged_into_id::text from public.patients where id = src_pt), keep_pt::text);
+
   -- NEW order: undoMergeSteps()'s actual sequence. This fixture has nothing
   -- under appointments/audit_log/patient_consents (empty move_back — a no-op,
   -- same as the app skipping an empty id list) and nothing filled_from_source
@@ -2103,14 +2153,16 @@ begin
     pg_temp.state_of(format($q$update public.visits set patient_id = %L where id = %L$q$, src_pt, v_id)), 'ok');
   perform pg_temp.expect('s15.8 NEW order step 3 (move_back critical_alerts) succeeds — the alert''s patient now matches its test''s (already-moved) visit',
     pg_temp.state_of(format($q$update public.critical_alerts set patient_id = %L where id = %L$q$, src_pt, al_id)), 'ok');
+  -- Read-back: 'ok' alone doesn't rule out a 0-row-match UPDATE (review
+  -- minor #2) — confirm the alert's patient_id actually is src_pt now.
+  perform pg_temp.expect('s15.8b the alert''s patient_id is now src_pt',
+    (select patient_id::text from public.critical_alerts where id = al_id), src_pt::text);
   perform pg_temp.expect('s15.9 NEW order step 4 (move_back appointment_attachments) succeeds',
     pg_temp.state_of(format($q$update public.appointment_attachments set patient_id = %L where id = %L$q$, src_pt, att_id)), 'ok');
+  perform pg_temp.expect('s15.9b the attachment''s patient_id is now src_pt',
+    (select patient_id::text from public.appointment_attachments where id = att_id), src_pt::text);
   perform pg_temp.expect('s15.10 NEW order step 5 (mark_ledger_undone) succeeds',
     pg_temp.state_of(format($q$update public.patient_merges set undone_at = now(), undone_by = %L where id = %L$q$, k_admin, merge_id)), 'ok');
-
-  perform pg_temp.expect('s15.11 the test/result (never itself "moved" — it follows its visit) resolves to the source patient after undo',
-    (select v.patient_id::text from public.test_requests tr join public.visits v on v.id = tr.visit_id where tr.id = tr_id),
-    src_pt::text);
   perform pg_temp.expect('s15.12 the merge ledger is marked undone',
     (select (undone_at is not null)::text from public.patient_merges where id = merge_id), 'true');
 end

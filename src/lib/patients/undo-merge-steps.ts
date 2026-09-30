@@ -5,7 +5,10 @@
 // The runner stops at the first failed step: the ledger stays NOT undone and
 // the admin sees which step failed; running Undo again is safe (every step is
 // idempotent — moving rows already back, or clearing a cleared marker,
-// changes nothing).
+// changes nothing). Within this list, visits must precede critical_alerts:
+// a_lifecycle_guard's (a2') check requires a critical alert's patient_id to
+// equal its test's patient (via the test's visit), so the alert can only
+// move back to the source once its visit already has (0184 review minor #1).
 export const UNDO_MERGE_TABLES = [
   "visits",
   "appointments",
