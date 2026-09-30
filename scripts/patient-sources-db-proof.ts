@@ -1585,13 +1585,23 @@ async function main() {
         }
       }
 
+      // No role claim and no sub at all (empty, '{}' or a claim without "role"): auth.role() is
+      // NULL. The gate must be coalesced so NULL means "refuse", not "skip the raise".
+      for (const sql of SVC_FUNCS) {
+        for (const claims of [null, {}, { iss: "supabase" }] as Claims[]) {
+          await setRole("authenticated", claims);
+          await expectPgError(`0199 authenticated with no role claim (${JSON.stringify(claims)}) refused`, "42501", () => q(sql));
+        }
+      }
+      await setRole("postgres", null);
+
       // Grants and bodies, as the migration's own post-condition states them.
       for (const fn of ["public.patient_sources_summary(date,date)", "public.patient_sources_series(date,date,text,text)"]) {
         const g = await q<{ anon: boolean; auth: boolean; svc: boolean; gate: boolean }>(
           `select has_function_privilege('anon', $1, 'execute') as anon,
                   has_function_privilege('authenticated', $1, 'execute') as auth,
                   has_function_privilege('service_role', $1, 'execute') as svc,
-                  pg_get_functiondef($1::regprocedure) like '%''service_role''%' as gate`, [fn]);
+                  pg_get_functiondef($1::regprocedure) like '%coalesce((select auth.role()), '''') = ''service_role''%' as gate`, [fn]);
         assert(!g.rows[0].anon && g.rows[0].auth && g.rows[0].svc && g.rows[0].gate, `0199: bad ACL/body for ${fn}: ${JSON.stringify(g.rows[0])}`);
       }
     }));
@@ -1629,6 +1639,40 @@ async function main() {
       await asAdmin();
       await expectOk("control: 0189 summary still answers an admin", () =>
         q(`select public._ps_summary_0189('2026-06-01'::date,'2026-06-30'::date)`));
+    }));
+
+    // Control (0199 coalesce): prove the no-claims refusal above can fail. The live
+    // 0199 bodies are loaded under temp names with the coalesce removed (the
+    // gate as first drafted); a session with no role claim then sails through.
+    await check("0199 control: without the coalesce a no-claims session gets through", () => scoped(async () => {
+      await setRole("postgres", null);
+      const src = fs.readFileSync(path.resolve(process.cwd(), "supabase/migrations/0199_patient_sources_service_read.sql"), "utf8");
+      const GATE = "coalesce((select auth.role()), '') = 'service_role'";
+      const load = (name: string, temp: string, argsSig: string) => {
+        const start = src.indexOf(`create or replace function public.${name}(`);
+        const end = src.indexOf("\n$$;\n", start) + 5;
+        assert(start > 0 && end > start, `could not extract the 0199 ${name}`);
+        const live = src.slice(start, end).replace(`public.${name}(`, `public.${temp}(`);
+        assert(live.includes(GATE), "the live 0199 body must carry the coalesced gate");
+        const body = live.replace(GATE, "(select auth.role()) = 'service_role'");
+        assert(body !== live && !body.includes("coalesce((select auth.role())"), "the uncoalesced copy must differ from the live body");
+        return { body, grant: `grant execute on function public.${temp}(${argsSig}) to service_role, authenticated` };
+      };
+      const s = load("patient_sources_summary", "_ps_summary_nocoalesce", "date, date");
+      const r = load("patient_sources_series", "_ps_series_nocoalesce", "date, date, text, text");
+      for (const x of [s, r]) { await q(x.body); await q(x.grant); }
+
+      // Session with no role claim and no sub: the uncoalesced gate lets it through...
+      await setRole("authenticated", null);
+      await expectOk("control: uncoalesced summary lets a no-claims session through", () =>
+        q(`select public._ps_summary_nocoalesce('2026-06-01'::date,'2026-06-30'::date)`));
+      await expectOk("control: uncoalesced series lets a no-claims session through", () =>
+        q(`select public._ps_series_nocoalesce('2026-06-01'::date,'2026-06-30'::date,'day'::text,'new'::text)`));
+      // ...and the live functions refuse the very same session.
+      await expectPgError("control: live summary refuses the no-claims session", "42501", () =>
+        q(`select public.patient_sources_summary('2026-06-01'::date,'2026-06-30'::date)`));
+      await expectPgError("control: live series refuses the no-claims session", "42501", () =>
+        q(`select public.patient_sources_series('2026-06-01'::date,'2026-06-30'::date,'day'::text,'new'::text)`));
     }));
   } finally {
     // Never persisted. This proof never writes anything real.

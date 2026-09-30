@@ -9,8 +9,11 @@
 --
 -- WHAT. Both functions are re-created with bodies copied VERBATIM from
 -- 0189_patient_sources.sql (0193 did not redefine them) changing ONLY the gate:
---   if not (public.has_role(array['admin']) or (select auth.role()) = 'service_role') then
+--   if not (public.has_role(array['admin']) or coalesce((select auth.role()), '') = 'service_role') then
 -- so a request whose JWT role is service_role passes, exactly as an admin does.
+-- The coalesce matters: with no JWT claims auth.role() is NULL, and
+-- `false or NULL` is NULL, `not NULL` is NULL, and `if NULL` skips the raise —
+-- an uncoalesced gate would fail OPEN for a session with no role claim.
 -- An admin viewing as another role (0182) is still refused; authenticated
 -- non-admins and anon are still refused (anon has no EXECUTE at all).
 --
@@ -44,7 +47,7 @@ set search_path = ''
 as $$
 #variable_conflict use_column
 begin
-  if not (public.has_role(array['admin']) or (select auth.role()) = 'service_role') then
+  if not (public.has_role(array['admin']) or coalesce((select auth.role()), '') = 'service_role') then
     raise exception 'Patient Sources is for admins only' using errcode = '42501';
   end if;
   perform public._ps_assert_mirror_mode();
@@ -98,7 +101,7 @@ set search_path = ''
 as $$
 #variable_conflict use_column
 begin
-  if not (public.has_role(array['admin']) or (select auth.role()) = 'service_role') then
+  if not (public.has_role(array['admin']) or coalesce((select auth.role()), '') = 'service_role') then
     raise exception 'Patient Sources is for admins only' using errcode = '42501';
   end if;
   perform public._ps_assert_mirror_mode();
@@ -162,7 +165,7 @@ begin
     if not has_function_privilege('service_role', f, 'execute') then
       raise exception '0199: % is not executable by service_role', f;
     end if;
-    if pg_get_functiondef(f::regprocedure) not like '%''service_role''%' then
+    if pg_get_functiondef(f::regprocedure) not like '%coalesce((select auth.role()), '''') = ''service_role''%' then
       raise exception '0199: % does not carry the service_role gate branch', f;
     end if;
   end loop;
