@@ -226,7 +226,9 @@ export async function unclaimQueueSelectionAction(input: unknown): Promise<BulkQ
   const reason = parsed.data.reason?.trim() || undefined;
   const panels = uniquePanels(parsed.data.panels);
   // First occurrence of a test id wins, as in the core.
-  const items = [...new Map(parsed.data.items.map((i) => [i.testRequestId, i])).values()];
+  const firstItem = new Map<string, (typeof parsed.data.items)[number]>();
+  for (const i of parsed.data.items) if (!firstItem.has(i.testRequestId)) firstItem.set(i.testRequestId, i);
+  const items = [...firstItem.values()];
 
   const resolved = await resolvePanels(supabase, session, panels);
   if (!resolved.ok) return resolved;
@@ -242,6 +244,10 @@ export async function unclaimQueueSelectionAction(input: unknown): Promise<BulkQ
   // The started_at every bench member holds, read once for all panels. Fail
   // closed per panel: with no exact previous_started_at the hand-back could
   // not be undone precisely, so it is not made (the singles above still are).
+  // This read happens BEFORE the unclaim RPC — the same window unclaimTestsCore
+  // has between its read and its write. A member missing from the map records
+  // previous_started_at null, and Undo's reclaim then cannot restore the
+  // original start time.
   const startedAt = await readBenchStartedAt(
     supabase,
     panels.flatMap((p) => resolved.states.get(p.key)?.benchIds ?? []),

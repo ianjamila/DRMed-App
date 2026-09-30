@@ -49,6 +49,7 @@ import {
   unclaimQueueSelectionAction,
 } from "./panel-actions";
 import { panelRowKey } from "@/lib/queue/bulk-queue";
+import { UNCLAIM_REFUSAL_OWN } from "@/lib/queue/claim-eligibility";
 
 const VISIT = "11111111-1111-4111-8111-111111111111";
 const GROUP = "22222222-2222-4222-8222-222222222222";
@@ -264,6 +265,66 @@ describe("unclaimQueueSelectionAction", () => {
     });
   });
 
+  it("skips a panel whose bench is no longer held as the operator saw it", async () => {
+    panelRead({ [KEY]: [held(M1)] });
+    const r = await unclaimQueueSelectionAction({
+      items: [],
+      panels: [{ visitId: VISIT, groupId: GROUP, members: [{ id: M1, holder: SINGLE }] }],
+    });
+    expect(h.unclaimPanelMembers).not.toHaveBeenCalled();
+    expect(r).toEqual({
+      ok: true,
+      changedIds: [],
+      skipped: [{ id: KEY, reason: "Someone else holds this report now — refresh the queue." }],
+    });
+  });
+
+  it("skips a panel the viewer may not hand back, with the role's refusal text", async () => {
+    h.session = { user_id: "staff-1", role: "medtech" };
+    // Held by someone else, seen as such: a non-admin cannot hand it back.
+    panelRead({ [KEY]: [held(M1)] });
+    const r = await unclaimQueueSelectionAction({
+      items: [],
+      panels: [{ visitId: VISIT, groupId: GROUP, members: seen([M1]) }],
+    });
+    expect(h.unclaimPanelMembers).not.toHaveBeenCalled();
+    expect(r).toEqual({
+      ok: true,
+      changedIds: [],
+      skipped: [{ id: KEY, reason: UNCLAIM_REFUSAL_OWN }],
+    });
+  });
+
+  it("a refused single-test call refuses the whole selection before any panel is handed back", async () => {
+    panelRead({ [KEY]: [held(M1)] });
+    h.unclaimTestsCore.mockResolvedValue({ ok: false, error: "Only lab staff can claim or unclaim tests from the queue." });
+    const r = await unclaimQueueSelectionAction({
+      items: [{ testRequestId: SINGLE, assignedTo: HOLDER }],
+      panels: [{ visitId: VISIT, groupId: GROUP, members: seen([M1]) }],
+    });
+    expect(r).toEqual({ ok: false, error: "Only lab staff can claim or unclaim tests from the queue." });
+    expect(h.unclaimPanelMembers).not.toHaveBeenCalled();
+    expect(h.readBenchStartedAt).not.toHaveBeenCalled();
+  });
+
+  it("keeps the FIRST occurrence of a duplicated test id (its assignedTo), as the core does", async () => {
+    panelRead({});
+    await unclaimQueueSelectionAction({
+      items: [
+        { testRequestId: SINGLE, assignedTo: HOLDER },
+        { testRequestId: SINGLE, assignedTo: SINGLE_2 },
+        { testRequestId: SINGLE_2, assignedTo: HOLDER },
+      ],
+      panels: [],
+    });
+    const [, , input, ctx] = h.unclaimTestsCore.mock.calls[0]!;
+    expect(input.items).toEqual([
+      { testRequestId: SINGLE, assignedTo: HOLDER },
+      { testRequestId: SINGLE_2, assignedTo: HOLDER },
+    ]);
+    expect(ctx.batchSize).toBe(2);
+  });
+
   it("ignores a batch id the browser sends", async () => {
     panelRead({ [KEY]: [held(M1)] });
     await unclaimQueueSelectionAction({
@@ -292,6 +353,69 @@ describe("deleteQueueSelectionAction", () => {
     expect(panelInput).toEqual({ testRequestIds: [M1, M2], reason: "duplicate entry" });
     expect(panelCtx).toEqual({ batchId: singleCtx.batchId, batchSize: 2, panelKey: KEY });
     expect(r).toEqual({ ok: true, changedIds: [SINGLE, M1, M2], skipped: [], batchId: singleCtx.batchId });
+  });
+
+  it("a refused single-test call refuses everything, before any panel is deleted", async () => {
+    panelRead({ [KEY]: [member(M1)] });
+    h.deleteTestRequestsManyCore.mockResolvedValueOnce({ ok: false, error: "Reason is required." });
+    const r = await deleteQueueSelectionAction({
+      testRequestIds: [SINGLE],
+      panels: [{ visitId: VISIT, groupId: GROUP }],
+      reason: "",
+    });
+    expect(r).toEqual({ ok: false, error: "Reason is required." });
+    expect(h.deleteTestRequestsManyCore).toHaveBeenCalledTimes(1);
+  });
+
+  it("the first panel refused with nothing deleted yet returns the whole refusal", async () => {
+    panelRead({ [KEY]: [member(M1)] });
+    h.deleteTestRequestsManyCore.mockResolvedValueOnce({ ok: false, error: "Reason is required." });
+    const r = await deleteQueueSelectionAction({
+      testRequestIds: [],
+      panels: [{ visitId: VISIT, groupId: GROUP }],
+      reason: "",
+    });
+    expect(r).toEqual({ ok: false, error: "Reason is required." });
+  });
+
+  it("a panel refused AFTER something was deleted is reported against the panel, not as a whole refusal", async () => {
+    panelRead({ [KEY]: [member(M1)] });
+    h.deleteTestRequestsManyCore
+      .mockImplementationOnce(async (_s: unknown, input: { testRequestIds: string[] }, ctx: { batchId: string }) => ({
+        ok: true, changedIds: input.testRequestIds, skipped: [], batchId: ctx.batchId,
+      }))
+      .mockResolvedValueOnce({ ok: false, error: "Has recorded payments — void them first." });
+    const r = await deleteQueueSelectionAction({
+      testRequestIds: [SINGLE],
+      panels: [{ visitId: VISIT, groupId: GROUP }],
+      reason: "dup",
+    });
+    expect(r).toMatchObject({
+      ok: true,
+      changedIds: [SINGLE],
+      skipped: [{ id: KEY, reason: "Has recorded payments — void them first." }],
+    });
+  });
+
+  it("omits the batch id when nothing was deleted", async () => {
+    panelRead({ [KEY]: [member(M1)] });
+    h.deleteTestRequestsManyCore.mockResolvedValue({
+      ok: true,
+      changedIds: [],
+      skipped: [{ id: M1, reason: "Has recorded payments — void them first." }],
+      batchId: "x",
+    });
+    const r = await deleteQueueSelectionAction({
+      testRequestIds: [],
+      panels: [{ visitId: VISIT, groupId: GROUP }],
+      reason: "dup",
+    });
+    expect(r).toEqual({
+      ok: true,
+      changedIds: [],
+      skipped: [{ id: KEY, reason: "Has recorded payments — void them first." }],
+    });
+    expect(r).not.toHaveProperty("batchId");
   });
 
   it("refuses a role that cannot delete before any read, minting nothing", async () => {
