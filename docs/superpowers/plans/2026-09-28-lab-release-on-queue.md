@@ -1,4 +1,4 @@
-# Lab Release on the Queue — Implementation Plan (rev 2)
+# Lab Release on the Queue — Implementation Plan (rev 4)
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking. Use **Sonnet** subagents.
 
@@ -1269,25 +1269,370 @@ describe("release bell items", () => {
 - True atomic whole-report release would need an RPC with row locks (a migration); the queue and visit page detect and withhold instead.
 - (The visit-page whole-report rule, admin card and email alert moved into this PR as Tasks 18–20.)
 
-## Owner-added scope (2026-09-30) — Tasks 18–20
+## Owner-added scope (2026-09-30) — Tasks 18–20 (rev 4)
 
-The owner moved all three follow-ups INTO this PR. **Before building them, expand each into full TDD steps (same style as Tasks 1–17) and append them here.** They were not in the Codex review; run `/codex-review astra high plan` on this addendum before building Task 18 (behaviour change) and Task 20 (migration).
+The owner moved all three follow-ups INTO this PR and approved the whole-combined-report-or-nothing rule for the visit page too. Build order: Tasks 1–12, 14–20, then Task 13 last (open PR #254 rewrites the same queue list/bulk bar — rebase onto it if it has merged by then and reuse its panel selection key `panel:<visit>:<group>` / `fetchPanelMembers` instead of duplicating), then Tasks 16–17.
+
+**Owner decision 2026-09-30 (privacy, RA 10173):** the staff "Results released" email carries the patient's **first name + last initial**, the visit number and a **count** of results — never test names, result values or contact details (matches the online-booking alert). Staff see the test names in the app, behind sign-in and the audit trail.
+
+### Change to Task 8 (rev 4): the per-visit pipeline is a shared helper
+
+Build Task 8's steps 4–7 (membership reads, fail-closed, `planReportRelease`, `releaseRows`, post-write completeness, notify) **not inline in `releaseTestsAction`** but as one exported function, so the visit page (Task 18) uses the same code path:
+
+```ts
+// src/lib/actions/visits/release-reports.ts
+import "server-only";
+export type VisitReleaseOutcome = {
+  /** Selected ids the write actually released (authoritative RETURNING). */
+  changedIds: string[];
+  /** Pulled-in report members (not selected) the write released. */
+  alsoReleasedIds: string[];
+  /** Selected ids NOT released, with the reason (plan refusal, fail-closed read, DB error, raced). */
+  skipped: SkippedRow[];
+  warnings: string[];
+  /** Released rows that are plain or on a report verified complete — the only rows announced. */
+  announced: ReleasedRow[];
+};
+
+/**
+ * Release `selectedIds` (all on `visitId`, already eligibility-checked by the
+ * caller) with the whole-report rule. Never releases part of a combined
+ * report on purpose; detects and withholds when a race makes it partial.
+ * Notifies the patient (notifyReleased) and schedules the staff alert
+ * (Task 20) for `announced` only.
+ */
+export async function releaseVisitSelection(args: {
+  supabase: SupabaseClient;
+  session: Pick<StaffSession, "user_id" | "role">;
+  visitId: string;
+  selectedIds: readonly string[];
+  medium: ReleaseMedium;
+  auditMeta: Record<string, unknown>;
+}): Promise<VisitReleaseOutcome>
+```
+
+It never returns `{ok:false}`: every failure lands the affected selected ids in `skipped` (read error → "Couldn't check which report these tests belong to — try again."; `releaseRows` error → its translated message for every selected id; too many after expansion → `"Too many tests once whole reports are included — select fewer."` for every selected id). `releaseTestsAction` keeps its contract (steps 1–3, 8–9) and calls this per visit. The fake in-memory Supabase used by Task 8's tests goes in `src/lib/actions/visits/fake-release-db.ts` (a non-test helper module; export `makeFakeReleaseDb(seed)` returning `{ client, rows, links, failNext(table, phase) }`), so Task 18's tests reuse it. The helper module is a test fixture — add it to any guard allowlist that scans `src/lib/actions/**` only if a guard trips, with the justification "test fixture, never imported by app code"; prefer naming/placement that no guard scans if the guard supports an ignore for fixtures (read `write-guards.test.ts` / `query-surfaces.test.ts` scan roots first).
+
+Register `release-reports.ts` in `query-surfaces.test.ts` (`SURFACES` "lab" — it reads `test_requests` through the `result_test_requests` embed only, so check whether the scanner even sees it; register only if it does) and confirm `write-guards.test.ts` stays green.
+
+Task 8's tests stay as written (they exercise the helper through the action); add two direct helper tests: (a) `announced` excludes the rows of an incomplete report; (b) `releaseRows` error → every selected id skipped with the translated message, nothing announced.
+
+### Change to Task 9a (rev 4): outcome text from counts
+
+`releaseOutcomeText` takes `{ changedCount: number; alsoReleasedCount: number; skipped: readonly SkippedRow[]; warnings: readonly string[] }` (not the queue result with id arrays), so the visit page's actions — which return counts — share it. Queue callers pass `{ changedCount: res.changedIds.length, alsoReleasedCount: res.alsoReleasedIds.length, skipped: res.skipped, warnings: res.warnings }`. Its tests use the count form.
+
+---
 
 ### Task 18: Visit page follows the whole-report rule
-- `releaseTestAction`, `releaseSelectedAction` and `releaseAllReadyComponentsAction` (`visits/[id]/actions.ts`) run the selection through `planReportRelease` (Task 7) with the same fail-closed membership reads as Task 8, and notify only for reports verified complete. Release on one combined-report member releases every ready member of that report, or refuses with the same message.
-- Visit page UI: per-row Release on a combined-report member reads "Release report (N tests)"; a mixed report shows the "isn't finished" reason instead of an enabled button; the visit-page bulk bar shows the outcome incl. "Also released…".
-- **Behaviour change** — say so in the guide (Task 16) and the PR body.
-- Tests: extend Task 6's pin test; per action add mixed / deleted-member / pulled-in / fail-closed cases.
+
+**Behaviour change:** today the visit page can release one member of a combined chemistry report, leaving the patient with a report the portal will not serve (it needs every linked test released). After this task, releasing any member of a combined report releases every ready member of that report, or refuses with the same message the queue gives.
+
+**Files:** modify `visits/[id]/actions.ts` (`releaseTestAction`, `releaseSelectedAction`, `releaseAllReadyComponentsAction`), `visits/[id]/release-button.tsx`, `visits/[id]/release-all-button.tsx`, `visits/[id]/bulk-action-bar.tsx`, `visits/[id]/page.tsx`; modify `src/lib/queue/report-release-scope.ts` (+test); create `visits/[id]/release-actions.test.ts`, `visits/[id]/release-button.test.tsx`.
+
+- [ ] **Step 1: Failing pure test — page preflight shares the planner's rule.** Add to `report-release-scope.test.ts`:
+
+```ts
+import { reportReleaseBlock, REPORT_REFUSAL } from "./report-release-scope";
+
+describe("reportReleaseBlock", () => {
+  const mem = (status: string, deleted = false) => ({ status, deleted });
+  it("is null when every live member is ready or released", () => {
+    expect(reportReleaseBlock([mem("ready_for_release"), mem("released")])).toBeNull();
+  });
+  it("refuses a deleted, unreleased member first", () => {
+    expect(reportReleaseBlock([mem("ready_for_release"), mem("ready_for_release", true)])).toBe(REPORT_REFUSAL.deletedMember);
+  });
+  it("counts unfinished live members", () => {
+    expect(reportReleaseBlock([mem("ready_for_release"), mem("result_uploaded"), mem("in_progress")]))
+      .toBe(REPORT_REFUSAL.notFinished(2));
+  });
+  it("ignores a deleted member that was released", () => {
+    expect(reportReleaseBlock([mem("ready_for_release"), mem("released", true)])).toBeNull();
+  });
+});
+```
+
+- [ ] **Step 2:** run → FAIL.
+- [ ] **Step 3: Implement** in `report-release-scope.ts` and make `planReportRelease` use it (its existing tests must stay green — same order: structural, doctor, then this):
+
+```ts
+/** The status/deletion half of the whole-report rule, shared by the planner and the visit page's preflight. */
+export function reportReleaseBlock(members: ReadonlyArray<{ status: string; deleted: boolean }>): string | null {
+  if (members.some((x) => x.deleted && x.status !== "released")) return REPORT_REFUSAL.deletedMember;
+  const unfinished = members.filter((x) => !x.deleted && x.status !== "ready_for_release" && x.status !== "released");
+  return unfinished.length > 0 ? REPORT_REFUSAL.notFinished(unfinished.length) : null;
+}
+```
+
+In `planReportRelease` replace the two inline branches with `else reason = reportReleaseBlock(mems);`. **Commit** `refactor(queue): share the whole-report status rule`.
+
+- [ ] **Step 4: Failing action tests** (`visits/[id]/release-actions.test.ts`; mock `server-only`, `next/cache` (capture `revalidatePath`), `next/headers`, `@/lib/auth/require-staff` (hoisted role), `@/lib/supabase/admin` (for `assertVisitPatientActive` → active), `@/lib/audit/log`, `@/lib/notifications/notify-released`, `@/lib/notifications/notify-released-bulk`, `@/lib/notifications/release-staff-alert` (Task 20; record calls), `@/lib/supabase/server` → `makeFakeReleaseDb(...)`). Seed: visit `v1` paid, live, active patient; chemistry report `r1` = `a`,`b` (both ready), plain row `x` (ready), package header `h` with components `c1` (ready, plain) and `c2` (ready, on report `r1`… use `r2` = `c2`,`d` ready). Cases:
+  1. `releaseTestAction("a","v1","email")` → `{ ok: true, alsoReleasedCount: 1, warnings: [] }`; `a` and `b` released; `notifyResultsReleasedBulk` called once with both ids; alert scheduled once for `v1` with 2 rows.
+  2. Mixed: `b` = `result_uploaded` → `releaseTestAction("a",…)` → `{ ok:false, error: REPORT_REFUSAL.notFinished(1) }`; nothing released; no notify; no alert.
+  3. Deleted unreleased sibling `b` → `{ ok:false, error: REPORT_REFUSAL.deletedMember }`.
+  4. Fail-closed: `failNext("result_test_requests","read")` → `{ ok:false, error:"Couldn't check which report these tests belong to — try again." }`, no write.
+  5. Plain row `x` → released alone, `notifyResultReleased` (single) called, `alsoReleasedCount: 0` — same patient-facing behaviour as before.
+  6. `releaseSelectedAction("v1", ["a","x"], "physical")` → `{ ok:true, count: 2, alsoReleasedCount: 1, skipped: [], warnings: [] }`.
+  7. `releaseSelectedAction` with `a` on a mixed report and `x` plain → `{ ok:true, count:1, alsoReleasedCount:0, skipped:[{ id:"a", reason: REPORT_REFUSAL.notFinished(1) }], warnings:[] }`; `x` released.
+  8. `releaseSelectedAction` where every id is refused → `{ ok:false, error: <first reason> }` (keeps the old "nothing released = error" contract, now with the reason instead of the generic string; the generic `"None of the selected tests are ready to release."` stays for the no-candidates case).
+  9. `releaseAllReadyComponentsAction("h","v1","physical")` → `c1`, `c2` and the pulled-in `d` released; `alsoReleasedCount: 1`; the package header is not written by the action.
+  10. `releaseAllReadyComponentsAction` with `d` at `result_uploaded` → `c1` released, `c2` refused → `{ ok:true, alsoReleasedCount:0, skipped:[{ id:"c2", reason: notFinished(1) }], warnings:[] }`.
+  11. Race: fake `releaseRows` path returns only `a` of `a`,`b` (use the fake's `failNext("test_requests","update-partial")`) → `{ ok:true, …, warnings:[<the "couldn't confirm" / "changed while releasing" text from Task 8>] }`, no notify, no alert.
+  12. Every action: `revalidatePath` args equal Task 4's `revalidateReleaseSurfaces("v1")` list, on success AND on a refusal after the visit check.
+
+- [ ] **Step 5:** run → FAIL.
+- [ ] **Step 6: Implement.** New result types in `actions.ts`:
+
+```ts
+export type ReleaseResult =
+  | { ok: true; alsoReleasedCount: number; skipped: SkippedRow[]; warnings: string[] }
+  | { ok: false; error: string };
+export type BulkSelectionResult =
+  | { ok: true; count: number; alsoReleasedCount: number; skipped: SkippedRow[]; warnings: string[] }
+  | { ok: false; error: string };
+```
+
+(`releasePackageHeaderAction` and the undo/mark-done actions keep returning `{ ok: true }`-compatible shapes — give them a separate `SimpleResult = { ok: true } | { ok: false; error: string }` type and update their imports/callers; do not widen them.)
+
+- `releaseTestAction`: keep medium check, `requireActiveStaff`, `refuseIfVisitDeleted`, the candidate read and its two messages (not ready / outside sections — reuse `RELEASE_REFUSAL.notReady` / `.section`, identical text). Replace the write/audit/notify with:
+
+```ts
+const out = await releaseVisitSelection({
+  supabase, session, visitId, selectedIds: [testRequestId], medium: releaseMedium,
+  auditMeta: { source: "visit_page", bulk: false, selection: false },
+});
+revalidateReleaseSurfaces(visitId);
+if (out.changedIds.length === 0) {
+  return { ok: false, error: out.skipped[0]?.reason ?? RELEASE_REFUSAL.notReady };
+}
+return { ok: true, alsoReleasedCount: out.alsoReleasedIds.length, skipped: out.skipped, warnings: out.warnings };
+```
+
+- `releaseSelectedAction`: keep input checks and the "None of the selected tests are ready to release." early return when the section-scoped candidate read is empty (move that read in front — it is the existing read; `releaseRows` repeats it, which is fine). Then `releaseVisitSelection({ …, selectedIds: scopedIds, auditMeta: { source: "visit_page", bulk: true, selection: true } })`; ids the caller sent but that were not candidates go into `skipped` with `RELEASE_REFUSAL.notReady`. Return per case 6–8.
+- `releaseAllReadyComponentsAction`: keep the header check and the section-scoped ready-components read (drop the `scopedIds === null` branch — always read the ids, so `releaseVisitSelection` gets an explicit list); if empty → existing "No components are ready to release."; else `releaseVisitSelection({ …, selectedIds: componentIds, auditMeta: { source: "visit_page", bulk: true, package_header_id: headerId } })`; nothing changed → `{ ok:false, error: first reason }`.
+- All three: `revalidateReleaseSurfaces(visitId)` on every path after the visit check (case 12). Remove the now-unused inline notify/audit code; `notifyResultReleased` / `notifyResultsReleasedBulk` imports leave this file if nothing else uses them.
+
+- [ ] **Step 7: Page preflight + UI.** In `page.tsx`, next to `reportScopeByTrId` (~L355), build `reportBlockByTrId: Record<string, string>` from the page's own rows: for each report scope, `reportReleaseBlock(scope.memberIds.map(id => ({ status: statusById.get(id) ?? "unknown", deleted: false })))`, and if `sharedReportIds` shows members off this visit's live list (`fetchSharedReportTestIds`), treat the report as blocked with `REPORT_REFUSAL.deletedMember` only when that off-list member is known deleted-and-unreleased — otherwise leave it to the server (display only; the action is the guard). Pass to `TestAction`: `releaseLabel` = `reportScope ? \`Release report (${reportScope.memberIds.length} tests)\` : "Release"` and `releaseBlock = reportBlockByTrId[t.id] ?? null`.
+  - `ReleaseButton` gets `label?: string` and `blockReason?: string | null`: disabled when `blockReason`, which is shown under the button in the same style as `QueueReleaseButton`'s block text. Outcomes go through `useReleaseOutcome()?.show(releaseOutcomeText({ changedCount: 1, alsoReleasedCount: res.alsoReleasedCount, skipped: res.skipped, warnings: res.warnings }))` (count form, see the Task 9a change). `{ok:false}` keeps `alert(result.error)` (existing visit-page pattern) when no provider is mounted, else `show(error)`.
+  - Mount `<ReleaseOutcomeProvider>` (Task 9a) around the visit page's main content.
+  - Rows whose `reportBlockByTrId` is set: render `RowSelectCheckbox eligibility="release"` only when not blocked (~L1182 and the standalone-row equivalent), so bulk can't select a row the page already knows is refused.
+  - `ReleaseAllButton`: same outcome reporting.
+  - `BulkActionBar`: add a release-expansion preview mirroring the existing violet undo banner (~L99-110): from `reportScopeByTrId`, count ready members of touched reports not in `releaseIds` (pass a `readyIds: string[]` prop from the page) → `"Releasing these also releases N other test(s) on the same combined report."`. Replace the "Released X of Y selected — the rest were already handled…" alert with the provider notice built from the result (count, also-released, each skipped reason, warnings).
+- [ ] **Step 8: DOM test** (`release-button.test.tsx`, jsdom; mock the actions module): blocked → disabled + reason text; label "Release report (3 tests)" rendered; ok result with `alsoReleasedCount: 2` → provider notice contains "Also released 2 other tests on the same combined report." after the button unmounts.
+- [ ] **Step 9:** `npm test && npm run typecheck && npm run lint`. **Commit** `feat(visits): the visit page releases a combined report whole or not at all`.
+
+---
 
 ### Task 19: Admin dashboard "Ready for release" card
-- `cards.ts`: `{ id: "admin.ready_for_release", label: "Ready for release", roles: ["admin"], group: "operations" }`.
-- `admin-dashboard.tsx`: Task 14's lab query with no section filter, plus a second count of those on visits NOT money-settled, shown in the hint ("N waiting on payment"); href `/staff/queue?filter=pending_release`. `<StatCard>` only (route-name guard).
 
-### Task 20: Email alert to reception when results are released (MIGRATION)
-- Mirror 0157 `online_booking`: `git fetch && npm run claim -- migration`; the migration recreates `staff_alert_settings_key_check` with `result_released`, seeds its settings row, and ends with a `do $$ … $$` post-check. Add the key to `STAFF_ALERT_KEYS` / `STAFF_ALERTS` in `src/lib/notifications/staff-alerts.ts` (label "Results released", default roles `["reception"]`, description "When the lab releases results, so the counter can print them for a waiting patient"); update `staff-alerts.test.ts`.
-- Sender `src/lib/notifications/release-staff-alert.ts` + content builder (+ tests): ONE email per release action per visit (never per test) with patient name, visit #, test names and a link to `/staff/queue?filter=released_today`; recipients via `resolveStaffAlertRecipients("result_released", admin)`; `audit()` the send; run in `after()` so it never delays the release; skip sample visits; send only for verified-released rows. Call it from every release path (queue action and the visit-page actions).
-- Default ON for reception like the other alerts; adjustable in Admin Tools › Email Alerts.
-- **Prod:** push the migration yourself right before merge (`supabase db push --dry-run`, then push, from this worktree rebased on current main; verify by object). The app must not reach prod before the migration (the CHECK rejects the new key).
+**Files:** `src/lib/dashboards/cards.ts` (+ `cards.test.ts` if it pins ids), `_dashboards/admin-dashboard.tsx`; create `src/lib/dashboards/ready-for-release.ts` (+test).
+
+- [ ] **Step 1: Failing pure test**
+
+```ts
+// src/lib/dashboards/ready-for-release.test.ts
+import { describe, expect, it } from "vitest";
+import { readyForReleaseHint } from "./ready-for-release";
+
+describe("readyForReleaseHint", () => {
+  it("names how many wait on payment", () => {
+    expect(readyForReleaseHint(5, 3)).toBe("2 waiting on payment");
+    expect(readyForReleaseHint(1, 0)).toBe("1 waiting on payment");
+  });
+  it("falls back to the plain hint when all are paid or none wait", () => {
+    expect(readyForReleaseHint(4, 4)).toBe("All dates — finished, waiting to go to the patient");
+    expect(readyForReleaseHint(0, 0)).toBe("All dates — finished, waiting to go to the patient");
+  });
+  it("never shows a negative count if the two reads disagree", () => {
+    expect(readyForReleaseHint(2, 3)).toBe("All dates — finished, waiting to go to the patient");
+  });
+});
+```
+
+- [ ] **Step 2:** FAIL. **Step 3: Implement**
+
+```ts
+// src/lib/dashboards/ready-for-release.ts
+// Hint for the admin "Ready for release" card. `total` = every finished lab
+// result waiting to go out; `settled` = those on a paid / waived / HMO visit.
+// The difference is what's stuck on payment (the release trigger, 0133).
+export function readyForReleaseHint(total: number, settled: number): string {
+  const waiting = total - settled;
+  return waiting > 0 ? `${waiting} waiting on payment` : "All dates — finished, waiting to go to the patient";
+}
+```
+
+- [ ] **Step 4: Registry** — `cards.ts`: `{ id: "admin.ready_for_release", label: "Ready for release", roles: ["admin"], group: "operations" }` (update `cards.test.ts` if it pins the list).
+- [ ] **Step 5: Queries** — in `loadAdminStats`, two tuple elements, both `show("admin.ready_for_release") ? … : SKIP_COUNT`:
+
+```ts
+// Finished lab results waiting to go out, all sections (the Pending release
+// tab as an admin sees it) — and how many of them are on a settled visit.
+supabase
+  .from("test_requests")
+  .select("id, services!inner ( kind ), visits!inner ( id )", { count: "exact", head: true })
+  .eq("status", "ready_for_release")
+  .eq("is_package_header", false)
+  .not("services.kind", "in", DOCTOR_KINDS_PG_LIST)
+  .is("deleted_at", null)
+  .is("visits.deleted_at", null),
+// …same chain plus:
+  .or(MONEY_SETTLED_VISITS_OR, { foreignTable: "visits" }),
+```
+
+`namedResults` gets `ready_for_release` and `ready_for_release_settled`; `stats` gets `readyForRelease`, `readyForReleaseSettled`, `readyForReleaseError: Boolean(a.error || b.error)`.
+- [ ] **Step 6: Render** in the Operations grid (add to `showOperations`):
+
+```tsx
+{show("admin.ready_for_release") && (
+  <StatCard label="Ready for release" value={stats.readyForRelease}
+    hint={readyForReleaseHint(stats.readyForRelease, stats.readyForReleaseSettled)}
+    href="/staff/queue?filter=pending_release"
+    accent={stats.readyForRelease > 0 ? "warn" : "default"} error={stats.readyForReleaseError} />
+)}
+```
+
+- [ ] **Step 7:** `npm test` (route-name guard, `query-surfaces`, cards) + typecheck + lint. **Commit** `feat(dashboards): admin Ready for release card with the payment hint`.
+
+---
+
+### Task 20: Email alert to reception when results are released (MIGRATION 0192)
+
+Migration number **0192 is claimed** (`npm run claim -- list`). 0191 belongs to open PR #254.
+
+**Files:** create `supabase/migrations/0192_result_released_staff_alert.sql`, `src/lib/notifications/release-staff-alert-content.ts` (+test), `src/lib/notifications/release-staff-alert.ts` (+test); modify `src/lib/notifications/staff-alerts.ts`, `staff-alerts.test.ts` (only if a case needs updating), `src/lib/actions/visits/release-reports.ts` (schedule the alert), `src/types/database.ts` (only if `npm run db:types` changes it — a CHECK change normally doesn't).
+
+- [ ] **Step 1: Failing registry test.** Add `"result_released"` to the expected alert set by adding the key to `STAFF_ALERT_KEYS` first → `staff-alerts.test.ts` fails ("CHECK list matches" and "every key is seeded") until the migration exists. That is the failing test.
+- [ ] **Step 2: Registry entry** (`staff-alerts.ts`):
+
+```ts
+result_released: {
+  key: "result_released",
+  label: "Results released",
+  description:
+    "Sent when the lab releases results, so the counter can print them for a waiting patient. One email per release per visit. It shows the patient's first name and last initial, the visit number and how many results — never which tests, the results themselves, or contact details.",
+  defaultRoles: ["reception"],
+  sentAction: "test_request.released.staff_alert_sent",
+},
+```
+
+- [ ] **Step 3: Migration** (mirror 0157/0186 exactly; the test's regex needs the literal `staff_alert_settings_key_check check (alert_key in (…))` with no nested parentheses; list ALL seven keys):
+
+```sql
+-- 0192 — Email Alerts: "Results released" (lab-release-on-queue, Task 20).
+-- Reception can be emailed when the lab releases results, so the counter can
+-- print them for a waiting patient. Content is name + visit # + a count only
+-- (owner decision 2026-09-30, RA 10173) — see release-staff-alert-content.ts.
+-- Additive: widens the key CHECK and seeds the settings row (enabled by
+-- default, like every alert). Recipients default to reception in the app
+-- registry (STAFF_ALERTS) until an admin changes them in Email Alerts.
+
+alter table public.staff_alert_settings
+  drop constraint if exists staff_alert_settings_key_check;
+
+alter table public.staff_alert_settings
+  add constraint staff_alert_settings_key_check
+    check (alert_key in ('website_message', 'template_health', 'dedup_digest', 'online_booking', 'released_payment_removed', 'stale_bookings', 'result_released'));
+
+insert into public.staff_alert_settings (alert_key)
+values ('result_released')
+on conflict (alert_key) do nothing;
+
+do $$
+begin
+  if not exists (select 1 from public.staff_alert_settings where alert_key = 'result_released') then
+    raise exception '0192 post-check: the result_released alert row is missing';
+  end if;
+end;
+$$;
+```
+
+Before writing it, re-read the newest migration that touches `staff_alert_settings_key_check` on `origin/main` (0186 today) and copy its key list — if another branch has since merged a new key, include it too. Apply locally with `supabase migration up` (never `db reset` the shared local DB), then `npx vitest run src/lib/notifications/staff-alerts.test.ts` → PASS.
+- [ ] **Step 4: Failing content test**
+
+```ts
+// src/lib/notifications/release-staff-alert-content.test.ts
+import { describe, expect, it } from "vitest";
+import { buildReleaseAlertEmail, patientShortName } from "./release-staff-alert-content";
+
+const base = { firstName: "Ian", lastName: "Jamila", visitNumber: "0044", count: 3,
+  queueUrl: "https://drmed.ph/staff/queue?filter=released_today" };
+
+describe("release staff alert email", () => {
+  it("shortens the name to first name + last initial", () => {
+    expect(patientShortName("Ian", "Jamila")).toBe("Ian J.");
+    expect(patientShortName("Ian", null)).toBe("Ian");
+    expect(patientShortName(null, "Jamila")).toBe("A patient");
+  });
+  it("says how many results, for whom, on which visit", () => {
+    const e = buildReleaseAlertEmail(base);
+    expect(e.subject).toBe("3 results released for Ian J. — visit #0044");
+    expect(e.text).toContain("https://drmed.ph/staff/queue?filter=released_today");
+    expect(buildReleaseAlertEmail({ ...base, count: 1 }).subject).toBe("1 result released for Ian J. — visit #0044");
+  });
+  it("never carries the full surname, test names or contact details", () => {
+    const e = buildReleaseAlertEmail(base);
+    for (const part of [e.subject, e.text, e.html]) expect(part).not.toContain("Jamila");
+    // The input type has no test-name / phone / email fields — structural rule.
+  });
+  it("escapes a hostile first name in the HTML and keeps the subject one line", () => {
+    const e = buildReleaseAlertEmail({ ...base, firstName: "<b>x</b>\nBcc: y" });
+    expect(e.html).not.toContain("<b>x</b>");
+    expect(e.subject).not.toMatch(/[\r\n]/);
+  });
+  it("says why the recipient gets it and where to change it", () => {
+    expect(buildReleaseAlertEmail(base).text).toContain("Admin Tools › Email Alerts");
+  });
+});
+```
+
+- [ ] **Step 5:** FAIL. **Step 6: Implement** `release-staff-alert-content.ts` modelled on `src/lib/appointments/booking-alert-content.ts` (read it first; same `renderEmailShell` / `emailParagraph` / `emailDetailBox` / `emailButton(label, url, "cyan")` / `escapeHtml` helpers from `@/lib/notifications/branded-email`; strip CR/LF from anything in the subject). Input type `{ firstName: string | null; lastName: string | null; visitNumber: string; count: number; queueUrl: string }` — nothing else. Button "Open Released today". Received-note: `You're receiving this because you're switched on for the "Results released" alert. An admin can change who gets it under Admin Tools › Email Alerts.`
+- [ ] **Step 7: Failing sender test** (`release-staff-alert.test.ts`; mock `server-only`, `next/server` (`after: (fn) => queued.push(fn)`), `@/lib/supabase/admin` (visit row: `visit_number`, `is_sample`, `patients ( first_name, last_name )`), `./staff-alert-recipients`, `./email` (`sendEmail` records calls), `@/lib/audit/log`, `@/lib/observability/report-error`):
+  1. `scheduleReleaseStaffAlert("v1", 3)` queues exactly one `after` callback and does no I/O until it runs.
+  2. Running it with recipients `["a@x","b@x"]` → `sendEmail` twice with the built subject; one `audit` row: `action: "test_request.released.staff_alert_sent"`, `actor_type: "system"`, `resource_type: "visit"`, `resource_id: "v1"`, `metadata: { recipients: 2, sent: 2, failed: 0, count: 3 }` (no addresses).
+  3. Sample visit (`is_sample: true`) → no email; audit with `skipped: "sample visit"`.
+  4. `count === 0` → nothing queued.
+  5. No recipients → no email; audit `skipped` reason as in booking-alert (`turned off in Email Alerts` / `nobody is switched on…`).
+  6. A thrown visit read → `reportError` called, nothing rethrown.
+- [ ] **Step 8:** FAIL. **Step 9: Implement** `release-staff-alert.ts` modelled on `src/lib/appointments/booking-alert.ts` (read it first):
+
+```ts
+import "server-only";
+import { after } from "next/server";
+// …createAdminClient, resolveStaffAlertRecipients, sendEmail, audit, reportError, SITE, buildReleaseAlertEmail
+
+/**
+ * Queue the reception "Results released" email for one release action on one
+ * visit. Runs after the response (never delays the release), never throws.
+ * `count` = rows actually announced (verified released: plain rows, or a
+ * combined report confirmed complete) — callers pass releaseVisitSelection's
+ * `announced.length`, never the selection size.
+ */
+export function scheduleReleaseStaffAlert(visitId: string, count: number): void {
+  if (count <= 0) return;
+  after(() => sendReleaseStaffAlert(visitId, count));
+}
+```
+
+`sendReleaseStaffAlert`: admin read of `visits` (`visit_number, is_sample, patients ( first_name, last_name )`, `.eq("id", visitId).maybeSingle()` — history read, mark it so the `patients` inventory / query-surfaces guards accept it: read those guards' rules and classify the read; it is a single known visit already proven live by the caller); skip sample; resolve recipients; build; send sequentially; one audit row; catch-all → `reportError({ scope: "notify/result-released-staff-alert", … })`. Register the file in whichever inventory the guards require (`query-surfaces` `LIFECYCLES` for the `visits` read — "spans deleted" is wrong here, use the live declaration with the reason "caller proved the visit live"; `patient-senders.test.ts` if it scans staff senders — it documents that staff alerts are covered there).
+- [ ] **Step 10: Wire it.** In `releaseVisitSelection` (the one place every release path goes through), after notifying: `scheduleReleaseStaffAlert(visitId, out.announced.length)`. Nothing else calls it (the package-header release and "Mark done" are not lab result releases). Extend the Task 8 helper tests and Task 18 action tests (already listed there) to assert one scheduled alert per visit with the announced count, and none for a refused/incomplete report.
+- [ ] **Step 11:** `npm test && npm run typecheck && npm run lint`; `npm run db:types` (expect no diff). **Commit** `feat(alerts): email reception when results are released (0192)`.
+- [ ] **Prod (right before merge, not during the build):** from this worktree rebased on current `origin/main`, with `supabase/.temp/{project-ref,linked-project.json,pooler-url}` copied in: MCP `list_migrations` to confirm 0192 is free on prod and whether 0191 (#254) is applied; `supabase db push --dry-run` (add `--include-all` only if 0191 is still unapplied and genuinely must go first — it must NOT: 0191 is #254's; if 0191 is unapplied, the dry-run must list ONLY 0192, else stop); push; verify by object: `select pg_get_constraintdef(oid) from pg_constraint where conname = 'staff_alert_settings_key_check'` contains `result_released`, and `select enabled from staff_alert_settings where alert_key = 'result_released'` → `true`. The app must not deploy before this (the CHECK would reject the new key's settings writes and the resolver would fail open to defaults).
+
+---
+
+### Task 17 additions (rev 4) — local checks for Tasks 18–20
+
+11. **Visit page, whole report (View as Medical Tech):** a chemistry report with two ready members → each row reads "Release report (2 tests)"; clicking one releases both; notice says "Also released 1 other test on the same combined report."; the portal shows the PDF. Mixed report (one member `result_uploaded`) → both rows show the "isn't finished" reason, no checkbox, button disabled; a forged `releaseTestAction` call on the ready member returns the same refusal and releases nothing. Package "Release all ready" with a component on a mixed report → the others release, the refused one is named in the notice.
+12. **Visit page bulk:** select one member of a two-member ready report + a plain row → the violet preview says it also releases 1 other test; outcome counts right.
+13. **Admin dashboard (as admin, not View-as):** "Ready for release" count equals the Pending release tab's total as admin; put one ready result on an unpaid visit → hint "1 waiting on payment"; the card is hideable in dashboard settings.
+14. **Email alert:** with `NOTIFICATIONS_LIVE` unset locally, release as medtech → one `test_request.released.staff_alert_sent` audit row per visit per release action with `skipped` = the email-skipped reason and `count` right; a bulk release across two visits → two rows; a sample visit → `skipped: "sample visit"`; a refused mixed report → no row. Admin Tools › Email Alerts lists "Results released" with reception on by default; turning it off → next release audits `skipped: "turned off in Email Alerts"`. Read one built email (log `buildReleaseAlertEmail` output in a scratch test) — no surname, no test names.
+
+### Task 16 additions (rev 4)
+
+- Guide: visit page — "Releasing one test on a combined report (for example a chemistry panel) now releases every finished test on that report together; if any test on it is still waiting for a result or sign-off, the report can't be released yet and the page says why." (call it out as a change in the "What's new" / changelog block the guide keeps).
+- Guide: admin dashboard "Ready for release" card and its "waiting on payment" hint; Admin Tools › Email Alerts gains "Results released" (reception by default; name + visit # + count only).
+- PR body: a **Behaviour change** section for Task 18 and a **Migration 0192** section (push order: right before merge).
 
 ## Skills to update in the same PR
 
@@ -1297,3 +1642,4 @@ The owner moved all three follow-ups INTO this PR. **Before building them, expan
 
 - **rev 2 (Codex Astra high review, 2026-09-28):** P1 whole-report release could release part of a mixed report → added `planReportRelease` (full membership incl. status/deleted/doctor), completeness check + withheld notice; P2 reread attribution → `releaseRows` core returns RETURNING ids; P2 panels not bulk-selectable → panel selection entries with weight + flattening; P2 consolidated page lacked lifecycle selects/types → specified; P2 typed revalidation missed route groups → `/(staff)/staff/(dashboard)/queue` + untyped `/staff`; P3 bell identity (event key + unique item ids), shared DB/app refusal wording (`release-messages.ts`), delivery copy corrected; added validation cases (forged calls, consent withdrawal, waived/HMO, inactive, limits, Manila midnight) and a rollback note.
 - **rev 3 (Codex recheck, 2026-09-28 — no third Codex round, per the review rule):** P1 fail-closed membership reads before the write, and a post-write verification that requires the full known membership (else no notice + warning); completeness described as observed-at-that-moment. P2 outcome notice moved to a page-level `ReleaseOutcomeProvider` (Task 9a) that survives the refresh and includes "Also released…". P2 guard integration: core moved to `src/lib/actions/visits/release-rows.ts` (write-guards scanner coverage), self-guards the active patient, registered in `SURFACES`/`LIFECYCLES`; dropped the inapplicable `DERIVED_ROW_SETS` exemption. P3 rollback note: sent notices / viewed copies can't be recalled. Added fail-closed and same-user-concurrency tests; skills-update step.
+- **rev 4 (2026-09-30, owner scope):** Tasks 18–20 expanded to full TDD steps; Task 8's per-visit pipeline becomes the shared `releaseVisitSelection` helper (visit page + queue); `releaseOutcomeText` takes counts; staff release email carries first name + last initial, visit # and a count only (owner privacy decision); migration 0192 claimed; build order puts Task 13 last because open PR #254 rewrites the queue list.
