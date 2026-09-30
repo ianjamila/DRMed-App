@@ -40,7 +40,29 @@ export function translatePgError(err: PgError): string {
       if (/payment_status/i.test(m)) {
         return RELEASE_BLOCKED_UNPAID;
       }
-      return "Invalid value: that combination is not allowed by the schema.";
+      // A genuine table CHECK constraint (e.g. employee_loans_outstanding_nonneg,
+      // 0044) fails with Postgres's own generic "... violates check constraint
+      // <name> ..." wording — there is nothing case-specific to say, and the
+      // constraint's internal name is not for staff, so keep the generic
+      // message. A hand-written plpgsql `raise ... using errcode = '23514'` /
+      // `'check_violation'` (0001/0133's payment gate and 0086/0088's consent
+      // gate above; 0184's "a correction record stays on its result and
+      // test", "a critical alert stays on its result and test", "a payment
+      // correction stays linked to the payment it corrects", "a critical
+      // alert's patient must match its test's patient", "a result can only
+      // hold one patient's tests", "an alert can only be withdrawn by a
+      // correction of its own result") carries neither marker and IS written
+      // to be read by staff — pass it through instead of hiding it behind the
+      // generic line. (`err.constraint` would be another such marker, but the
+      // PostgrestError shape this app receives never carries one — only
+      // message/details/hint/code — so only the message/details text can be
+      // checked here.)
+      const isRealConstraintViolation =
+        /violates check constraint/i.test(m) || /violates check constraint/i.test(err.details ?? "");
+      if (isRealConstraintViolation || !m) {
+        return "Invalid value: that combination is not allowed by the schema.";
+      }
+      return m;
     }
     case "23503":
       // foreign_key_violation — caller referenced a row that doesn't exist or is locked from deletion.
@@ -232,10 +254,25 @@ export function translatePgError(err: PgError): string {
       // waive_visit_balance refusals (not admin, HMO, already waived/paid,
       // mixed provenance, total out of step, gift code in flight …).
       return err.message ?? "This visit's balance cannot be waived.";
+    // Patient lifecycle locks (0184). P0072: the record moved to another
+    // patient (or the patient was deleted/merged) while this save waited for
+    // the lock; the transaction rolled back whole, so trying again is safe —
+    // callers retry once automatically (src/lib/patients/lifecycle-retry.ts).
+    case "P0072":
+      return "This patient's records changed while you were saving. Please try again.";
+    // create_visit_encounter (0184): a refusal the SQL words for reception
+    // (bad total, malformed package, wrong role) — pass it through.
+    case "P0073":
+      return err.message
+        ? `${err.message.charAt(0).toUpperCase()}${err.message.slice(1)}.`
+        : "The visit could not be created. Please try again.";
+    // A deadlock victim / serialization failure: nothing was saved. Covers
+    // both 0183's waived-balance protocol and 0184's patient lifecycle locks
+    // — both accept a rare conflict and let Postgres abort one side, and the
+    // caller (or lifecycle-retry.ts) retries once, so the wording stays generic.
     case "40P01":
-      // deadlock_detected — the 0183 serialization protocol accepts one rare
-      // cycle (waiver vs. an undo cascade) and lets Postgres abort one side.
-      return "Something else changed this visit at the same moment. Try again.";
+    case "40001":
+      return "Another change to the same records was being saved at the same moment. Please try again.";
     // 0187: view_as_transition — the caller is not an active admin.
     case "P0074":
       return "Only an admin can view the app as another role.";

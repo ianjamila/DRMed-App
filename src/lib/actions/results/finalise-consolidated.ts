@@ -25,7 +25,9 @@ import {
   type ValueRow,
 } from "@/lib/results/value-rows";
 import { commitResultFinalise } from "@/lib/actions/results/result-edit-core";
-import { announceFinaliseRelease } from "@/lib/actions/results/finalise-release-alert";
+import { releaseFinalisedReport } from "@/lib/actions/results/finalise-release";
+import type { FinaliseDeferral } from "@/lib/actions/results/finalise-release-outcome";
+import { createLinkedResult } from "@/lib/actions/results/create-linked";
 
 export interface FinaliseInput {
   visitId: string;
@@ -44,7 +46,9 @@ export type FinaliseResult =
       data: {
         result_id: string;
         releaseDeferred: boolean;
-        deferredReason: "payment" | "consent" | "signoff" | null;
+        deferredReason: FinaliseDeferral | null;
+        /** Shown to the medtech: an "other" deferral's reason, or why a released report's patient wasn't notified. */
+        releaseNote: string | null;
       };
     }
   | { ok: false; error: string };
@@ -281,35 +285,14 @@ export async function finaliseConsolidatedReport(
     // fileless test. finalised_at is written for real in step 8, in the
     // SAME update as storage_path — only once the PDF is safely stored —
     // which is also when the flip is meant to happen.
-    const { data: resultsRow, error: rErr } = await admin
-      .from("results")
-      .insert({
-        report_group_id: input.groupId,
-        finalised_by_staff_id: session.user_id,
-        generation_kind: "structured",
-        finalised_at: null,
-        uploaded_by: session.user_id,
-        storage_path: null,
-      })
-      .select("id")
-      .single();
-    if (rErr || !resultsRow) {
-      return {
-        ok: false,
-        error: translatePgError(
-          rErr ?? { message: "insert results returned no row" },
-        ),
-      };
-    }
-    resultId = resultsRow.id;
-
-    const { error: jErr } = await admin.from("result_test_requests").insert(
-      input.testRequestIds.map((trid) => ({
-        result_id: resultId,
-        test_request_id: trid,
-      })),
-    );
-    if (jErr) return { ok: false, error: translatePgError(jErr) };
+    const created = await createLinkedResult(admin, {
+      actor: session.user_id,
+      testRequestIds: input.testRequestIds,
+      kind: "structured",
+      reportGroupId: input.groupId,
+    });
+    if (!created.ok) return { ok: false, error: created.error };
+    resultId = created.resultId;
   }
 
   // ---------------------------------------------------------------------
@@ -430,69 +413,33 @@ export async function finaliseConsolidatedReport(
   }
 
   // ---------------------------------------------------------------------
-  // 9) Release every linked test_request that is ready to (N4 + M13).
+  // 9) Release the report — WHOLE or not at all — through the same path as
+  // the lab queue and the visit page (see finalise-release.ts).
   //
-  // The status filter (`.eq("status", "ready_for_release")`) is the M13
-  // guard: a test whose service requires pathologist sign-off was left at
-  // 'result_uploaded' by the trigger fired in step 8 (never
-  // 'ready_for_release') and is therefore excluded from this UPDATE's
-  // WHERE clause entirely —
-  // it can never be force-released from here. The shared consolidated PDF
-  // stays withheld from the portal until every linked test reaches
-  // 'released' (see N6 in the portal actions).
+  // Every member of this report is in input.testRequestIds (step 1 + the
+  // resume check), so the release sees the whole report. A member whose
+  // service needs pathologist sign-off was left at 'result_uploaded' by the
+  // step-8 trigger; then NOTHING is released — never the ready members alone,
+  // which used to leave the patient with a report the portal would not open
+  // (it serves the PDF only once every member is released). The sign-off,
+  // then a release from the queue, finishes it later.
   //
-  // The payment-gating trigger (enforce_payment_before_release) fires on
-  // the rows that DO match and will block the whole statement if
-  // visits.payment_status/hmo_provider_id isn't settled (0133) — since
-  // every row here shares one visit, that's a uniform "this visit's money
-  // isn't settled yet" outcome. Same for the consent gate (ships OFF).
-  // Treat both as soft outcomes (releaseDeferred) rather than hard
-  // failures: the result is still finalised and reception can release
-  // later from the visit page.
-  //
-  // Release metadata (released_at / released_by / release_medium) mirrors
-  // exactly what releaseTestAction / markDoctorLineDoneAction write for
-  // the single-test path (N4) — without it these tests would vanish from
-  // "Released today", dated reports, and HMO movement. There is no
-  // release-medium picker on this form, so "other" is used, matching the
-  // convention markDoctorLineDoneAction already established for
-  // non-interactive releases.
+  // The payment gate (enforce_payment_before_release, 0133) and the consent
+  // gate (ships OFF) still fire on the write and come back as a deferral:
+  // the result stays finalised and is released once they're settled. The
+  // shared path also sends the patient's "result ready" notice and
+  // reception's alert — only for a report verified fully released — and
+  // audits each released line.
   // ---------------------------------------------------------------------
-  const releaseNow = new Date().toISOString();
-  const { data: releasedRows, error: relErr } = await admin
-    .from("test_requests")
-    .update({
-      status: "released",
-      released_at: releaseNow,
-      released_by: session.user_id,
-      release_medium: "other",
-    })
-    .in("id", input.testRequestIds)
-    .eq("status", "ready_for_release")
-    .select("id");
-
-  let releaseDeferred = false;
-  let deferredReason: "payment" | "consent" | "signoff" | null = null;
-  if (relErr) {
-    const code = (relErr as { code?: string }).code;
-    const msg = relErr.message ?? "";
-    if (code === "23514" && /payment_status/i.test(msg)) {
-      releaseDeferred = true;
-      deferredReason = "payment";
-    } else if (code === "23514" && /consent/i.test(msg)) {
-      releaseDeferred = true;
-      deferredReason = "consent";
-    } else {
-      return { ok: false, error: translatePgError(relErr) };
-    }
-  } else if ((releasedRows ?? []).length < input.testRequestIds.length) {
-    // No error, but not every id matched the status filter — the ids that
-    // didn't were left at 'result_uploaded' by the sign-off gate in step 8
-    // (a payment/consent failure would have raised for the whole
-    // statement above, since every row shares one visit).
-    releaseDeferred = true;
-    deferredReason = "signoff";
-  }
+  const { releaseDeferred, deferredReason, releaseNote, outcome: releaseOut } =
+    await releaseFinalisedReport({
+      supabase: admin,
+      session,
+      visitId: input.visitId,
+      resultId,
+      testRequestIds: input.testRequestIds,
+    });
+  const releasedIds = releaseOut ? [...releaseOut.changedIds, ...releaseOut.alsoReleasedIds] : [];
 
   // 10) Audit.
   await audit({
@@ -509,11 +456,12 @@ export async function finaliseConsolidatedReport(
       storage_path: committed.data.storagePath,
       release_deferred: releaseDeferred,
       deferred_reason: deferredReason,
+      release_note: releaseNote,
     },
     ip_address: ip,
     user_agent: ua,
   });
-  if ((releasedRows ?? []).length > 0) {
+  if (releasedIds.length > 0) {
     await audit({
       actor_id: session.user_id,
       actor_type: "staff",
@@ -521,28 +469,19 @@ export async function finaliseConsolidatedReport(
       resource_type: "result",
       resource_id: resultId,
       metadata: {
-        test_request_ids: (releasedRows ?? []).map((r) => r.id),
+        test_request_ids: releasedIds,
         report_group_id: input.groupId,
         visit_id: input.visitId,
         release_medium: "other",
+        patient_notified: (releaseOut?.announced.length ?? 0) > 0,
       },
       ip_address: ip,
       user_agent: ua,
     });
   }
 
-  // Tell reception only when the whole report went out in this one write (a
-  // deferral or sign-off partial is announced later by the release that
-  // finishes it) — see finalise-release-alert.ts.
-  announceFinaliseRelease({
-    visitId: input.visitId,
-    releaseDeferred,
-    requestedIds: input.testRequestIds,
-    releasedCount: (releasedRows ?? []).length,
-  });
-
   return {
     ok: true,
-    data: { result_id: resultId, releaseDeferred, deferredReason },
+    data: { result_id: resultId, releaseDeferred, deferredReason, releaseNote },
   };
 }

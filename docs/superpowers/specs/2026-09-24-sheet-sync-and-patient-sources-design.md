@@ -52,7 +52,7 @@ conversion those dashboards (`v_ops_daily_*`, `v_daily_revenue_by_service`,
 - `DOCTOR CONSULTATION`: 9,047 named rows to 2026-09-19 (lags lab); ~960 ≥ cutover; only 6
   rows carry a control number, none a test number; 5 rows dated `Aug 30, 3034`. Col 11
   FINAL PRICE is the doctor's whole fee, col 12 CLINIC FEE the clinic's share (the app's
-  consult `final_price_php` is the clinic fee). 204 consult lines since cutover are blank/₱0.
+  consult `final_price_php` is the doctor's WHOLE fee; the clinic's share is `clinic_fee_php` — corrected 2026-09-30, Patient Sources reads `coalesce(clinic_fee_php, final_price_php)`). 204 consult lines since cutover are blank/₱0.
   The payment column also holds non-methods (`PRE EMPLOYMENT` 39, `OK` 17). Consults are
   typed mostly **without middle names** (494 of 562 names) while Customers and lab rows carry them.
 - Small tabs: `DOCTOR PROCEDURE HMO` 79, `HOME SERVICE REQUESTS` 43, `GC Codes` 49 (codes

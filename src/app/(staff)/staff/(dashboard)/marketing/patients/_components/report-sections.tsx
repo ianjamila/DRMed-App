@@ -45,7 +45,7 @@ export function ChannelTableSection({ rows, peopleHref, modeLabel }: {
                     <td className={`${th} text-right`}>{r.unconfirmed.toLocaleString("en-PH")}</td>
                     <td className={`${th} text-right`}>{Math.round(r.share * 100)}%</td>
                     <td className={`${th} text-right`}>
-                      {r.change > 0 ? `+${r.change}` : r.change} (was {r.previousTotal})
+                      {r.change === null ? "—" : `${r.change > 0 ? "+" : ""}${r.change} (was ${r.previousTotal})`}
                     </td>
                   </tr>
                 ))}

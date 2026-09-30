@@ -262,15 +262,6 @@ const ALLOWED: Record<string, Allowance> = {
       "for the semi-monthly payroll period end. Two integers in, an integer " +
       "out, entirely inside UTC — it never represents a moment in time.",
   },
-  "app/(staff)/staff/(dashboard)/admin/closures/page.tsx": {
-    methods: ["getUTCDate", "setUTCDate"],
-    why:
-      "Builds the half-open Manila day bound by taking Manila midnight and " +
-      "adding ONE UTC DAY to it. That is +24h, and Manila midnight + 24h is " +
-      "the next Manila midnight because PH has no DST — so the +08:00 pin is " +
-      "preserved, not undone. The result is used as an instant, never sliced " +
-      "back to a date.",
-  },
   "lib/operations/daily-report.ts": {
     methods: [ISO_TRUNCATION],
     why:

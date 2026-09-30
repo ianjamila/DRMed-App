@@ -153,6 +153,8 @@ export interface LinkRecord {
   method: "auto_exact" | "auto_loose" | "admin";
   /** Why a hold was placed (the planner reason, or "undone by an admin"); null otherwise. */
   hold_reason?: string | null;
+  /** 0193: the deleted patient a `matches_deleted_patient` hold was placed for (the hold clears patient_id). */
+  held_patient_id?: string | null;
 }
 
 /**
@@ -212,13 +214,18 @@ export type CustomerOp =
   | { op: "link"; link_key: string; patient_id: string; method: "auto_exact" | "auto_loose"; expected_row_version?: number }
   | { op: "fill"; patient_id: string; fields: FillFields; expected_row_version?: number }
   /**
-   * `expected_row_version` (review fix D): the SAME guard as link/fill —
-   * facts is planned from the same patient read as its sibling link/fill
-   * ops, so a stale identity must reject it too, not just them.
+   * `expected_row_version` (review fix D, S2): the SAME guard as link/fill —
+   * facts is planned from the same patient read as its sibling link/fill ops,
+   * so a stale identity must reject it too, not just them. The planner always
+   * sets it (the read version). 0193's SQL accepts the current version when it
+   * equals this OR when it is exactly the version this run's own fill for the
+   * patient produced from it (a fill bumps row_version by one), whichever
+   * chunk the fill landed in; anything else — staff edited the patient, it was
+   * deleted/merged — is `stale` and reported in `stale_patient_ids`.
    */
   | { op: "facts"; patient_id: string; registered_on: string | null; new_repeat: "new" | "repeat" | null; source_ref: string; expected_row_version?: number }
   /** Persist a review: upsert (link_key, patient_id null, decision "review"), never over an admin row. */
-  | { op: "hold"; link_key: string; reason: string };
+  | { op: "hold"; link_key: string; reason: string; /** 0193: stored on the link as held_patient_id */ deleted_patient_id?: string };
 
 export type LinkState = "linked" | "ambiguous" | "conflict" | "possible_existing" | "unlinked";
 

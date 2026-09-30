@@ -5822,6 +5822,7 @@ export type Database = {
           decided_by: string | null
           decision: string
           hold_reason: string | null
+          held_patient_id: string | null
           link_key: string
           method: string
           patient_id: string | null
@@ -5832,6 +5833,7 @@ export type Database = {
           decided_by?: string | null
           decision?: string
           hold_reason?: string | null
+          held_patient_id?: string | null
           link_key: string
           method: string
           patient_id?: string | null
@@ -5842,6 +5844,7 @@ export type Database = {
           decided_by?: string | null
           decision?: string
           hold_reason?: string | null
+          held_patient_id?: string | null
           link_key?: string
           method?: string
           patient_id?: string | null
@@ -7540,6 +7543,17 @@ export type Database = {
         }
         Returns: string
       }
+      create_visit_encounter: {
+        Args: {
+          p_actor: string
+          p_context?: Json
+          p_patient_id: string
+          p_pin_hash: string
+          p_visit_group_id?: string
+          p_visits: Json
+        }
+        Returns: Json
+      }
       current_patient_id: { Args: never; Returns: string }
       delete_patient: {
         Args: {
@@ -7582,9 +7596,71 @@ export type Database = {
         }
       }
       lab_sections_for_role: { Args: { p_role: string }; Returns: string[] }
+      lifecycle_lock: {
+        Args: { p_exclusive: boolean; p_patient_ids: string[] }
+        Returns: undefined
+      }
+      lifecycle_lock_and_assert: {
+        Args: { p_exclusive: boolean; p_patient_ids: string[] }
+        Returns: undefined
+      }
+      lifecycle_lock_results: {
+        Args: { p_exclusive: boolean; p_result_ids: string[] }
+        Returns: undefined
+      }
+      lifecycle_norm: { Args: { p_ids: string[] }; Returns: string[] }
+      lifecycle_patients_of_allocations: {
+        Args: { p_allocation_ids: string[] }
+        Returns: string[]
+      }
+      lifecycle_patients_of_amendments: {
+        Args: { p_amendment_ids: string[] }
+        Returns: string[]
+      }
+      lifecycle_patients_of_hmo_items: {
+        Args: { p_item_ids: string[] }
+        Returns: string[]
+      }
+      lifecycle_patients_of_payments: {
+        Args: { p_payment_ids: string[] }
+        Returns: string[]
+      }
+      lifecycle_patients_of_result: {
+        Args: { p_except_test?: string; p_result_id: string }
+        Returns: string[]
+      }
+      lifecycle_patients_of_row: {
+        Args: { p_for_delete: boolean; p_row: Json; p_table: string }
+        Returns: string[]
+      }
+      lifecycle_patients_of_test_requests: {
+        Args: { p_test_request_ids: string[] }
+        Returns: string[]
+      }
+      lifecycle_patients_of_visits: {
+        Args: { p_visit_ids: string[] }
+        Returns: string[]
+      }
+      lifecycle_result_ids_of_row: {
+        Args: { p_row: Json; p_table: string }
+        Returns: string[]
+      }
+      lifecycle_via: {
+        Args: { p_for_delete?: boolean; p_id: string; p_kind: string }
+        Returns: string[]
+      }
       next_pf_disbursement_batch_number: {
         Args: { p_year: number }
         Returns: number
+      }
+      notification_skip_summary: {
+        Args: never
+        Returns: {
+          reason: string
+          sender: string
+          skipped_30d: number
+          skipped_7d: number
+        }[]
       }
       partner_labs: {
         Args: never
@@ -7702,6 +7778,27 @@ export type Database = {
         Args: { p_item_id: string }
         Returns: undefined
       }
+      record_hmo_settlement: {
+        Args: {
+          p_actor: string
+          p_bank_reference?: string
+          p_batch_id: string
+          p_context?: Json
+          p_items: Json
+          p_received_at: string
+          p_total_amount_php: number
+        }
+        Returns: Json
+      }
+      reschedule_closure_appointments: {
+        Args: {
+          p_actor: string
+          p_closed_on: string
+          p_context?: Json
+          p_dry_run?: boolean
+        }
+        Returns: Json
+      }
       resolve_ar_account: { Args: { p_is_hmo: boolean }; Returns: string }
       resolve_cash_account: { Args: { p_method: string }; Returns: string }
       resolve_cash_adjustment_account: {
@@ -7735,6 +7832,18 @@ export type Database = {
       restore_patient: {
         Args: { p_actor: string; p_context: Json; p_patient_id: string }
         Returns: Json
+      }
+      result_create_linked: {
+        Args: {
+          p_actor: string
+          p_file_size_bytes?: number
+          p_generation_kind: string
+          p_notes?: string
+          p_report_group_id?: string
+          p_storage_path?: string
+          p_test_request_ids: string[]
+        }
+        Returns: string
       }
       result_amendment_remarks: {
         Args: { p_test_request_ids: string[] }
@@ -7910,10 +8019,6 @@ export type Database = {
           with_promise: number
           within_promise: number
         }[]
-      }
-      set_patient_context: {
-        Args: { p_patient_id: string }
-        Returns: undefined
       }
       sheet_alias_apply: {
         Args: {

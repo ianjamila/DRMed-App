@@ -62,7 +62,7 @@ vi.mock("@/lib/audit/log", () => ({
 }));
 
 import type { AlertRow } from "@/lib/results/value-rows";
-import { auditAlertChanges, commitResultEdit, UNCONFIRMED_SAVE_ERROR } from "./result-edit-core";
+import { auditAlertChanges, commitResultEdit, commitWithUploads, UNCONFIRMED_SAVE_ERROR } from "./result-edit-core";
 
 const ALERT = {
   parameter_id: "p-k",
@@ -263,5 +263,50 @@ describe("commitResultEdit — a definite rejection", () => {
     const out = await commitResultEdit(args());
     expect(out.ok).toBe(false);
     expect(fx.removed).toEqual([]);
+  });
+});
+
+// 0184: the first-PDF-upload path (queue/[id]/actions.ts uploadResultAction)
+// now goes through this same commitWithUploads protocol with an
+// attempt-unique path. The probe-confirmed-committed twin of this scenario
+// is already covered generically above ("never removes anything when the
+// probe finds the attempt committed after all [R1]", which uses this exact
+// P0066 code) — commitWithUploads has no idea which RPC it wrapped.
+describe("commitWithUploads — a first upload race (0184)", () => {
+  it("a P0066 rejection of a first upload removes only this attempt's object", async () => {
+    const uploaded: string[] = [];
+    const removed: string[] = [];
+    const admin = {
+      storage: {
+        from: () => ({
+          upload: async (path: string) => {
+            uploaded.push(path);
+            return { error: null };
+          },
+          remove: async (paths: string[]) => {
+            removed.push(...paths);
+            return { error: null };
+          },
+        }),
+      },
+    } as unknown as Parameters<typeof commitWithUploads>[0];
+
+    const path = "patient-1/visit-1/tr-1.v0.abcd1234.pdf";
+    const out = await commitWithUploads(
+      admin,
+      [{ bucket: "results", path, body: Buffer.from("%PDF-1.4"), contentType: "application/pdf" }],
+      async () => ({
+        data: null,
+        error: { code: "P0066", message: "this test already has a result — reload the page" },
+      }),
+      async () => false,
+    );
+
+    expect(uploaded).toEqual([path]);
+    expect(removed).toEqual([path]);
+    expect(out).toEqual({
+      status: "failed",
+      error: "This test already has a result — reload the page.",
+    });
   });
 });

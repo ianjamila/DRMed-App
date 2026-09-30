@@ -1,6 +1,7 @@
 "use server";
 
-import { fetchCompleteRowsByIds } from "@/lib/reports/paging";
+import { fetchCompleteRows, fetchCompleteRowsByIds } from "@/lib/reports/paging";
+import { chunkIds } from "@/lib/patients/require-active-core";
 import { headers } from "next/headers";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
@@ -32,6 +33,7 @@ import {
   assertClaimItemsPatientsActive,
   assertResolutionPatientActive,
   assertPaymentPatientActive,
+  activeTestRequestIds,
 } from "@/lib/patients/require-active";
 import { reverseJournalEntryBySource } from "@/lib/accounting/journal-entry";
 import { loadOwnBatchRows } from "@/lib/audit/bulk-batch";
@@ -44,6 +46,7 @@ import {
   sameInstant,
   type BulkUndoResult,
 } from "@/lib/ui/bulk-undo";
+import { withLifecycleRetry } from "@/lib/patients/lifecycle-retry";
 
 export type ActionResult<T = void> = { ok: true; data?: T } | { ok: false; error: string };
 
@@ -128,7 +131,7 @@ export async function createClaimBatchAction(
     test_request_id: tr.id,
     billed_amount_php: tr.hmo_approved_amount_php as number,
   }));
-  const { error: iErr } = await admin.from("hmo_claim_items").insert(rows);
+  const { error: iErr } = await withLifecycleRetry(() => admin.from("hmo_claim_items").insert(rows));
   if (iErr) {
     // Best-effort cleanup of the empty batch.
     await admin.from("hmo_claim_batches").delete().eq("id", batch.id);
@@ -229,7 +232,7 @@ export async function addItemsToBatchAction(input: unknown): Promise<ActionResul
     test_request_id: tr.id,
     billed_amount_php: tr.hmo_approved_amount_php as number,
   }));
-  const { error: iErr } = await admin.from("hmo_claim_items").insert(rows);
+  const { error: iErr } = await withLifecycleRetry(() => admin.from("hmo_claim_items").insert(rows));
   if (iErr) return { ok: false, error: translatePgError(iErr) };
 
   const meta = await auditMeta();
@@ -276,10 +279,12 @@ export async function removeItemFromBatchAction(input: unknown): Promise<ActionR
     return { ok: false, error: "Only draft batches allow item removal." };
   }
 
-  const { error: dErr } = await admin
-    .from("hmo_claim_items")
-    .delete()
-    .eq("id", parsed.data.item_id);
+  const { error: dErr } = await withLifecycleRetry(() =>
+    admin
+      .from("hmo_claim_items")
+      .delete()
+      .eq("id", parsed.data.item_id),
+  );
   if (dErr) return { ok: false, error: translatePgError(dErr) };
 
   const meta = await auditMeta();
@@ -460,14 +465,16 @@ export async function updateItemHmoResponseAction(input: unknown): Promise<Actio
     .maybeSingle();
   if (!before) return { ok: false, error: "Item not found." };
 
-  const { error } = await admin
-    .from("hmo_claim_items")
-    .update({
-      hmo_response: parsed.data.hmo_response,
-      hmo_response_date: parsed.data.hmo_response_date,
-      hmo_response_notes: parsed.data.hmo_response_notes ?? null,
-    })
-    .eq("id", parsed.data.item_id);
+  const { error } = await withLifecycleRetry(() =>
+    admin
+      .from("hmo_claim_items")
+      .update({
+        hmo_response: parsed.data.hmo_response,
+        hmo_response_date: parsed.data.hmo_response_date,
+        hmo_response_notes: parsed.data.hmo_response_notes ?? null,
+      })
+      .eq("id", parsed.data.item_id),
+  );
   if (error) return { ok: false, error: translatePgError(error) };
 
   const meta = await auditMeta();
@@ -485,9 +492,21 @@ export async function updateItemHmoResponseAction(input: unknown): Promise<Actio
   return { ok: true };
 }
 
+// Ids per bulk write chunk — same figure as require-active.ts's own CHUNK
+// (a plain `.in()` with hundreds of values is both a PostgREST/Postgres risk
+// and rides the GET query string uncapped).
+const HMO_BULK_CHUNK = 200;
+
 export async function bulkSetHmoResponseAction(
   input: unknown,
-): Promise<ActionResult<{ items_updated: number; items_skipped: number }>> {
+): Promise<
+  ActionResult<{
+    items_updated: number;
+    items_skipped: number;
+    items_skipped_inactive: number;
+    items_skipped_changed: number;
+  }>
+> {
   const session = await requireAdminStaff();
   const parsed = BulkSetHmoResponseSchema.safeParse(input);
   if (!parsed.success) {
@@ -501,23 +520,155 @@ export async function bulkSetHmoResponseAction(
     .eq("batch_id", parsed.data.batch_id);
   const totalCount = totalItems ?? 0;
 
-  let query = admin
-    .from("hmo_claim_items")
-    .update({
-      hmo_response: parsed.data.response,
-      hmo_response_date: parsed.data.response_date,
-      hmo_response_notes: parsed.data.notes ?? null,
-    })
-    .eq("batch_id", parsed.data.batch_id);
-  if (parsed.data.scope === "pending_only") {
-    query = query.eq("hmo_response", "pending");
+  // Resolve the scope's candidate items up front. A single bulk UPDATE
+  // aborts wholesale (P0058) the instant any ONE row's patient is inactive
+  // (deleted or merged) — this can't happen in the ordinary case (a
+  // non-voided claim item blocks patient deletion, and merge repoints the
+  // visit before the source is tombstoned), but a voided batch's items skip
+  // that blocker, so it is not impossible. Exclude an inactive patient's item
+  // from the write instead of discovering it as a failed statement — same
+  // rule as the closures bulk reschedule and the queue's per-row bulk
+  // claim/unclaim. items_skipped_inactive is reported SEPARATELY from the
+  // scope exclusion (e.g. "pending only" skipping an already-answered item)
+  // so the UI never blames a deleted/merged patient for an ordinary scope
+  // miss.
+  //
+  // Paged with a total order (id tie-break) rather than a bare select — a
+  // batch past PostgREST's 1000-row cap would otherwise silently leave the
+  // remainder out of the candidate set (and out of items_skipped_inactive).
+  const { data: candidates, error: candidatesError } = await fetchCompleteRows<
+    { id: string; test_request_id: string },
+    { message: string }
+  >((from, to) => {
+    let q = admin
+      .from("hmo_claim_items")
+      .select("id, test_request_id")
+      .eq("batch_id", parsed.data.batch_id);
+    if (parsed.data.scope === "pending_only") {
+      q = q.eq("hmo_response", "pending");
+    }
+    return q.order("id", { ascending: true }).range(from, to);
+  });
+  if (candidatesError) return { ok: false, error: translatePgError(candidatesError) };
+  const candidateRows = candidates ?? [];
+
+  if (candidateRows.length === 0) {
+    return {
+      ok: true,
+      data: { items_updated: 0, items_skipped: totalCount, items_skipped_inactive: 0, items_skipped_changed: 0 },
+    };
   }
 
-  const { data: updatedRows, error } = await query.select("id");
-  if (error) return { ok: false, error: translatePgError(error) };
+  const activeTestRequests = await activeTestRequestIds(
+    admin,
+    candidateRows.map((r) => r.test_request_id),
+  );
+  if (!activeTestRequests) {
+    return { ok: false, error: "Could not check the patient record. Try again." };
+  }
+  const activeItemIds = candidateRows
+    .filter((r) => activeTestRequests.has(r.test_request_id))
+    .map((r) => r.id);
+  const skippedInactive = candidateRows.length - activeItemIds.length;
 
-  const items_updated = updatedRows?.length ?? 0;
+  if (activeItemIds.length === 0) {
+    return {
+      ok: true,
+      data: {
+        items_updated: 0,
+        items_skipped: totalCount,
+        items_skipped_inactive: skippedInactive,
+        items_skipped_changed: 0,
+      },
+    };
+  }
+
+  // Write in bounded chunks, and — on every chunk — re-apply the SAME
+  // batch/scope predicates the candidate read used (not just `.in("id", …)`
+  // of the ids it found). Without them, a concurrent admin who changed an
+  // item's response after the candidate read but before this write would
+  // have that change silently overwritten. Any candidate whose predicate no
+  // longer matches (its hmo_response moved off "pending" for a pending_only
+  // scope, most plausibly) is simply not in the returned rows — counted
+  // below as items_skipped_changed rather than claimed as updated. Each
+  // chunk's builder is rebuilt fresh inside withLifecycleRetry (`.select()`
+  // appends a Prefer header, so re-awaiting one builder on a retry would
+  // send it twice).
+  let items_updated = 0;
+  const idChunks = chunkIds(activeItemIds, HMO_BULK_CHUNK);
+  for (let chunkIndex = 0; chunkIndex < idChunks.length; chunkIndex++) {
+    const idsChunk = idChunks[chunkIndex]!;
+    const { data: updatedRows, error } = await withLifecycleRetry(() => {
+      let q = admin
+        .from("hmo_claim_items")
+        .update({
+          hmo_response: parsed.data.response,
+          hmo_response_date: parsed.data.response_date,
+          hmo_response_notes: parsed.data.notes ?? null,
+        })
+        .eq("batch_id", parsed.data.batch_id)
+        .in("id", idsChunk);
+      if (parsed.data.scope === "pending_only") {
+        q = q.eq("hmo_response", "pending");
+      }
+      return q.select("id");
+    });
+    if (error) {
+      if (items_updated === 0) {
+        // Nothing committed yet (this is the first chunk, or every earlier
+        // chunk updated zero rows) — behave exactly as the single atomic
+        // UPDATE used to: a clean failure, nothing to audit or revalidate.
+        return { ok: false, error: translatePgError(error) };
+      }
+      // Unlike the old single-statement UPDATE, a later chunk failing here
+      // leaves real, already-committed work behind (0184 review follow-up,
+      // HMO P2): a bare error would leave it unaudited and unrevalidated,
+      // and the message would understate what actually happened. Audit what
+      // WAS updated, revalidate so the batch page reflects it, and report
+      // the partial result rather than a bare failure.
+      const meta = await auditMeta();
+      await audit({
+        actor_id: session.user_id,
+        actor_type: "staff",
+        action: "hmo_claim_batch.bulk_hmo_response_set",
+        resource_type: "hmo_claim_batch",
+        resource_id: parsed.data.batch_id,
+        metadata: {
+          response: parsed.data.response,
+          response_date: parsed.data.response_date,
+          scope: parsed.data.scope,
+          items_updated,
+          failed_after_chunk: chunkIndex,
+          error_code: error.code ?? null,
+          error_message: error.message,
+        },
+        ...meta,
+      });
+      revalidatePath(`${BASE_PATH}/batches/${parsed.data.batch_id}`);
+      // A re-run's own predicates make this safe either way: pending_only's
+      // `.eq("hmo_response", "pending")` naturally excludes the items this
+      // pass already updated (they're no longer pending); the "all" scope
+      // has no such predicate, so a re-run just re-applies the same values
+      // to them — harmless.
+      const rerunNote =
+        parsed.data.scope === "pending_only"
+          ? "Run it again — items already updated are skipped automatically (no longer pending)."
+          : "Run it again to update the rest — items already updated are simply set to the same response again.";
+      return {
+        ok: false,
+        error: `Updated ${items_updated} of ${activeItemIds.length} items, then stopped: ${translatePgError(error)} ${rerunNote}`,
+      };
+    }
+    items_updated += updatedRows?.length ?? 0;
+  }
+
   const items_skipped = totalCount - items_updated;
+  const items_skipped_inactive = skippedInactive;
+  // Candidates that matched the scope predicate at read time but not at
+  // write time — e.g. another admin changed a pending_only candidate's
+  // response in between. Reported separately so the modal never claims more
+  // than it actually changed.
+  const items_skipped_changed = activeItemIds.length - items_updated;
 
   const meta = await auditMeta();
   await audit({
@@ -532,12 +683,17 @@ export async function bulkSetHmoResponseAction(
       scope: parsed.data.scope,
       items_updated,
       items_skipped,
+      items_skipped_inactive,
+      items_skipped_changed,
     },
     ...meta,
   });
 
   revalidatePath(`${BASE_PATH}/batches/${parsed.data.batch_id}`);
-  return { ok: true, data: { items_updated, items_skipped } };
+  return {
+    ok: true,
+    data: { items_updated, items_skipped, items_skipped_inactive, items_skipped_changed },
+  };
 }
 
 // ============================================================
@@ -558,17 +714,19 @@ export async function createResolutionAction(
   const active = await assertClaimItemsPatientsActive(admin, [parsed.data.item_id]);
   if (!active.ok) return { ok: false, error: active.error };
 
-  const { data: row, error } = await admin
-    .from("hmo_claim_resolutions")
-    .insert({
-      item_id: parsed.data.item_id,
-      destination: parsed.data.destination,
-      amount_php: parsed.data.amount_php,
-      resolved_by: session.user_id,
-      notes: parsed.data.notes ?? null,
-    })
-    .select("id")
-    .single();
+  const { data: row, error } = await withLifecycleRetry(() =>
+    admin
+      .from("hmo_claim_resolutions")
+      .insert({
+        item_id: parsed.data.item_id,
+        destination: parsed.data.destination,
+        amount_php: parsed.data.amount_php,
+        resolved_by: session.user_id,
+        notes: parsed.data.notes ?? null,
+      })
+      .select("id")
+      .single(),
+  );
   if (error || !row) {
     return { ok: false, error: translatePgError(error ?? { message: "insert failed" }) };
   }
@@ -612,17 +770,19 @@ export async function voidResolutionAction(input: unknown): Promise<ActionResult
   const active = await assertResolutionPatientActive(admin, parsed.data.resolution_id);
   if (!active.ok) return { ok: false, error: active.error };
 
-  const { data: row, error } = await admin
-    .from("hmo_claim_resolutions")
-    .update({
-      voided_at: new Date().toISOString(),
-      voided_by: session.user_id,
-      void_reason: parsed.data.void_reason,
-    })
-    .eq("id", parsed.data.resolution_id)
-    .is("voided_at", null)
-    .select("item_id")
-    .maybeSingle();
+  const { data: row, error } = await withLifecycleRetry(() =>
+    admin
+      .from("hmo_claim_resolutions")
+      .update({
+        voided_at: new Date().toISOString(),
+        voided_by: session.user_id,
+        void_reason: parsed.data.void_reason,
+      })
+      .eq("id", parsed.data.resolution_id)
+      .is("voided_at", null)
+      .select("item_id")
+      .maybeSingle(),
+  );
   if (error) return { ok: false, error: translatePgError(error) };
   if (!row) return { ok: false, error: "Resolution not found or already voided." };
 
@@ -651,13 +811,9 @@ export async function voidResolutionAction(input: unknown): Promise<ActionResult
 // Settlement + allocation
 // ============================================================
 
-// NOTE: Settlement is N+1 INSERTs (one payment per visit + N allocations) without a
-// true transaction. Best-effort rollback below deletes any payments inserted before a
-// later failure (the bridge's bridge_payment_delete trigger reverses their JEs). If
-// rollback itself fails (network partition mid-cleanup), orphan payments may persist
-// — they'd remain visible in the audit log and on the visit. For full atomicity,
-// future work can move this into a Postgres function (see 12.3 spec §17 "Estimated
-// effort" notes and the plan's Task 18 NOTE).
+// Settlement (0184): record_hmo_settlement writes one hmo payment per visit
+// and every allocation in one transaction, audited inside it
+// (hmo_settlement.recorded).
 export async function recordHmoSettlementAction(
   input: unknown,
 ): Promise<ActionResult<{ payment_ids: string[]; allocation_count: number }>> {
@@ -675,106 +831,27 @@ export async function recordHmoSettlementAction(
   );
   if (!active.ok) return { ok: false, error: active.error };
 
-  // Load items + their visit_ids.
-  const itemIds = parsed.data.items.map((it) => it.item_id);
-  const { data: items, error: iErr } = await fetchCompleteRowsByIds(itemIds, (ids, from, to) =>
-    admin
-      .from("hmo_claim_items")
-      .select(
-        "id, batch_id, billed_amount_php, paid_amount_php, test_request_id, test_requests!inner(visit_id)",
-      )
-      .in("id", ids)
-      .order("id", { ascending: true })
-      .range(from, to)
+  // 0184: payments (one per visit) and allocations in ONE transaction, under
+  // the claim patients' lifecycle locks and the items' row locks — no
+  // compensating delete loop, no orphan payment if an allocation is refused.
+  const { ip, ua } = await ipAndAgent();
+  const { data, error } = await withLifecycleRetry(() =>
+    admin.rpc("record_hmo_settlement", {
+      p_actor: session.user_id,
+      p_batch_id: parsed.data.batch_id,
+      p_total_amount_php: parsed.data.total_amount_php,
+      // The same value the action used to write to payments.received_at.
+      p_received_at: parsed.data.payment_date,
+      p_items: parsed.data.items,
+      p_bank_reference: parsed.data.bank_reference ?? undefined,
+      p_context: { ip, user_agent: ua },
+    }),
   );
-  if (iErr) return { ok: false, error: translatePgError(iErr) };
-  if (!items || items.length !== itemIds.length) {
-    return { ok: false, error: "Some items not found." };
-  }
-  // Verify all items belong to the input batch_id (single-batch settlement rule).
-  for (const it of items) {
-    if (it.batch_id !== parsed.data.batch_id) {
-      return { ok: false, error: "All items must belong to batch_id." };
-    }
-  }
-
-  // Group amounts by visit_id.
-  const visitTotals = new Map<string, number>();
-  const itemAmount = new Map<string, number>(
-    parsed.data.items.map((i) => [i.item_id, i.amount_php]),
-  );
-  const itemVisit = new Map<string, string>();
-  for (const it of items) {
-    const visitId = (it as unknown as { test_requests: { visit_id: string } }).test_requests
-      .visit_id;
-    itemVisit.set(it.id, visitId);
-    visitTotals.set(visitId, (visitTotals.get(visitId) ?? 0) + (itemAmount.get(it.id) ?? 0));
-  }
-
-  // Insert one payments row per visit.
-  // NOTE: payments table uses `reference_number` and `received_by` (not `reference` / `recorded_by`).
-  const paymentIds: string[] = [];
-  const visitPaymentIds = new Map<string, string>();
-  for (const [visitId, amount] of visitTotals.entries()) {
-    const { data: p, error: pErr } = await admin
-      .from("payments")
-      .insert({
-        visit_id: visitId,
-        amount_php: amount,
-        method: "hmo",
-        reference_number: parsed.data.bank_reference ?? null,
-        received_at: parsed.data.payment_date,
-        received_by: session.user_id,
-      })
-      .select("id")
-      .single();
-    if (pErr || !p) {
-      // Best-effort rollback of payments already inserted.
-      for (const id of paymentIds) {
-        await admin.from("payments").delete().eq("id", id);
-      }
-      return {
-        ok: false,
-        error: translatePgError(pErr ?? { message: "payment insert failed" }),
-      };
-    }
-    paymentIds.push(p.id);
-    visitPaymentIds.set(visitId, p.id);
-  }
-
-  // Insert allocations.
-  const allocRows = parsed.data.items.map((it) => ({
-    payment_id: visitPaymentIds.get(itemVisit.get(it.item_id)!)!,
-    item_id: it.item_id,
-    amount_php: it.amount_php,
-  }));
-  const { error: aErr } = await admin.from("hmo_payment_allocations").insert(allocRows);
-  if (aErr) {
-    for (const id of paymentIds) {
-      await admin.from("payments").delete().eq("id", id);
-    }
-    return { ok: false, error: translatePgError(aErr) };
-  }
-
-  const meta = await auditMeta();
-  await audit({
-    actor_id: session.user_id,
-    actor_type: "staff",
-    action: "hmo_settlement.recorded",
-    resource_type: "hmo_claim_batch",
-    resource_id: parsed.data.batch_id,
-    metadata: {
-      total_amount_php: parsed.data.total_amount_php,
-      payment_count: paymentIds.length,
-      allocation_count: allocRows.length,
-      payment_ids: paymentIds,
-      bank_reference: parsed.data.bank_reference ?? null,
-    },
-    ...meta,
-  });
+  if (error || !data) return { ok: false, error: translatePgError(error ?? { message: "Could not record the settlement." }) };
+  const out = data as { payment_ids: string[]; allocation_count: number };
 
   revalidatePath(`${BASE_PATH}/batches/${parsed.data.batch_id}`);
-  return { ok: true, data: { payment_ids: paymentIds, allocation_count: allocRows.length } };
+  return { ok: true, data: { payment_ids: out.payment_ids, allocation_count: out.allocation_count } };
 }
 
 export async function allocateExistingPaymentAction(input: unknown): Promise<ActionResult> {
@@ -827,7 +904,7 @@ export async function allocateExistingPaymentAction(input: unknown): Promise<Act
     item_id: a.item_id,
     amount_php: a.amount_php,
   }));
-  const { error } = await admin.from("hmo_payment_allocations").insert(rows);
+  const { error } = await withLifecycleRetry(() => admin.from("hmo_payment_allocations").insert(rows));
   if (error) return { ok: false, error: translatePgError(error) };
   // P0012 fires here on overshoot.
 

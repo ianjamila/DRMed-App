@@ -22,6 +22,7 @@ import {
   releasedTotal,
 } from "@/lib/visits/payment-edit";
 import { assertVisitPatientActive } from "@/lib/patients/require-active";
+import { withLifecycleRetry } from "@/lib/patients/lifecycle-retry";
 
 // Same role pair as Edit and Delete (payments/[id]/{edit,void}/actions.ts).
 function canMovePayment(role: string): boolean {
@@ -142,19 +143,21 @@ export async function movePaymentAction(input: {
   if (!activeTarget.ok) return { ok: false, error: activeTarget.error };
 
   // Same amount, method, reference and notes — only the visit changes.
-  const { data: newPaymentId, error: rpcErr } = await admin.rpc("correct_payment", {
-    p_payment_id: d.payment_id,
-    p_amount_php: Number(before.amount_php),
-    p_method: before.method ?? "",
-    p_reference_number: before.reference_number ?? "",
-    p_notes: before.notes ?? "",
-    p_reason: d.reason,
-    p_actor_id: session.user_id,
-    p_visit_id: d.target_visit_id,
-    // Refused under the row lock if anything changed since the read above, so
-    // a reference fix saved in between is never copied over (0174).
-    p_expected: paymentSnapshot(before),
-  });
+  const { data: newPaymentId, error: rpcErr } = await withLifecycleRetry(() =>
+    admin.rpc("correct_payment", {
+      p_payment_id: d.payment_id,
+      p_amount_php: Number(before.amount_php),
+      p_method: before.method ?? "",
+      p_reference_number: before.reference_number ?? "",
+      p_notes: before.notes ?? "",
+      p_reason: d.reason,
+      p_actor_id: session.user_id,
+      p_visit_id: d.target_visit_id,
+      // Refused under the row lock if anything changed since the read above, so
+      // a reference fix saved in between is never copied over (0174).
+      p_expected: paymentSnapshot(before),
+    }),
+  );
   if (rpcErr) {
     return {
       ok: false,

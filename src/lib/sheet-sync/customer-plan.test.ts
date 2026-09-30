@@ -758,3 +758,264 @@ describe("deleted-patient-match hold (review fix E, owner decision 2026-09-25)",
     expect(create).toMatchObject({ op: "create", link_keys: [key] });
   });
 });
+
+describe("S1: a saved auto link whose patient was later deleted (sync review gaps)", () => {
+  const key = "reyes|ana#1990-01-01";
+  const deletedOf = (over: Partial<DeletedPatientEvidence> = {}): DeletedPatientEvidence => ({
+    id: "gone-1", first_name: "Ana", middle_name: null, last_name: "Reyes", birthdate: "1990-01-01", phone: null, ...over,
+  });
+  const savedLink = (pid: string) => new Map([[key, { link_key: key, patient_id: pid, decision: "link" as const, method: "auto_exact" as const }]]);
+  const run = (patients: PatientRecord[], deleted: DeletedPatientEvidence[], links = savedLink("gone-1")) =>
+    planCustomers({ rows: rowsOf({ name: "Reyes, Ana", dob: 32874 }), index: buildPatientIndex(patients), links, facts: new Map(),
+      prevRows: [], deletedPatients: deleted });
+
+  it("is held as matches_deleted_patient with the deleted id (not the generic 'no longer exists' hold), never created", () => {
+    const out = run([], [deletedOf()]);
+    expect(out.ops.some((o) => o.op === "create")).toBe(false);
+    expect(out.ops.filter((o) => o.op === "hold")).toEqual([{ op: "hold", link_key: key, reason: "matches_deleted_patient", deleted_patient_id: "gone-1" }]);
+    expect(out.review).toHaveLength(1);
+    expect(out.review[0]).toMatchObject({ kind: "possible_existing_patient",
+      payload: { held_because: "matches_deleted_patient", deleted_patient_id: "gone-1" } });
+  });
+
+  it("holds even when the sheet row no longer carries the evidence the name matcher needs (the saved link itself is the proof)", () => {
+    // deleted record has a different DOB than the sheet row, so name+DOB cannot match — only the saved link can
+    const out = run([], [deletedOf({ birthdate: "1985-05-05" })]);
+    expect(out.review[0].payload).toMatchObject({ deleted_patient_id: "gone-1", held_because: "matches_deleted_patient" });
+  });
+
+  it("a link to a merged-away patient whose SURVIVOR was deleted is held the same way", () => {
+    const mergedAway = patient({ first_name: "Ana", middle_name: null, last_name: "Reyes", birthdate: "1990-01-01", merged_into_id: "gone-1" });
+    const out = run([mergedAway], [deletedOf({ birthdate: null })], savedLink(mergedAway.id));
+    expect(out.review[0].payload).toMatchObject({ deleted_patient_id: "gone-1", held_because: "matches_deleted_patient" });
+    expect(out.ops.some((o) => o.op === "create")).toBe(false);
+  });
+
+  it("a merged-away patient whose survivor is LIVE still follows the survivor (no hold, no create)", () => {
+    const survivor = patient({ first_name: "Ana", middle_name: null, last_name: "Reyes", birthdate: "1990-01-01" });
+    const mergedAway = patient({ first_name: "Ana", middle_name: null, last_name: "Reyes", birthdate: "1990-01-01", merged_into_id: survivor.id });
+    const out = run([survivor, mergedAway], [deletedOf()], savedLink(mergedAway.id));
+    expect(out.review).toHaveLength(0);
+    expect(out.ops.some((o) => o.op === "create" || o.op === "hold")).toBe(false);
+    expect(out.ops).toContainEqual(expect.objectContaining({ op: "link", link_key: key, patient_id: survivor.id }));
+  });
+
+  it("a saved link whose patient is simply missing (not deleted) keeps the generic hold", () => {
+    const out = run([], [], savedLink("nobody"));
+    expect(out.review[0]).toMatchObject({ kind: "ambiguous_patient", payload: { reason: "the previously linked patient no longer exists" } });
+  });
+});
+
+describe("S2: facts ops carry the read row_version and survive their own fill (sync review gaps)", () => {
+  const rows = () => rowsOf({ name: "Dela Cruz, Juan Santos", dob: 32874, phone: "09171112222", nr: "NEW" });
+  const fixture = () => patient({ row_version: 7 });
+
+  it("every op for a patient (link, fill, facts) carries the version the planner read", () => {
+    const p = fixture();
+    const out = plan(rows(), [p]);
+    for (const op of ["link", "fill", "facts"] as const) {
+      expect(opsOf(out, op)).toHaveLength(1);
+      expect(opsOf(out, op)[0]).toMatchObject({ expected_row_version: 7 });
+    }
+  });
+
+  it("planner output: fill + facts in ONE chunk — the fill's own bump does not reject the facts", () => {
+    const p = fixture();
+    const out = plan(rows(), [p]);
+    const after = applyOps(out.ops, world([p]));
+    expect(after.counts).toMatchObject({ filled: 1, facts: 1, stale: 0 });
+    expect(after.facts.has(p.id)).toBe(true);
+    expect(after.stalePatientIds).toEqual([]);
+  });
+
+  it("planner output: fill in one chunk, facts in the NEXT call — still written", () => {
+    const p = fixture();
+    const out = plan(rows(), [p]);
+    const fillAndLink = out.ops.filter((o) => o.op !== "facts");
+    const factsOnly = out.ops.filter((o) => o.op === "facts");
+    const first = applyOps(fillAndLink, world([p]));
+    const second = applyOps(factsOnly, first);
+    expect(first.counts.filled).toBe(1);
+    expect(second.counts).toMatchObject({ facts: 1, stale: 0 });
+  });
+
+  it("stale identity (staff edited the patient after the read): fill AND facts are rejected and the id is reported", () => {
+    const p = fixture();
+    const out = plan(rows(), [p]);
+    const edited = world([{ ...p, row_version: 8 }]);
+    const after = applyOps(out.ops, edited);
+    expect(after.counts).toMatchObject({ filled: 0, facts: 0, stale: 3 });
+    expect(after.facts.has(p.id)).toBe(false);
+    expect(after.stalePatientIds).toEqual([p.id]);
+  });
+
+  it("staff edit AFTER our fill but before the facts chunk is still stale (only our own bump is forgiven)", () => {
+    const p = fixture();
+    const out = plan(rows(), [p]);
+    const first = applyOps(out.ops.filter((o) => o.op !== "facts"), world([p]));
+    const live = first.patients.find((x) => x.id === p.id)!;
+    live.row_version = (live.row_version ?? 0) + 1; // staff write between chunks
+    const second = applyOps(out.ops.filter((o) => o.op === "facts"), first);
+    expect(second.counts).toMatchObject({ facts: 0, stale: 1 });
+  });
+
+  it("no fill needed (nothing to fill): facts are written against the untouched read version", () => {
+    const p = patient({ row_version: 3, phone: "+639171112222" });
+    const out = plan(rowsOf({ name: "Dela Cruz, Juan Santos", dob: 32874, phone: "09171112222", nr: "NEW" }), [p]);
+    expect(opsOf(out, "fill")).toHaveLength(0);
+    const after = applyOps(out.ops, world([p]));
+    expect(after.counts).toMatchObject({ facts: 1, stale: 0 });
+  });
+});
+
+describe("S1 (admin link): an admin-chosen patient who was later deleted", () => {
+  const key = "reyes|ana#1990-01-01";
+  const adminLink = (pid: string) => new Map([[key, { link_key: key, patient_id: pid, decision: "link" as const, method: "admin" as const }]]);
+  const run = (patients: PatientRecord[], deleted: DeletedPatientEvidence[], pid: string) =>
+    planCustomers({ rows: rowsOf({ name: "Reyes, Ana", dob: 32874 }), index: buildPatientIndex(patients), links: adminLink(pid), facts: new Map(),
+      prevRows: [], deletedPatients: deleted });
+  const del = (over: Partial<DeletedPatientEvidence> = {}): DeletedPatientEvidence =>
+    ({ id: "gone-1", first_name: "Someone", middle_name: null, last_name: "Else", birthdate: null, phone: null, ...over });
+
+  it("is a matches_deleted_patient review with the deleted id, no hold op (admin rows are never overwritten), no create", () => {
+    const out = run([], [del()], "gone-1");
+    expect(out.review[0]).toMatchObject({ kind: "possible_existing_patient",
+      payload: { held_because: "matches_deleted_patient", deleted_patient_id: "gone-1" } });
+    expect(out.ops.some((o) => o.op === "hold" || o.op === "create")).toBe(false);
+  });
+  it("follows a merge to a deleted survivor", () => {
+    const merged = patient({ merged_into_id: "gone-1" });
+    const out = run([merged], [del()], merged.id);
+    expect(out.review[0].payload).toMatchObject({ deleted_patient_id: "gone-1" });
+  });
+  it("a live survivor is still followed (linked, no review)", () => {
+    const survivor = patient({});
+    const merged = patient({ merged_into_id: survivor.id });
+    const out = run([survivor, merged], [del()], merged.id);
+    expect(out.review).toHaveLength(0);
+    expect(out.mirror[0]).toMatchObject({ patient_id: survivor.id, link_state: "linked" });
+  });
+  it("a truly missing patient keeps the generic hold", () => {
+    const out = run([], [], "nobody");
+    expect(out.review[0]).toMatchObject({ kind: "ambiguous_patient", payload: { reason: "the chosen patient no longer exists" } });
+  });
+});
+
+describe("S1 recheck: the deleted-patient evidence survives the persisted hold", () => {
+  const key = "reyes|ana#1990-01-01";
+  // the deleted record's DOB differs from the sheet row, so name+DOB matching can never re-find it
+  const deleted: DeletedPatientEvidence = { id: "gone-1", first_name: "Ana", middle_name: null, last_name: "Reyes", birthdate: "1985-05-05", phone: null };
+  const rows = () => rowsOf({ name: "Reyes, Ana", dob: 32874 });
+  const saved = { link_key: key, patient_id: "gone-1", decision: "link" as const, method: "auto_exact" as const };
+  const runOn = (w: World, patients: PatientRecord[], del: DeletedPatientEvidence[]) =>
+    planCustomers({ rows: rows(), index: buildPatientIndex(patients), links: w.links, facts: w.facts, prevRows: [], deletedPatients: del });
+
+  it("run 1 hold carries the deleted id; applied, run 2 still offers the deleted-patient card with the id, no second hold", () => {
+    const w0 = world([], [saved]);
+    const r1 = runOn(w0, [], [deleted]);
+    const hold = r1.ops.find((o) => o.op === "hold");
+    expect(hold).toEqual({ op: "hold", link_key: key, reason: "matches_deleted_patient", deleted_patient_id: "gone-1" });
+    const w1 = applyOps(r1.ops, w0);
+    expect(w1.links.get(key)).toMatchObject({ decision: "review", patient_id: null, hold_reason: "matches_deleted_patient", held_patient_id: "gone-1" });
+    const r2 = runOn(w1, [], [deleted]);
+    expect(r2.ops.filter((o) => o.op === "hold" || o.op === "create")).toEqual([]);
+    expect(r2.review).toHaveLength(1);
+    expect(r2.review[0]).toMatchObject({ kind: "possible_existing_patient",
+      payload: { held_because: "matches_deleted_patient", deleted_patient_id: "gone-1" } });
+    // …and a third run is just as stable
+    const r3 = runOn(applyOps(r2.ops, w1), [], [deleted]);
+    expect(r3.review[0].payload).toMatchObject({ deleted_patient_id: "gone-1" });
+  });
+
+  it("restore: once staff restore that patient (live again), run 2 offers a normal link candidate, not the deleted card", () => {
+    const w0 = world([], [saved]);
+    const w1 = applyOps(runOn(w0, [], [deleted]).ops, w0);
+    const restored = patient({ id: "gone-1", first_name: "Ana", middle_name: null, last_name: "Reyes", birthdate: "1985-05-05" });
+    const r2 = runOn(w1, [restored], []);
+    expect(r2.review).toHaveLength(1);
+    expect(r2.review[0].payload.deleted_patient_id).toBeUndefined();
+    expect((r2.review[0].payload.candidates as Array<{ patient_id: string }>).map((c) => c.patient_id)).toContain("gone-1");
+    expect(r2.ops.some((o) => o.op === "create")).toBe(false);
+  });
+
+  it("a hold for any other reason records no held_patient_id", () => {
+    const p = patient({ birthdate: null }); const q2 = patient({ birthdate: null });
+    const w0 = world([p, q2]);
+    const out = planIn(rowsOf({ name: "Dela Cruz, Juan Santos", phone: "09171112222" }), w0);
+    const w1 = applyOps(out.ops, w0);
+    for (const l of w1.links.values()) expect(l.held_patient_id ?? null).toBeNull();
+  });
+});
+
+describe("S1 recheck 2: the held deleted target moves (restore, merge, survivor deleted)", () => {
+  const key = "reyes|ana#1990-01-01";
+  const delA: DeletedPatientEvidence = { id: "A", first_name: "Ana", middle_name: null, last_name: "Reyes", birthdate: "1985-05-05", phone: null };
+  const delB: DeletedPatientEvidence = { id: "B", first_name: "Ana", middle_name: null, last_name: "Reyes", birthdate: "1986-06-06", phone: null };
+  const saved = { link_key: key, patient_id: "A", decision: "link" as const, method: "auto_exact" as const };
+  const runOn = (w: World, patients: PatientRecord[], del: DeletedPatientEvidence[]) =>
+    planCustomers({ rows: rowsOf({ name: "Reyes, Ana", dob: 32874 }), index: buildPatientIndex(patients), links: w.links, facts: w.facts, prevRows: [], deletedPatients: del });
+
+  it("restore A → merge A into B → delete B: the hold follows the chain, re-persists B, and stays stable", () => {
+    const w0 = world([], [saved]);
+    const w1 = applyOps(runOn(w0, [], [delA]).ops, w0);
+    expect(w1.links.get(key)).toMatchObject({ held_patient_id: "A" });
+    const aMerged = patient({ id: "A", first_name: "Ana", middle_name: null, last_name: "Reyes", birthdate: "1985-05-05", merged_into_id: "B" });
+    const r2 = runOn(w1, [aMerged], [delB]);
+    expect(r2.review[0].payload).toMatchObject({ held_because: "matches_deleted_patient", deleted_patient_id: "B" });
+    expect(r2.ops.filter((o) => o.op === "hold")).toEqual([{ op: "hold", link_key: key, reason: "matches_deleted_patient", deleted_patient_id: "B" }]);
+    expect(r2.ops.some((o) => o.op === "create")).toBe(false);
+    const w2 = applyOps(r2.ops, w1);
+    expect(w2.links.get(key)).toMatchObject({ decision: "review", held_patient_id: "B", hold_reason: "matches_deleted_patient" });
+    const r3 = runOn(w2, [aMerged], [delB]);
+    expect(r3.ops.filter((o) => o.op === "hold")).toEqual([]);
+    expect(r3.review[0].payload).toMatchObject({ deleted_patient_id: "B" });
+  });
+
+  it("restore A → merge A into a LIVE survivor: the ordinary path (normal Link candidate), no deleted card", () => {
+    const w0 = world([], [saved]);
+    const w1 = applyOps(runOn(w0, [], [delA]).ops, w0);
+    const survivor = patient({ id: "B", first_name: "Ana", middle_name: null, last_name: "Reyes", birthdate: "1990-01-01" });
+    const aMerged = patient({ id: "A", first_name: "Ana", middle_name: null, last_name: "Reyes", birthdate: "1985-05-05", merged_into_id: "B" });
+    const r2 = runOn(w1, [survivor, aMerged], []);
+    expect(r2.review[0].payload.deleted_patient_id).toBeUndefined();
+    expect((r2.review[0].payload.candidates as Array<{ patient_id: string }>).map((c) => c.patient_id)).toContain("B");
+    expect(r2.ops.filter((o) => o.op === "hold" || o.op === "create")).toEqual([]);
+  });
+
+  it("any other hold clears an existing held_patient_id", () => {
+    const seeded = world([], [{ link_key: key, patient_id: null, decision: "review", method: "auto_exact",
+      hold_reason: "matches_deleted_patient", held_patient_id: "A" }]);
+    expect(seeded.links.get(key)!.held_patient_id).toBe("A"); // the seed really carries one
+    const after = applyOps([{ op: "hold", link_key: key, reason: "several patients share this full name" }], seeded);
+    expect(after.links.get(key)).toMatchObject({ hold_reason: "several patients share this full name", held_patient_id: null });
+  });
+});
+
+describe("S1 recheck 3: a restored / live-survivor held patient is always a Link candidate", () => {
+  const key = "reyes|ana#1990-01-01";
+  const delA: DeletedPatientEvidence = { id: "A", first_name: "Ana", middle_name: null, last_name: "Reyes", birthdate: "1985-05-05", phone: null };
+  const saved = { link_key: key, patient_id: "A", decision: "link" as const, method: "auto_exact" as const };
+  const runOn = (w: World, patients: PatientRecord[], del: DeletedPatientEvidence[]) =>
+    planCustomers({ rows: rowsOf({ name: "Reyes, Ana", dob: 32874 }), index: buildPatientIndex(patients), links: w.links, facts: w.facts, prevRows: [], deletedPatients: del });
+  const cands = (out: ReturnType<typeof planCustomers>) => (out.review[0].payload.candidates as Array<{ patient_id: string }>).map((c) => c.patient_id);
+  const held = () => { const w0 = world([], [saved]); return applyOps(runOn(w0, [], [delA]).ops, w0); };
+
+  it("restored with a DIFFERENT name+DOB than the sheet row: still offered, never linked or created", () => {
+    const restored = patient({ id: "A", first_name: "Anna", middle_name: null, last_name: "Reyez", birthdate: "1985-05-05" });
+    const out = runOn(held(), [restored], []);
+    expect(cands(out)).toContain("A");
+    expect(out.ops.filter((o) => o.op === "link" || o.op === "create")).toEqual([]);
+  });
+  it("merged into a live survivor with a different DOB: the survivor is offered", () => {
+    const survivor = patient({ id: "B", first_name: "Anna", middle_name: null, last_name: "Reyez", birthdate: "1970-02-02" });
+    const aMerged = patient({ id: "A", first_name: "Ana", middle_name: null, last_name: "Reyes", birthdate: "1985-05-05", merged_into_id: "B" });
+    const out = runOn(held(), [survivor, aMerged], []);
+    expect(cands(out)).toContain("B");
+    expect(out.ops.filter((o) => o.op === "link" || o.op === "create")).toEqual([]);
+  });
+  it("a HARD-deleted held patient (in neither list) keeps the generic hold and never creates", () => {
+    const out = runOn(held(), [], []);
+    expect(out.review).toHaveLength(1);
+    expect(out.ops.some((o) => o.op === "create")).toBe(false);
+  });
+});

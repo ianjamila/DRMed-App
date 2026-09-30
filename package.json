@@ -46,6 +46,7 @@
     "dedup:patients": "tsx scripts/patient-dedup/index.ts",
     "smoke:dashboards": "tsx scripts/smoke-dashboards.mjs",
     "smoke:print": "tsx scripts/smoke-print.ts",
+    "smoke:locks": "tsx scripts/smoke-lifecycle-locks.ts",
     "perf:rls-probe": "tsx scripts/perf/rls-equivalence-probe.ts",
     "perf:rls-check": "tsx scripts/perf/rls-equivalence-check.ts",
     "perf:rls-prove": "tsx scripts/perf/rls-equivalence-prove.ts",
@@ -54,6 +55,7 @@
     "sheet-sync:db-proof": "tsx scripts/sheet-sync-db-proof.ts",
     "sheet:sync": "tsx scripts/sheet-sync.ts",
     "patient-sources:db-proof": "tsx scripts/patient-sources-db-proof.ts",
+    "ad-spend:concurrency-proof": "tsx scripts/ad-spend-concurrency-proof.ts",
     "panel-claim:concurrency-proof": "tsx scripts/panel-claim-concurrency-proof.ts"
   },
   "dependencies": {

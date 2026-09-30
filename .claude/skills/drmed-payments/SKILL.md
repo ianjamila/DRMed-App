@@ -63,7 +63,10 @@ eod_close_records       counted_cash_php + counted_denominations jsonb (0132: bi
 | bill-line guard (0183, on `test_requests`) | 0183 | **P0070**: a waived visit's lines can't be added, restored, reactivated, repriced, reparented or moved — the allocation was computed over the lines as they stood. |
 | the fold (`bridge_test_request_released`, waiver share) | 0183 | On release, a line with an unrecognised allocation folds its share into that release's JE: DR 1100 for (final − waived), DR 4910/4920 for the waived share, CR revenue unchanged — so revenue is never overstated and AR is never double-counted. |
 | `waiver_unrecognise_line()` (undo-release / cancel hooks) | 0183 | Reverses an allocation's recognition with its line: a folded share reverses as part of the release JE's mirror reversal; a standalone waiver JE is reversed on its own. Either way the allocation goes back to unrecognised, so a later re-release folds it again. |
-| Serialization (0183) | 0183 | One lock order for every path — `visits` row, then the visit's live `test_requests` rows in id order; payments are read, never locked, by the waiver. The one cycle the design accepts (a waive vs. an undo cascade) is left for Postgres to detect and abort as `40P01`, translated "Something else changed this visit at the same moment. Try again." |
+| Serialization (0183) | 0183 | One lock order for every path — `visits` row, then the visit's live `test_requests` rows in id order; payments are read, never locked, by the waiver. The one cycle the design accepts (a waive vs. an undo cascade) is left for Postgres to detect and abort as `40P01`, translated "Another change to the same records was being saved at the same moment. Please try again." (0184 gives 40001/40P01 this same generic wording everywhere, including the patient lifecycle lock's own deadlock/serialization aborts.) |
+| `correct_payment(...)` (0161 → 0174 → 0183 → 0184) | 0184 re-creates it on top of 0183's body | Takes the patient lifecycle lock (both visits, sorted, shared unless the correction moves the payment's patient) BEFORE its own row locks — same "advisory lock, then row lock" discipline as every other 0184-hardened RPC. Refuses (P0058) on either visit's patient if inactive. `withLifecycleRetry` wraps its callers (Edit, Move) for the P0072/40001/40P01 retry. |
+| `record_hmo_settlement(...)` (new, 0184) | `admin/accounting/hmo-claims/actions.ts` → `recordHmoSettlementAction` | Replaces the old loop-of-PostgREST-inserts-plus-best-effort-compensating-deletes with ONE transaction. **Lock order: patient(s) → the affected VISIT rows (sorted, `for update`) → the BATCH row (`for no key update`) → the claim items (id order, `for update`) → payment/allocation writes.** The visit lock sits ahead of the batch lock on purpose — inserting the settlement payment fires 0183's `guard_payment_on_waived_visit`, which locks the visit, so without this the settlement's own order (batch → items → visit) was the exact reverse of a plain payment void (visit → allocations → batch) and the two could deadlock. A voided or still-`draft` batch is refused (22023) before any lock past the batch row. Money is validated and summed in integer centavos. |
+| `reschedule_closure_appointments(...)` (new, 0184) | `admin/closures/{page,closures-client}.tsx` | Bulk-reschedules a closed day's confirmed appointments to `pending_callback` in one transaction, with a `p_dry_run` preview mode the closures page calls to show the exact count. Locks every affected patient (shared) before touching a row; refuses (22023) above 2,000 patients in one call (each patient lock is its own advisory-lock table entry, and prod's `max_locks_per_transaction` is 64). Appointments of a deleted/merged patient are silently skipped, not moved — the dry-run and real run report the same `skipped_inactive` count. |
 
 ## Pure helpers (vitest-covered, no DB) — reuse, don't re-derive
 
@@ -130,9 +133,17 @@ Admin-managed `discount_types` catalog. Kinds `percent` / `fixed` / `custom` (cu
 ## Patient delete/restore (0167) blocks writes on inactive patients
 
 A deleted or merged patient's history stays readable, but nothing new can be written
-against it until an admin restores the record — this is enforced app-side first (the
-DB-side child-table guards are a PR 3 follow-up, so until then these ARE the only
-barrier). `src/lib/patients/require-active.ts` exports one `assert*Active(db, id(s))`
+against it until an admin restores the record. **Since PR 3a (0184) this is enforced
+DB-side, not just app-side:** every write to a patient-owned table — `payments`,
+`hmo_claim_items`, `hmo_payment_allocations`, `hmo_claim_resolutions`, `doctor_pf_entries`
+included — passes the `a_lifecycle_guard` trigger, which takes the patient's lifecycle
+lock and refuses (P0058) on an inactive patient with no exception for money paths (the
+only guard exceptions anywhere near payments are `doctor_pf_entries.disbursement_id`
+UPDATE — paying a doctor for work already done adds nothing to the patient — and a
+no-op UPDATE). The app-side guards below were the ONLY barrier before 0184 and stay in
+place as the first, cheaper line of defense (they run before the DB round-trip); the
+`assert*Active` helpers now back up, not substitute for, the trigger.
+`src/lib/patients/require-active.ts` exports one `assert*Active(db, id(s))`
 helper per write surface — `assertPatientActive`, `assertVisitPatientActive` /
 `assertVisitsPatientsActive`, `assertTestRequestsPatientsActive`,
 `assertPaymentPatientActive`, `assertAppointmentsPatientsActive`,

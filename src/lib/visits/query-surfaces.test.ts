@@ -200,6 +200,10 @@ const SURFACES: Record<string, Surface> = {
     meaning: "structural",
     why: "Same report_group_id scoping as the consolidated page it serves.",
   },
+  "lib/actions/results/finalise-release.ts": {
+    meaning: "structural",
+    why: "Reads the status of the members of the report finalise-consolidated just finalised — ids it proved report_group_id-scoped — to spot one still awaiting sign-off before releasing.",
+  },
 
   // --- Results archive -----------------------------------------------------
   "app/(staff)/staff/(dashboard)/results/page.tsx": {
@@ -367,6 +371,12 @@ const DERIVED_ROW_SETS: DerivedRowSet[] = [
       "The bench detail page's guarded test lookup above it (visits!inner + visits.deleted_at), of which these are the package components.",
   },
   {
+    file: "lib/actions/results/finalise-release.ts",
+    key: "id",
+    provenBy:
+      "The ids are finalise-consolidated's input.testRequestIds, which its claim-rows query proved live on both halves (deleted_at and visits.deleted_at) before finalising; the release that follows re-pins both itself.",
+  },
+  {
     file: "lib/actions/results/finalise-consolidated.ts",
     key: "id",
     provenBy:
@@ -522,6 +532,10 @@ const LIFECYCLES: Record<string, LifecycleSurface> = {
   "lib/queue/panel-members.ts": {
     lifecycle: "live",
     why: "Bench work on the lab queue. Deleted lines and every line of a deleted visit are out of a panel.",
+  },
+  "lib/actions/results/finalise-release.ts": {
+    lifecycle: "live",
+    why: "Step 9 of finalising a chemistry report: releases it whole or not at all. A deleted line is never released (releaseRows pins it).",
   },
   "lib/actions/results/finalise-consolidated.ts": {
     lifecycle: "live",

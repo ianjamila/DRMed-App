@@ -20,6 +20,7 @@ import { checkRateLimit, RATE_LIMITS } from "@/lib/rate-limit/check";
 import { resolvePatient } from "@/lib/patients/resolve";
 import { activePatients } from "@/lib/patients/active";
 import { createAppointmentGroup, createLabRequestOnlyBooking, type PatientResolution } from "@/lib/appointments/create";
+import { PORTAL_LOOKUP_AGAIN_ERROR } from "@/lib/appointments/patient-recovery";
 import { recordSelfRegistrationGrant, shouldRecordBookingConsent } from "@/lib/consent/self-registration";
 import type { ServiceRow } from "@/lib/appointments/timing";
 import { validateLabRequestGate, parseIntakePreference } from "@/lib/appointments/lab-request";
@@ -379,6 +380,7 @@ export async function submitBookingAction(_prev: BookingResult | null, formData:
         source: bookingSource,
         attribution,
         resolvePatient: resolveThunk,
+        lookupAgainError: PORTAL_LOOKUP_AGAIN_ERROR,
       })
     : await createAppointmentGroup(admin, {
         branch: data.branch,
@@ -392,6 +394,7 @@ export async function submitBookingAction(_prev: BookingResult | null, formData:
         source: bookingSource,
         attribution,
         resolvePatient: resolveThunk,
+        lookupAgainError: PORTAL_LOOKUP_AGAIN_ERROR,
       });
 
   if (!result.ok) {

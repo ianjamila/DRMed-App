@@ -9,6 +9,7 @@ import { audit } from "@/lib/audit/log";
 import { requireActiveStaff } from "@/lib/auth/require-staff";
 import { requireAdminStaff } from "@/lib/auth/require-admin";
 import { assertVisitPatientActive } from "@/lib/patients/require-active";
+import { withLifecycleRetry } from "@/lib/patients/lifecycle-retry";
 import { ipAndAgent } from "@/lib/server/action-helpers";
 import { loadOwnBatchRows } from "@/lib/audit/bulk-batch";
 import {
@@ -1082,11 +1083,16 @@ export async function waiveVisitBalanceAction(
   // 0183: the RPC owns every rule (admin actor, non-HMO, unpaid/partial,
   // provenance, the per-line split, the discount JE) under the visit + line
   // row locks, and raises P0071 with a staff-readable message per refusal.
-  const { data, error } = await admin.rpc("waive_visit_balance", {
-    p_visit_id: visitId,
-    p_actor_id: session.user_id,
-    p_reason: parsed.data.reason,
-  });
+  // 0184: waive_visit_balance takes the patient lifecycle lock LAST, at its
+  // visits UPDATE — a concurrent ownership move can make it a 40P01 victim,
+  // so retry once (a single RPC call, rolled back whole on loss).
+  const { data, error } = await withLifecycleRetry(() =>
+    admin.rpc("waive_visit_balance", {
+      p_visit_id: visitId,
+      p_actor_id: session.user_id,
+      p_reason: parsed.data.reason,
+    }),
+  );
   if (error) {
     revalidatePath(`/staff/visits/${visitId}`);
     return {

@@ -3,6 +3,7 @@ import "server-only";
 import { randomUUID } from "node:crypto";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { translatePgError } from "@/lib/accounting/pg-errors";
+import { withLifecycleRetry } from "@/lib/patients/lifecycle-retry";
 import { audit } from "@/lib/audit/log";
 import type { Json } from "@/types/database";
 import { classifyCommitError, editVersionPath, versionBase } from "@/lib/results/result-edit";
@@ -20,6 +21,7 @@ import type { AlertRow, ValueRow } from "@/lib/results/value-rows";
 //      whether this attempt committed, and if it cannot tell, KEEPS the
 //      objects — an orphan is harmless, deleting a committed PDF is not.
 // Nothing is ever removed after a confirmed commit.
+// Also used by the first PDF upload (queue/[id]/actions.ts uploadResultAction, 0184).
 
 type Admin = ReturnType<typeof createAdminClient>;
 
@@ -43,7 +45,7 @@ export interface NewImage {
 
 type RpcOutcome<T> = { data: T | null; error: { code?: string | null; message: string } | null };
 
-type CommitOutcome<T> =
+export type CommitOutcome<T> =
   | { status: "committed"; data: T | null }
   | { status: "failed"; error: string };
 
@@ -58,7 +60,7 @@ async function removeObjects(admin: Admin, objects: readonly PendingObject[]) {
  * Upload → RPC → classify. `probe` asks the database whether THIS attempt
  * committed: true / false, or null when it cannot tell either.
  */
-async function commitWithUploads<T>(
+export async function commitWithUploads<T>(
   admin: Admin,
   uploads: readonly PendingObject[],
   call: () => PromiseLike<RpcOutcome<T>>,
@@ -187,26 +189,28 @@ export async function commitResultEdit(
     admin,
     uploads,
     () =>
-      admin.rpc("result_edit_commit", {
-        p_attempt_id: attemptId,
-        p_result_id: args.resultId,
-        p_expected_amendment_count: args.expectedAmendmentCount,
-        p_editor: args.editorId,
-        p_reason: args.reason,
-        p_anchor_test_request_id: args.anchorTestRequestId,
-        p_new_storage_path: newStoragePath,
-        p_new_file_size_bytes: args.pdf.byteLength,
-        p_values: args.values as unknown as Json,
-        p_new_image: args.newImage
-          ? ({
-              storage_path: newImagePath,
-              filename: args.newImage.filename,
-              mime_type: args.newImage.mime,
-              size_bytes: args.newImage.size,
-            } as Json)
-          : (null as unknown as Json),
-        p_alerts: args.alerts as unknown as Json,
-      }),
+      withLifecycleRetry(() =>
+        admin.rpc("result_edit_commit", {
+          p_attempt_id: attemptId,
+          p_result_id: args.resultId,
+          p_expected_amendment_count: args.expectedAmendmentCount,
+          p_editor: args.editorId,
+          p_reason: args.reason,
+          p_anchor_test_request_id: args.anchorTestRequestId,
+          p_new_storage_path: newStoragePath,
+          p_new_file_size_bytes: args.pdf.byteLength,
+          p_values: args.values as unknown as Json,
+          p_new_image: args.newImage
+            ? ({
+                storage_path: newImagePath,
+                filename: args.newImage.filename,
+                mime_type: args.newImage.mime,
+                size_bytes: args.newImage.size,
+              } as Json)
+            : (null as unknown as Json),
+          p_alerts: args.alerts as unknown as Json,
+        }),
+      ),
     async () => {
       const { data, error } = await admin
         .from("result_amendments")
@@ -300,24 +304,26 @@ export async function commitResultFinalise(
     admin,
     uploads,
     () =>
-      admin.rpc("result_finalise_commit", {
-        p_result_id: args.resultId,
-        p_finaliser: args.finaliserId,
-        p_values: args.values as unknown as Json,
-        p_storage_path: storagePath,
-        p_file_size_bytes: args.pdf.byteLength,
-        p_finalised_at: args.finalisedAt.toISOString(),
-        p_new_image:
-          args.image && imagePath
-            ? ({
-                storage_path: imagePath,
-                filename: args.image.filename,
-                mime_type: args.image.mime,
-                size_bytes: args.image.size,
-              } as Json)
-            : (null as unknown as Json),
-        p_alerts: args.alerts as unknown as Json,
-      }),
+      withLifecycleRetry(() =>
+        admin.rpc("result_finalise_commit", {
+          p_result_id: args.resultId,
+          p_finaliser: args.finaliserId,
+          p_values: args.values as unknown as Json,
+          p_storage_path: storagePath,
+          p_file_size_bytes: args.pdf.byteLength,
+          p_finalised_at: args.finalisedAt.toISOString(),
+          p_new_image:
+            args.image && imagePath
+              ? ({
+                  storage_path: imagePath,
+                  filename: args.image.filename,
+                  mime_type: args.image.mime,
+                  size_bytes: args.image.size,
+                } as Json)
+              : (null as unknown as Json),
+          p_alerts: args.alerts as unknown as Json,
+        }),
+      ),
     async () => {
       // This attempt's object path is unique, so "the row points at it"
       // is exactly "this attempt committed".
