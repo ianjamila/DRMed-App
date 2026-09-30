@@ -247,7 +247,7 @@
 <div class="layout">
 <nav class="toc" aria-label="Contents">
   <p class="toc-brand">drmed<span>.</span>ph</p>
-  <p class="toc-tag">User guide · v2.45</p>
+  <p class="toc-tag">User guide · v2.46</p>
   <div class="filter" role="group" aria-label="Show chapters for">
     <button type="button" data-filter="all" aria-pressed="true">All roles</button>
     <button type="button" data-filter="reception">Reception</button>
@@ -1126,7 +1126,7 @@
     <dl class="defs">
       <dt>Which patient is this?</dt><dd>More than one existing patient could match a sheet row; pick one to <kbd class="ui">Link to selected patient</kbd>, or <kbd class="ui">Create a new patient</kbd> instead.</dd>
       <dt>Details don't match the patient</dt><dd>A likely match exists, but something about it (DOB, phone) disagrees enough to ask first.</dd>
-      <dt>Might already be a patient</dt><dd>A softer version of the above — a possible match worth a look before creating a new record. When the row's name and date of birth (or phone) match a patient record that was <b>deleted</b>, the sync holds it back instead of quietly re-creating that person — the card reads <q>Matches a deleted patient record</q> and offers <kbd class="ui">Create a new patient</kbd>, <kbd class="ui">Keep deleted</kbd>, or a link to find the deleted record (restore it there first to <kbd class="ui">Link</kbd> normally).</dd>
+      <dt>Might already be a patient</dt><dd>A softer version of the above — a possible match worth a look before creating a new record. When the row's name and date of birth (or phone) match a patient record that was <b>deleted</b>, the sync holds it back instead of quietly re-creating that person — the card reads <q>Matches a deleted patient record</q> and offers <kbd class="ui">Create a new patient</kbd>, <kbd class="ui">Keep deleted</kbd>, or a link to find the deleted record (restore it there first to <kbd class="ui">Link</kbd> normally). The same card appears when a row the sync had already linked to a patient finds that patient has since been deleted. Once you choose <kbd class="ui">Keep deleted</kbd>, the card moves to the handled list, where it offers only <kbd class="ui">Create a new patient</kbd> and the link to the deleted record.</dd>
       <dt>Unknown &ldquo;how did you hear&rdquo; answer</dt><dd>The sheet's answer doesn't match any channel yet. Choose one from the dropdown and click <kbd class="ui">Map answer</kbd> to update every patient who gave that answer, or <kbd class="ui">Dismiss</kbd>.</dd>
       <dt>Date the sync can't read</dt><dd>A date cell in the sheet isn't in a format the sync understands.</dd>
       <dt>Row the sync can't use</dt><dd>The row is missing something the sync needs to make a patient — most often a name that has no last name before the comma, or no first name. <b>Fix it in the sheet — the next sync picks it up.</b></dd>
@@ -1336,7 +1336,7 @@
 </section>
 
 <footer class="end">
-  <p>drmed.ph User Guide · v2.45 · 28 September 2026 · Matches the production release at migration 0186, plus 0189 (Patient Sources), 0187 (View-as follow-ups), 0190 (claim-holder guard and End now), 0188 (why a patient notice failed, Retry notice), 0183 (waived balance in the books), 0182, 0179 (corrected-result follow-ups), 0176 and 0170 (applied out of order) and 0167 (patient delete and restore). Every label in this guide was checked against the application code on that date. Print with <b>Ctrl/Cmd + P</b>; each chapter starts on a new page.</p>
+  <p>drmed.ph User Guide · v2.46 · 30 September 2026 · Matches the production release at migration 0186, plus 0193 (sync review fixes), 0189 (Patient Sources), 0187 (View-as follow-ups), 0190 (claim-holder guard and End now), 0188 (why a patient notice failed, Retry notice), 0183 (waived balance in the books), 0182, 0179 (corrected-result follow-ups), 0176 and 0170 (applied out of order) and 0167 (patient delete and restore). Every label in this guide was checked against the application code on that date. Print with <b>Ctrl/Cmd + P</b>; each chapter starts on a new page.</p>
 </footer>
 </main>
 </div>
