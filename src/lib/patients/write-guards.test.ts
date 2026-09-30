@@ -121,6 +121,10 @@ const EXEMPT: Record<string, string> = {
     "Same as claimTestAction, for a consolidated report (the panel page's Claim and the queue list's panel Claim / bulk Claim) — claiming does not bill.",
   [`src/lib/actions/queue/panel-writes.ts:unclaimPanelMembers`]:
     "Handing a consolidated report back reduces work, same reasoning as performUnclaim (its group path and the queue's bulk Unclaim both call this).",
+  [`src/lib/actions/queue/panel-writes.ts:reclaimPanelMembers`]:
+    "Undo of a bulk panel hand-back — puts back a claim the operator just handed back; neither bills nor releases, same reasoning as performUnclaim / claimPanelMembers. reclaim_panel_members (0200) also requires a live visit, and the lifecycle trigger (0184) refuses a deleted or merged patient.",
+  [`src/lib/actions/queue/panel-writes.ts:restorePanelMembers`]:
+    "Undo of a bulk panel queue-delete — its caller (undoBulkQueueAction) checks the visit's patient is active before calling, like restoreTestRequestsForVisit's assertVisitPatientActive; restore_panel_members (0200) also refuses a deleted visit, and the lifecycle trigger (0184) refuses a deleted or merged patient.",
   [`src/app/(marketing)/appointments/cancel/[id]/actions.ts:cancelAppointmentAction`]:
     "Public cancel-by-link reduces work (cancels), same reasoning as staff cancel.",
   [`src/app/(marketing)/schedule/actions.ts:storeLabRequestFiles`]:
