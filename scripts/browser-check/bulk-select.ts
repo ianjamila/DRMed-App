@@ -1,7 +1,10 @@
 /**
  * Guarded, local-only, signed-in headless-Chrome checklist for every
  * bulk-select behaviour this PR (bulk-select follow-ups) added: fixed bars,
- * keyboard jump, named outcomes, dated callbacks, chemistry panels and panel Undo, Undo
+ * keyboard jump, named outcomes, dated callbacks, the Website Messages inbox
+ * bulk bar (M1–M8: select-all, Escape, Mark closed + audit, Undo, stale-click
+ * naming, "Last changed by" on the detail page, 390px, role redirect),
+ * chemistry panels and panel Undo, Undo
  * (including Release selected and the historic HMO claim actions), and the
  * audit-log bulk filter. Every check ASSERTS via c.expect — it never
  * just logs.
@@ -25,6 +28,7 @@ import {
   APP_BASE,
   BAR,
   VISIT_BAR,
+  OUTCOME,
   barText,
   headerBox,
   newPageFromState,
@@ -304,6 +308,208 @@ async function sectionDatedCallbacks(c: CheckContext, admin: Page): Promise<void
     const ok =
       alphaTotal === 1 && alphaInTodayCount === 1 && tagCount > 0 && pendingDescCount > 0 && undatedCount === 1;
     return { ok, detail: { alphaTotal, alphaInTodayCount, tagCount, pendingDescCount, undatedCount } };
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Website Messages inbox bulk bar (spec 2026-09-25 §7, §9 items 5–6)
+// ---------------------------------------------------------------------------
+const MESSAGES_URL = `${APP_BASE}/staff/messages?status=all&q=BSQ%20Sender`;
+
+/** A row's checkbox on the inbox — RowSelectCheckbox labels it "Select message from <name>". */
+const msgBox = (page: Page, name: string) =>
+  page.locator(`input[type="checkbox"][aria-label="Select message from ${name}"]`);
+
+const barButton = (page: Page, label: string) => page.locator(BAR).locator("button", { hasText: label });
+
+/** Most recent NON-Undo bulk batch of inbox status changes (single-message changes carry no batch id). */
+async function latestMessageBatchId(c: CheckContext): Promise<string | undefined> {
+  const rows = await c.sql(
+    `select metadata->>'bulk_batch_id' as batch_id from audit_log
+     where action = 'contact_message.status_changed'
+       and metadata->>'bulk_batch_id' is not null
+       and metadata->>'via' is distinct from 'bulk_undo'
+     order by created_at desc limit 1`,
+  );
+  return rows[0]?.batch_id as string | undefined;
+}
+
+async function messageRow(c: CheckContext, name: string) {
+  const [r] = await c.sql(
+    "select id, status, handled_by, handled_at from contact_messages where name = $1 and message like 'bsq-fixture%'",
+    [name],
+  );
+  return r;
+}
+
+async function sectionMessages(c: CheckContext, admin: Page, med: Page): Promise<void> {
+  const [adminRow] = await c.sql(
+    "select u.id, sp.full_name from auth.users u left join staff_profiles sp on sp.id = u.id where u.email = $1",
+    [ADMIN.email],
+  );
+  const adminId = adminRow.id as string;
+  const adminName = (adminRow.full_name as string | null) ?? null;
+  let m3Batch: string | undefined;
+
+  await check(c, "M1 select-all: 5 messages, per-button counts, bar pinned to the bottom", async () => {
+    await goto(admin, MESSAGES_URL);
+    await admin.getByLabel("Select all messages on this page").check();
+    await admin.waitForSelector(BAR, { timeout: 10_000 });
+    const text = await barText(admin);
+    const pos = await pinnedBottom(admin, BAR);
+    const ok =
+      !!text &&
+      text.includes("5 messages selected") &&
+      text.includes("Mark replied (2)") &&
+      text.includes("Mark closed (4)") &&
+      text.includes("Reopen (3)") &&
+      pos.fixed &&
+      pos.bottomGap <= 16;
+    return { ok, detail: { text, pos } };
+  });
+
+  await check(c, "M2 Escape clears the selection; Escape in the search box does not", async () => {
+    await admin.keyboard.press("Escape");
+    await sleep(300);
+    const clearedByEscape = (await admin.locator(BAR).count()) === 0;
+    await admin.getByLabel("Select all messages on this page").check();
+    await admin.waitForSelector(BAR, { timeout: 10_000 });
+    await admin.locator("#messages-q").focus();
+    await admin.keyboard.press("Escape");
+    await sleep(300);
+    const keptInSearch = (await admin.locator(BAR).count()) === 1;
+    return { ok: clearedByEscape && keptInSearch, detail: { clearedByEscape, keptInSearch } };
+  });
+
+  await check(c, "M3 One + Four (booked) -> Mark closed: named outcome, DB, audit batch", async () => {
+    await goto(admin, MESSAGES_URL);
+    await msgBox(admin, "BSQ Sender One").check();
+    await msgBox(admin, "BSQ Sender Four").check();
+    await admin.waitForSelector(BAR, { timeout: 10_000 });
+    await barButton(admin, "Mark closed (2)").click();
+    await waitForCount(admin.locator('button:has-text("↶ Undo")'));
+    const text = await outcomeText(admin);
+    m3Batch = await latestMessageBatchId(c);
+    const one = await messageRow(c, "BSQ Sender One");
+    const four = await messageRow(c, "BSQ Sender Four");
+    const audit = m3Batch
+      ? await c.sql(
+          `select resource_id, metadata ? 'previous_handled_by' as has_prev, metadata->>'previous_handled_by' as prev
+           from audit_log
+           where action = 'contact_message.status_changed' and metadata->>'bulk_batch_id' = $1`,
+          [m3Batch],
+        )
+      : [];
+    const auditIds = audit.map((r) => r.resource_id).sort();
+    const ok =
+      !!text &&
+      text.includes("Marked 2 messages closed.") &&
+      one?.status === "closed" &&
+      four?.status === "closed" &&
+      one?.handled_by === adminId &&
+      four?.handled_by === adminId &&
+      audit.length === 2 &&
+      JSON.stringify(auditIds) === JSON.stringify([one.id, four.id].sort()) &&
+      audit.every((r) => r.has_prev === true && r.prev === null);
+    return { ok, detail: { text, one, four, m3Batch, audit } };
+  });
+
+  await check(c, "M4 Undo restores One (new) and Four (booked), handler back to none", async () => {
+    const hadUndo = await clickUndo(admin);
+    const text = await outcomeText(admin);
+    const one = await messageRow(c, "BSQ Sender One");
+    const four = await messageRow(c, "BSQ Sender Four");
+    const undoRows = m3Batch ? await undoRowCount(c, m3Batch) : 0;
+    const ok =
+      hadUndo &&
+      !!text &&
+      text.includes("Undone — 2 messages are back to what they were.") &&
+      one?.status === "new" &&
+      four?.status === "booked" &&
+      one?.handled_by === null &&
+      one?.handled_at === null &&
+      four?.handled_by === null &&
+      four?.handled_at === null &&
+      undoRows === 2;
+    return { ok, detail: { hadUndo, text, one, four, undoRows } };
+  });
+
+  await check(c, "M5 stale click: Two changed to replied behind the bar is named and left alone", async () => {
+    await goto(admin, MESSAGES_URL);
+    await msgBox(admin, "BSQ Sender Two").check();
+    await admin.waitForSelector(BAR, { timeout: 10_000 });
+    const [{ t }] = await c.sql("select clock_timestamp() as t");
+    await c.sql("update contact_messages set status = 'replied' where name = 'BSQ Sender Two' and message like 'bsq-fixture%'");
+    await barButton(admin, "Mark closed (1)").click();
+    await waitForCount(admin.locator(OUTCOME));
+    const text = await outcomeText(admin);
+    const two = await messageRow(c, "BSQ Sender Two");
+    const [{ n }] = await c.sql(
+      `select count(*)::int as n from audit_log
+       where action = 'contact_message.status_changed' and resource_id = $1 and created_at > $2`,
+      [two.id, t],
+    );
+    const ok =
+      !!text &&
+      text.includes("BSQ Sender Two: changed since you selected it") &&
+      two?.status === "replied" &&
+      Number(n) === 0;
+    return { ok, detail: { text, two, auditRowsSince: n } };
+  });
+
+  await check(c, "M6 detail page shows the bulk actor after a bulk Mark replied", async () => {
+    await goto(admin, MESSAGES_URL);
+    await msgBox(admin, "BSQ Sender One").check();
+    await admin.waitForSelector(BAR, { timeout: 10_000 });
+    await barButton(admin, "Mark replied (1)").click();
+    await waitForCount(admin.locator('button:has-text("↶ Undo")'));
+    const one = await messageRow(c, "BSQ Sender One");
+    await goto(admin, `${APP_BASE}/staff/messages/${one.id}`);
+    const body = (await admin.locator("body").innerText()).replace(/\s+/g, " ");
+    const expected = `Last changed by ${adminName ?? "a staff member"}`;
+    const ok = one?.status === "replied" && one?.handled_by === adminId && body.includes(expected);
+    return { ok, detail: { status: one?.status, handledBy: one?.handled_by, expected, hasText: body.includes(expected) } };
+  });
+
+  await check(c, "M7 390px: bar visible, 44px checkbox targets, no horizontal scroll", async () => {
+    await admin.setViewportSize({ width: 390, height: 844 });
+    try {
+      await goto(admin, MESSAGES_URL);
+      await msgBox(admin, "BSQ Sender One").check();
+      await msgBox(admin, "BSQ Sender Three").check();
+      await admin.waitForSelector(BAR, { timeout: 10_000 });
+      const barVisible = await admin.locator(BAR).isVisible();
+      const m = await admin.evaluate((sel) => {
+        const bar = document.querySelector(sel)!;
+        const r = bar.getBoundingClientRect();
+        const targets = [...document.querySelectorAll('tbody input[type="checkbox"]')].map((el) => {
+          const box = (el.closest("label") ?? el).getBoundingClientRect();
+          return { w: Math.round(box.width), h: Math.round(box.height) };
+        });
+        return {
+          scrollW: document.documentElement.scrollWidth,
+          barLeft: r.left,
+          barRight: r.right,
+          targets,
+        };
+      }, BAR);
+      const ok =
+        barVisible &&
+        m.scrollW <= 390 &&
+        m.barLeft >= -1 &&
+        m.barRight <= 391 &&
+        m.targets.length >= 2 &&
+        m.targets.every((t) => t.h >= 44 && t.w >= 44);
+      return { ok, detail: { barVisible, ...m } };
+    } finally {
+      await admin.setViewportSize({ width: 1280, height: 800 });
+    }
+  });
+
+  await check(c, "M8 medtech is redirected away from /staff/messages", async () => {
+    await goto(med, `${APP_BASE}/staff/messages`);
+    const pathname = new URL(med.url()).pathname;
+    return { ok: !pathname.startsWith("/staff/messages"), detail: { pathname } };
   });
 }
 
@@ -1212,6 +1418,9 @@ async function main(): Promise<void> {
   await sectionKeyboard(c, med);
   await sectionNamedOutcome(c, admin);
   await sectionDatedCallbacks(c, admin);
+
+  await reseed(c);
+  await sectionMessages(c, admin, med);
 
   await reseed(c);
   await sectionPanels(c, med);
