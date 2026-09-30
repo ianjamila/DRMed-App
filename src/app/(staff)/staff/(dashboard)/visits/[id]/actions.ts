@@ -21,7 +21,6 @@ import {
 } from "@/lib/actions/visits/release-reports";
 import { RELEASE_REFUSAL } from "@/lib/queue/release-eligibility";
 import type { SkippedRow } from "@/lib/queue/bulk-queue";
-import { DOCTOR_KINDS_PG_LIST } from "@/lib/visits/classification";
 import {
   hasOpenHmoClaim,
   visitDeletability,
@@ -396,8 +395,9 @@ export async function releaseSelectedAction(
   const visitDeleted = await refuseIfVisitDeleted(supabase, visitId);
   if (visitDeleted) return visitDeleted;
 
-  // Section-scoped candidates (RLS is role-only): live, ready, non-header,
-  // non-doctor lines of this visit that this role may release.
+  // Section-scoped candidates (RLS is role-only): live, ready, non-header
+  // lines of this visit that this role may release (releaseRows also refuses
+  // doctor lines; they never reach ready_for_release).
   const { data: readyRows, error: readErr } = await supabase
     .from("test_requests")
     .select("id, services!inner ( section, name, kind )")
@@ -405,7 +405,6 @@ export async function releaseSelectedAction(
     .eq("visit_id", visitId)
     .eq("status", "ready_for_release")
     .eq("is_package_header", false)
-    .not("services.kind", "in", DOCTOR_KINDS_PG_LIST)
     .is("deleted_at", null);
   if (readErr) {
     revalidateReleaseSurfaces(visitId);

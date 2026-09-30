@@ -4,6 +4,7 @@ import { useState, useTransition } from "react";
 import { Button } from "@/components/ui/button";
 import { Panel } from "@/components/ui/panel";
 import { RELEASE_MEDIUM_OPTIONS } from "@/lib/visits/release-media";
+import { releaseOutcomeText, useReleaseOutcome } from "@/components/staff/release/release-outcome";
 import {
   releaseSelectedAction,
   undoReleaseSelectedAction,
@@ -30,6 +31,9 @@ interface Props {
   // confirms. The server expansion in undoReleaseSelectedAction is what
   // actually decides what reverts.
   reportScopeByTrId: Record<string, { memberIds: string[]; label: string }>;
+  // Live ready-for-release ids on the visit — with reportScopeByTrId, lets the
+  // bar preview how many more tests a release pulls in (display only).
+  readyIds: string[];
 }
 
 // Sticky bottom toolbar (same pattern as the hmo-claims bulk bars) that
@@ -49,7 +53,9 @@ export function BulkActionBar({
   gateRequired,
   viewedCountById,
   reportScopeByTrId,
+  readyIds,
 }: Props) {
+  const outcome = useReleaseOutcome();
   const {
     releaseIds,
     unreleaseIds,
@@ -100,6 +106,22 @@ export function BulkActionBar({
     (trId) => (viewedCountById[trId] ?? 0) > 0,
   ).length;
 
+  // Display-only preview of the release side of the whole-report rule:
+  // releasing one member of a combined report releases every ready member, so
+  // count the ready members the selection does not already include.
+  // releaseSelectedAction re-derives and enforces this itself.
+  const readySet = new Set(readyIds);
+  const selectedRelease = new Set<string>(releaseIds);
+  const alsoReleased = new Set<string>();
+  for (const trId of releaseIds) {
+    const scope = reportScopeByTrId[trId];
+    if (!scope) continue;
+    for (const id of scope.memberIds) {
+      if (readySet.has(id) && !selectedRelease.has(id)) alsoReleased.add(id);
+    }
+  }
+  const releaseExtra = alsoReleased.size;
+
   function onRelease() {
     // Snapshot the ids being sent so success only clears exactly this batch —
     // rows in the other bucket, or ticked while the action is in flight,
@@ -107,15 +129,22 @@ export function BulkActionBar({
     const sentIds = releaseIds;
     startRelease(async () => {
       const result = await releaseSelectedAction(visitId, sentIds, medium);
-      if (!result.ok) {
-        alert(result.error);
-        return;
+      // The refresh after a release remounts rows, so the outcome (count, the
+      // tests a report pulled in, each skipped reason, warnings) goes to the
+      // page-level provider; alert is the no-provider fallback.
+      const text = result.ok
+        ? releaseOutcomeText({
+            changedCount: result.count,
+            alsoReleasedCount: result.alsoReleasedCount,
+            skipped: result.skipped,
+            warnings: result.warnings,
+          })
+        : result.error;
+      if (text) {
+        if (outcome) outcome.show(text);
+        else alert(text);
       }
-      if (result.count < sentIds.length) {
-        alert(
-          `Released ${result.count} of ${sentIds.length} selected — the rest were already handled or not yours to release.`,
-        );
-      }
+      if (!result.ok) return;
       clearIds(sentIds);
     });
   }
@@ -198,6 +227,12 @@ export function BulkActionBar({
                 </option>
               ))}
             </select>
+            {releaseExtra > 0 ? (
+              <span className="rounded-md border border-violet-300 bg-violet-50 px-2 py-1 text-[11px] font-semibold text-violet-900">
+                Releasing these also releases {releaseExtra} other test
+                {releaseExtra === 1 ? "" : "s"} on the same combined report.
+              </span>
+            ) : null}
             <Button
               type="button"
               size="sm"

@@ -15,6 +15,8 @@ import {
   roleCanActOnResults,
 } from "@/lib/visits/line-visibility";
 import { ReleaseButton } from "./release-button";
+import { ReleaseOutcomeProvider } from "@/components/staff/release/release-outcome";
+import { reportReleaseBlock } from "@/lib/queue/report-release-scope";
 import { fetchSharedReportTestIds } from "@/lib/visits/shared-report-links";
 import { ReleaseAllButton } from "./release-all-button";
 import { ReleasePackageHeaderButton } from "./release-package-header-button";
@@ -366,6 +368,28 @@ export default async function VisitDetailPage({ params, searchParams }: Props) {
     };
     for (const trId of members) reportScopeByTrId[trId] = scope;
   }
+  // Whole-report release rule, display side: a combined report releases every
+  // ready member or none, so a report with an unfinished or deleted-unreleased
+  // member disables Release (and the bulk checkbox) with the same message the
+  // action would refuse with. Display only — releaseVisitSelection re-proves it
+  // (members on another visit are invisible here; the server refuses those).
+  const trState = new Map((tests ?? []).map((t) => [t.id, { status: t.status, deleted: t.deleted_at !== null }]));
+  const reportBlockByTrId: Record<string, string> = {};
+  const blockByScope = new Map<object, string | null>();
+  for (const [trId, scope] of Object.entries(reportScopeByTrId)) {
+    if (!blockByScope.has(scope)) {
+      blockByScope.set(
+        scope,
+        reportReleaseBlock(scope.memberIds.map((id) => trState.get(id) ?? { status: "unknown", deleted: false })),
+      );
+    }
+    const block = blockByScope.get(scope);
+    if (block) reportBlockByTrId[trId] = block;
+  }
+  // Live ready members, for the bulk bar's "also releases N more" preview.
+  const readyTrIds = (tests ?? [])
+    .filter((t) => t.deleted_at === null && t.status === "ready_for_release")
+    .map((t) => t.id);
 
   // Admin-only: fetch PF entries to render status badges per test_request.
   const testIds = (tests ?? []).map((t) => t.id);
@@ -699,6 +723,7 @@ export default async function VisitDetailPage({ params, searchParams }: Props) {
 
   return (
     <div className="px-4 py-8 sm:px-6 lg:px-8">
+      <ReleaseOutcomeProvider>
       <Link
         href={`/staff/patients/${patient.id}`}
         className="text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-cyan)] hover:underline"
@@ -1180,11 +1205,13 @@ export default async function VisitDetailPage({ params, searchParams }: Props) {
                                   <td className="px-4 py-3">
                                     {visitDeleted || !patientActive || !canActOnRow(c) ? null : c.status ===
                                       "ready_for_release" ? (
+                                      reportBlockByTrId[c.id] ? null : (
                                       <RowSelectCheckbox
                                         testRequestId={c.id}
                                         eligibility="release"
                                         label={csvc.name}
                                       />
+                                      )
                                     ) : c.status === "released" ? (
                                       <RowSelectCheckbox
                                         testRequestId={c.id}
@@ -1259,6 +1286,7 @@ export default async function VisitDetailPage({ params, searchParams }: Props) {
                                       viewedCount={componentViewedCount}
                                       editNote={componentEditNote}
                                       reportScope={componentReportScope}
+                                      releaseBlock={reportBlockByTrId[c.id] ?? null}
                                       preferredMedium={
                                         (patient.preferred_release_medium ?? null) as
                                           | "physical"
@@ -1344,11 +1372,13 @@ export default async function VisitDetailPage({ params, searchParams }: Props) {
                     <td className="px-2 py-3">
                       {visitDeleted || !patientActive || !canActOnRow(t) ? null : t.status ===
                         "ready_for_release" ? (
+                        reportBlockByTrId[t.id] ? null : (
                         <RowSelectCheckbox
                           testRequestId={t.id}
                           eligibility="release"
                           label={svc.name}
                         />
+                        )
                       ) : t.status === "released" ? (
                         <RowSelectCheckbox
                           testRequestId={t.id}
@@ -1490,6 +1520,7 @@ export default async function VisitDetailPage({ params, searchParams }: Props) {
                         viewedCount={viewedCountForRow}
                         editNote={editNote}
                         reportScope={reportScope}
+                        releaseBlock={reportBlockByTrId[t.id] ?? null}
                         preferredMedium={
                           (patient.preferred_release_medium ?? null) as
                             | "physical"
@@ -1575,6 +1606,7 @@ export default async function VisitDetailPage({ params, searchParams }: Props) {
           gateRequired={gateRequired}
           viewedCountById={viewedCountRecord}
           reportScopeByTrId={reportScopeByTrId}
+          readyIds={readyTrIds}
         />
       )}
       </SelectionProvider>
@@ -1798,6 +1830,7 @@ export default async function VisitDetailPage({ params, searchParams }: Props) {
       >
         Back to patient
       </Link>
+      </ReleaseOutcomeProvider>
     </div>
   );
 }
@@ -1920,6 +1953,9 @@ interface TestActionProps {
   // Present when this row shares a finished result with other tests — undo
   // reverts the whole report, not just this row (display only).
   reportScope?: { memberIds: string[]; label: string } | null;
+  // Why a ready row on a combined report can't be released yet (an unfinished
+  // or deleted sibling) — the whole-report rule; null when it can.
+  releaseBlock?: string | null;
   // "compact" is used inside package-component rows, which are denser than
   // the standalone tests table.
   size?: "default" | "compact";
@@ -1947,6 +1983,7 @@ function TestAction({
   viewedCount,
   editNote = null,
   reportScope = null,
+  releaseBlock = null,
   size = "default",
 }: TestActionProps) {
   const sizeCls = size === "compact" ? "text-[10px]" : "text-xs";
@@ -2088,6 +2125,8 @@ function TestAction({
           consentOnFile={consentOnFile}
           gateRequired={gateRequired}
           size={size}
+          label={reportScope ? `Release report (${reportScope.memberIds.length} tests)` : "Release"}
+          blockReason={releaseBlock}
         />
         {editNote ? (
           <span className={`${sizeCls} max-w-[16rem] text-right text-violet-800`}>

@@ -2,6 +2,7 @@
 
 import { useState, useTransition } from "react";
 import { Button } from "@/components/ui/button";
+import { releaseOutcomeText, useReleaseOutcome } from "@/components/staff/release/release-outcome";
 import { releaseAllReadyComponentsAction, type ReleaseMedium } from "./actions";
 
 interface Props {
@@ -39,6 +40,7 @@ export function ReleaseAllButton({
   gateRequired,
   readyCount,
 }: Props) {
+  const outcome = useReleaseOutcome();
   const [pending, start] = useTransition();
   const [medium, setMedium] = useState<ReleaseMedium>(
     preferredMedium ?? "physical",
@@ -83,7 +85,21 @@ export function ReleaseAllButton({
               visitId,
               medium,
             );
-            if (!result.ok) alert(result.error);
+            // Counts come from the write (changedCount), never the render-time
+            // readyCount: a component on a combined report may be refused, and
+            // report members outside the package may be pulled in.
+            const text = result.ok
+              ? releaseOutcomeText({
+                  changedCount: result.changedCount,
+                  alsoReleasedCount: result.alsoReleasedCount,
+                  skipped: result.skipped,
+                  warnings: result.warnings,
+                })
+              : result.error;
+            if (text) {
+              if (outcome) outcome.show(text);
+              else alert(text);
+            }
           })
         }
       >

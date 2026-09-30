@@ -4,6 +4,7 @@ import { useState, useTransition } from "react";
 import { Button } from "@/components/ui/button";
 import { RELEASE_BLOCKED_CONSENT, RELEASE_BLOCKED_UNPAID } from "@/lib/visits/release-messages";
 import { RELEASE_MEDIUM_OPTIONS } from "@/lib/visits/release-media";
+import { releaseOutcomeText, useReleaseOutcome } from "@/components/staff/release/release-outcome";
 import { releaseTestAction, type ReleaseMedium } from "./actions";
 
 interface Props {
@@ -22,6 +23,12 @@ interface Props {
   // "compact" is used inside package-component rows, which are denser than
   // the standalone tests table.
   size?: "default" | "compact";
+  // "Release report (N tests)" on a combined chemistry report; defaults to "Release".
+  label?: string;
+  // Whole-report rule: why this report can't be released yet (an unfinished or
+  // deleted sibling). Disables the button and is shown under it. Display only —
+  // releaseTestAction re-proves it.
+  blockReason?: string | null;
 }
 
 export function ReleaseButton({
@@ -32,24 +39,28 @@ export function ReleaseButton({
   consentOnFile,
   gateRequired,
   size = "default",
+  label = "Release",
+  blockReason = null,
 }: Props) {
+  const outcome = useReleaseOutcome();
   const [pending, start] = useTransition();
   const [medium, setMedium] = useState<ReleaseMedium>(
     preferredMedium ?? "physical",
   );
 
   const blockedForConsent = gateRequired && !consentOnFile;
-  const disabled = pending || !moneySettled || blockedForConsent;
+  const disabled = pending || !moneySettled || blockedForConsent || blockReason !== null;
   const title = !moneySettled
     ? RELEASE_BLOCKED_UNPAID
     : blockedForConsent
       ? RELEASE_BLOCKED_CONSENT
-      : undefined;
+      : (blockReason ?? undefined);
 
   const textCls = size === "compact" ? "text-[10px]" : "text-xs";
   const btnSizeCls = size === "compact" ? "text-[10px] min-h-[28px]" : "";
 
   return (
+    <div className="flex flex-col items-end gap-0.5">
     <div className="flex items-center justify-end gap-1.5">
       {!consentOnFile && !gateRequired ? (
         <span className="text-[11px] text-amber-600">Consent not on file</span>
@@ -76,12 +87,31 @@ export function ReleaseButton({
         onClick={() =>
           start(async () => {
             const result = await releaseTestAction(testRequestId, visitId, medium);
-            if (!result.ok) alert(result.error);
+            // The page refreshes on success and unmounts this button, so the
+            // outcome goes to the page-level provider (alert is the fallback).
+            const text = result.ok
+              ? releaseOutcomeText({
+                  changedCount: result.changedCount,
+                  alsoReleasedCount: result.alsoReleasedCount,
+                  skipped: result.skipped,
+                  warnings: result.warnings,
+                })
+              : result.error;
+            if (text) {
+              if (outcome) outcome.show(text);
+              else alert(text);
+            }
           })
         }
       >
-        {pending ? "Releasing…" : "Release"}
+        {pending ? "Releasing…" : label}
       </Button>
+    </div>
+      {blockReason ? (
+        <span className={`${textCls} max-w-[16rem] text-right text-[color:var(--color-brand-text-soft)]`}>
+          {blockReason}
+        </span>
+      ) : null}
     </div>
   );
 }
