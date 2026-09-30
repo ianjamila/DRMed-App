@@ -205,6 +205,7 @@ export async function updateMessageStatusManyAction(input: unknown): Promise<Bul
     q = group.handledAt === null ? q.is("handled_at", null) : q.eq("handled_at", group.handledAt);
     const { data, error } = await q.select("id");
     if (error) {
+      console.error("bulk message status write failed", { ids: group.ids, error });
       firstError ??= error;
       for (const id of group.ids) erroredIds.add(id);
       continue;

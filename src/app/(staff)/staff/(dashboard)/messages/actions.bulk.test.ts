@@ -1,10 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-// updateMessageStatusManyAction / undoMessageStatusManyAction end to end
-// against the in-memory fake client: the real zod parsing, matrix check,
-// guarded writes and Undo planning run; only the session, audit writer,
-// headers and cache are stubbed. A predicate dropped from a write changes
-// the rows these tests read back.
+// updateMessageStatusManyAction end to end against the in-memory fake
+// client: the real zod parsing, matrix check and guarded writes run; only the
+// session, audit writer, headers and cache are stubbed. A predicate dropped
+// from a write changes the rows these tests read back.
 vi.mock("server-only", () => ({}));
 vi.mock("next/headers", () => ({
   headers: async () => new Headers({ "x-forwarded-for": "9.9.9.9", "user-agent": "vitest" }),
@@ -24,7 +23,7 @@ vi.mock("@/lib/audit/log", () => ({ audit: h.audit }));
 import { revalidatePath } from "next/cache";
 import { updateMessageStatusManyAction } from "./actions";
 import { FakeDb, type Row } from "@/lib/testing/fake-db";
-import { MESSAGE_CHANGED_REASON, MESSAGE_GONE_REASON } from "@/lib/contact-messages/bulk-status";
+import { MESSAGE_CHANGED_REASON, MESSAGE_GONE_REASON, MESSAGE_WRITE_FAILED_REASON } from "@/lib/contact-messages/bulk-status";
 
 const ME = h.session.user_id;
 const OTHER = "22222222-2222-4222-8222-222222222222";
@@ -43,7 +42,10 @@ beforeEach(() => {
   h.audit.mockClear();
   vi.mocked(revalidatePath).mockClear();
 });
-afterEach(() => vi.useRealTimers());
+afterEach(() => {
+  vi.useRealTimers();
+  vi.restoreAllMocks();
+});
 
 describe("updateMessageStatusManyAction", () => {
   it("refuses a role outside reception/admin before reading anything", async () => {
@@ -141,7 +143,64 @@ describe("updateMessageStatusManyAction", () => {
     expect(r.batchId).toBeUndefined();
   });
 
+  // Each race flips exactly ONE column of message 1 between the server's read
+  // and its write; message 2 shares the write group and must still commit.
+  // Dropping that one predicate from the write lets message 1 be overwritten.
+  const races: Array<[string, Row]> = [
+    ["status", { status: "booked" }],
+    ["handled_at", { handled_at: "2026-09-30T00:00:00+00:00" }],
+    ["handled_by", { handled_by: OTHER }],
+  ];
+  it.each(races)("a write-time change of only %s is skipped by that predicate, its group-mate still commits", async (_col, flip) => {
+    db.seed("contact_messages", [msg(1), msg(2)]);
+    db.hooks.beforeWrite = (call, d) => {
+      if (call.table === "contact_messages") Object.assign(d.row("contact_messages", id(1)), flip);
+    };
+    const r = await updateMessageStatusManyAction({
+      entries: [{ id: id(1), from: "new" }, { id: id(2), from: "new" }],
+      to: "closed",
+    });
+    if (!r.ok) throw new Error(r.error);
+    expect(db.updates("contact_messages")).toHaveLength(1); // one group: only the predicates can tell them apart
+    expect(r.changedIds).toEqual([id(2)]);
+    expect(r.skipped).toEqual([{ id: id(1), reason: MESSAGE_CHANGED_REASON }]);
+    expect(db.row("contact_messages", id(1))).toMatchObject({ handled_by: null, handled_at: null, ...flip });
+    expect(db.row("contact_messages", id(1)).status).not.toBe("closed");
+    expect(db.row("contact_messages", id(1)).handled_by).not.toBe(ME);
+    expect(db.row("contact_messages", id(2))).toMatchObject({ status: "closed", handled_by: ME });
+    expect(audits().map((a) => a.resource_id)).toEqual([id(2)]);
+  });
+
+  it("one group's write error is skipped and named; the other group still commits and is audited", async () => {
+    const err = vi.spyOn(console, "error").mockImplementation(() => {});
+    db.seed("contact_messages", [
+      msg(1, { handled_by: OTHER, handled_at: "2026-09-29T01:00:00+00:00" }),
+      msg(2),
+    ]);
+    db.hooks.beforeWrite = (call) =>
+      call.table === "contact_messages" && call.filters.some(([n, a]) => n === "eq" && a[0] === "handled_by")
+        ? { code: "XX000", message: "boom" }
+        : undefined;
+    const r = await updateMessageStatusManyAction({
+      entries: [{ id: id(1), from: "new" }, { id: id(2), from: "new" }],
+      to: "closed",
+    });
+    if (!r.ok) throw new Error(r.error);
+    expect(db.updates("contact_messages")).toHaveLength(2);
+    expect(r.changedIds).toEqual([id(2)]);
+    expect(r.skipped).toEqual([{ id: id(1), reason: MESSAGE_WRITE_FAILED_REASON }]);
+    expect(r.batchId).toBeDefined();
+    expect(db.row("contact_messages", id(1))).toMatchObject({ status: "new", handled_by: OTHER });
+    expect(db.row("contact_messages", id(2))).toMatchObject({ status: "closed", handled_by: ME });
+    expect(audits().map((a) => a.resource_id)).toEqual([id(2)]);
+    expect(meta(audits()[0]!)).toMatchObject({ bulk_batch_id: r.batchId, bulk_batch_size: 2 });
+    expect(vi.mocked(revalidatePath)).toHaveBeenCalled();
+    expect(err).toHaveBeenCalledWith("bulk message status write failed", expect.objectContaining({ ids: [id(1)] }));
+    err.mockRestore();
+  });
+
   it("a failed write reports the error when nothing changed", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
     db.seed("contact_messages", [msg(1)]);
     db.hooks.beforeWrite = (call) => (call.table === "contact_messages" ? { code: "XX000", message: "boom" } : undefined);
     const r = await updateMessageStatusManyAction({ entries: [{ id: id(1), from: "new" }], to: "closed" });
