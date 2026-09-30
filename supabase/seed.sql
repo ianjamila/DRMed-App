@@ -195,3 +195,5 @@ revoke all on public.patient_consents              from public, anon, authentica
 revoke all on public.patient_merges                from public, anon, authenticated;
 revoke all on public.pf_disbursement_year_counters from public, anon, authenticated;
 revoke all on public.sheet_mirror_staging          from public, anon, authenticated;
+revoke all on sequence public.patient_consents_seq_seq     from public, anon, authenticated;
+revoke all on sequence public.sheet_mirror_staging_seq_seq from public, anon, authenticated;

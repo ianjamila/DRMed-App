@@ -100,7 +100,9 @@ end $$;
 -- denies every row today, but a table-level grant left behind turns the first
 -- policy anyone adds — for any purpose — into a read or write path. Supabase's
 -- default privileges hand both roles ALL on every new table, so a table newly
--- added to the list will fail here until its migration revokes them.
+-- added to the list will fail here until its migration revokes them — on the
+-- table, any column, and any sequence it owns (a list of privileges passed to
+-- has_*_privilege is satisfied by ANY one of them, which is what detection wants).
 do $$
 declare
   granted text;
@@ -114,8 +116,14 @@ begin
     and c.relkind = 'r'
     and c.relrowsecurity
     and not exists (select 1 from pg_policy p where p.polrelid = c.oid)
-    and has_table_privilege(r.rolname, c.oid,
-          'SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER');
+    and (has_table_privilege(r.rolname, c.oid,
+           'SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER,MAINTAIN')
+         or has_any_column_privilege(r.rolname, c.oid, 'SELECT,INSERT,UPDATE,REFERENCES')
+         -- an owned (identity/serial) sequence is part of the table's surface
+         or exists (select 1 from pg_depend d join pg_class sq on sq.oid = d.objid
+                     where d.refobjid = c.oid and d.deptype in ('a', 'i')
+                       and sq.relkind = 'S'
+                       and has_sequence_privilege(r.rolname, sq.oid, 'USAGE,SELECT,UPDATE')));
 
   if granted is not null then
     raise exception
