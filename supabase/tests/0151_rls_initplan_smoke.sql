@@ -48,16 +48,16 @@ end $$;
 
 -- Second assertion: the rewrite must not have quietly dropped anyone's access.
 --
--- "RLS enabled with no policy" denies everything to anon and authenticated. Seven
--- tables are deliberately in that state — counters, import bookkeeping and merge
--- history that only service_role touches, auto-protected by 0124's ensure_rls event
+-- "RLS enabled with no policy" denies everything to anon and authenticated. Eight
+-- tables are deliberately in that state — counters, import bookkeeping, merge
+-- history and the Sheet Sync staging buffer that only service_role touches, auto-protected by 0124's ensure_rls event
 -- trigger. So the assertion cannot be "no such table exists"; a first draft said
 -- that and failed on a perfectly correct database, which is the same mistake as a
 -- regex that matches the form it is meant to allow.
 --
 -- Pin the known set instead, and fail if it GROWS. That still catches a policy
 -- dropped by accident — the failure mode this migration could actually cause —
--- without flagging seven deliberate denials. If you add a table to this list, say
+-- without flagging eight deliberate denials. If you add a table to this list, say
 -- in the commit why it is service_role-only.
 do $$
 declare
@@ -78,7 +78,12 @@ begin
       'legacy_import_runs',
       'patient_consents',
       'patient_merges',
-      'pf_disbursement_year_counters'
+      'pf_disbursement_year_counters',
+      -- 0170: raw sheet rows parked between sheet_mirror_stage() and the
+      -- apply step. Only the service-role sync RPCs read or write it (0170
+      -- revokes anon/authenticated: "Staging: no policy"), and no admin page
+      -- shows it, so any policy here would only widen access.
+      'sheet_mirror_staging'
     );
 
   if newly_unprotected is not null then

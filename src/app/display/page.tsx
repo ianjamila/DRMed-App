@@ -1,4 +1,5 @@
 import { createAdminClient } from "@/lib/supabase/admin";
+import { activeEmbeddedPatients } from "@/lib/patients/active";
 import { CONTACT } from "@/lib/marketing/site";
 import { DisplayPoller } from "./poller";
 
@@ -54,7 +55,9 @@ async function loadDisplayData(): Promise<{
     { data: requested },
     { data: closures },
   ] = await Promise.all([
-    admin
+    // A deleted or merged-away patient is off every lab worklist (owner
+    // decision 2026-09-30), so their name never reaches the waiting room.
+    activeEmbeddedPatients(admin
       .from("test_requests")
       .select(
         `
@@ -69,8 +72,8 @@ async function loadDisplayData(): Promise<{
       .is("deleted_at", null)
       .is("visits.deleted_at", null)
       .order("started_at", { ascending: false })
-      .limit(6),
-    admin
+      .limit(6), "visits.patients"),
+    activeEmbeddedPatients(admin
       .from("test_requests")
       .select(
         `
@@ -85,7 +88,7 @@ async function loadDisplayData(): Promise<{
       .is("deleted_at", null)
       .is("visits.deleted_at", null)
       .order("requested_at", { ascending: true })
-      .limit(8),
+      .limit(8), "visits.patients"),
     admin
       .from("clinic_closures")
       .select("closed_on, reason")

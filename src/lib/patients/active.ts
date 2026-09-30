@@ -1,7 +1,10 @@
 // The one active-patient rule (0167): a patient record is ACTIVE when it is
 // neither soft-deleted nor merged into another record. Every directory,
 // picker and matching query applies it; history lookups (visits, receipts,
-// payments, reports, audit) deliberately do not. The SQL side of the same
+// payments, reports, audit) deliberately do not. The lab worklists (the queue
+// and the results archive) and the dashboard cards that count them DO, per
+// owner decision 2026-09-30 — a deleted or merged-away patient's tests are
+// hidden there, not just badged. The SQL side of the same
 // rule lives in the 0167 views and functions (active-views.test.ts), and
 // src/lib/patients/query-surfaces.test.ts classifies every patients read.
 //
@@ -30,6 +33,18 @@ interface IsFilterable {
 export function activePatients<Q>(query: Q): Q {
   const withDeleted = (query as unknown as IsFilterable).is("deleted_at", null);
   return (withDeleted as IsFilterable).is("merged_into_id", null) as Q;
+}
+
+/**
+ * Restrict a query to rows whose EMBEDDED patient is active. `embed` is the
+ * dotted path to a `patients!inner` embed (e.g. "visits.patients"); every hop
+ * must be `!inner`, or PostgREST silently ignores the filter (CLAUDE.md).
+ * Wrap the builder directly — `query = activeEmbeddedPatients(query, "visits.patients")`
+ * — so the inventory test can see it at the call site.
+ */
+export function activeEmbeddedPatients<Q>(query: Q, embed: string): Q {
+  const withDeleted = (query as unknown as IsFilterable).is(`${embed}.deleted_at`, null);
+  return (withDeleted as IsFilterable).is(`${embed}.merged_into_id`, null) as Q;
 }
 
 export function isActivePatient(p: PatientLifecycle | null | undefined): boolean {

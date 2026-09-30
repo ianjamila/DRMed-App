@@ -78,7 +78,7 @@ import { QueueReleaseButton } from "@/components/staff/release/queue-release-but
 import { evaluateRelease, RELEASE_REFUSAL } from "@/lib/queue/release-eligibility";
 import { reportReleaseBlock } from "@/lib/queue/report-release-scope";
 import { getConsentCurrentByPatient, isConsentGateRequired } from "@/lib/consent/gate";
-import { isActivePatient } from "@/lib/patients/active";
+import { activeEmbeddedPatients, isActivePatient } from "@/lib/patients/active";
 import { isReleaseMedium, type ReleaseMedium } from "@/lib/visits/release-media";
 import { canActOnResult } from "@/lib/visits/line-visibility";
 import { ReleaseOutcomeProvider } from "@/components/staff/release/release-outcome";
@@ -440,6 +440,12 @@ export default async function QueuePage({ searchParams }: SearchProps) {
     query = query.ilike("visits.visit_number", visitFilter.pattern);
   }
 
+  // Deleted and merged-away patients are HIDDEN from this worklist (owner
+  // decision 2026-09-30), not just badged — in the query, so the count and
+  // paging stay honest. `visits.patients` is `!inner` at both hops in every
+  // select shape above, which is what makes PostgREST honour the filter.
+  query = activeEmbeddedPatients(query, "visits.patients");
+
   // Free-text search is a real filter like the rest: every word must match the
   // row's patient / visit # / test / panel text (migration 0194), so it counts
   // against the whole queue and the pager, not just the page in hand.
@@ -603,6 +609,8 @@ export default async function QueuePage({ searchParams }: SearchProps) {
           section: svc.section,
           printTestId: printable ? r.id : null,
           hasFile: pdfState !== undefined,
+          // The list query excludes inactive patients, so this only matters if
+          // that filter is ever removed.
           patientActive: isActivePatient(patient),
           consentOnFile: consentByPatient.get(patient.id) ?? false,
           // Judged on the panel's FULL membership once it is read (below).

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  activeEmbeddedPatients,
   activePatients,
   inactivePatientError,
   isActivePatient,
@@ -24,6 +25,23 @@ describe("activePatients", () => {
     expect(calls).toEqual([
       ["deleted_at", null],
       ["merged_into_id", null],
+    ]);
+  });
+});
+
+describe("activeEmbeddedPatients", () => {
+  it("adds the two lifecycle filters on the embedded path and returns the same builder", () => {
+    const calls: [string, unknown][] = [];
+    const builder = {
+      is(column: string, value: unknown) {
+        calls.push([column, value]);
+        return builder;
+      },
+    };
+    expect(activeEmbeddedPatients(builder, "visits.patients")).toBe(builder);
+    expect(calls).toEqual([
+      ["visits.patients.deleted_at", null],
+      ["visits.patients.merged_into_id", null],
     ]);
   });
 });
