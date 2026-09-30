@@ -22,7 +22,7 @@ import { MarkDoneButton } from "./mark-done-button";
 import { SelectionProvider } from "./selection-context";
 import { RowSelectCheckbox } from "./row-select-checkbox";
 import { BulkActionBar } from "./bulk-action-bar";
-import { UndoReleaseDialog } from "./undo-release-dialog";
+import { UndoReleaseDialog } from "@/components/staff/release/undo-release-dialog";
 import { DeleteSampleVisitDialog } from "./delete-sample-visit-dialog";
 import { DeleteBlockedHint } from "@/components/staff/delete-blocked-hint";
 import { SampleBadge } from "@/components/staff/sample-badge";
