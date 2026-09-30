@@ -17,7 +17,7 @@ export function LabRequestLinks({ attachments }: { attachments: LabRequestAttach
     startTransition(async () => {
       const res = await getLabRequestFormUrlAction(id);
       if (res.ok) window.open(res.url, "_blank", "noopener,noreferrer");
-      else setError(res.error);
+      else startTransition(() => setError(res.error));
     });
   }
 

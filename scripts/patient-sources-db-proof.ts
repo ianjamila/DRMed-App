@@ -512,6 +512,7 @@ async function main() {
         { name: "ad_spend_delete", sql: `select public.ad_spend_delete('meta'::text,'2026-06-01'::date,'2026-06-01'::date)` },
         { name: "ad_spend_daily_totals", sql: `select public.ad_spend_daily_totals('2026-06-01'::date,'2026-06-30'::date)` },
         { name: "ad_spend_coverage", sql: `select public.ad_spend_coverage()` },
+        { name: "ad_spend_rows", sql: `select * from public.ad_spend_rows('2026-06-01'::date,'2026-06-30'::date)` },
       ];
       const principals: { label: string; role: DbRole; claims: Claims; expect: "denied" | "ok" }[] = [
         { label: "anon", role: "anon", claims: null, expect: "denied" },
@@ -1443,6 +1444,251 @@ async function main() {
       await setRole("postgres", null);
       const left = await q(`select 1 from public.ad_spend_daily where campaign_key in ('p5mix','p5ok')`);
       assert(left.rows.length === 0, `P5: a refused import must write nothing, found ${left.rows.length} rows`);
+    }));
+
+    // (0203) The import writes leads / platform bookings / ad label with the existing semantics.
+    await check("Ad spend (0203): import writes leads, bookings and ad label; blank stays NULL, 0 is kept; duplicates sum", () => scoped(async () => {
+      await setRole("postgres", null);
+      await setRole("authenticated", { sub: fx.adminId, role: "authenticated" });
+      const D = "2026-06-10";
+      const row = (ad: string, extra: Json) => ({ spend_date: D, platform: "meta", campaign_key: "l0203", ad_key: ad, campaign_label: "L0203", spend_php: 10, ...extra });
+      await expectOk("import with leads/bookings", () =>
+        q(`select public.ad_spend_import(gen_random_uuid(), $1::jsonb)`, [JSON.stringify([
+          row("ada", { ad_label: "Ad A", leads: 5, platform_bookings: 2, impressions: 100, clicks: 4 }),
+          row("ada", { ad_label: "Ad A", leads: 3, platform_bookings: 0, impressions: 50, clicks: 1 }),
+          row("adb", { ad_label: "Ad B", leads: null, platform_bookings: 0 }),
+          row("adc", {}),
+        ])]));
+      await setRole("postgres", null);
+      const got = await q<{ ad_key: string; ad_label: string | null; leads: number | null; platform_bookings: number | null; spend_php: string; impressions: number | null }>(
+        `select ad_key, ad_label, leads, platform_bookings, spend_php::text, impressions from public.ad_spend_daily where campaign_key = 'l0203' order by ad_key`);
+      const by = Object.fromEntries(got.rows.map((r) => [r.ad_key, r]));
+      assert(by.ada.leads === 8 && by.ada.platform_bookings === 2 && by.ada.ad_label === "Ad A" && Number(by.ada.spend_php) === 20 && by.ada.impressions === 150,
+        `ada: expected leads 8 (5+3), bookings 2 (2+0), label 'Ad A', spend 20, impr 150; got ${JSON.stringify(by.ada)}`);
+      assert(by.adb.leads === null, `adb: a blank leads must stay NULL (unknown), got ${by.adb.leads}`);
+      assert(by.adb.platform_bookings === 0, `adb: an explicit 0 bookings must be kept as 0, got ${by.adb.platform_bookings}`);
+      assert(by.adc.leads === null && by.adc.platform_bookings === null && by.adc.ad_label === null, `adc: absent fields must be NULL, got ${JSON.stringify(by.adc)}`);
+    }));
+
+    await check("Ad spend (0203): a same-kind partial upload updates only the ads it mentions and keeps siblings' leads/bookings/label", () => scoped(async () => {
+      await setRole("postgres", null);
+      await setRole("authenticated", { sub: fx.adminId, role: "authenticated" });
+      const D = "2026-06-11";
+      const row = (ad: string, extra: Json) => ({ spend_date: D, platform: "google", campaign_key: "p0203", ad_key: ad, campaign_label: "P0203", spend_php: 10, ...extra });
+      await expectOk("seed two ads", () =>
+        q(`select public.ad_spend_import(gen_random_uuid(), $1::jsonb)`, [JSON.stringify([
+          row("ada", { ad_label: "Ad A", leads: 5, platform_bookings: 2 }),
+          row("adb", { ad_label: "Ad B", leads: 7, platform_bookings: 3 }),
+        ])]));
+      const r = await expectOk("partial re-upload of ad A only", () =>
+        q<{ r: Json }>(`select public.ad_spend_import(gen_random_uuid(), $1::jsonb) as r`, [JSON.stringify([
+          row("ada", { ad_label: "Ad A v2", leads: 9, platform_bookings: null, spend_php: 25 }),
+        ])]));
+      assert(r.rows[0].r.replaced === 1 && r.rows[0].r.inserted === 0, `expected {inserted:0,replaced:1}, got ${JSON.stringify(r.rows[0].r)}`);
+      await setRole("postgres", null);
+      const got = await q<{ ad_key: string; ad_label: string | null; leads: number | null; platform_bookings: number | null; spend_php: string }>(
+        `select ad_key, ad_label, leads, platform_bookings, spend_php::text from public.ad_spend_daily where campaign_key = 'p0203' order by ad_key`);
+      assert(got.rows.length === 2, `both ads must still exist, got ${got.rows.length}`);
+      const [a, b] = got.rows;
+      assert(a.leads === 9 && a.platform_bookings === null && a.ad_label === "Ad A v2" && Number(a.spend_php) === 25,
+        `ad A must take the file's word (leads 9, bookings NULL, label 'Ad A v2', spend 25), got ${JSON.stringify(a)}`);
+      assert(b.leads === 7 && b.platform_bookings === 3 && b.ad_label === "Ad B" && Number(b.spend_php) === 10,
+        `sibling ad B must be untouched (leads 7, bookings 3, label 'Ad B', spend 10), got ${JSON.stringify(b)}`);
+    }));
+
+    // (0203) Column presence rule: a column ABSENT from the file (key missing from every row)
+    // keeps the saved value; PRESENT-but-blank (key with null) sets NULL; 0 stays 0.
+    const FIELDS = ["ad_label", "leads", "platform_bookings", "impressions", "clicks"] as const;
+    type SavedAd = { ad_key: string; ad_label: string | null; leads: number | null; platform_bookings: number | null; impressions: number | null; clicks: number | null; spend_php: string };
+    const readAds = async (campaign: string) => {
+      await setRole("postgres", null);
+      const got = await q<SavedAd>(
+        `select ad_key, ad_label, leads, platform_bookings, impressions, clicks, spend_php::text from public.ad_spend_daily where campaign_key = $1 order by ad_key`, [campaign]);
+      return Object.fromEntries(got.rows.map((r) => [r.ad_key, r])) as Record<string, SavedAd>;
+    };
+    const SEED = { ad_label: "Ad A", leads: 5, platform_bookings: 2, impressions: 100, clicks: 4 };
+
+    await check("Ad spend (0203): a file WITHOUT leads/bookings/label/impressions/clicks columns keeps the saved values", () => scoped(async () => {
+      await setRole("postgres", null);
+      await setRole("authenticated", { sub: fx.adminId, role: "authenticated" });
+      const row = (ad: string, extra: Json) => ({ spend_date: "2026-06-13", platform: "meta", campaign_key: "a0203", ad_key: ad, campaign_label: "A0203", spend_php: 10, ...extra });
+      await expectOk("seed", () =>
+        q(`select public.ad_spend_import(gen_random_uuid(), $1::jsonb)`, [JSON.stringify([row("ada", SEED), row("adb", { ...SEED, ad_label: "Ad B", leads: 7 })])]));
+      // Re-upload of ad A carrying only spend (no optional key at all) - plus a brand-new ad C.
+      const r = await expectOk("re-upload without the optional columns", () =>
+        q<{ r: Json }>(`select public.ad_spend_import(gen_random_uuid(), $1::jsonb) as r`, [JSON.stringify([row("ada", { spend_php: 25 }), row("adc", { spend_php: 3 })])]));
+      assert(r.rows[0].r.replaced === 1 && r.rows[0].r.inserted === 1, `expected {inserted:1,replaced:1}, got ${JSON.stringify(r.rows[0].r)}`);
+      const by = await readAds("a0203");
+      assert(Number(by.ada.spend_php) === 25, `ad A spend must take the file's 25, got ${by.ada.spend_php}`);
+      for (const k of FIELDS) assert(by.ada[k] === (SEED as Json)[k], `ad A ${k} must be KEPT (${(SEED as Json)[k]}), got ${by.ada[k]}`);
+      assert(by.adb.leads === 7 && by.adb.ad_label === "Ad B", `sibling ad B untouched, got ${JSON.stringify(by.adb)}`);
+      // A new row from such a file has nothing to keep: NULLs.
+      assert(FIELDS.every((k) => by.adc[k] === null), `new ad C carries only what the file said (NULLs), got ${JSON.stringify(by.adc)}`);
+      // Keys are per FIELD: a file with ONLY a leads column updates leads and keeps the other four.
+      await setRole("authenticated", { sub: fx.adminId, role: "authenticated" });
+      await expectOk("re-upload with only leads", () =>
+        q(`select public.ad_spend_import(gen_random_uuid(), $1::jsonb)`, [JSON.stringify([row("ada", { leads: 11 })])]));
+      const by2 = await readAds("a0203");
+      assert(by2.ada.leads === 11 && by2.ada.platform_bookings === 2 && by2.ada.ad_label === "Ad A" && by2.ada.impressions === 100 && by2.ada.clicks === 4,
+        `only leads changes, got ${JSON.stringify(by2.ada)}`);
+    }));
+
+    await check("Ad spend (0203): a column present but blank sets NULL, and 0 stays 0", () => scoped(async () => {
+      await setRole("postgres", null);
+      await setRole("authenticated", { sub: fx.adminId, role: "authenticated" });
+      const row = (ad: string, extra: Json) => ({ spend_date: "2026-06-14", platform: "google", campaign_key: "b0203", ad_key: ad, campaign_label: "B0203", spend_php: 10, ...extra });
+      await expectOk("seed", () =>
+        q(`select public.ad_spend_import(gen_random_uuid(), $1::jsonb)`, [JSON.stringify([row("ada", SEED), row("adb", { ...SEED, ad_label: "Ad B" })])]));
+      // Ad A: every column present, every cell blank -> all NULL. Ad B: leads/bookings present as 0, the rest absent from the file.
+      await expectOk("blank cells", () =>
+        q(`select public.ad_spend_import(gen_random_uuid(), $1::jsonb)`, [JSON.stringify([row("ada", { ad_label: null, leads: null, platform_bookings: null, impressions: null, clicks: null })])]));
+      const by = await readAds("b0203");
+      assert(FIELDS.every((k) => by.ada[k] === null), `present-but-blank must set NULL, got ${JSON.stringify(by.ada)}`);
+      assert(by.adb.leads === 5, `ad B was not in the file: untouched, got ${JSON.stringify(by.adb)}`);
+      await asAdmin();
+      await expectOk("zeros", () =>
+        q(`select public.ad_spend_import(gen_random_uuid(), $1::jsonb)`, [JSON.stringify([row("adb", { leads: 0, platform_bookings: 0, impressions: 0 })])]));
+      const by2 = await readAds("b0203");
+      assert(by2.adb.leads === 0 && by2.adb.platform_bookings === 0 && by2.adb.impressions === 0, `0 must stay 0 (not NULL), got ${JSON.stringify(by2.adb)}`);
+      assert(by2.adb.ad_label === "Ad B" && by2.adb.clicks === 4, `absent label/clicks kept next to the zeros, got ${JSON.stringify(by2.adb)}`);
+      // The zeros survive a later file that has no such columns.
+      await asAdmin();
+      await expectOk("later file without them", () =>
+        q(`select public.ad_spend_import(gen_random_uuid(), $1::jsonb)`, [JSON.stringify([row("adb", { spend_php: 30 })])]));
+      const by3 = await readAds("b0203");
+      assert(by3.adb.leads === 0 && by3.adb.platform_bookings === 0 && Number(by3.adb.spend_php) === 30, `0 kept across a later columnless file, got ${JSON.stringify(by3.adb)}`);
+    }));
+
+    await check("Ad spend (0203): the app deployed BEFORE 0203 (always sends impressions/clicks, never leads/bookings/label) behaves no worse", () => scoped(async () => {
+      await setRole("postgres", null);
+      await setRole("authenticated", { sub: fx.adminId, role: "authenticated" });
+      const row = (extra: Json) => ({ spend_date: "2026-06-17", platform: "meta", campaign_key: "o0203", ad_key: "ada", campaign_label: "O0203", spend_php: 10, ...extra });
+      await expectOk("seed", () => q(`select public.ad_spend_import(gen_random_uuid(), $1::jsonb)`, [JSON.stringify([row(SEED)])]));
+      // Old row shape: impressions/clicks keys present (null = its file had no such column), nothing else.
+      await expectOk("old-app upload", () =>
+        q(`select public.ad_spend_import(gen_random_uuid(), $1::jsonb, 0)`, [JSON.stringify([row({ spend_php: 25, impressions: null, clicks: null })])]));
+      const by = await readAds("o0203");
+      assert(Number(by.ada.spend_php) === 25, `spend follows the old upload, got ${by.ada.spend_php}`);
+      assert(by.ada.impressions === null && by.ada.clicks === null, `impressions/clicks behave as before (overwritten by the present keys), got ${JSON.stringify(by.ada)}`);
+      assert(by.ada.leads === 5 && by.ada.platform_bookings === 2 && by.ada.ad_label === "Ad A", `leads/bookings/label (which the old app cannot send) are kept, got ${JSON.stringify(by.ada)}`);
+    }));
+
+    // Controls for the two checks above: the 0203 import body is loaded under a temp name with the
+    // rule broken, inside this rolled-back savepoint (like the 0199 controls). Each MUST lose data.
+    const loadImport0203 = async (temp: string, rewrite: (field: string) => string) => {
+      const src = fs.readFileSync(path.resolve(process.cwd(), "supabase/migrations/0203_ad_spend_leads_bookings.sql"), "utf8");
+      const start = src.indexOf("create or replace function public.ad_spend_import(");
+      const end = src.indexOf("\n$$;\n", start) + 5;
+      assert(start > 0 && end > start, "could not extract the 0203 ad_spend_import");
+      let body = src.slice(start, end).replace("public.ad_spend_import(", `public.${temp}(`);
+      const flags: Record<string, string> = { impressions: "v_has_impressions", clicks: "v_has_clicks", ad_label: "v_has_ad_label", leads: "v_has_leads", platform_bookings: "v_has_bookings" };
+      for (const [field, flag] of Object.entries(flags)) {
+        const live = `case when ${flag} then excluded.${field} else a.${field} end`;
+        assert(body.includes(live), `the live 0203 body must carry the keep-if-absent case for ${field}`);
+        body = body.replace(live, rewrite(field));
+      }
+      await q(body);
+      await q(`grant execute on function public.${temp}(uuid, jsonb, int) to authenticated`);
+    };
+
+    await check("0203 control: the old overwrite upsert LOSES leads/bookings/label/impressions/clicks on a columnless file", () => scoped(async () => {
+      await setRole("postgres", null);
+      await loadImport0203("_ad_spend_import_overwrite", (field) => `excluded.${field}`);
+      await setRole("authenticated", { sub: fx.adminId, role: "authenticated" });
+      const row = (extra: Json) => ({ spend_date: "2026-06-15", platform: "meta", campaign_key: "c0203", ad_key: "ada", campaign_label: "C0203", spend_php: 10, ...extra });
+      await expectOk("control seed (live body)", () =>
+        q(`select public.ad_spend_import(gen_random_uuid(), $1::jsonb)`, [JSON.stringify([row(SEED)])]));
+      await expectOk("control re-upload (overwrite body)", () =>
+        q(`select public._ad_spend_import_overwrite(gen_random_uuid(), $1::jsonb)`, [JSON.stringify([row({ spend_php: 25 })])]));
+      const by = await readAds("c0203");
+      assert(FIELDS.every((k) => by.ada[k] === null), `control: the overwrite body must have lost all five saved values, got ${JSON.stringify(by.ada)}`);
+      // ...whereas the live body keeps them (same input).
+      await setRole("authenticated", { sub: fx.adminId, role: "authenticated" });
+      await expectOk("control: reseed", () => q(`select public.ad_spend_import(gen_random_uuid(), $1::jsonb)`, [JSON.stringify([row(SEED)])]));
+      await expectOk("control: live re-upload", () => q(`select public.ad_spend_import(gen_random_uuid(), $1::jsonb)`, [JSON.stringify([row({ spend_php: 25 })])]));
+      const live = await readAds("c0203");
+      assert(FIELDS.every((k) => live.ada[k] === (SEED as Json)[k]), `control: the live body keeps them, got ${JSON.stringify(live.ada)}`);
+    }));
+
+    await check("0203 control: a keep-always body (coalesce) would NOT clear a present-but-blank column", () => scoped(async () => {
+      await setRole("postgres", null);
+      await loadImport0203("_ad_spend_import_keepalways", (field) => `coalesce(excluded.${field}, a.${field})`);
+      await setRole("authenticated", { sub: fx.adminId, role: "authenticated" });
+      const row = (extra: Json) => ({ spend_date: "2026-06-16", platform: "meta", campaign_key: "d0203", ad_key: "ada", campaign_label: "D0203", spend_php: 10, ...extra });
+      await expectOk("control seed", () => q(`select public.ad_spend_import(gen_random_uuid(), $1::jsonb)`, [JSON.stringify([row(SEED)])]));
+      await expectOk("control blank re-upload (keep-always body)", () =>
+        q(`select public._ad_spend_import_keepalways(gen_random_uuid(), $1::jsonb)`, [JSON.stringify([row({ ad_label: null, leads: null, platform_bookings: null, impressions: null, clicks: null })])]));
+      const by = await readAds("d0203");
+      assert(FIELDS.every((k) => by.ada[k] === (SEED as Json)[k]), `control: the keep-always body must have failed to clear the blanks, got ${JSON.stringify(by.ada)}`);
+    }));
+
+    await check("Ad spend (0203): a kind change without rejected rows replaces the group, with the new fields; with rejected rows it is refused", () => scoped(async () => {
+      await setRole("postgres", null);
+      await setRole("authenticated", { sub: fx.adminId, role: "authenticated" });
+      const D = "2026-06-12";
+      const row = (ad: string, extra: Json) => ({ spend_date: D, platform: "meta", campaign_key: "k0203", ad_key: ad, campaign_label: "K0203", spend_php: 10, ...extra });
+      await expectOk("seed per-ad", () =>
+        q(`select public.ad_spend_import(gen_random_uuid(), $1::jsonb)`, [JSON.stringify([row("ada", { ad_label: "Ad A", leads: 5 }), row("adb", { ad_label: "Ad B", leads: 7 })])]));
+      await expectPgError("kind change with rejected rows", "22023", () =>
+        q(`select public.ad_spend_import(gen_random_uuid(), $1::jsonb, 1)`, [JSON.stringify([row("(campaign)", { leads: 12, platform_bookings: 4 })])]));
+      const kept = await q<{ n: string }>(`select count(*)::text as n from public.ad_spend_daily where campaign_key = 'k0203' and ad_key <> '(campaign)'`);
+      assert(kept.rows[0].n === "2", `a refused import must leave both per-ad rows, got ${kept.rows[0].n}`);
+      await expectOk("kind change, nothing rejected", () =>
+        q(`select public.ad_spend_import(gen_random_uuid(), $1::jsonb, 0)`, [JSON.stringify([row("(campaign)", { leads: 12, platform_bookings: 4 })])]));
+      const got = await q<{ ad_key: string; leads: number | null; platform_bookings: number | null; ad_label: string | null }>(
+        `select ad_key, leads, platform_bookings, ad_label from public.ad_spend_daily where campaign_key = 'k0203'`);
+      assert(got.rows.length === 1 && got.rows[0].ad_key === "(campaign)" && got.rows[0].leads === 12 && got.rows[0].platform_bookings === 4 && got.rows[0].ad_label === null,
+        `the group must be replaced by the campaign total with its own numbers, got ${JSON.stringify(got.rows)}`);
+    }));
+
+    await check("Ad spend (0203): ad_spend_rows returns every field, in a TOTAL order that pages without gaps or repeats", () => scoped(async () => {
+      await setRole("postgres", null);
+      // Inserted in REVERSE of the wanted order and with ties on date/platform/campaign, so heap order != sorted order.
+      const fixtures: [string, string, string, string][] = [
+        ["2026-06-14", "meta", "r0203-b", "ad2"], ["2026-06-14", "meta", "r0203-b", "ad1"],
+        ["2026-06-14", "meta", "r0203-a", "ad2"], ["2026-06-14", "meta", "r0203-a", "ad1"],
+        ["2026-06-14", "google", "r0203-z", "ad1"], ["2026-06-13", "meta", "r0203-b", "ad1"],
+      ];
+      for (const [d, p, c, ad] of fixtures) {
+        await q(
+          `insert into public.ad_spend_daily (spend_date, platform, campaign_key, ad_key, campaign_label, spend_php, ad_label, leads, platform_bookings, upload_id)
+           values ($1, $2, $3, $4, $5, 5, $6, 1, 0, gen_random_uuid())`, [d, p, c, ad, c.toUpperCase(), `Label ${ad}`]);
+      }
+      await asAdmin();
+      const cols = "spend_date::text as d, platform, campaign_key, ad_key";
+      const full = await q<{ d: string; platform: string; campaign_key: string; ad_key: string }>(
+        `select ${cols} from public.ad_spend_rows('2026-06-13'::date,'2026-06-14'::date) where campaign_key like 'r0203-%'`);
+      const expected = await q<{ d: string; platform: string; campaign_key: string; ad_key: string }>(
+        `select ${cols} from public.ad_spend_daily where campaign_key like 'r0203-%' order by spend_date, platform, campaign_key, ad_key`);
+      const k = (r: { d: string; platform: string; campaign_key: string; ad_key: string }) => [r.d, r.platform, r.campaign_key, r.ad_key].join("|");
+      assert(full.rows.length === 6, `expected 6 fixture rows, got ${full.rows.length}`);
+      assert(full.rows.map(k).join(",") === expected.rows.map(k).join(","), `order must be (date, platform, campaign_key, ad_key); got ${full.rows.map(k).join(", ")}`);
+      // PostgREST pages with limit/offset over the function's result: two-row pages must tile the whole set.
+      const paged: string[] = [];
+      for (let off = 0; off < 6; off += 2) {
+        const page = await q<{ d: string; platform: string; campaign_key: string; ad_key: string }>(
+          `select ${cols} from public.ad_spend_rows('2026-06-13'::date,'2026-06-14'::date) where campaign_key like 'r0203-%' limit 2 offset $1`, [off]);
+        paged.push(...page.rows.map(k));
+      }
+      assert(paged.join(",") === full.rows.map(k).join(","), `paging must not drop or repeat rows; paged ${paged.join(", ")}`);
+      const one = await q<{ ad_label: string | null; leads: number | null; platform_bookings: number | null; spend_php: string; campaign_label: string }>(
+        `select ad_label, leads, platform_bookings, spend_php::text, campaign_label from public.ad_spend_rows('2026-06-14'::date,'2026-06-14'::date) where campaign_key = 'r0203-z'`);
+      assert(one.rows[0].ad_label === "Label ad1" && one.rows[0].leads === 1 && one.rows[0].platform_bookings === 0 && Number(one.rows[0].spend_php) === 5 && one.rows[0].campaign_label === "R0203-Z",
+        `ad_spend_rows must return the stored fields, got ${JSON.stringify(one.rows[0])}`);
+    }));
+
+    await check("Ad spend (0203): ad_spend_rows period rules (400-day cap, start <= end, no Patient Sources 2023-12 floor) and admin-only reads", () => scoped(async () => {
+      await asAdmin();
+      await expectPgError("start after end", "22023", () => q(`select * from public.ad_spend_rows('2026-06-30'::date,'2026-06-01'::date)`));
+      await expectPgError("null start", "22023", () => q(`select * from public.ad_spend_rows(null::date,'2026-06-01'::date)`));
+      await expectPgError("401 days", "22023", () => q(`select * from public.ad_spend_rows('2025-01-01'::date,'2026-02-06'::date)`));
+      await expectOk("exactly 400 days", () => q(`select * from public.ad_spend_rows('2025-01-01'::date,'2026-02-05'::date)`));
+      await expectOk("before 2023-12-01 is fine for ad data", () => q(`select * from public.ad_spend_rows('2023-01-01'::date,'2023-06-01'::date)`));
+      // Reception sees no rows through the table either (RLS) and is refused by the function.
+      await setRole("authenticated", { sub: fx.receptionId, role: "authenticated" });
+      await expectPgError("reception", "42501", () => q(`select * from public.ad_spend_rows('2026-06-01'::date,'2026-06-30'::date)`));
+      await setRole("anon", null);
+      await expectPgError("anon", "42501", () => q(`select * from public.ad_spend_rows('2026-06-01'::date,'2026-06-30'::date)`));
     }));
 
     await check("Whole history, not the period", () => scoped(async () => {

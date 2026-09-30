@@ -14,7 +14,9 @@ export function MarkContactedButton({ amendmentId }: { amendmentId: string }) {
       setErr(null);
       const result = await markCopyContactedAction(amendmentId);
       if (!result.ok) {
-        setErr(result.error);
+        startTransition(() => {
+          setErr(result.error);
+        });
         return;
       }
       router.refresh();

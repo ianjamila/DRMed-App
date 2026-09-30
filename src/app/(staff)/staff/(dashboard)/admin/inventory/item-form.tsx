@@ -80,7 +80,9 @@ export function ItemForm({
         ? await updateInventoryItem(initial!.id, payload)
         : await createInventoryItem(payload);
       if (!r.ok) {
-        setError(r.error);
+        startTransition(() => {
+          setError(r.error);
+        });
         return;
       }
       router.push(`/staff/admin/inventory/${r.data.id}`);

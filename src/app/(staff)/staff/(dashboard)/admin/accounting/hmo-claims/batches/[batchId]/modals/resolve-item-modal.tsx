@@ -86,7 +86,9 @@ function ResolveItemModalInner({
         notes: notes.trim() || null,
       });
       if (!res.ok) {
-        setErr(res.error);
+        startTransition(() => {
+          setErr(res.error);
+        });
         return;
       }
       onClose();

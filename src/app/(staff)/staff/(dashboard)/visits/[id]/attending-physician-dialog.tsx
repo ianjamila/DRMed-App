@@ -57,10 +57,14 @@ export function AttendingPhysicianDialog({
         attending_physician_id: selected === "" ? null : selected,
       });
       if (!result.ok) {
-        setErr(result.error);
+        startTransition(() => {
+          setErr(result.error);
+        });
         return;
       }
-      setOpen(false);
+      startTransition(() => {
+        setOpen(false);
+      });
     });
   }
 

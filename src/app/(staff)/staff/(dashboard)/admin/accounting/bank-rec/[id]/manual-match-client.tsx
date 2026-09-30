@@ -47,7 +47,9 @@ export function ManualMatchClient({
         je_line_id: selectedId,
       });
       if (!r.ok) {
-        setError(r.error);
+        startTransition(() => {
+          setError(r.error);
+        });
         return;
       }
       router.refresh();

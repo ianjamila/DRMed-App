@@ -25,7 +25,9 @@ export function UploadResultForm({ testRequestId }: Props) {
         const formData = new FormData(e.currentTarget);
         start(async () => {
           const result = await uploadResultAction(testRequestId, formData);
-          setState(result);
+          start(() => {
+            setState(result);
+          });
           if (result.ok) router.refresh();
         });
       }}

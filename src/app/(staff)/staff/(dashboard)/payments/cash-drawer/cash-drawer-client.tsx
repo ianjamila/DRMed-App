@@ -366,7 +366,7 @@ function AdjustmentModal(props: {
         vendor_id: isSendOut ? (vendorId || null) : null,
         notes: notes || null,
       });
-      if (!r.ok) setErr(r.error);
+      if (!r.ok) start(() => setErr(r.error));
       else props.onSaved();
     });
   };

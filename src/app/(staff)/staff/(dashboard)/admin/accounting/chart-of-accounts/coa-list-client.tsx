@@ -295,7 +295,7 @@ function Row({ row }: { row: CoaRow }) {
     startTransition(async () => {
       setErr(null);
       const result = await toggleAccountActiveAction(row.id);
-      if (!result.ok) setErr(result.error);
+      if (!result.ok) startTransition(() => setErr(result.error));
     });
   }
 

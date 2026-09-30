@@ -92,16 +92,22 @@ export function MovePaymentDialog({
       setPicked("");
       const r = await findVisitForMoveAction(lookup);
       if (!r.ok) {
-        setFound(null);
-        setErr(r.error);
+        startFind(() => {
+          setFound(null);
+          setErr(r.error);
+        });
         return;
       }
       if (r.visit.visitNumber === currentVisitNumber) {
-        setFound(null);
-        setErr("The payment is already on this visit.");
+        startFind(() => {
+          setFound(null);
+          setErr("The payment is already on this visit.");
+        });
         return;
       }
-      setFound(r.visit);
+      startFind(() => {
+        setFound(r.visit);
+      });
     });
   }
 
@@ -111,10 +117,14 @@ export function MovePaymentDialog({
       setErr(null);
       const r = await movePaymentAction({ paymentId, targetVisitId: target.id, reason: reason.trim() });
       if (!r.ok) {
-        setErr(r.error);
+        startMove(() => {
+          setErr(r.error);
+        });
         return;
       }
-      setOpen(false);
+      startMove(() => {
+        setOpen(false);
+      });
     });
   }
 

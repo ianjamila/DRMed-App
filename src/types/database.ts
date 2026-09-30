@@ -217,12 +217,15 @@ export type Database = {
       ad_spend_daily: {
         Row: {
           ad_key: string
+          ad_label: string | null
           campaign_key: string
           campaign_label: string
           clicks: number | null
           id: number
           impressions: number | null
+          leads: number | null
           platform: string
+          platform_bookings: number | null
           spend_date: string
           spend_php: number
           upload_id: string
@@ -231,12 +234,15 @@ export type Database = {
         }
         Insert: {
           ad_key: string
+          ad_label?: string | null
           campaign_key: string
           campaign_label: string
           clicks?: number | null
           id?: never
           impressions?: number | null
+          leads?: number | null
           platform: string
+          platform_bookings?: number | null
           spend_date: string
           spend_php: number
           upload_id: string
@@ -245,12 +251,15 @@ export type Database = {
         }
         Update: {
           ad_key?: string
+          ad_label?: string | null
           campaign_key?: string
           campaign_label?: string
           clicks?: number | null
           id?: never
           impressions?: number | null
+          leads?: number | null
           platform?: string
+          platform_bookings?: number | null
           spend_date?: string
           spend_php?: number
           upload_id?: string
@@ -901,8 +910,8 @@ export type Database = {
           due_date: string
           gross_amount?: number
           id?: string
-          net_payable?: number | null
-          outstanding_amount?: number | null
+          net_payable?: never
+          outstanding_amount?: never
           paid_amount?: number
           posted_at?: string | null
           posted_by?: string | null
@@ -929,8 +938,8 @@ export type Database = {
           due_date?: string
           gross_amount?: number
           id?: string
-          net_payable?: number | null
-          outstanding_amount?: number | null
+          net_payable?: never
+          outstanding_amount?: never
           paid_amount?: number
           posted_at?: string | null
           posted_by?: string | null
@@ -3369,7 +3378,7 @@ export type Database = {
           keep_id: string
           merged_at: string
           merged_by: string | null
-          moved: Json
+          moved: NonNullable<Json>
           source_id: string
           undone_at: string | null
           undone_by: string | null
@@ -3380,7 +3389,7 @@ export type Database = {
           keep_id: string
           merged_at?: string
           merged_by?: string | null
-          moved?: Json
+          moved?: NonNullable<Json>
           source_id: string
           undone_at?: string | null
           undone_by?: string | null
@@ -3391,7 +3400,7 @@ export type Database = {
           keep_id?: string
           merged_at?: string
           merged_by?: string | null
-          moved?: Json
+          moved?: NonNullable<Json>
           source_id?: string
           undone_at?: string | null
           undone_by?: string | null
@@ -3902,7 +3911,7 @@ export type Database = {
           id: string
           import_id: string
           notes: string | null
-          source_row: Json
+          source_row: NonNullable<Json>
           status: string
           time_in: string | null
           time_out: string | null
@@ -3915,7 +3924,7 @@ export type Database = {
           id?: string
           import_id: string
           notes?: string | null
-          source_row: Json
+          source_row: NonNullable<Json>
           status?: string
           time_in?: string | null
           time_out?: string | null
@@ -3928,7 +3937,7 @@ export type Database = {
           id?: string
           import_id?: string
           notes?: string | null
-          source_row?: Json
+          source_row?: NonNullable<Json>
           status?: string
           time_in?: string | null
           time_out?: string | null
@@ -5680,7 +5689,7 @@ export type Database = {
           patient_id: string | null
           payment_detail_raw: string | null
           payment_method_raw: string | null
-          raw: Json
+          raw: NonNullable<Json>
           release_medium_raw: string | null
           released_on: string | null
           revenue_php: number | null
@@ -5707,7 +5716,7 @@ export type Database = {
           patient_id?: string | null
           payment_detail_raw?: string | null
           payment_method_raw?: string | null
-          raw: Json
+          raw: NonNullable<Json>
           release_medium_raw?: string | null
           released_on?: string | null
           revenue_php?: number | null
@@ -5734,7 +5743,7 @@ export type Database = {
           patient_id?: string | null
           payment_detail_raw?: string | null
           payment_method_raw?: string | null
-          raw?: Json
+          raw?: NonNullable<Json>
           release_medium_raw?: string | null
           released_on?: string | null
           revenue_php?: number | null
@@ -5786,21 +5795,21 @@ export type Database = {
       }
       sheet_mirror_staging: {
         Row: {
-          row: Json
+          row: NonNullable<Json>
           run_id: string
           seq: number
           staged_at: string
           tab: string
         }
         Insert: {
-          row: Json
+          row: NonNullable<Json>
           run_id: string
           seq?: never
           staged_at?: string
           tab: string
         }
         Update: {
-          row?: Json
+          row?: NonNullable<Json>
           run_id?: string
           seq?: never
           staged_at?: string
@@ -5821,8 +5830,8 @@ export type Database = {
           decided_at: string
           decided_by: string | null
           decision: string
-          hold_reason: string | null
           held_patient_id: string | null
+          hold_reason: string | null
           link_key: string
           method: string
           patient_id: string | null
@@ -5832,8 +5841,8 @@ export type Database = {
           decided_at?: string
           decided_by?: string | null
           decision?: string
-          hold_reason?: string | null
           held_patient_id?: string | null
+          hold_reason?: string | null
           link_key: string
           method: string
           patient_id?: string | null
@@ -5843,8 +5852,8 @@ export type Database = {
           decided_at?: string
           decided_by?: string | null
           decision?: string
-          hold_reason?: string | null
           held_patient_id?: string | null
+          hold_reason?: string | null
           link_key?: string
           method?: string
           patient_id?: string | null
@@ -5955,7 +5964,7 @@ export type Database = {
           item_key: string
           kind: string
           last_seen_at: string
-          payload: Json
+          payload: NonNullable<Json>
           resolution: Json | null
           resolved_at: string | null
           resolved_by: string | null
@@ -5969,7 +5978,7 @@ export type Database = {
           item_key: string
           kind: string
           last_seen_at?: string
-          payload?: Json
+          payload?: NonNullable<Json>
           resolution?: Json | null
           resolved_at?: string | null
           resolved_by?: string | null
@@ -5983,7 +5992,7 @@ export type Database = {
           item_key?: string
           kind?: string
           last_seen_at?: string
-          payload?: Json
+          payload?: NonNullable<Json>
           resolution?: Json | null
           resolved_at?: string | null
           resolved_by?: string | null
@@ -6011,12 +6020,12 @@ export type Database = {
           id: string
           lease_token: string | null
           legacy_import_run_id: string | null
-          per_tab: Json
+          per_tab: NonNullable<Json>
           released_by_run_id: string | null
           reverted_by_run_id: string | null
           started_at: string
           status: string
-          summary: Json
+          summary: NonNullable<Json>
           trigger: string
         }
         Insert: {
@@ -6028,12 +6037,12 @@ export type Database = {
           id?: string
           lease_token?: string | null
           legacy_import_run_id?: string | null
-          per_tab?: Json
+          per_tab?: NonNullable<Json>
           released_by_run_id?: string | null
           reverted_by_run_id?: string | null
           started_at?: string
           status: string
-          summary?: Json
+          summary?: NonNullable<Json>
           trigger: string
         }
         Update: {
@@ -6045,12 +6054,12 @@ export type Database = {
           id?: string
           lease_token?: string | null
           legacy_import_run_id?: string | null
-          per_tab?: Json
+          per_tab?: NonNullable<Json>
           released_by_run_id?: string | null
           reverted_by_run_id?: string | null
           started_at?: string
           status?: string
-          summary?: Json
+          summary?: NonNullable<Json>
           trigger?: string
         }
         Relationships: [
@@ -7334,7 +7343,7 @@ export type Database = {
     }
     Functions: {
       _patient_sources_encounters: {
-        Args: never
+        Args: Record<PropertyKey, never>
         Returns: {
           identity: string
           loose_key: string
@@ -7344,7 +7353,7 @@ export type Database = {
         }[]
       }
       _patient_sources_identities: {
-        Args: never
+        Args: Record<PropertyKey, never>
         Returns: {
           basis: string
           channel: string
@@ -7353,10 +7362,14 @@ export type Database = {
           identity: string
           is_returning: boolean
           loose_key: string
+          referrer_raw: string
           survivor_id: string
         }[]
       }
-      _ps_assert_mirror_mode: { Args: never; Returns: undefined }
+      _ps_assert_mirror_mode: {
+        Args: Record<PropertyKey, never>
+        Returns: undefined
+      }
       _ps_bucket: {
         Args: { p_d: string; p_from: string; p_grain: string }
         Returns: string
@@ -7368,6 +7381,10 @@ export type Database = {
       _ps_doctor_norm: { Args: { p: string }; Returns: string }
       _ps_loose_key: {
         Args: { p_first: string; p_last: string }
+        Returns: string
+      }
+      _ps_mirror_window_start: {
+        Args: Record<PropertyKey, never>
         Returns: string
       }
       _ps_name_norm: { Args: { p: string }; Returns: string }
@@ -7383,7 +7400,7 @@ export type Database = {
         }[]
       }
       _ps_survivors: {
-        Args: never
+        Args: Record<PropertyKey, never>
         Returns: {
           patient_id: string
           survivor_id: string
@@ -7402,7 +7419,7 @@ export type Database = {
         Returns: number
       }
       ad_spend_coverage: {
-        Args: never
+        Args: Record<PropertyKey, never>
         Returns: {
           days: number
           first_date: string
@@ -7426,6 +7443,22 @@ export type Database = {
       ad_spend_import: {
         Args: { p_rejected_count?: number; p_rows: Json; p_upload_id: string }
         Returns: Json
+      }
+      ad_spend_rows: {
+        Args: { p_from: string; p_to: string }
+        Returns: {
+          ad_key: string
+          ad_label: string
+          campaign_key: string
+          campaign_label: string
+          clicks: number
+          impressions: number
+          leads: number
+          platform: string
+          platform_bookings: number
+          spend_date: string
+          spend_php: number
+        }[]
       }
       admin_delete_result_template: {
         Args: { p_template_id: string }
@@ -7451,8 +7484,11 @@ export type Database = {
         Args: { p_actor_id: string; p_input: Json }
         Returns: Json
       }
-      ap_next_bill_number: { Args: never; Returns: string }
-      ap_next_payment_number: { Args: never; Returns: string }
+      ap_next_bill_number: { Args: Record<PropertyKey, never>; Returns: string }
+      ap_next_payment_number: {
+        Args: Record<PropertyKey, never>
+        Returns: string
+      }
       ap_post_recurring_template: {
         Args: { p_template_id: string }
         Returns: Json
@@ -7477,7 +7513,10 @@ export type Database = {
         Args: { p_actor_id: string; p_bill_id: string; p_reason: string }
         Returns: Json
       }
-      api_request_guard: { Args: never; Returns: undefined }
+      api_request_guard: {
+        Args: Record<PropertyKey, never>
+        Returns: undefined
+      }
       apply_leave_entitlements: {
         Args: { p_year: number }
         Returns: {
@@ -7555,7 +7594,7 @@ export type Database = {
         }
         Returns: Json
       }
-      current_patient_id: { Args: never; Returns: string }
+      current_patient_id: { Args: Record<PropertyKey, never>; Returns: string }
       delete_patient: {
         Args: {
           p_actor: string
@@ -7575,13 +7614,16 @@ export type Database = {
         Returns: undefined
       }
       eod_unclosed_days: {
-        Args: { p_from: string | null; p_shift_id: string; p_to: string | null }
+        Args: { p_from: string; p_shift_id: string; p_to: string }
         Returns: string[]
       }
-      generate_drm_id: { Args: never; Returns: string }
-      generate_visit_number: { Args: never; Returns: string }
+      generate_drm_id: { Args: Record<PropertyKey, never>; Returns: string }
+      generate_visit_number: {
+        Args: Record<PropertyKey, never>
+        Returns: string
+      }
       has_role: { Args: { roles: string[] }; Returns: boolean }
-      is_staff: { Args: never; Returns: boolean }
+      is_staff: { Args: Record<PropertyKey, never>; Returns: boolean }
       je_next_number: { Args: { p_fiscal_year: number }; Returns: string }
       lab_search: {
         Args: { "": Database["public"]["Tables"]["test_requests"]["Row"] }
@@ -7655,7 +7697,7 @@ export type Database = {
         Returns: number
       }
       notification_skip_summary: {
-        Args: never
+        Args: Record<PropertyKey, never>
         Returns: {
           reason: string
           sender: string
@@ -7664,7 +7706,7 @@ export type Database = {
         }[]
       }
       partner_labs: {
-        Args: never
+        Args: Record<PropertyKey, never>
         Returns: {
           id: string
           name: string
@@ -7766,7 +7808,10 @@ export type Database = {
           test_request_id: string
         }[]
       }
-      recompute_clinic_fee_for_unreleased: { Args: never; Returns: Json }
+      recompute_clinic_fee_for_unreleased: {
+        Args: Record<PropertyKey, never>
+        Returns: Json
+      }
       recompute_hmo_batch_status: {
         Args: { p_batch_id: string }
         Returns: undefined
@@ -7790,6 +7835,17 @@ export type Database = {
           p_total_amount_php: number
         }
         Returns: Json
+      }
+      release_actor: {
+        Args: { p_actor: string }
+        Returns: {
+          actor_id: string
+          actor_role: string
+        }[]
+      }
+      release_report_locks: {
+        Args: { p_deleted_message: string; p_ids: string[]; p_visit_id: string }
+        Returns: string[]
       }
       release_visit_results: {
         Args: {
@@ -7843,18 +7899,6 @@ export type Database = {
       restore_patient: {
         Args: { p_actor: string; p_context: Json; p_patient_id: string }
         Returns: Json
-      }
-      result_create_linked: {
-        Args: {
-          p_actor: string
-          p_file_size_bytes?: number
-          p_generation_kind: string
-          p_notes?: string
-          p_report_group_id?: string
-          p_storage_path?: string
-          p_test_request_ids: string[]
-        }
-        Returns: string
       }
       result_amendment_remarks: {
         Args: { p_test_request_ids: string[] }
@@ -7918,6 +7962,18 @@ export type Database = {
           result_id: string
           visit_id: string
         }[]
+      }
+      result_create_linked: {
+        Args: {
+          p_actor: string
+          p_file_size_bytes?: number
+          p_generation_kind: string
+          p_notes?: string
+          p_report_group_id?: string
+          p_storage_path?: string
+          p_test_request_ids: string[]
+        }
+        Returns: string
       }
       result_edit_commit: {
         Args: {
@@ -8059,7 +8115,7 @@ export type Database = {
         Returns: number
       }
       sheet_resort_candidates: {
-        Args: never
+        Args: Record<PropertyKey, never>
         Returns: {
           answer: string
           id: string
@@ -8119,13 +8175,13 @@ export type Database = {
         }
         Returns: Json
       }
-      show_limit: { Args: never; Returns: number }
+      show_limit: { Args: Record<PropertyKey, never>; Returns: number }
       show_trgm: { Args: { "": string }; Returns: string[] }
       staff_can_read_finished_result: {
         Args: { p_result_id: string }
         Returns: boolean
       }
-      staff_role: { Args: never; Returns: string }
+      staff_role: { Args: Record<PropertyKey, never>; Returns: string }
       unclaim_panel_members: {
         Args: { p_holders: string[]; p_test_request_ids: string[] }
         Returns: number
@@ -8243,12 +8299,12 @@ export type Tables<
   DefaultSchemaTableNameOrOptions extends
     | keyof (DefaultSchema["Tables"] & DefaultSchema["Views"])
     | { schema: keyof DatabaseWithoutInternals },
-  TableName extends DefaultSchemaTableNameOrOptions extends {
+  TableName extends (DefaultSchemaTableNameOrOptions extends {
     schema: keyof DatabaseWithoutInternals
   }
     ? keyof (DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Tables"] &
         DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Views"])
-    : never = never,
+    : never) = never,
 > = DefaultSchemaTableNameOrOptions extends {
   schema: keyof DatabaseWithoutInternals
 }
@@ -8270,13 +8326,12 @@ export type Tables<
 
 export type TablesInsert<
   DefaultSchemaTableNameOrOptions extends
-    | keyof DefaultSchema["Tables"]
-    | { schema: keyof DatabaseWithoutInternals },
-  TableName extends DefaultSchemaTableNameOrOptions extends {
+    keyof DefaultSchema["Tables"] | { schema: keyof DatabaseWithoutInternals },
+  TableName extends (DefaultSchemaTableNameOrOptions extends {
     schema: keyof DatabaseWithoutInternals
   }
     ? keyof DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Tables"]
-    : never = never,
+    : never) = never,
 > = DefaultSchemaTableNameOrOptions extends {
   schema: keyof DatabaseWithoutInternals
 }
@@ -8295,13 +8350,12 @@ export type TablesInsert<
 
 export type TablesUpdate<
   DefaultSchemaTableNameOrOptions extends
-    | keyof DefaultSchema["Tables"]
-    | { schema: keyof DatabaseWithoutInternals },
-  TableName extends DefaultSchemaTableNameOrOptions extends {
+    keyof DefaultSchema["Tables"] | { schema: keyof DatabaseWithoutInternals },
+  TableName extends (DefaultSchemaTableNameOrOptions extends {
     schema: keyof DatabaseWithoutInternals
   }
     ? keyof DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Tables"]
-    : never = never,
+    : never) = never,
 > = DefaultSchemaTableNameOrOptions extends {
   schema: keyof DatabaseWithoutInternals
 }
@@ -8320,13 +8374,12 @@ export type TablesUpdate<
 
 export type Enums<
   DefaultSchemaEnumNameOrOptions extends
-    | keyof DefaultSchema["Enums"]
-    | { schema: keyof DatabaseWithoutInternals },
-  EnumName extends DefaultSchemaEnumNameOrOptions extends {
+    keyof DefaultSchema["Enums"] | { schema: keyof DatabaseWithoutInternals },
+  EnumName extends (DefaultSchemaEnumNameOrOptions extends {
     schema: keyof DatabaseWithoutInternals
   }
     ? keyof DatabaseWithoutInternals[DefaultSchemaEnumNameOrOptions["schema"]]["Enums"]
-    : never = never,
+    : never) = never,
 > = DefaultSchemaEnumNameOrOptions extends {
   schema: keyof DatabaseWithoutInternals
 }
@@ -8339,11 +8392,11 @@ export type CompositeTypes<
   PublicCompositeTypeNameOrOptions extends
     | keyof DefaultSchema["CompositeTypes"]
     | { schema: keyof DatabaseWithoutInternals },
-  CompositeTypeName extends PublicCompositeTypeNameOrOptions extends {
+  CompositeTypeName extends (PublicCompositeTypeNameOrOptions extends {
     schema: keyof DatabaseWithoutInternals
   }
     ? keyof DatabaseWithoutInternals[PublicCompositeTypeNameOrOptions["schema"]]["CompositeTypes"]
-    : never = never,
+    : never) = never,
 > = PublicCompositeTypeNameOrOptions extends {
   schema: keyof DatabaseWithoutInternals
 }
@@ -8401,4 +8454,3 @@ export const Constants = {
     },
   },
 } as const
-

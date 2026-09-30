@@ -92,7 +92,9 @@ function SubmitBatchModalInner({
         reference_no: trimmed.length > 0 ? trimmed : null,
       });
       if (!res.ok) {
-        setErr(res.error);
+        startTransition(() => {
+          setErr(res.error);
+        });
         return;
       }
       onClose();

@@ -62,16 +62,20 @@ export function MovementForm({
     startTransition(async () => {
       const r = await recordMovement(payload);
       if (!r.ok) {
-        setError(r.error);
+        startTransition(() => {
+          setError(r.error);
+        });
         return;
       }
       // Reset for fast back-to-back entry.
-      setQuantity("");
-      setUnitCost("");
-      setExpiryDate("");
-      setLotNumber("");
-      setReference("");
-      setNotes("");
+      startTransition(() => {
+        setQuantity("");
+        setUnitCost("");
+        setExpiryDate("");
+        setLotNumber("");
+        setReference("");
+        setNotes("");
+      });
       router.refresh();
     });
   }

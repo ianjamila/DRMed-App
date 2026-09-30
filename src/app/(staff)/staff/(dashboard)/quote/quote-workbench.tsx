@@ -210,7 +210,9 @@ export function QuoteWorkbench({ services, messageContext = null }: Props) {
         alert(result.error);
         return;
       }
-      setMarkedReplied(true);
+      startMarkReply(() => {
+        setMarkedReplied(true);
+      });
     });
   }
 

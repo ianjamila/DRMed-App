@@ -56,7 +56,9 @@ function AcknowledgeBatchModalInner({
         hmo_ack_ref: trimmed.length > 0 ? trimmed : null,
       });
       if (!res.ok) {
-        setErr(res.error);
+        startTransition(() => {
+          setErr(res.error);
+        });
         return;
       }
       onClose();

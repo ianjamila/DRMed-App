@@ -76,18 +76,22 @@ export function QuickExpenseForm({ defaultDate, partnerLabs }: Props) {
         vendor_id: isSendOut ? vendorId : null,
       });
       if (!r.ok) {
-        setErr(r.error);
+        startTransition(() => {
+          setErr(r.error);
+        });
         return;
       }
       // A "Clinic Cash" expense is recorded as a cash-drawer payout, so say so
       // — it moves the till, not just the books. Its entry number comes from
       // the journal entry the DB bridge posts, which can read back empty.
       const posted = r.data.entry_number ? `Posted ${r.data.entry_number}.` : "Posted.";
-      setOk(
-        isTillCashMop(mop as Mop)
-          ? `${posted} Recorded as a cash-drawer payout — it also shows under Cash Drawer › Petty Cash.`
-          : posted,
-      );
+      startTransition(() => {
+        setOk(
+          isTillCashMop(mop as Mop)
+            ? `${posted} Recorded as a cash-drawer payout — it also shows under Cash Drawer › Petty Cash.`
+            : posted,
+        );
+      });
       reset();
       router.refresh();
     });

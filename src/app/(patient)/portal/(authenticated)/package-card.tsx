@@ -57,7 +57,9 @@ export function PackageCard(props: PackageCardProps) {
     start(async () => {
       const result = await getPackagePdfDownloadUrl(props.header.id);
       if (!result.ok) {
-        setError(result.error);
+        start(() => {
+          setError(result.error);
+        });
         return;
       }
       // base64 → Blob → object URL → click → revoke. The transient
