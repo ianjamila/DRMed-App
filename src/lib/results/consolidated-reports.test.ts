@@ -3,6 +3,7 @@ import {
   codeDuplicatesName,
   partitionConsolidatedMembers,
   reportEditLoadState,
+  reportActionKind,
   reportHeadlineStatus,
   type ConsolidatedMemberRow,
 } from "./consolidated-reports";
@@ -120,5 +121,22 @@ describe("reportEditLoadState — never edit over values that failed to load", (
 
   it("says no template only when the reads succeeded and none is active", () => {
     expect(reportEditLoadState({ ...ok, hasTemplate: false })).toBe("no_template");
+  });
+});
+
+describe("reportActionKind — Release / Undo on a finished report", () => {
+  it("offers Release while any member is ready, even on a mixed report", () => {
+    expect(reportActionKind([{ status: "ready_for_release" }, { status: "ready_for_release" }])).toBe("release");
+    // Mixed: the server refuses with the "isn't finished" message, shown inline.
+    expect(reportActionKind([{ status: "result_uploaded" }, { status: "ready_for_release" }])).toBe("release");
+    expect(reportActionKind([{ status: "released" }, { status: "ready_for_release" }])).toBe("release");
+  });
+  it("offers Undo once nothing is ready and something is released", () => {
+    expect(reportActionKind([{ status: "released" }, { status: "released" }])).toBe("undo");
+    expect(reportActionKind([{ status: "released" }, { status: "result_uploaded" }])).toBe("undo");
+  });
+  it("offers nothing while the report still awaits sign-off, or is empty", () => {
+    expect(reportActionKind([{ status: "result_uploaded" }])).toBeNull();
+    expect(reportActionKind([])).toBeNull();
   });
 });

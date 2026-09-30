@@ -119,3 +119,16 @@ export function reportEditLoadState(r: {
 
 export const REPORT_VALUES_LOAD_FAILED =
   "This report's values couldn't be loaded, so it can't be edited right now. Reload the page to try again.";
+
+/**
+ * Which whole-report control a finished report's card offers. Release while
+ * any member is ready (a mixed report still shows it — the server refuses it
+ * with the "isn't finished" message, which the button shows inline); Undo when
+ * nothing is ready and something is released; otherwise nothing (still awaiting
+ * sign-off).
+ */
+export function reportActionKind(members: readonly { status: string }[]): "release" | "undo" | null {
+  if (members.some((m) => m.status === "ready_for_release")) return "release";
+  if (members.some((m) => m.status === "released")) return "undo";
+  return null;
+}
