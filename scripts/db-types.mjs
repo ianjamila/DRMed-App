@@ -16,6 +16,7 @@
 //     says how to move it rather than committing it into the types.
 //
 // Usage: node scripts/db-types.mjs            (local stack)
+//        node scripts/db-types.mjs --workdir <dir with its own supabase/>
 //        node scripts/db-types.mjs --db-url "$SUPABASE_DB_URL"
 import { spawnSync } from "node:child_process";
 import { writeFileSync } from "node:fs";
@@ -31,7 +32,16 @@ if (dbUrlAt > -1 && !process.argv[dbUrlAt + 1]) {
   process.exit(1);
 }
 
-const gen = spawnSync("supabase", ["gen", "types", "typescript", ...source], {
+// --workdir <dir>: generate from ANOTHER local stack (e.g. an isolated one started
+// from a copy of supabase/), so the shared stack's unmerged objects stay out.
+const workdirAt = process.argv.indexOf("--workdir");
+const workdir = workdirAt > -1 ? ["--workdir", process.argv[workdirAt + 1] ?? ""] : [];
+if (workdirAt > -1 && !process.argv[workdirAt + 1]) {
+  console.error("db-types: --workdir needs a value");
+  process.exit(1);
+}
+
+const gen = spawnSync("supabase", ["gen", "types", "typescript", ...source, ...workdir], {
   encoding: "utf8",
   maxBuffer: 64 * 1024 * 1024,
   stdio: ["ignore", "pipe", "inherit"],

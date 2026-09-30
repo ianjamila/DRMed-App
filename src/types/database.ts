@@ -7513,7 +7513,10 @@ export type Database = {
         Args: { p_actor_id: string; p_bill_id: string; p_reason: string }
         Returns: Json
       }
-      api_request_guard: { Args: never; Returns: undefined }
+      api_request_guard: {
+        Args: Record<PropertyKey, never>
+        Returns: undefined
+      }
       apply_leave_entitlements: {
         Args: { p_year: number }
         Returns: {
