@@ -216,6 +216,7 @@
 //   #  J  "::bigint = v_facts_ver - 1" -> "::bigint is not null"  (single-line on purpose: the helper THROWS "mutation target not found" if the text is absent)   (f) version one below the fill
 //   #  K  "if v_op ? 'expected_row_version' and v_facts_ver is distinct from" -> "if false and v_facts_ver is distinct from"   (c) stale identity (+ the older stale-facts check)
 //   #  L  the fill's not-found branch back to "n_skipped := n_skipped + 1; continue;"                                               (g) deleted target (+ check 36)
+//   #  M  hold op: "hold_reason, held_patient_id)" insert value -> NULL, i.e. mutate "= excluded.held_patient_id" -> "= null"   (39) run 2 loses the deleted id
 //   # (S1 and S4 are pinned by customer-plan.test.ts and review-queue.test.tsx.)
 import "./lib/load-env";
 import { requireLocalOrExplicitProd } from "./lib/env-guard";
@@ -224,7 +225,7 @@ import { planCustomers } from "../src/lib/sheet-sync/customer-plan";
 import { buildPatientIndex } from "../src/lib/sheet-sync/patient-index";
 import { parseCustomersTab } from "../src/lib/sheet-sync/tabs/customers";
 import { CUST_HEADER } from "../src/lib/sheet-sync/__fixtures__/tab-headers";
-import type { CustomerOp, PatientRecord } from "../src/lib/sheet-sync/types";
+import type { CustomerOp, DeletedPatientEvidence, LinkRecord, PatientRecord } from "../src/lib/sheet-sync/types";
 
 requireLocalOrExplicitProd("sheet-sync:db-proof", {
   writes: "nothing — every check runs in one transaction that is rolled back",
@@ -3608,6 +3609,69 @@ async function main() {
       const ghost = await apply(lease.token, [{ op: "fill", patient_id: "00000000-0000-4000-8000-00000000dead", fields: { email: "x@example.test" } }]);
       assert(ghost.counts.stale === 1 && (ghost.counts.skipped ?? 0) === 0, `(g) a fill on a missing patient: expected stale, got ${JSON.stringify(ghost)}`);
       await finish(lease.token);
+    });
+
+    // 39. 0193 (S1 recheck): the deleted-patient evidence survives the PERSISTED hold ----------
+    await check("0193 S1: a saved link to a deleted patient — run 1's hold (real RPC) keeps the deleted id, run 2 still offers Keep deleted, and after a restore the row offers a normal link", async () => {
+      await setRole("postgres", null);
+      // the deleted record's DOB differs from the sheet row, so name+DOB matching can never re-find it
+      const p = await q<{ id: string }>(
+        `insert into public.patients (first_name, last_name, birthdate) values ('Ana', 'HeldEvidence', '1985-05-05') returning id`);
+      const pid = p.rows[0].id;
+      const r = new Array(22).fill("") as unknown[];
+      r[4] = "HeldEvidence, Ana"; r[6] = 32874; r[20] = 46000;
+      const rows = parseCustomersTab([CUST_HEADER, r] as never, { today: "2026-09-24", aliases: new Map() }).rows;
+      const key = rows[0].linkKey;
+      await q(`insert into public.sheet_patient_links (link_key, patient_id, decision, method) values ($1, $2, 'link', 'auto_exact')`, [key, pid]);
+      await q(`select public.delete_patient($1::uuid, 'test_record', null, $2::uuid, null)`, [pid, fx.adminId]);
+
+      const PC = `id, drm_id, first_name, middle_name, last_name, to_char(birthdate, 'YYYY-MM-DD') as birthdate, phone, phone_normalized,
+        email, sex, address, referred_by_doctor, preferred_release_medium, senior_pwd_id_kind, senior_pwd_id_number,
+        referral_source, referral_source_origin, merged_into_id, row_version::int as row_version`;
+      const planNow = async () => {
+        await setRole("postgres", null);
+        const live = await q<PatientRecord>(`select ${PC} from public.patients where deleted_at is null and id = $1`, [pid]);
+        const del = await q<DeletedPatientEvidence>(
+          `select id, first_name, middle_name, last_name, to_char(birthdate, 'YYYY-MM-DD') as birthdate, phone from public.patients where deleted_at is not null and id = $1`, [pid]);
+        const lk = await q<LinkRecord>(`select link_key, patient_id, decision, method, hold_reason, held_patient_id from public.sheet_patient_links where link_key = $1`, [key]);
+        return planCustomers({ rows, index: buildPatientIndex(live.rows), links: new Map(lk.rows.map((l) => [l.link_key, l])),
+          facts: new Map(), prevRows: [], deletedPatients: del.rows });
+      };
+      const applyChunk = async (ops: CustomerOp[]) => {
+        const lease = await acquire("manual", false);
+        await setRole("service_role", null);
+        const j = (await q<{ j: Json }>(`select public.sheet_sync_apply_customer_ops($1::uuid, $2::jsonb) as j`, [lease.token, JSON.stringify(ops)])).rows[0].j;
+        await finish(lease.token);
+        return j;
+      };
+
+      // run 1: the planner holds the key with the deleted id; the RPC persists it
+      const run1 = await planNow();
+      const hold = run1.ops.find((o) => o.op === "hold");
+      assert(hold && hold.op === "hold" && hold.reason === "matches_deleted_patient" && hold.deleted_patient_id === pid,
+        `run 1: expected a matches_deleted_patient hold carrying the deleted id, got ${JSON.stringify(run1.ops)}`);
+      assert(run1.review[0]?.payload.deleted_patient_id === pid, "run 1: the review must carry deleted_patient_id");
+      const j1 = await applyChunk(run1.ops);
+      assert(j1.counts.held === 1, `run 1: expected held=1, got ${JSON.stringify(j1.counts)}`);
+      await setRole("postgres", null);
+      const stored = await q<{ decision: string; patient_id: string | null; hold_reason: string | null; held_patient_id: string | null }>(
+        `select decision, patient_id, hold_reason, held_patient_id from public.sheet_patient_links where link_key = $1`, [key]);
+      assert(stored.rows[0].decision === "review" && stored.rows[0].patient_id === null && stored.rows[0].held_patient_id === pid,
+        `the applied hold must clear patient_id but keep held_patient_id, got ${JSON.stringify(stored.rows[0])}`);
+
+      // run 2 (the persisted hold is all it has): still the deleted-patient card, same id, no second hold
+      const run2 = await planNow();
+      assert(run2.ops.filter((o) => o.op === "hold" || o.op === "create").length === 0, `run 2: expected no hold/create, got ${JSON.stringify(run2.ops)}`);
+      assert(run2.review.length === 1 && run2.review[0].payload.deleted_patient_id === pid && run2.review[0].payload.held_because === "matches_deleted_patient",
+        `run 2: the review must still carry deleted_patient_id (Keep deleted / Find the deleted record), got ${JSON.stringify(run2.review)}`);
+
+      // restore: the patient is live again → a normal candidate to link, no deleted card, never a create
+      await q(`select public.restore_patient($1::uuid, $2::uuid, null)`, [pid, fx.adminId]);
+      const run3 = await planNow();
+      assert(run3.ops.every((o) => o.op !== "create"), "after a restore: the planner must never create");
+      assert(run3.review.length === 1 && run3.review[0].payload.deleted_patient_id === undefined
+        && (run3.review[0].payload.candidates as Array<{ patient_id: string }>).some((c) => c.patient_id === pid),
+        `after a restore: expected a normal review whose candidates include the restored patient, got ${JSON.stringify(run3.review)}`);
     });
   } finally {
     // Never persisted. This proof never writes anything real.

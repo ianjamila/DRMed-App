@@ -202,7 +202,7 @@ export function createSupabaseStore(client: Client): SheetSyncStore {
     loadPatients: () => all<PatientRecord>((from, to) =>
       client.from("patients").select(PATIENT_COLUMNS).is("deleted_at", null).order("id").range(from, to) as never),
     loadLinks: () => all<LinkRecord>((from, to) =>
-      client.from("sheet_patient_links").select("link_key, patient_id, decision, method, hold_reason").order("link_key").range(from, to) as never),
+      client.from("sheet_patient_links").select("link_key, patient_id, decision, method, hold_reason, held_patient_id").order("link_key").range(from, to) as never),
     loadFacts: () => all<FactsRecord>((from, to) =>
       client.from("patient_acquisition_facts").select("patient_id, registered_on, sheet_new_repeat, source_ref").order("patient_id").range(from, to) as never),
     async loadAliases() {

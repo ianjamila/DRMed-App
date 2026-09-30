@@ -357,6 +357,20 @@ export function planCustomers(input: Input): CustomerPlan {
   function resolveHeld(g: Group): Resolution {
     const fresh = resolveFresh(g, false);
     const why = g.stored?.hold_reason ? { held_because: g.stored.hold_reason } : {};
+    // The deleted-patient evidence must survive the hold (Codex recheck on S1):
+    // applying the hold clears the link's patient_id, and name/DOB/phone matching
+    // cannot always find the deleted record again (the sheet row's DOB was edited,
+    // say). The hold op therefore persists the deleted id (held_patient_id, 0193)
+    // and this run reads it back. It is honoured only while that patient is STILL
+    // deleted: once staff restore it, the ordinary path below runs (a live
+    // candidate, a normal Link) — and only when the fresh answer has no live
+    // candidates of its own to show.
+    const heldDeleted = g.stored?.hold_reason === DELETED_PATIENT_HOLD_REASON && g.stored.held_patient_id
+      && deletedById.has(g.stored.held_patient_id) ? g.stored.held_patient_id : null;
+    if (heldDeleted && (fresh.kind === "create" || (fresh.kind === "review" && fresh.candidates.length === 0 && !fresh.extra?.deleted_patient_id))) {
+      return review("possible_existing_patient", "held for an admin decision", [],
+        { held_because: DELETED_PATIENT_HOLD_REASON, deleted_patient_id: heldDeleted });
+    }
     if (fresh.kind === "review") return review(fresh.review, "held for an admin decision", fresh.candidates, { detail: fresh.reason, ...fresh.extra, ...why });
     return review("ambiguous_patient", "held for an admin decision", fresh.kind === "linked" ? [fresh.patientId] : [], why);
   }
@@ -627,7 +641,11 @@ export function planCustomers(input: Input): CustomerPlan {
     const s = g.stored;
     if (s && (s.decision !== "link" || s.method === "admin")) continue;
     const settled = g.res.nameOnly && !createdNames.has(g.nameNorm) && s?.decision !== "link" && !g.collision;
-    if (!settled) { ops.push({ op: "hold", link_key: g.key, reason: g.res.reason }); holds++; }
+    if (!settled) {
+      const deletedId = typeof g.res.extra?.deleted_patient_id === "string" ? g.res.extra.deleted_patient_id : undefined;
+      ops.push({ op: "hold", link_key: g.key, reason: g.res.reason, ...(deletedId ? { deleted_patient_id: deletedId } : {}) });
+      holds++;
+    }
   }
 
   let fills = 0;

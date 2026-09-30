@@ -14,6 +14,15 @@
 
 -- ===== Part A: Sheet Sync ====================================================
 
+-- S1 recheck: a matches_deleted_patient hold clears patient_id (the target check
+-- requires it for decision 'review'), so the deleted patient's id is kept HERE.
+-- The planner reads it back on later runs (name/DOB/phone matching cannot always
+-- find the deleted record again) and honours it only while that patient is still
+-- deleted. No FK on purpose: a hard-deleted patient must not cascade the hold away,
+-- and no CHECK: sheet_review_resolve (0170) turns a hold into a link/create without
+-- touching this column, so the planner reads it only for decision 'review' holds.
+alter table public.sheet_patient_links add column if not exists held_patient_id uuid;
+
 create or replace function public.sheet_sync_apply_customer_ops(p_lease_token uuid, p_ops jsonb)
 returns jsonb language plpgsql security definer set search_path = '' as $$
 declare
@@ -232,11 +241,14 @@ begin
       if coalesce(v_op->>'link_key', '') = '' then
         raise exception 'Bad hold op.' using errcode = '22023';
       end if;
-      insert into public.sheet_patient_links (link_key, patient_id, decision, method, run_id, hold_reason)
-      values (v_op->>'link_key', null, 'review', 'auto_exact', v_run, left(nullif(v_op->>'reason', ''), 400))
+      -- 0193: a deleted-patient hold also records which patient (held_patient_id);
+      -- any other hold clears it.
+      insert into public.sheet_patient_links (link_key, patient_id, decision, method, run_id, hold_reason, held_patient_id)
+      values (v_op->>'link_key', null, 'review', 'auto_exact', v_run, left(nullif(v_op->>'reason', ''), 400),
+              case when v_op->>'reason' = 'matches_deleted_patient' then nullif(v_op->>'deleted_patient_id', '')::uuid end)
       on conflict (link_key) do update
         set decision = 'review', patient_id = null, run_id = excluded.run_id, decided_at = now(),
-            hold_reason = excluded.hold_reason
+            hold_reason = excluded.hold_reason, held_patient_id = excluded.held_patient_id
         where public.sheet_patient_links.method <> 'admin';
       get diagnostics v_rows = row_count;
       if v_rows > 0 then n_held := n_held + 1; else n_skipped := n_skipped + 1; end if;
@@ -393,6 +405,13 @@ begin
   if not (select prosecdef from pg_proc where oid = 'public.sheet_sync_apply_customer_ops(uuid, jsonb)'::regprocedure)
      or v_def !~ 'SET search_path TO ''''' then
     raise exception '0193: sheet_sync_apply_customer_ops lost security definer or its empty search_path';
+  end if;
+  if v_def not like '%held_patient_id = excluded.held_patient_id%' then
+    raise exception '0193: hold op no longer records held_patient_id';
+  end if;
+  if not exists (select 1 from information_schema.columns
+                  where table_schema = 'public' and table_name = 'sheet_patient_links' and column_name = 'held_patient_id') then
+    raise exception '0193: sheet_patient_links.held_patient_id is missing';
   end if;
   if v_def not like '%c.row_version_after = v_facts_ver%' then
     raise exception '0193: facts guard (S2) missing from sheet_sync_apply_customer_ops';

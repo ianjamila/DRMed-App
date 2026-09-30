@@ -772,7 +772,7 @@ describe("S1: a saved auto link whose patient was later deleted (sync review gap
   it("is held as matches_deleted_patient with the deleted id (not the generic 'no longer exists' hold), never created", () => {
     const out = run([], [deletedOf()]);
     expect(out.ops.some((o) => o.op === "create")).toBe(false);
-    expect(out.ops.filter((o) => o.op === "hold")).toEqual([{ op: "hold", link_key: key, reason: "matches_deleted_patient" }]);
+    expect(out.ops.filter((o) => o.op === "hold")).toEqual([{ op: "hold", link_key: key, reason: "matches_deleted_patient", deleted_patient_id: "gone-1" }]);
     expect(out.review).toHaveLength(1);
     expect(out.review[0]).toMatchObject({ kind: "possible_existing_patient",
       payload: { held_because: "matches_deleted_patient", deleted_patient_id: "gone-1" } });
@@ -898,5 +898,51 @@ describe("S1 (admin link): an admin-chosen patient who was later deleted", () =>
   it("a truly missing patient keeps the generic hold", () => {
     const out = run([], [], "nobody");
     expect(out.review[0]).toMatchObject({ kind: "ambiguous_patient", payload: { reason: "the chosen patient no longer exists" } });
+  });
+});
+
+describe("S1 recheck: the deleted-patient evidence survives the persisted hold", () => {
+  const key = "reyes|ana#1990-01-01";
+  // the deleted record's DOB differs from the sheet row, so name+DOB matching can never re-find it
+  const deleted: DeletedPatientEvidence = { id: "gone-1", first_name: "Ana", middle_name: null, last_name: "Reyes", birthdate: "1985-05-05", phone: null };
+  const rows = () => rowsOf({ name: "Reyes, Ana", dob: 32874 });
+  const saved = { link_key: key, patient_id: "gone-1", decision: "link" as const, method: "auto_exact" as const };
+  const runOn = (w: World, patients: PatientRecord[], del: DeletedPatientEvidence[]) =>
+    planCustomers({ rows: rows(), index: buildPatientIndex(patients), links: w.links, facts: w.facts, prevRows: [], deletedPatients: del });
+
+  it("run 1 hold carries the deleted id; applied, run 2 still offers the deleted-patient card with the id, no second hold", () => {
+    const w0 = world([], [saved]);
+    const r1 = runOn(w0, [], [deleted]);
+    const hold = r1.ops.find((o) => o.op === "hold");
+    expect(hold).toEqual({ op: "hold", link_key: key, reason: "matches_deleted_patient", deleted_patient_id: "gone-1" });
+    const w1 = applyOps(r1.ops, w0);
+    expect(w1.links.get(key)).toMatchObject({ decision: "review", patient_id: null, hold_reason: "matches_deleted_patient", held_patient_id: "gone-1" });
+    const r2 = runOn(w1, [], [deleted]);
+    expect(r2.ops.filter((o) => o.op === "hold" || o.op === "create")).toEqual([]);
+    expect(r2.review).toHaveLength(1);
+    expect(r2.review[0]).toMatchObject({ kind: "possible_existing_patient",
+      payload: { held_because: "matches_deleted_patient", deleted_patient_id: "gone-1" } });
+    // …and a third run is just as stable
+    const r3 = runOn(applyOps(r2.ops, w1), [], [deleted]);
+    expect(r3.review[0].payload).toMatchObject({ deleted_patient_id: "gone-1" });
+  });
+
+  it("restore: once staff restore that patient (live again), run 2 offers a normal link candidate, not the deleted card", () => {
+    const w0 = world([], [saved]);
+    const w1 = applyOps(runOn(w0, [], [deleted]).ops, w0);
+    const restored = patient({ id: "gone-1", first_name: "Ana", middle_name: null, last_name: "Reyes", birthdate: "1985-05-05" });
+    const r2 = runOn(w1, [restored], []);
+    expect(r2.review).toHaveLength(1);
+    expect(r2.review[0].payload.deleted_patient_id).toBeUndefined();
+    expect((r2.review[0].payload.candidates as Array<{ patient_id: string }>).map((c) => c.patient_id)).toContain("gone-1");
+    expect(r2.ops.some((o) => o.op === "create")).toBe(false);
+  });
+
+  it("a hold for any other reason records no held_patient_id", () => {
+    const p = patient({ birthdate: null }); const q2 = patient({ birthdate: null });
+    const w0 = world([p, q2]);
+    const out = planIn(rowsOf({ name: "Dela Cruz, Juan Santos", phone: "09171112222" }), w0);
+    const w1 = applyOps(out.ops, w0);
+    for (const l of w1.links.values()) expect(l.held_patient_id ?? null).toBeNull();
   });
 });

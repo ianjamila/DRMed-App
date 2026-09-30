@@ -160,8 +160,10 @@ export function applyOps(ops: readonly CustomerOp[], w: World): ApplyOpsResult {
       const ex = links.get(o.link_key);
       if (ex && ex.method === "admin") { counts.skipped++; continue; }
       const hold_reason = o.reason ? o.reason.slice(0, 400) : null;
-      links.set(o.link_key, ex ? { ...ex, patient_id: null, decision: "review", hold_reason }
-        : { link_key: o.link_key, patient_id: null, decision: "review", method: "auto_exact", hold_reason });
+      // 0193: a deleted-patient hold also records the deleted id (held_patient_id); any other hold clears it.
+      const held_patient_id = o.reason === "matches_deleted_patient" ? (o.deleted_patient_id ?? null) : null;
+      links.set(o.link_key, ex ? { ...ex, patient_id: null, decision: "review", hold_reason, held_patient_id }
+        : { link_key: o.link_key, patient_id: null, decision: "review", method: "auto_exact", hold_reason, held_patient_id });
       counts.held++;
     } else if (o.op === "fill") {
       const p = byId.get(o.patient_id);

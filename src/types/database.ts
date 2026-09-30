@@ -5787,6 +5787,7 @@ export type Database = {
           decided_by: string | null
           decision: string
           hold_reason: string | null
+          held_patient_id: string | null
           link_key: string
           method: string
           patient_id: string | null
@@ -5797,6 +5798,7 @@ export type Database = {
           decided_by?: string | null
           decision?: string
           hold_reason?: string | null
+          held_patient_id?: string | null
           link_key: string
           method: string
           patient_id?: string | null
@@ -5807,6 +5809,7 @@ export type Database = {
           decided_by?: string | null
           decision?: string
           hold_reason?: string | null
+          held_patient_id?: string | null
           link_key?: string
           method?: string
           patient_id?: string | null
