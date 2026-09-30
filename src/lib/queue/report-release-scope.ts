@@ -15,6 +15,9 @@ export interface ReportMember extends UndoScopeMemberRow {
   isDoctorLine: boolean;
 }
 
+/** Start of every notFinished refusal — lets a caller tell "waiting on a result or sign-off" apart from a hard refusal. */
+export const NOT_FINISHED_PREFIX = "Part of this combined report isn't finished";
+
 export const REPORT_REFUSAL = {
   outside_sections: "This combined report has tests outside the sections you can release — ask an admin.",
   package_header: "This combined report includes a package header, which shouldn't happen — ask an admin to check it.",
@@ -22,7 +25,7 @@ export const REPORT_REFUSAL = {
   deletedMember: "A deleted test is still on this combined report, so the patient could never open it — ask an admin.",
   doctorMember: "A consultation is linked to this combined report, which shouldn't happen — ask an admin to check it.",
   notFinished: (n: number) =>
-    `Part of this combined report isn't finished — ${n} test${n === 1 ? " is" : "s are"} still awaiting a result or sign-off.`,
+    `${NOT_FINISHED_PREFIX} — ${n} test${n === 1 ? " is" : "s are"} still awaiting a result or sign-off.`,
 } satisfies Record<UndoScopeRejectionReason, unknown> & Record<string, unknown>;
 
 /** The status/deletion half of the whole-report rule, shared by the planner and the visit page's preflight. */

@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { claimConsolidated, finaliseConsolidated } from "./actions";
 import type { ConsolidatedFormTemplate, ConsolidatedFormVisit } from "./page";
 import { normalisePatientSex } from "@/lib/results/types";
+import type { FinaliseDeferral } from "@/lib/actions/results/finalise-release-outcome";
 import { ConsolidatedValuesTable, useConsolidatedValues } from "./consolidated-values-table";
 
 interface Props {
@@ -30,9 +31,8 @@ export function ConsolidatedForm(props: Props) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
-  const [deferredReason, setDeferredReason] = useState<
-    "payment" | "consent" | "signoff" | null
-  >(null);
+  const [deferredReason, setDeferredReason] = useState<FinaliseDeferral | null>(null);
+  const [releaseNote, setReleaseNote] = useState<string | null>(null);
 
   // Derived server-side from report_group_service_params — identity-based, so
   // renaming a parameter in the admin editor can't silently disable a field.
@@ -79,10 +79,11 @@ export function ConsolidatedForm(props: Props) {
         setError(res.error);
         return;
       }
+      setReleaseNote(res.data.releaseNote);
       if (res.data.releaseDeferred) {
         // Stay on the page so the medtech sees the report is finalised but
         // not yet in the patient's hands — and why.
-        setDeferredReason(res.data.deferredReason ?? "payment");
+        setDeferredReason(res.data.deferredReason ?? "other");
         return;
       }
       // Stay here: the page re-renders with the new report card (and its
@@ -95,6 +96,15 @@ export function ConsolidatedForm(props: Props) {
     <>
       {props.claimPanel}
 
+      {!deferredReason && releaseNote ? (
+        <p
+          role="status"
+          className="mt-6 rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-sm font-semibold text-amber-900"
+        >
+          Report finalised and released. {releaseNote}
+        </p>
+      ) : null}
+
       <section className="mt-6 rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white p-6">
         {deferredReason ? (
           <div className="rounded-lg border border-amber-300 bg-amber-50 p-4">
@@ -104,7 +114,9 @@ export function ConsolidatedForm(props: Props) {
                 ? "visit not yet paid (HMO visits are exempt). Record the payment, then come back and release these results — only packages release on their own"
                 : deferredReason === "consent"
                   ? "patient consent not on file"
-                  : "one or more of these tests requires pathologist sign-off before it can be released"}
+                  : deferredReason === "signoff"
+                    ? "one or more of these tests requires pathologist sign-off. The whole report is released together once it's signed off — release it from the queue then"
+                    : (releaseNote ?? "release it from the queue")}
             </p>
             <button
               type="button"
