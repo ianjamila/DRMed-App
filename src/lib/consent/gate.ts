@@ -1,5 +1,6 @@
 import "server-only";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { reportError } from "@/lib/observability/report-error";
 import { LATEST_CONSENT_EVENT_ORDER } from "@/lib/consent/latest-event";
 import type { ConsentHistoryEvent } from "@/lib/consent/history";
 
@@ -61,4 +62,32 @@ export async function getConsentHistory(patientId: string): Promise<ConsentHisto
       ascending: LATEST_CONSENT_EVENT_ORDER.ascending,
     });
   return (data ?? []) as ConsentHistoryEvent[];
+}
+
+/**
+ * consent_current for many patients in one read (the lab queue lists up to
+ * 100 rows across visits). Admin client, same as getPatientConsentState. A
+ * missing patient reads as false, and so does a failed read (reported, empty
+ * map): "no consent on file" fails closed — the queue shows the consent block
+ * while the gate is on, a warning while it is off. Display/preflight only —
+ * the DB trigger (0088) is the guard at release time.
+ */
+export async function getConsentCurrentByPatient(
+  patientIds: readonly string[],
+): Promise<Map<string, boolean>> {
+  const ids = Array.from(new Set(patientIds));
+  const out = new Map<string, boolean>();
+  if (ids.length === 0) return out;
+  const admin = createAdminClient();
+  const { data, error } = await admin.from("patients").select("id, consent_current").in("id", ids);
+  if (error) {
+    await reportError({
+      scope: "consent/current-by-patient",
+      error,
+      metadata: { patient_count: ids.length },
+    });
+    return out;
+  }
+  for (const r of data ?? []) out.set(r.id, !!r.consent_current);
+  return out;
 }

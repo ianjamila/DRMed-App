@@ -16,6 +16,8 @@ import {
 import { RevenueByClass } from "@/components/staff/revenue-by-class";
 import { priorYearRange } from "@/lib/reports/period-presets";
 import { LAB_QUEUE_GATE_VISITS_OR } from "@/lib/visits/lab-gate";
+import { MONEY_SETTLED_VISITS_OR } from "@/lib/visits/money-settled";
+import { readyForReleaseHint } from "@/lib/dashboards/ready-for-release";
 import { PAYABLE_BILL_STATUSES } from "@/lib/accounting/payable-bills";
 import { todayManilaISODate } from "@/lib/dates/manila";
 import { loadHiddenCardIds } from "@/lib/dashboards/card-prefs";
@@ -139,6 +141,8 @@ async function loadAdminStats(show: (id: string) => boolean) {
   const [
     visitsToday,
     queueTotal,
+    readyForRelease,
+    readyForReleaseSettled,
     releasedToday,
     releasedByStaff,
     revenueToday,
@@ -193,6 +197,35 @@ async function loadAdminStats(show: (id: string) => boolean) {
           // counting it here made the card read higher than the queue it
           // opens. Same predicate, same numbers.
           .or(LAB_QUEUE_GATE_VISITS_OR, { foreignTable: "visits" })
+      : SKIP_COUNT,
+    // Finished lab results waiting to go out, all sections (the Pending release
+    // tab as an admin sees it) — and how many of them are on a settled visit.
+    show("admin.ready_for_release")
+      ? supabase
+          .from("test_requests")
+          .select("id, services!inner ( kind ), visits!inner ( id )", {
+            count: "exact",
+            head: true,
+          })
+          .eq("status", "ready_for_release")
+          .eq("is_package_header", false)
+          .not("services.kind", "in", DOCTOR_KINDS_PG_LIST)
+          .is("deleted_at", null)
+          .is("visits.deleted_at", null)
+      : SKIP_COUNT,
+    show("admin.ready_for_release")
+      ? supabase
+          .from("test_requests")
+          .select("id, services!inner ( kind ), visits!inner ( id )", {
+            count: "exact",
+            head: true,
+          })
+          .eq("status", "ready_for_release")
+          .eq("is_package_header", false)
+          .not("services.kind", "in", DOCTOR_KINDS_PG_LIST)
+          .is("deleted_at", null)
+          .is("visits.deleted_at", null)
+          .or(MONEY_SETTLED_VISITS_OR, { foreignTable: "visits" })
       : SKIP_COUNT,
     show("admin.released_today")
       ? supabase
@@ -506,6 +539,7 @@ async function loadAdminStats(show: (id: string) => boolean) {
   // below so StatCard/ActivityStrip can say "Couldn't load" instead.
   const namedResults: { scope: string; error: unknown }[] = [
     { scope: "revenue_today", error: revenueToday.error },
+    { scope: "ready_for_release", error: readyForRelease.error ?? readyForReleaseSettled.error },
     { scope: "past_due_periods", error: openPeriods.error },
     { scope: "draft_jes", error: draftJeCount.error },
     { scope: "ap_bills", error: bills.error },
@@ -663,6 +697,9 @@ async function loadAdminStats(show: (id: string) => boolean) {
     visitsTodayError: Boolean(visitsToday.error),
     queueTotal: queueTotal.count ?? 0,
     queueTotalError: Boolean(queueTotal.error),
+    readyForRelease: readyForRelease.count ?? 0,
+    readyForReleaseSettled: readyForReleaseSettled.count ?? 0,
+    readyForReleaseError: Boolean(readyForRelease.error || readyForReleaseSettled.error),
     queueUnclaimed: queueUnclaimed.count ?? 0,
     queueUnclaimedXray: queueUnclaimedXray.count ?? 0,
     queueUnclaimedError: Boolean(queueUnclaimed.error || queueUnclaimedXray.error),
@@ -825,6 +862,7 @@ export async function AdminDashboard({
     show("admin.visits_today") ||
     show("admin.queue_total") ||
     show("admin.queue_unclaimed") ||
+    show("admin.ready_for_release") ||
     show("admin.released_today") ||
     showDupCard ||
     show("admin.new_messages");
@@ -935,6 +973,16 @@ export async function AdminDashboard({
                 }
                 href="/staff/queue?filter=unclaimed"
                 error={stats.queueUnclaimedError}
+              />
+            )}
+            {show("admin.ready_for_release") && (
+              <StatCard
+                label="Ready for release"
+                value={stats.readyForRelease}
+                hint={readyForReleaseHint(stats.readyForRelease, stats.readyForReleaseSettled)}
+                href="/staff/queue?filter=pending_release"
+                accent={stats.readyForRelease > 0 ? "warn" : "default"}
+                error={stats.readyForReleaseError}
               />
             )}
             {show("admin.released_today") && (
