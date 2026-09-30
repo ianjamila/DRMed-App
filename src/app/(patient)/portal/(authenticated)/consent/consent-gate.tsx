@@ -43,7 +43,7 @@ export function PortalConsentGate() {
             start(async () => {
               setErr(null);
               const res = await acceptConsentPortalAction({ signatory: "self" });
-              if (!res.ok) setErr(res.error);
+              if (!res.ok) start(() => setErr(res.error));
             })
           }
         >

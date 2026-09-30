@@ -55,11 +55,15 @@ export function QueueDeleteDialog({
           ? await deleteVisitAction(visitId, trimmed)
           : await restoreVisitAction(visitId, trimmed);
       if (!result.ok) {
-        setErr(result.error);
+        startTransition(() => {
+          setErr(result.error);
+        });
         return;
       }
-      setOpen(false);
-      setReason("");
+      startTransition(() => {
+        setOpen(false);
+        setReason("");
+      });
     });
   }
 

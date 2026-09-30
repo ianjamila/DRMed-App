@@ -73,7 +73,11 @@ export function ConsentPanel({
         dataUrl: png,
         ext: "png",
       });
-      if (!up.ok) return setErr(up.error);
+      if (!up.ok) {
+        const message = up.error;
+        start(() => setErr(message));
+        return;
+      }
       const res = await recordConsentGrantAction({
         patientId,
         method: "onscreen_signature",
@@ -82,8 +86,14 @@ export function ConsentPanel({
         signatoryRelationship: signatory === "self" ? undefined : rel,
         artifactPath: up.path,
       });
-      if (!res.ok) return setErr(res.error);
-      setMode("idle");
+      if (!res.ok) {
+        const message = res.error;
+        start(() => setErr(message));
+        return;
+      }
+      start(() => {
+        setMode("idle");
+      });
     });
   }
 
@@ -105,7 +115,11 @@ export function ConsentPanel({
         dataUrl,
         ext,
       });
-      if (!up.ok) return setErr(up.error);
+      if (!up.ok) {
+        const message = up.error;
+        start(() => setErr(message));
+        return;
+      }
       const res = await recordConsentGrantAction({
         patientId,
         method: "paper_wet_signature",
@@ -114,8 +128,14 @@ export function ConsentPanel({
         signatoryRelationship: signatory === "self" ? undefined : rel,
         artifactPath: up.path,
       });
-      if (!res.ok) return setErr(res.error);
-      setMode("idle");
+      if (!res.ok) {
+        const message = res.error;
+        start(() => setErr(message));
+        return;
+      }
+      start(() => {
+        setMode("idle");
+      });
     });
   }
 
@@ -125,7 +145,7 @@ export function ConsentPanel({
     setErr(null);
     start(async () => {
       const res = await withdrawConsentAction({ patientId, reason });
-      if (!res.ok) setErr(res.error);
+      if (!res.ok) start(() => setErr(res.error));
     });
   }
 

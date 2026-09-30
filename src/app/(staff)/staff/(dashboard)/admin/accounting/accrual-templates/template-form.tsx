@@ -129,7 +129,9 @@ export function AccrualTemplateForm({
         ? await updateAccrualTemplate(initial!.id, payload)
         : await createAccrualTemplate(payload);
       if (!result.ok) {
-        setError(result.error);
+        startTransition(() => {
+          setError(result.error);
+        });
         return;
       }
       router.push("/staff/admin/accounting/accrual-templates");

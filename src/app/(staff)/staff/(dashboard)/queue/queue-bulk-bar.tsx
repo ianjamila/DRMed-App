@@ -158,10 +158,12 @@ export function QueueBulkBar({ rowsByKey }: Props) {
         // unless the server says the window/batch itself is gone, in which
         // case retrying can only repeat the same refusal.
         const gone = r.error === UNDO_EXPIRED || r.error === UNDO_ALREADY;
-        setOutcome({
-          message: `${r.error}\n\n${previousMessage}`,
-          edits: selectionEdits,
-          undo: gone ? null : u,
+        startUndo(() => {
+          setOutcome({
+            message: `${r.error}\n\n${previousMessage}`,
+            edits: selectionEdits,
+            undo: gone ? null : u,
+          });
         });
         return;
       }
@@ -180,13 +182,15 @@ export function QueueBulkBar({ rowsByKey }: Props) {
           notRestoredByKey.set(n.id, { label: u.labelOf[n.id] ?? "A test", reason: n.reason });
         }
       }
-      setOutcome({
-        message: undoOutcomeMessage(
-          { one: "test", many: "tests" },
-          { restored: restoredCount, notRestored: [...notRestoredByKey.values()] },
-        ),
-        edits: selectionEdits,
-        undo: null,
+      startUndo(() => {
+        setOutcome({
+          message: undoOutcomeMessage(
+            { one: "test", many: "tests" },
+            { restored: restoredCount, notRestored: [...notRestoredByKey.values()] },
+          ),
+          edits: selectionEdits,
+          undo: null,
+        });
       });
       router.refresh();
     });
@@ -264,10 +268,12 @@ export function QueueBulkBar({ rowsByKey }: Props) {
       const msg = bulkReleaseMessage(ids.length, result, labelsByTestId(rowsByKey));
       // Release keeps #261's outcome text; it carries no Undo here (the
       // 10-minute bulk Undo covers Claim / Unclaim / Delete only).
-      setOutcome({
-        message: result.warnings.length ? `${msg}\n${result.warnings.join("\n")}` : msg,
-        edits: selectionEdits,
-        undo: null,
+      start(() => {
+        setOutcome({
+          message: result.warnings.length ? `${msg}\n${result.warnings.join("\n")}` : msg,
+          edits: selectionEdits,
+          undo: null,
+        });
       });
       clearKeys(keys);
       closePanel();

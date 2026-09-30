@@ -73,7 +73,7 @@ export function RecurringClient({
         ? await deactivateRecurringTemplateAction(t.id)
         : await reactivateRecurringTemplateAction(t.id);
       if (r.ok) router.refresh();
-      else setRowError(r.error);
+      else startTransition(() => setRowError(r.error));
     });
   }
 
@@ -255,7 +255,7 @@ function TemplateForm({
         ? await updateRecurringTemplateAction(mode.template.id, payload)
         : await createRecurringTemplateAction(payload);
       if (r.ok) onSaved();
-      else setError(r.error);
+      else startTransition(() => setError(r.error));
     });
   }
 

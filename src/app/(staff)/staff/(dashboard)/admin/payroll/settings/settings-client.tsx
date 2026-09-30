@@ -212,10 +212,14 @@ function SettingItem({ row }: { row: SettingRow }) {
         value_php: parsed,
       });
       if (!result.ok) {
-        setError(result.error);
+        startTransition(() => {
+          setError(result.error);
+        });
         return;
       }
-      setOk("Saved.");
+      startTransition(() => {
+        setOk("Saved.");
+      });
       // Refresh so the server-rendered initial value updates.
       router.refresh();
     });

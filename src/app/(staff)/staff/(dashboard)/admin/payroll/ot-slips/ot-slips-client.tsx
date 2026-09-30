@@ -156,10 +156,14 @@ export function OtSlipsClient({
       startTransition(async () => {
         const result = await approveOtSlipAction(slipId);
         if (!result.ok) {
-          setActionError(result.error);
+          startTransition(() => {
+            setActionError(result.error);
+          });
           return;
         }
-        setActionError(null);
+        startTransition(() => {
+          setActionError(null);
+        });
         router.refresh();
       });
     },
@@ -171,12 +175,18 @@ export function OtSlipsClient({
       startTransition(async () => {
         const result = await rejectOtSlipAction(slipId, reason);
         if (!result.ok) {
-          setActionError(result.error);
+          startTransition(() => {
+            setActionError(result.error);
+          });
           return;
         }
-        setActionError(null);
+        startTransition(() => {
+          setActionError(null);
+        });
         if (mountedRef.current) {
-          setReasonPrompt(null);
+          startTransition(() => {
+            setReasonPrompt(null);
+          });
         }
         router.refresh();
       });
@@ -189,12 +199,18 @@ export function OtSlipsClient({
       startTransition(async () => {
         const result = await voidOtSlipAction(slipId);
         if (!result.ok) {
-          setActionError(result.error);
+          startTransition(() => {
+            setActionError(result.error);
+          });
           return;
         }
-        setActionError(null);
+        startTransition(() => {
+          setActionError(null);
+        });
         if (mountedRef.current) {
-          setReasonPrompt(null);
+          startTransition(() => {
+            setReasonPrompt(null);
+          });
         }
         router.refresh();
       });
@@ -741,14 +757,18 @@ function RequestOtSlipDrawer({
         reason: reason.trim() || null,
       });
       if (!result.ok) {
-        setError(result.error);
+        startTransition(() => {
+          setError(result.error);
+        });
         return;
       }
       // Reset and notify parent.
-      setEmployeeId("");
-      setWorkDate(defaultWorkDate);
-      setHoursRequested("1.00");
-      setReason("");
+      startTransition(() => {
+        setEmployeeId("");
+        setWorkDate(defaultWorkDate);
+        setHoursRequested("1.00");
+        setReason("");
+      });
       onCreated();
     });
   };

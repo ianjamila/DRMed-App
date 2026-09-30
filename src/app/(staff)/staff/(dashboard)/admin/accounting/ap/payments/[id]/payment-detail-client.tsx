@@ -110,11 +110,15 @@ export function PaymentDetailClient({
     startTransition(async () => {
       const r = await voidBillPaymentAction(payment.id, voidReason.trim());
       if (r.ok) {
-        setVoidOpen(false);
-        setVoidReason("");
+        startTransition(() => {
+          setVoidOpen(false);
+          setVoidReason("");
+        });
         router.refresh();
       } else {
-        setError(r.error);
+        startTransition(() => {
+          setError(r.error);
+        });
       }
     });
   }
@@ -148,10 +152,14 @@ export function PaymentDetailClient({
         allocations: items,
       });
       if (r.ok) {
-        setReallocOpen(false);
+        startTransition(() => {
+          setReallocOpen(false);
+        });
         router.refresh();
       } else {
-        setError(r.error);
+        startTransition(() => {
+          setError(r.error);
+        });
       }
     });
   }

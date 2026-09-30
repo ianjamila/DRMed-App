@@ -197,8 +197,10 @@ export function PaymentFormClient({
     startTransition(async () => {
       const r = await createBillPaymentAction(payload);
       if (!r.ok) {
-        setError(r.error);
-        setFieldError(r.field ?? null);
+        startTransition(() => {
+          setError(r.error);
+          setFieldError(r.field ?? null);
+        });
         return;
       }
       router.push(`/staff/admin/accounting/ap/payments/${r.data.payment_id}`);

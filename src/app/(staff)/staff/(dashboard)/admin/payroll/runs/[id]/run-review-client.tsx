@@ -248,7 +248,9 @@ export function RunReviewClient({ run, employeeRuns, loadError }: Props) {
     startRecomputeTransition(async () => {
       const res = await recomputePayrollRunAction(run.id);
       if (!res.ok) {
-        setRecomputeError(res.error);
+        startRecomputeTransition(() => {
+          setRecomputeError(res.error);
+        });
         return;
       }
       router.refresh();
@@ -267,10 +269,14 @@ export function RunReviewClient({ run, employeeRuns, loadError }: Props) {
     startHeaderTransition(async () => {
       const res = await finaliseRunAction(run.id);
       if (!res.ok) {
-        setDialogError(res.error);
+        startHeaderTransition(() => {
+          setDialogError(res.error);
+        });
         return;
       }
-      setOpenDialog(null);
+      startHeaderTransition(() => {
+        setOpenDialog(null);
+      });
       router.refresh();
     });
   };
@@ -283,11 +289,15 @@ export function RunReviewClient({ run, employeeRuns, loadError }: Props) {
         void_reason: voidReason.trim(),
       });
       if (!res.ok) {
-        setDialogError(res.error);
+        startHeaderTransition(() => {
+          setDialogError(res.error);
+        });
         return;
       }
-      setOpenDialog(null);
-      setVoidReason("");
+      startHeaderTransition(() => {
+        setOpenDialog(null);
+        setVoidReason("");
+      });
       router.refresh();
     });
   };
@@ -297,10 +307,14 @@ export function RunReviewClient({ run, employeeRuns, loadError }: Props) {
     startHeaderTransition(async () => {
       const res = await reopenVoidedRunAction({ run_id: run.id });
       if (!res.ok) {
-        setDialogError(res.error);
+        startHeaderTransition(() => {
+          setDialogError(res.error);
+        });
         return;
       }
-      setOpenDialog(null);
+      startHeaderTransition(() => {
+        setOpenDialog(null);
+      });
       router.refresh();
     });
   };
@@ -1255,12 +1269,16 @@ function PayoutCell({ employeeRun }: { employeeRun: EmployeeRunRow }) {
             : undefined,
       });
       if (!res.ok) {
-        setError(res.error);
+        startTransition(() => {
+          setError(res.error);
+        });
         return;
       }
-      setMarkOpen(false);
-      setPaidAtLocalDate("");
-      setBankReference("");
+      startTransition(() => {
+        setMarkOpen(false);
+        setPaidAtLocalDate("");
+        setBankReference("");
+      });
       router.refresh();
     });
   };
@@ -1273,11 +1291,15 @@ function PayoutCell({ employeeRun }: { employeeRun: EmployeeRunRow }) {
         voidReason.trim(),
       );
       if (!res.ok) {
-        setError(res.error);
+        startTransition(() => {
+          setError(res.error);
+        });
         return;
       }
-      setVoidOpen(false);
-      setVoidReason("");
+      startTransition(() => {
+        setVoidOpen(false);
+        setVoidReason("");
+      });
       router.refresh();
     });
   };

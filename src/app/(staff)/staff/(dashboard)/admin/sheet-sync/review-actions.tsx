@@ -118,13 +118,17 @@ export function IdentityItemControls({
           patientId: action === "link" ? selected : null,
         });
         if (!res.ok) {
-          setErr(res.error);
+          startTransition(() => {
+            setErr(res.error);
+          });
           return;
         }
         router.refresh();
       } catch (e) {
         console.error("sheet sync review resolve failed", e);
-        setErr("Could not reach the server. Check your connection and try again.");
+        startTransition(() => {
+          setErr("Could not reach the server. Check your connection and try again.");
+        });
       }
     });
   }
@@ -230,13 +234,17 @@ export function DeletedPatientMatchControls({ itemId, rowLabel, handled = false 
       try {
         const res = await resolveReviewItemAction({ itemId, action, patientId: null });
         if (!res.ok) {
-          setErr(res.error);
+          startTransition(() => {
+            setErr(res.error);
+          });
           return;
         }
         router.refresh();
       } catch (e) {
         console.error("sheet sync review resolve failed", e);
-        setErr("Could not reach the server. Check your connection and try again.");
+        startTransition(() => {
+          setErr("Could not reach the server. Check your connection and try again.");
+        });
       }
     });
   }
@@ -301,7 +309,9 @@ export function UnmappedItemControls({ itemId, answer }: { itemId: string; answe
       try {
         const res = await mapAnswerToChannelAction({ itemId, sourceId });
         if (!res.ok) {
-          setErr(res.error);
+          startTransition(() => {
+            setErr(res.error);
+          });
           return;
         }
         // Not router.refresh(): the item leaves the open list once mapped,
@@ -311,7 +321,9 @@ export function UnmappedItemControls({ itemId, answer }: { itemId: string; answe
         goDone("alias", res.data.patientsUpdated);
       } catch (e) {
         console.error("sheet sync map answer failed", e);
-        setErr("Could not reach the server. Check your connection and try again.");
+        startTransition(() => {
+          setErr("Could not reach the server. Check your connection and try again.");
+        });
       }
     });
   }
@@ -322,13 +334,17 @@ export function UnmappedItemControls({ itemId, answer }: { itemId: string; answe
       try {
         const res = await resolveReviewItemAction({ itemId, action: "dismiss", patientId: null });
         if (!res.ok) {
-          setErr(res.error);
+          startTransition(() => {
+            setErr(res.error);
+          });
           return;
         }
         router.refresh();
       } catch (e) {
         console.error("sheet sync review dismiss failed", e);
-        setErr("Could not reach the server. Check your connection and try again.");
+        startTransition(() => {
+          setErr("Could not reach the server. Check your connection and try again.");
+        });
       }
     });
   }
@@ -400,13 +416,17 @@ export function SimpleDismissControls({
       try {
         const res = await resolveReviewItemAction({ itemId, action: "dismiss", patientId: null });
         if (!res.ok) {
-          setErr(res.error);
+          startTransition(() => {
+            setErr(res.error);
+          });
           return;
         }
         router.refresh();
       } catch (e) {
         console.error("sheet sync review dismiss failed", e);
-        setErr("Could not reach the server. Check your connection and try again.");
+        startTransition(() => {
+          setErr("Could not reach the server. Check your connection and try again.");
+        });
       }
     });
   }
@@ -461,10 +481,14 @@ export function ApproveResortGroupButton({
       try {
         const res = await approveResortGroupAction({ answerNorm, from, to });
         if (!res.ok) {
-          setErr(res.error);
+          startTransition(() => {
+            setErr(res.error);
+          });
           return;
         }
-        setOpen(false);
+        startTransition(() => {
+          setOpen(false);
+        });
         // Not router.refresh(): once approved, this group's patients no
         // longer match the proposal and the row disappears from the table —
         // which would unmount this button, and its "N updated" message with
@@ -473,7 +497,9 @@ export function ApproveResortGroupButton({
         goDone("resort", res.data.updated);
       } catch (e) {
         console.error("sheet sync resort approve failed", e);
-        setErr("Could not reach the server. Check your connection and try again.");
+        startTransition(() => {
+          setErr("Could not reach the server. Check your connection and try again.");
+        });
       }
     });
   }

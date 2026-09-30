@@ -76,17 +76,21 @@ export function PettyCashForm({ defaultDate, maxDate, shiftId, partnerLabs }: Pr
         shift_id: shiftId,
       });
       if (!r.ok) {
-        setErr(r.error);
+        startTransition(() => {
+          setErr(r.error);
+        });
         return;
       }
       // entry_number comes from the journal entry the DB bridge posts; fall
       // back to a plain confirmation rather than "Recorded — ." if that
       // read-back ever comes up empty.
-      setOk(
-        r.data.entry_number
-          ? `Recorded — ${r.data.entry_number}. Taken out of the drawer.`
-          : "Recorded. Taken out of the drawer.",
-      );
+      startTransition(() => {
+        setOk(
+          r.data.entry_number
+            ? `Recorded — ${r.data.entry_number}. Taken out of the drawer.`
+            : "Recorded. Taken out of the drawer.",
+        );
+      });
       reset();
       router.refresh();
     });

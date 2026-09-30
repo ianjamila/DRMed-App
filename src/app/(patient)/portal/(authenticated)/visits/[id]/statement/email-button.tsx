@@ -53,12 +53,14 @@ export function PatientEmailStatementButton({
   function onSend() {
     startTransition(async () => {
       const result = await emailMyStatementAction(visitId);
-      setMessage(
-        result.ok
-          ? { ok: true, text: `Sent to ${result.data.to}. Check your inbox (and spam folder).` }
-          : { ok: false, text: result.error },
-      );
-      setOpen(false);
+      startTransition(() => {
+        setMessage(
+          result.ok
+            ? { ok: true, text: `Sent to ${result.data.to}. Check your inbox (and spam folder).` }
+            : { ok: false, text: result.error },
+        );
+        setOpen(false);
+      });
     });
   }
 
