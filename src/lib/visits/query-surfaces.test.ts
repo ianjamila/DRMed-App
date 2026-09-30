@@ -854,8 +854,12 @@ function scanSource(text: string, full: string): Chain[] {
       const identifiers: string[] = [];
       const selectLiterals: string[] = [];
       const conditionalSelects: string[][] = [];
+      // `(cond ? A : B) as typeof A` is still a conditional: the queue page casts
+      // its two-literal select to keep supabase-js from failing to parse the union.
+      const unwrap = (a: ts.Expression): ts.Expression =>
+        ts.isParenthesizedExpression(a) || ts.isAsExpression(a) ? unwrap(a.expression) : a;
       const leaves = (a: ts.Expression): string[] => {
-        const e = ts.isParenthesizedExpression(a) ? a.expression : a;
+        const e = unwrap(a);
         if (ts.isConditionalExpression(e)) return [...leaves(e.whenTrue), ...leaves(e.whenFalse)];
         if (ts.isStringLiteralLike(e)) return [e.text];
         if (ts.isIdentifier(e)) return [consts.get(e.text) ?? ""];
@@ -866,7 +870,7 @@ function scanSource(text: string, full: string): Chain[] {
         const isSelect = methods[i] === "select";
         for (const arg of call.arguments) {
           if (isSelect) {
-            const inner = ts.isParenthesizedExpression(arg) ? arg.expression : arg;
+            const inner = unwrap(arg);
             if (ts.isConditionalExpression(inner)) conditionalSelects.push(leaves(inner));
           }
           const collectArg = (a: ts.Node) => {
@@ -1395,6 +1399,38 @@ describe("the lifecycle predicates reject what they should", () => {
 
     const leftServices = oneChain(source("id, visits!inner ( id ), services ( kind )"));
     expect(hasInnerServicesEmbed(leftServices)).toBe(false);
+  });
+
+  it("still reads every branch through a type cast on the ternary", () => {
+    // The queue page shape: `(searching ? SEARCH : BASE) as typeof BASE`, a
+    // cast supabase-js needs to type the union. The cast must not hide the
+    // branches from the guard.
+    const source = (search: string) => `
+      const BASE = "id, visits!inner ( id ), services!inner ( kind )";
+      const SEARCH = "${search}";
+      async function queue() {
+        const { data } = await db
+          .from("test_requests")
+          .select((searching ? SEARCH : BASE) as typeof BASE, { count: "exact" })
+          .is("deleted_at", null)
+          .is("visits.deleted_at", null)
+          .neq("services.kind", "doctor_consultation");
+      }
+    `;
+    const good = oneChain(
+      source("id, visits!inner ( id ), services!inner ( kind ), lab_search!inner ( )"),
+    );
+    expect(good.conditionalSelects).toHaveLength(1);
+    expect(good.conditionalSelects[0]).toHaveLength(2);
+    expect(hasInnerVisitsEmbed(good)).toBe(true);
+
+    const leftVisits = oneChain(
+      source("id, visits ( id ), services!inner ( kind ), lab_search!inner ( )"),
+    );
+    expect(
+      hasInnerVisitsEmbed(leftVisits),
+      "A cast hid the search branch, which drops visits!inner.",
+    ).toBe(false);
   });
 
   it("does not let a filtered query in the same function vouch for an unfiltered one", () => {

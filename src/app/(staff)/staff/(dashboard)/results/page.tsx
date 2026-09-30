@@ -12,7 +12,7 @@ import {
   todayManilaISODate,
 } from "@/lib/dates/manila";
 import { sectionsForRole } from "@/lib/auth/role-sections";
-import { matchesAllTokens } from "@/lib/patients/search";
+import { applyLabSearch, labSearchPatterns } from "@/lib/queue/lab-search";
 import { PageHeader } from "@/components/staff/page-header";
 import { labQueueGate } from "@/lib/visits/lab-gate";
 import { DOCTOR_KIND_VALUES } from "@/lib/visits/classification";
@@ -156,6 +156,34 @@ const ARCHIVE_SELECT_UPDATED_MINE = `
   result_test_requests!inner ( results!inner ( result_amendments!inner ( amended_by ) ) )
 `;
 
+// The same three shapes plus the search embed (migration 0194, `lab_search!inner
+// ( )`), used only while there are search words: an unconditional inner join
+// would run the search view on every archive load. Spelled out in full for the
+// same reason as above — query-surfaces.test.ts must be able to read every
+// branch of the ternary that picks between them.
+const ARCHIVE_SELECT_BASE_SEARCH = `
+  id, status, released_at, completed_at, requested_at,
+  visits!inner ( id, visit_number, payment_status, hmo_provider_id,
+    patients!inner ( first_name, last_name, drm_id, deleted_at, merged_into_id ) ),
+  services!inner ( code, name, kind, section, report_group_id, report_groups ( name ) ),
+  lab_search!inner ( )`;
+
+const ARCHIVE_SELECT_UPDATED_7D_SEARCH = `
+  id, status, released_at, completed_at, requested_at,
+  visits!inner ( id, visit_number, payment_status, hmo_provider_id,
+    patients!inner ( first_name, last_name, drm_id, deleted_at, merged_into_id ) ),
+  services!inner ( code, name, kind, section, report_group_id, report_groups ( name ) ),
+  result_test_requests!inner ( results!inner ( amended_at ) ),
+  lab_search!inner ( )`;
+
+const ARCHIVE_SELECT_UPDATED_MINE_SEARCH = `
+  id, status, released_at, completed_at, requested_at,
+  visits!inner ( id, visit_number, payment_status, hmo_provider_id,
+    patients!inner ( first_name, last_name, drm_id, deleted_at, merged_into_id ) ),
+  services!inner ( code, name, kind, section, report_group_id, report_groups ( name ) ),
+  result_test_requests!inner ( results!inner ( result_amendments!inner ( amended_by ) ) ),
+  lab_search!inner ( )`;
+
 interface SearchProps {
   searchParams: Promise<{
     status?: string;
@@ -222,6 +250,8 @@ export default async function AllResultsPage({ searchParams }: SearchProps) {
   const start = isISODate(sp.start) ? sp.start : "";
   const end = isISODate(sp.end) ? sp.end : "";
   const q = sp.q?.trim() ?? "";
+  const searchPatterns = labSearchPatterns(q);
+  const searching = searchPatterns.length > 0;
 
   const admin = createAdminClient();
   // The Updated column further down still reads result_amendments through
@@ -262,17 +292,23 @@ export default async function AllResultsPage({ searchParams }: SearchProps) {
   let query = admin
     .from("test_requests")
     .select(
-      // Three literal select shapes, chosen by a plain ternary rather than
-      // `${…}` interpolation: query-surfaces.test.ts statically proves every
-      // test_requests chain that filters visits.deleted_at embeds
-      // visits!inner (CLAUDE.md — PostgREST silently ignores a filter on a
-      // LEFT-joined embed), and it can only read a literal/no-substitution
-      // template argument, not a computed string.
+      // Six literal select shapes (three filters x with/without the search
+      // embed), chosen by plain ternaries rather than `${…}` interpolation:
+      // query-surfaces.test.ts statically proves every test_requests chain that
+      // filters visits.deleted_at embeds visits!inner (CLAUDE.md — PostgREST
+      // silently ignores a filter on a LEFT-joined embed), and it can only read
+      // a literal/no-substitution template argument, not a computed string.
       updated === "7d"
-        ? ARCHIVE_SELECT_UPDATED_7D
+        ? searching
+          ? ARCHIVE_SELECT_UPDATED_7D_SEARCH
+          : ARCHIVE_SELECT_UPDATED_7D
         : updated === "mine"
-          ? ARCHIVE_SELECT_UPDATED_MINE
-          : ARCHIVE_SELECT_BASE,
+          ? searching
+            ? ARCHIVE_SELECT_UPDATED_MINE_SEARCH
+            : ARCHIVE_SELECT_UPDATED_MINE
+          : searching
+            ? ARCHIVE_SELECT_BASE_SEARCH
+            : ARCHIVE_SELECT_BASE,
       { count: "exact" },
     )
     .is("deleted_at", null)
@@ -337,6 +373,11 @@ export default async function AllResultsPage({ searchParams }: SearchProps) {
       query = query.in("services.section", allowedSections);
     }
   }
+
+  // Free-text search is a real filter like the rest: every word must match the
+  // row's patient / visit # / test / panel text (migration 0194), so `total`
+  // and the pager count the searched set, not just the page in hand.
+  query = applyLabSearch(query, searchPatterns);
 
   if (updated === "7d") {
     query = query.gte("result_test_requests.results.amended_at", updatedSinceIso());
@@ -462,23 +503,10 @@ export default async function AllResultsPage({ searchParams }: SearchProps) {
   const remarksFor = (testIds: string[]) =>
     claimRemarks(testIds.flatMap((id) => claimEvents.get(id) ?? []));
 
-  // Optional client-side filter when q is set. Server-side ilike across a join
-  // is awkward in PostgREST, so post-filter the page rows here. Token-based:
-  // every word must appear somewhere (name / DRM-ID / service), in any order.
-  const filtered = q
-    ? rows.filter((r) => {
-        const pat = r.visits?.patients;
-        const name = pat ? `${pat.first_name} ${pat.last_name}` : "";
-        const drm = pat?.drm_id ?? "";
-        const svc = `${r.services?.code ?? ""} ${r.services?.name ?? ""}`;
-        return matchesAllTokens(`${name} ${drm} ${svc}`, q);
-      })
-    : rows;
-
   // The fold works on plain rows; the lab-gate flag is per visit.
   const awaitingByVisit = new Map<string, boolean>();
   const archiveRows: ArchiveTestRow[] = [];
-  for (const r of filtered) {
+  for (const r of rows) {
     const visit = r.visits;
     if (!visit) continue;
     if (!awaitingByVisit.has(visit.id)) awaitingByVisit.set(visit.id, !labQueueGate(visit).ok);
@@ -580,7 +608,7 @@ export default async function AllResultsPage({ searchParams }: SearchProps) {
     />
   );
 
-  const hasFilters = Boolean(start || end || q || status !== "all" || updated);
+  const hasFilters = Boolean(start || end || searching || status !== "all" || updated);
 
   return (
     <div className="px-4 py-8 sm:px-6 lg:px-8">
@@ -595,14 +623,9 @@ export default async function AllResultsPage({ searchParams }: SearchProps) {
               Visits
             </Link>
             .
-            {/* `q` is applied after the fetch (see below), so `total` is the
-                count BEFORE it — say what it actually counts rather than
-                calling a larger number "matching". */}
-            {q
-              ? ` · ${total.toLocaleString("en-PH")} match the filters · ${filtered.length} on this page match “${q}”`
-              : hasFilters
-                ? ` · ${total.toLocaleString("en-PH")} matching`
-                : ` · ${total.toLocaleString("en-PH")} total`}
+            {hasFilters
+              ? ` · ${total.toLocaleString("en-PH")} matching`
+              : ` · ${total.toLocaleString("en-PH")} total`}
           </>
         }
       />
@@ -743,23 +766,10 @@ export default async function AllResultsPage({ searchParams }: SearchProps) {
         </div>
       </form>
 
-      {/* The search box narrows the fetched page only — the dates and the tab
-          are real DB filters, this one is not. Say so, the way the lab queue
-          does, rather than let a page-1 miss read as "not in the archive". */}
-      {q && totalPages > 1 ? (
-        <p
-          role="status"
-          className="mb-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900"
-        >
-          The search box only looks at the {size} tests on this page. Narrow the
-          dates, or pick a tab, to search a smaller set.
-        </p>
-      ) : null}
-
       <section className="overflow-hidden rounded-xl border border-[color:var(--color-brand-bg-mid)] bg-white">
-        {filtered.length === 0 ? (
+        {rows.length === 0 ? (
           <p className="px-4 py-8 text-center text-sm text-[color:var(--color-brand-text-soft)]">
-            {status === "unclaimed" && !start && !end && !q
+            {status === "unclaimed" && !start && !end && !searching
               ? "Nothing is waiting to be picked up — every test in progress has someone on it."
               : "No results match this filter."}
           </p>

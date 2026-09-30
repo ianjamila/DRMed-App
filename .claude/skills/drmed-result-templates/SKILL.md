@@ -26,9 +26,11 @@ supabase/migrations/
 │                                            result_finalise_commit / result_edit_commit (service_role only, row lock,
 │                                            P0065 stale / P0066 not editable), section read rule
 │                                            (lab_sections_for_role + staff_can_read_finished_result), P0067 delete guard
-└── 0179_result_copy_followups.sql         ← follow-up columns on result_amendments, withdrawal columns on
+├── 0179_result_copy_followups.sql         ← follow-up columns on result_amendments, withdrawal columns on
                                              critical_alerts, result_edit_commit redefined by 3 text hunks (removed
                                              alerts now withdrawn not deleted), copy-state RPCs, notify claim/record, P0068
+└── 0194_lab_search.sql                    ← lab_search_rows view (security_invoker) + lab_search(test_requests)
+                                             computed relationship: server-side queue/results free-text search
 
 src/lib/results/
 ├── loaders.ts              ← loadTemplateParams(); loadResultDocumentInput(id, { finalisedAtOverride, valuesOverride, signerStaffId }) LAZY-imports the admin client (keep it that way — smoke:results runs under tsx)
@@ -123,7 +125,7 @@ Drafts, the first finalise and every edit of a structured result go through thre
 - **Package headers** (0040) auto-promote to `ready_for_release` on insert and never carry `requested`/`in_progress`; components are ₱0 rows with `parent_id`. Multi-row inserts must list headers before components (the trigger validates against same-statement rows in array order).
 - **Soft-deleted lines** (0125) are excluded from both worklists, the consolidated form, and are refused by claim / unclaim / reassign / result entry / finalise.
 - **Role sections**: `sectionsForRole(role) === []` means no access — both worklists deny, they don't skip the filter.
-- **Every date bound is a Manila half-open window** (`manilaRangeUtc`); the queue pages with `count: "exact"` + `.range()` rather than a row cap. Free-text search runs after the chemistry fold, so it only narrows the page in hand — the UI says so.
+- **Every date bound is a Manila half-open window** (`manilaRangeUtc`); the queue pages with `count: "exact"` + `.range()` rather than a row cap. Free-text search is server-side (0194): view `lab_search_rows` (`security_invoker`, live rows only — repeats both `deleted_at` predicates) plus the computed relationship `lab_search(test_requests)`. The queue and results pages select `lab_search!inner ( )` only while a search is active (literal `*_SEARCH` select constants; the queue casts the ternary `as typeof QUEUE_SELECT` for supabase-js typing, and the query-surfaces guard sees through the cast) and chain `applyLabSearch` (`src/lib/queue/lab-search.ts`, one `ilike` per word on `lab_search.search_text`), so the pager total and every page are the searched set. Searchable: patient last/first/middle name, DRM-ID, visit #, test code/name, report group code/name. Reception is redirected to Released today by `receptionQueueHref` (`src/lib/queue/reception-redirect.ts`), which keeps `q`/`visit`/`start`/`end`/`size`/`sort`/`dir` and drops `page`/`mine`. Panel siblings in the same tab bucket (bench = `requested`/`in_progress`, else the same status) are part of each member's text, so one member's code finds the whole panel — and a RELEASED sibling counts only on the same result file as the row (newest link with a stored PDF, the `newestLinkWithPdf` rule), because Released today splits a panel into one card per file (`reportCardKey`). The function has no `set search_path` on purpose (a SET blocks inlining: 1.2 s vs 0.2–0.3 s measured on prod). Never re-introduce a post-fetch filter.
 
 ## Schema
 
