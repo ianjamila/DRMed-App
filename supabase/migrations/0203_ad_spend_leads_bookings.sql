@@ -6,12 +6,26 @@
 -- shows, so ad_spend_daily gains the ad file's leads, the platform-reported
 -- bookings and the ad's display name.
 --
--- Additive: three nullable columns (NULL = the file did not say; an explicit 0
--- is kept), a re-created ad_spend_import (the 0193 body + the three new fields,
+-- Additive: three nullable columns (NULL = unknown; an explicit 0 is kept), a re-created ad_spend_import (the 0193 body + the three new fields,
 -- every other rule unchanged: same-kind partial uploads update only the ads
 -- they mention, a kind change replaces only when nothing was rejected, mixed
 -- kinds are refused, one advisory lock, one audit row) and a new admin-gated
 -- reader, ad_spend_rows.
+--
+-- COLUMN PRESENCE RULE (a re-upload must not erase saved numbers): the client
+-- parser OMITS a field's key from every row when the file has no such column
+-- (impressions, clicks, ad_label, leads, platform_bookings) and includes it,
+-- possibly null, when the column exists. The import derives one flag per field
+-- from key presence over p_rows and, on an ON CONFLICT update:
+--   column absent from the file      -> the saved value is KEPT
+--   column present, cell blank       -> NULL (the file says "unknown")
+--   column present, cell 0           -> 0
+-- The signature is unchanged. The app deployed BEFORE this migration always
+-- sent impressions/clicks (null when its file had no such column) and never
+-- sent leads/bookings/ad_label: so against this body it behaves exactly as it
+-- did for impressions/clicks and now also keeps saved leads/bookings/label.
+-- A kind-change REPLACE (delete of a different-kind row + insert) has no saved
+-- row to keep: the inserted row carries only what the file said (absent = NULL).
 --
 -- Nothing else changes: ad_spend_daily_totals / ad_spend_coverage /
 -- ad_spend_delete (Patient Sources "Cost per new patient") are untouched.
@@ -45,6 +59,11 @@ declare
   v_days int := 0;
   v_n int;
   v_kind_changed boolean;
+  v_has_impressions boolean;
+  v_has_clicks boolean;
+  v_has_ad_label boolean;
+  v_has_leads boolean;
+  v_has_bookings boolean;
 begin
   if not public.has_role(array['admin']) then
     raise exception 'Only admins can save ad spend' using errcode = '42501';
@@ -63,6 +82,17 @@ begin
   if v_n = 0 or v_n > 20000 then
     raise exception 'Ad spend import takes 1 to 20,000 rows, got %', v_n using errcode = '22023';
   end if;
+
+  -- Which optional fields does THIS file carry at all? (key presence, see the
+  -- header comment). A file whose rows are not JSON objects is refused below by
+  -- jsonb_to_recordset anyway.
+  select coalesce(bool_or(jsonb_typeof(e) = 'object' and e ? 'impressions'), false),
+         coalesce(bool_or(jsonb_typeof(e) = 'object' and e ? 'clicks'), false),
+         coalesce(bool_or(jsonb_typeof(e) = 'object' and e ? 'ad_label'), false),
+         coalesce(bool_or(jsonb_typeof(e) = 'object' and e ? 'leads'), false),
+         coalesce(bool_or(jsonb_typeof(e) = 'object' and e ? 'platform_bookings'), false)
+    into v_has_impressions, v_has_clicks, v_has_ad_label, v_has_leads, v_has_bookings
+  from jsonb_array_elements(p_rows) e;
 
   -- (P5) One group (spend_date, platform, campaign_key) must carry ONE kind of
   -- row. The client parser guarantees it, but a direct RPC call mixing a
@@ -170,11 +200,11 @@ begin
     on conflict (spend_date, platform, campaign_key, ad_key) do update
       set campaign_label = excluded.campaign_label,
           spend_php      = excluded.spend_php,
-          impressions    = excluded.impressions,
-          clicks         = excluded.clicks,
-          ad_label       = excluded.ad_label,
-          leads          = excluded.leads,
-          platform_bookings = excluded.platform_bookings,
+          impressions    = case when v_has_impressions then excluded.impressions else a.impressions end,
+          clicks         = case when v_has_clicks then excluded.clicks else a.clicks end,
+          ad_label       = case when v_has_ad_label then excluded.ad_label else a.ad_label end,
+          leads          = case when v_has_leads then excluded.leads else a.leads end,
+          platform_bookings = case when v_has_bookings then excluded.platform_bookings else a.platform_bookings end,
           uploaded_by    = excluded.uploaded_by,
           uploaded_at    = excluded.uploaded_at,
           upload_id      = excluded.upload_id
@@ -262,8 +292,12 @@ begin
   v_def := pg_get_functiondef('public.ad_spend_import(uuid,jsonb,integer)'::regprocedure);
   if v_def not like '%pg_advisory_xact_lock(hashtext(''ad_spend_import''))%' then raise exception '0203: import lost its advisory lock'; end if;
   if v_def not like '%[mixed breakdown]%' or v_def not like '%[breakdown change]%' then raise exception '0203: import lost a 0193 guard'; end if;
-  if v_def not like '%platform_bookings = excluded.platform_bookings%' or v_def not like '%ad_label       = excluded.ad_label%' then
-    raise exception '0203: import does not write the new fields';
+  if v_def not like '%case when v_has_leads then excluded.leads else a.leads end%'
+     or v_def not like '%case when v_has_bookings then excluded.platform_bookings else a.platform_bookings end%'
+     or v_def not like '%case when v_has_ad_label then excluded.ad_label else a.ad_label end%'
+     or v_def not like '%case when v_has_impressions then excluded.impressions else a.impressions end%'
+     or v_def not like '%case when v_has_clicks then excluded.clicks else a.clicks end%' then
+    raise exception '0203: import does not keep saved values for columns absent from the file';
   end if;
   v_def := pg_get_functiondef('public.ad_spend_rows(date,date)'::regprocedure);
   if v_def not like '%has_role%' or v_def not like '%order by a.spend_date, a.platform, a.campaign_key, a.ad_key%' then

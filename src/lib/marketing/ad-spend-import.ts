@@ -11,7 +11,7 @@
 import Papa from "papaparse";
 import { daysInMonth } from "@/lib/dates/manila";
 import { normaliseCampaignName } from "@/lib/marketing/campaign-results";
-import { mapCountColumns, parseCountCell } from "@/lib/marketing/ad-columns";
+import { mapCountColumns, parseCountCellExact, roundCount } from "@/lib/marketing/ad-columns";
 
 export type AdPlatform = "meta" | "google";
 export type AdSpendRejectReason = "date_range" | "bad_date" | "no_campaign" | "bad_spend" | "malformed_row";
@@ -42,14 +42,19 @@ export interface AdSpendRow {
   ad_key: string;
   campaign_label: string;
   spend_php: number;
-  impressions: number | null;
-  clicks: number | null;
-  /** The ad's name as uploaded (null for a campaign-total row or a file with no ad name). */
-  ad_label: string | null;
-  /** Leads / results / conversations the platform reported. null = the file did not say; 0 = reported zero. */
-  leads: number | null;
-  /** Bookings / conversions the platform reported (not the clinic's own appointments). null = unknown. */
-  platform_bookings: number | null;
+  // The five optional fields below are ABSENT (key omitted, not null) when the
+  // file has no such column, and PRESENT (possibly null) when it does. The
+  // database keeps the saved value for an absent key and writes NULL for a
+  // present-but-blank one (0203): a later file without a Leads column must not
+  // erase leads saved by an earlier one.
+  impressions?: number | null;
+  clicks?: number | null;
+  /** The ad's name as uploaded (null for a campaign-total row or a blank cell). */
+  ad_label?: string | null;
+  /** Leads / results / conversations the platform reported. null = the cell was blank; 0 = reported zero. */
+  leads?: number | null;
+  /** Bookings / conversions the platform reported (not the clinic's own appointments). null = blank. */
+  platform_bookings?: number | null;
 }
 
 export type AdSpendParse =
@@ -253,8 +258,10 @@ export function parseAdSpendCsv(
     if (spend === null || spend < 0) { reject("bad_spend"); continue; }
     const impressions = imprCol ? count(r[imprCol]) : null;
     const clicks = clickCol ? count(r[clickCol]) : null;
-    const leads = leadsCol ? parseCountCell(r[leadsCol]) : null;
-    const bookings = bookingsCol ? parseCountCell(r[bookingsCol]) : null;
+    // Fractional (Google "2.50") stay fractional through the duplicate sum; they
+    // are rounded ONCE per stored row after the loop.
+    const leads = leadsCol ? parseCountCellExact(r[leadsCol]) : null;
+    const bookings = bookingsCol ? parseCountCellExact(r[bookingsCol]) : null;
 
     const campaignKey = normaliseCampaignName(campaign);
     // Sonnet review #3: a campaign like "---" or "___" passes the `!campaign`
@@ -270,22 +277,35 @@ export function parseAdSpendCsv(
     // campaign "C" + ad "D|E" must stay two rows.
     const key = JSON.stringify([date, platform, campaignKey, adKey]);
     const prev = rows.get(key);
+    const label = adKey === "(campaign)" ? null : adLabelRaw.slice(0, 300) || null;
+    const sumCount = (x: number | null | undefined, y: number | null) =>
+      x == null && y === null ? null : (x ?? 0) + (y ?? 0);
     if (prev) {
       prev.spend_php = Math.round((prev.spend_php + spend) * 100) / 100;
-      prev.impressions = impressions === null && prev.impressions === null ? null : (prev.impressions ?? 0) + (impressions ?? 0);
-      prev.clicks = clicks === null && prev.clicks === null ? null : (prev.clicks ?? 0) + (clicks ?? 0);
-      prev.leads = leads === null && prev.leads === null ? null : (prev.leads ?? 0) + (leads ?? 0);
-      prev.platform_bookings =
-        bookings === null && prev.platform_bookings === null ? null : (prev.platform_bookings ?? 0) + (bookings ?? 0);
-      prev.ad_label ??= adKey === "(campaign)" ? null : adLabelRaw.slice(0, 300) || null;
+      if (imprCol) prev.impressions = sumCount(prev.impressions, impressions);
+      if (clickCol) prev.clicks = sumCount(prev.clicks, clicks);
+      if (leadsCol) prev.leads = sumCount(prev.leads, leads);
+      if (bookingsCol) prev.platform_bookings = sumCount(prev.platform_bookings, bookings);
+      if (adNameCol) prev.ad_label ??= label;
     } else {
-      rows.set(key, {
+      const row: AdSpendRow = {
         spend_date: date, platform, campaign_key: campaignKey.slice(0, 300), ad_key: adKey.slice(0, 300),
-        campaign_label: campaign.slice(0, 300), spend_php: spend, impressions, clicks,
-        ad_label: adKey === "(campaign)" ? null : adLabelRaw.slice(0, 300) || null,
-        leads, platform_bookings: bookings,
-      });
+        campaign_label: campaign.slice(0, 300), spend_php: spend,
+      };
+      if (imprCol) row.impressions = impressions;
+      if (clickCol) row.clicks = clicks;
+      if (adNameCol) row.ad_label = label;
+      if (leadsCol) row.leads = leads;
+      if (bookingsCol) row.platform_bookings = bookings;
+      rows.set(key, row);
     }
+  }
+
+  // Round fractional counts ONCE per stored row (half-up), after duplicates are
+  // summed: three 0.4 rows for one ad-day store 1, a single 0.4 row stores 0.
+  for (const row of rows.values()) {
+    if (typeof row.leads === "number") row.leads = roundCount(row.leads);
+    if (typeof row.platform_bookings === "number") row.platform_bookings = roundCount(row.platform_bookings);
   }
 
   // Codex #1 (parser half; recheck extended it to all three kinds): within

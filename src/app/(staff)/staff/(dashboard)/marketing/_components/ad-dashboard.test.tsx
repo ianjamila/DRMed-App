@@ -165,6 +165,34 @@ describe("one-time move of this browser's old rows", () => {
     expect(screen.getByRole("region", { name: /only in this browser/ })).toBeTruthy();
     expect(router.refresh).not.toHaveBeenCalled();
   });
+  it("keeps the browser's copy when the save is ok but some rows were rejected, and says how many and why", async () => {
+    putLegacy([legacyRow(), legacyRow({ date: "2026-06-16" })]);
+    save.mockResolvedValue({ ok: true, data: { inserted: 1, replaced: 0, days: 1, currencyAssumed: false, rejected: [{ reason: "Spend is blank or not a valid amount", count: 1 }] } });
+    render(ui());
+    await userEvent.click(screen.getByRole("button", { name: "Save them to clinic records" }));
+    await waitFor(() => expect(screen.getByText(/1 row rejected/)).toBeTruthy());
+    expect(window.localStorage.getItem(LEGACY_STORE_KEY)).not.toBeNull();
+    expect(screen.getByRole("region", { name: /only in this browser/ })).toBeTruthy();
+    expect(screen.getByRole("status").textContent).toMatch(/Spend is blank or not a valid amount/);
+    expect(screen.getByRole("status").textContent).toMatch(/Discard/);
+  });
+  it("keeps the browser's copy when the save is ok but nothing was saved", async () => {
+    putLegacy([legacyRow()]);
+    save.mockResolvedValue({ ok: true, data: { inserted: 0, replaced: 0, days: 0, currencyAssumed: false, rejected: [] } });
+    render(ui());
+    await userEvent.click(screen.getByRole("button", { name: "Save them to clinic records" }));
+    await waitFor(() => expect(save).toHaveBeenCalled());
+    await waitFor(() => expect(screen.getByRole("status").textContent).toMatch(/Nothing was saved/));
+    expect(window.localStorage.getItem(LEGACY_STORE_KEY)).not.toBeNull();
+    expect(screen.getByRole("region", { name: /only in this browser/ })).toBeTruthy();
+  });
+  it("the notice warns that rows on other platforms are discarded and that older rows overwrite newer saved numbers", () => {
+    putLegacy([legacyRow(), legacyRow({ platform: "Other" })]);
+    render(ui());
+    const text = screen.getByRole("region", { name: /only in this browser/ }).textContent ?? "";
+    expect(text).toMatch(/will be discarded — only Meta and Google can be saved/);
+    expect(text).toMatch(/over any newer saved numbers for the same day and ad/);
+  });
   it("keeps the browser's copy when the save call itself throws", async () => {
     putLegacy([legacyRow()]);
     save.mockRejectedValue(new Error("offline"));
@@ -190,7 +218,7 @@ describe("one-time move of this browser's old rows", () => {
     cleanup();
     putLegacy([legacyRow(), legacyRow({ platform: "Other" })]);
     render(ui());
-    expect(screen.getByRole("region", { name: /only in this browser/ }).textContent).toMatch(/1 row for platforms other than Meta and Google can't be saved/);
+    expect(screen.getByRole("region", { name: /only in this browser/ }).textContent).toMatch(/1 row on platform "Other" will be discarded — only Meta and Google can be saved/);
   });
   it("ignores corrupt stored data", () => {
     window.localStorage.setItem(LEGACY_STORE_KEY, "{not json");

@@ -552,11 +552,26 @@ export function AdPerformanceDashboard({
     setSaveNote("Saving to clinic records…");
     try {
       const res = await saveAdSpendAction(legacyFile.csv);
-      setSaveNote(describeAdSpendSave(res));
-      if (res.ok) {
-        // Only after the database has them: forget this browser's copy.
-        clearLegacyRows();
-        setLegacy([]);
+      const base = describeAdSpendSave(res);
+      if (!res.ok) {
+        setSaveNote(base);
+      } else {
+        const rejected = res.data.rejected.reduce((n, r) => n + r.count, 0);
+        const savedRows = res.data.inserted + res.data.replaced;
+        if (rejected === 0 && savedRows > 0) {
+          // Only when the database has every row: forget this browser's copy.
+          clearLegacyRows();
+          setLegacy([]);
+          setSaveNote(base);
+        } else if (rejected > 0) {
+          const why = res.data.rejected.map((r) => `${r.count} ${r.reason}`).join("; ");
+          setSaveNote(
+            `${savedRows} row${savedRows === 1 ? "" : "s"} saved, ${rejected} row${rejected === 1 ? "" : "s"} rejected (${why}). ` +
+              "This browser's copy was kept — use Discard if you don't want to keep these older rows.",
+          );
+        } else {
+          setSaveNote("Nothing was saved. This browser's copy was kept — use Discard if you don't want to keep these older rows.");
+        }
         router.refresh();
       }
     } catch {
@@ -715,9 +730,10 @@ export function AdPerformanceDashboard({
           >
             <span>
               This browser still has {legacy.length} ad row{legacy.length === 1 ? "" : "s"} from earlier uploads that were
-              never saved with leads and bookings.
+              never saved with leads and bookings. Saving writes these older rows over any newer saved numbers for the
+              same day and ad.
               {legacyFile.skippedOtherPlatform > 0 &&
-                ` (${legacyFile.skippedOtherPlatform} row${legacyFile.skippedOtherPlatform === 1 ? "" : "s"} for platforms other than Meta and Google can't be saved.)`}
+                ` ${legacyFile.skippedOtherPlatform} row${legacyFile.skippedOtherPlatform === 1 ? "" : "s"} on platform "Other" will be discarded — only Meta and Google can be saved.`}
             </span>
             <button
               type="button"
