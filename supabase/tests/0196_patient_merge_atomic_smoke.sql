@@ -229,6 +229,49 @@ create function pg_temp.consent5(p uuid) returns text language sql as $f$
     from public.patients where id = p;
 $f$;
 
+-- The pre-3b app's merge, statement by statement (for LEGACY ledger rows):
+-- moves the six tables, copies phone/email if keep lacks them, tombstones the
+-- source (through the writer, so the fixture also works under 0197) and writes
+-- a ledger row with NO snapshot_version.
+create function pg_temp.legacy_merge(k uuid, s uuid) returns uuid language plpgsql as $f$
+declare
+  mv jsonb := '{}'::jsonb; x jsonb; filled text[] := '{}'; kp public.patients%rowtype; sp public.patients%rowtype; mid uuid;
+begin
+  select * into kp from public.patients where id = k;
+  select * into sp from public.patients where id = s;
+  with u as (update public.visits set patient_id = k where patient_id = s returning id)
+    select coalesce(jsonb_agg(id), '[]') into x from u;  mv := mv || jsonb_build_object('visits', x);
+  with u as (update public.appointments set patient_id = k where patient_id = s returning id)
+    select coalesce(jsonb_agg(id), '[]') into x from u;  mv := mv || jsonb_build_object('appointments', x);
+  with u as (update public.audit_log set patient_id = k where patient_id = s returning id)
+    select coalesce(jsonb_agg(id), '[]') into x from u;  mv := mv || jsonb_build_object('audit_log', x);
+  with u as (update public.critical_alerts set patient_id = k where patient_id = s returning id)
+    select coalesce(jsonb_agg(id), '[]') into x from u;  mv := mv || jsonb_build_object('critical_alerts', x);
+  with u as (update public.patient_consents set patient_id = k where patient_id = s returning id)
+    select coalesce(jsonb_agg(id), '[]') into x from u;  mv := mv || jsonb_build_object('patient_consents', x);
+  with u as (update public.appointment_attachments set patient_id = k where patient_id = s returning id)
+    select coalesce(jsonb_agg(id), '[]') into x from u;  mv := mv || jsonb_build_object('appointment_attachments', x);
+  if kp.phone is null and sp.phone is not null then
+    update public.patients set phone = sp.phone where id = k; filled := filled || 'phone'::text;
+  end if;
+  if kp.email is null and sp.email is not null then
+    update public.patients set email = sp.email where id = k; filled := filled || 'email'::text;
+  end if;
+  perform pg_temp.mark_merged(s, k);
+  insert into public.patient_merges (keep_id, source_id, merged_by, moved, filled_from_source)
+  values (k, s, 'a0000000-0000-4000-8000-000000000196', mv, filled) returning id into mid;
+  return mid;
+end $f$;
+
+-- Runs one statement as the writer role (fixtures that emulate an old-app
+-- undo that stopped part-way; 0197-proof).
+create function pg_temp.as_writer(sql text) returns void language plpgsql as $f$
+begin
+  set local role patient_merge_writer;
+  execute sql;
+  reset role;
+end $f$;
+
 -- s2 ---------------------------------------------------------------------------
 do $s2$
 declare
@@ -537,5 +580,240 @@ begin
     pg_temp.state_of(format('select pg_temp.merge(%L, %L)', k, s)), 'ok');
 end
 $s5$;
+
+-- s6 ---------------------------------------------------------------------------
+do $s6$
+declare
+  k uuid; s uuid; t uuid; vk uuid; vs1 uuid; vs2 uuid; ls1 uuid; ls2 uuid; r1 uuid; r2 uuid;
+  al uuid; al2 uuid; ap uuid; att uuid; au bigint; grp uuid := gen_random_uuid();
+  vnew uuid; apnew uuid; mid uuid; rep jsonb; m public.patient_merges%rowtype; c text;
+begin
+  k := pg_temp.mk_patient('S6K');
+  s := pg_temp.mk_patient('S6S', '09176660000', 'mg-s6s@example.test');
+  update public.patients set address = 'S6 street' where id = s;
+  t := pg_temp.mk_patient('S6T');
+  perform pg_temp.mark_merged(t, s);
+  vk := pg_temp.mk_visit(k);
+  vs1 := pg_temp.mk_visit(s);
+  vs2 := pg_temp.mk_visit(s);
+  ls1 := pg_temp.mk_line(vs1);
+  r1 := pg_temp.mk_result(array[ls1]);
+  al := pg_temp.mk_alert(r1, ls1, s);
+  ap := pg_temp.mk_appt(s, grp);
+  att := pg_temp.mk_attach(s, grp);
+  au := pg_temp.mk_audit(s);
+  perform pg_temp.grant_consent(s);
+
+  mid := (pg_temp.merge(k, s)->>'merge_id')::uuid;
+
+  -- work done on the kept record after the merge
+  update public.patients set phone = '09179990000' where id = k;       -- edited a filled field
+  vnew := pg_temp.mk_visit(k);
+  apnew := pg_temp.mk_appt(k, gen_random_uuid());
+  perform pg_temp.withdraw_consent(k);
+  ls2 := pg_temp.mk_line(vs2);                                        -- a moved visit gets a new result + alert
+  r2 := pg_temp.mk_result(array[ls2]);
+  al2 := pg_temp.mk_alert(r2, ls2, k);
+
+  rep := pg_temp.undo(mid);
+  select * into m from public.patient_merges where id = mid;
+
+  perform pg_temp.expect('s6.1 recorded visits back; keep''s old and new visits stay',
+    ((select patient_id from public.visits where id = vs1) = s and (select patient_id from public.visits where id = vs2) = s
+     and (select patient_id from public.visits where id = vk) = k and (select patient_id from public.visits where id = vnew) = k)::text, 'true');
+  perform pg_temp.expect('s6.2 appointment, upload, audit row, consent back; later rows stay',
+    ((select patient_id from public.appointments where id = ap) = s and (select patient_id from public.appointments where id = apnew) = k
+     and (select patient_id from public.appointment_attachments where id = att) = s
+     and (select patient_id from public.audit_log where id = au) = s
+     and (select count(*) from public.patient_consents where patient_id = s and event_type = 'granted') = 1
+     and (select count(*) from public.patient_consents where patient_id = k and event_type = 'withdrawn') = 1)::text, 'true');
+  perform pg_temp.expect('s6.3 both alerts follow their visit (incl. the one created after the merge), re-stamped',
+    (select string_agg(patient_id::text || ':' || patient_drm_id, ',' order by created_at, id)
+       from public.critical_alerts where id in (al, al2)),
+    s::text || ':DRM-MGS6S,' || s::text || ':DRM-MGS6S');
+  perform pg_temp.expect('s6.4 edited phone kept; untouched email + address reverted',
+    concat_ws('|', (select phone from public.patients where id = k),
+                   coalesce((select email from public.patients where id = k), 'null'),
+                   coalesce((select address from public.patients where id = k), 'null')),
+    '09179990000|null|null');
+  perform pg_temp.expect('s6.5 report: kept vs reverted fields',
+    (rep->'kept_fields')::text || '|' ||
+    (select string_agg(x, ',' order by x) from jsonb_array_elements_text(rep->'reverted_fields') x),
+    '["phone"]|address,email');
+  perform pg_temp.expect('s6.6 chain restored', (select merged_into_id from public.patients where id = t)::text, s::text);
+  perform pg_temp.expect('s6.7 source active again',
+    ((select merged_into_id is null and merged_at is null from public.patients where id = s))::text, 'true');
+  c := pg_temp.consent5(k);
+  perform pg_temp.expect('s6.8 consent re-synced: source granted, keep withdrawn-only',
+    split_part(pg_temp.consent5(s), '|', 1) || '|' || split_part(c, '|', 1) || '|' ||
+    (split_part(c, '|', 3) <> '')::text || '|' || split_part(c, '|', 2), 'true|false|true|');
+  perform pg_temp.expect('s6.9 ledger marked undone with the report',
+    (m.undone_at is not null and m.undone_by = pg_temp.admin() and m.undo_report = rep)::text, 'true');
+  perform pg_temp.expect('s6.10 audit row',
+    (select count(*) from public.audit_log a where a.action = 'patient.merge.undone' and a.patient_id = k
+       and a.resource_id = s and a.metadata->>'merge_id' = mid::text)::text, '1');
+  perform pg_temp.expect('s6.11 report counts; nothing recorded left on keep',
+    (rep->'moved_back'->>'visits') || '|' || (rep->'moved_back'->>'critical_alerts') || '|' ||
+    (select sum(jsonb_array_length(v))::text from jsonb_each(rep->'left_on_keep') e(k2, v)) || '|' ||
+    (rep->>'resumed_interrupted_undo'),
+    '2|2|0|false');
+  perform pg_temp.expect('s6.12 the source takes writes again', pg_temp.state_of(format('select pg_temp.mk_visit(%L)', s)), 'ok');
+end
+$s6$;
+
+-- s7 ---------------------------------------------------------------------------
+do $s7$
+declare
+  k uuid; s uuid; mid uuid; k2 uuid; s2 uuid; mid2 uuid; k3 uuid; s3 uuid; z3 uuid; mid3 uuid;
+  k4 uuid; s4 uuid; mid4 uuid; k5 uuid; s5 uuid; vs5 uuid; vk5 uuid; mid5 uuid; k6 uuid; s6 uuid; mid6 uuid;
+  sig constant text := 'public.undo_patient_merge_guarded(uuid, uuid, jsonb)';
+begin
+  k := pg_temp.mk_patient('S7K'); s := pg_temp.mk_patient('S7S'); perform pg_temp.mk_visit(s);
+  mid := (pg_temp.merge(k, s)->>'merge_id')::uuid;
+  perform pg_temp.undo(mid);
+  perform pg_temp.expect('s7.1 double undo refused', pg_temp.state_of(format('select pg_temp.undo(%L)', mid)), 'P0079');
+
+  -- 30-day boundary (now() is the transaction start, so the arithmetic is exact)
+  k2 := pg_temp.mk_patient('S7K2'); s2 := pg_temp.mk_patient('S7S2');
+  mid2 := (pg_temp.merge(k2, s2)->>'merge_id')::uuid;
+  update public.patient_merges set merged_at = now() - interval '30 days' where id = mid2;
+  perform pg_temp.expect('s7.2 exactly 30 days refused', pg_temp.state_of(format('select pg_temp.undo(%L)', mid2)), 'P0079');
+  update public.patient_merges set merged_at = now() - interval '30 days 1 second' where id = mid2;
+  perform pg_temp.expect('s7.3 30 days + 1s refused', pg_temp.state_of(format('select pg_temp.undo(%L)', mid2)), 'P0079');
+  update public.patient_merges set merged_at = now() - interval '29 days 23 hours 59 minutes 59 seconds' where id = mid2;
+  perform pg_temp.expect('s7.4 29d 23h 59m 59s allowed', pg_temp.state_of(format('select pg_temp.undo(%L)', mid2)), 'ok');
+
+  -- kept record since merged into a third record
+  k3 := pg_temp.mk_patient('S7K3'); s3 := pg_temp.mk_patient('S7S3'); z3 := pg_temp.mk_patient('S7Z3');
+  mid3 := (pg_temp.merge(k3, s3)->>'merge_id')::uuid;
+  perform pg_temp.merge(z3, k3);
+  perform pg_temp.expect('s7.5 keep merged elsewhere refused', pg_temp.state_of(format('select pg_temp.undo(%L)', mid3)), 'P0079');
+
+  -- kept record since deleted
+  k4 := pg_temp.mk_patient('S7K4'); s4 := pg_temp.mk_patient('S7S4');
+  mid4 := (pg_temp.merge(k4, s4)->>'merge_id')::uuid;
+  perform pg_temp.kill(k4);
+  perform pg_temp.expect('s7.6 keep deleted refused', pg_temp.state_of(format('select pg_temp.undo(%L)', mid4)), 'P0079');
+
+  -- a result made after the merge that combines a moved visit's test with one of keep's own
+  k5 := pg_temp.mk_patient('S7K5'); s5 := pg_temp.mk_patient('S7S5');
+  vs5 := pg_temp.mk_visit(s5);
+  mid5 := (pg_temp.merge(k5, s5)->>'merge_id')::uuid;
+  vk5 := pg_temp.mk_visit(k5);
+  perform pg_temp.mk_result(array[pg_temp.mk_line(vs5), pg_temp.mk_line(vk5)]);
+  perform pg_temp.expect('s7.7 split result refused', pg_temp.state_of(format('select pg_temp.undo(%L)', mid5)), 'P0079');
+  perform pg_temp.expect('s7.8 nothing changed by the refusal',
+    ((select patient_id from public.visits where id = vs5) = k5
+     and (select merged_into_id from public.patients where id = s5) = k5
+     and (select undone_at from public.patient_merges where id = mid5) is null)::text, 'true');
+
+  k6 := pg_temp.mk_patient('S7K6'); s6 := pg_temp.mk_patient('S7S6');
+  mid6 := (pg_temp.merge(k6, s6)->>'merge_id')::uuid;
+  perform pg_temp.expect('s7.9 reception actor refused',
+    pg_temp.state_of(format('select pg_temp.undo(%L, %L)', mid6, 'a1000000-0000-4000-8000-000000000196')), 'P0078');
+  perform pg_temp.expect('s7.10 NULL actor refused',
+    pg_temp.state_as('service_role', format('select public.undo_patient_merge_guarded(%L, null, null)', mid6)), 'P0078');
+  perform pg_temp.expect('s7.11 unknown merge refused', pg_temp.state_of(format('select pg_temp.undo(%L)', gen_random_uuid())), 'P0079');
+  perform pg_temp.expect('s7.12 bad context refused',
+    pg_temp.state_as('service_role', format('select public.undo_patient_merge_guarded(%L, %L, %L)', mid6, pg_temp.admin(), '{"x":1}')), 'P0079');
+  perform pg_temp.expect('s7.13 anon/authenticated cannot execute; service_role can',
+    has_function_privilege('anon', sig, 'execute')::text || has_function_privilege('authenticated', sig, 'execute')::text
+    || has_function_privilege('service_role', sig, 'execute')::text, 'falsefalsetrue');
+end
+$s7$;
+
+-- s8 ---------------------------------------------------------------------------
+do $s8$
+declare k uuid; s uuid; vs uuid; mid uuid; rep jsonb;
+begin
+  k := pg_temp.mk_patient('S8K');
+  s := pg_temp.mk_patient('S8S', '09178880000', 'mg-s8s@example.test');
+  vs := pg_temp.mk_visit(s);
+  mid := pg_temp.legacy_merge(k, s);
+  update public.patients set email = 'mg-s8-edited@example.test' where id = k;   -- edited after the merge
+  rep := pg_temp.undo(mid);
+  perform pg_temp.expect('s8.1 legacy undo moves the recorded visit back', (select patient_id from public.visits where id = vs)::text, s::text);
+  perform pg_temp.expect('s8.2 legacy fill: phone (still = source) cleared, edited email kept',
+    coalesce((select phone from public.patients where id = k), 'null') || '|' || (select email from public.patients where id = k)
+    || '|' || (rep->'kept_fields')::text, 'null|mg-s8-edited@example.test|["email"]');
+  perform pg_temp.expect('s8.3 ledger undone; not a resume',
+    ((select undone_at is not null from public.patient_merges where id = mid) and (rep->>'resumed_interrupted_undo') = 'false')::text, 'true');
+end
+$s8$;
+
+-- s9 ---------------------------------------------------------------------------
+do $s9$
+declare
+  k uuid; s uuid; vs1 uuid; vs2 uuid; ls1 uuid; r1 uuid; al uuid; ap uuid; mid uuid; rep jsonb;
+  k2 uuid; s2 uuid; vs3 uuid; vk2 uuid; mid2 uuid;
+begin
+  k := pg_temp.mk_patient('S9K');
+  s := pg_temp.mk_patient('S9S', '09179990001');
+  vs1 := pg_temp.mk_visit(s); vs2 := pg_temp.mk_visit(s);
+  ls1 := pg_temp.mk_line(vs1); r1 := pg_temp.mk_result(array[ls1]); al := pg_temp.mk_alert(r1, ls1, s);
+  ap := pg_temp.mk_appt(s, gen_random_uuid());
+  mid := pg_temp.legacy_merge(k, s);
+  -- the old action cleared the marker, moved visits back … and stopped
+  perform pg_temp.as_writer(format('update public.patients set merged_into_id = null, merged_at = null where id = %L', s));
+  perform pg_temp.as_writer(format('update public.visits set patient_id = %L where id in (%L, %L)', s, vs1, vs2));
+  -- meanwhile both records were corrected to the same new phone
+  update public.patients set phone = '09170001111' where id in (k, s);
+
+  rep := pg_temp.undo(mid);
+  perform pg_temp.expect('s9.1 completes an interrupted legacy undo', rep->>'resumed_interrupted_undo', 'true');
+  perform pg_temp.expect('s9.2 the rest moves back; the alert follows its visit',
+    ((select patient_id from public.appointments where id = ap) = s
+     and (select patient_id from public.critical_alerts where id = al) = s)::text, 'true');
+  perform pg_temp.expect('s9.3 no fill reverted on a resume; all reported',
+    (select phone from public.patients where id = k) || '|' || (rep->'kept_fields')::text || '|' || (rep->'reverted_fields')::text,
+    '09170001111|["phone"]|[]');
+
+  -- a result already split by the interrupted undo is refused, nothing changed
+  k2 := pg_temp.mk_patient('S9K2'); s2 := pg_temp.mk_patient('S9S2');
+  vs3 := pg_temp.mk_visit(s2);
+  mid2 := pg_temp.legacy_merge(k2, s2);
+  vk2 := pg_temp.mk_visit(k2);
+  perform pg_temp.mk_result(array[pg_temp.mk_line(vs3), pg_temp.mk_line(vk2)]);      -- both on k2: allowed
+  perform pg_temp.as_writer(format('update public.patients set merged_into_id = null, merged_at = null where id = %L', s2));
+  perform pg_temp.as_writer(format('update public.visits set patient_id = %L where id = %L', s2, vs3));  -- now split
+  perform pg_temp.expect('s9.4 resume refuses an already-split result', pg_temp.state_of(format('select pg_temp.undo(%L)', mid2)), 'P0079');
+  perform pg_temp.expect('s9.5 ledger still live', ((select undone_at from public.patient_merges where id = mid2) is null)::text, 'true');
+end
+$s9$;
+
+-- s10 --------------------------------------------------------------------------
+do $s10$
+declare
+  k uuid; s uuid; mid uuid; rep jsonb;
+  g_empty uuid := gen_random_uuid(); g_walk uuid := gen_random_uuid(); g_split uuid := gen_random_uuid();
+  g_follow uuid := gen_random_uuid();
+  a_empty uuid; a_walk uuid; a_split uuid; a_orphan uuid; a_follow uuid;
+begin
+  k := pg_temp.mk_patient('S10K'); s := pg_temp.mk_patient('S10S');
+  a_empty := pg_temp.mk_attach(s, g_empty);                          -- recorded, empty group
+  perform pg_temp.mk_walkin_appt(g_walk);
+  a_walk := pg_temp.mk_attach(s, g_walk);                            -- recorded, walk-in-only group
+  perform pg_temp.mk_appt(s, g_split);
+  a_split := pg_temp.mk_attach(s, g_split);                          -- recorded; keep books into the group later
+  a_orphan := pg_temp.mk_attach(k, gen_random_uuid());               -- keep's own orphan upload
+  perform pg_temp.mk_appt(s, g_follow);                              -- source booking, upload arrives after the merge
+  mid := (pg_temp.merge(k, s)->>'merge_id')::uuid;
+  perform pg_temp.mk_appt(k, g_split);
+  a_follow := pg_temp.mk_attach(k, g_follow);
+
+  rep := pg_temp.undo(mid);
+  perform pg_temp.expect('s10.1 recorded, empty group → back',
+    (select patient_id from public.appointment_attachments where id = a_empty)::text, s::text);
+  perform pg_temp.expect('s10.2 recorded, walk-in-only group → back',
+    (select patient_id from public.appointment_attachments where id = a_walk)::text, s::text);
+  perform pg_temp.expect('s10.3 recorded, group now has keep''s booking → stays, reported',
+    (select patient_id from public.appointment_attachments where id = a_split)::text || '|' ||
+    (rep->'left_on_keep'->'appointment_attachments' @> to_jsonb(array[a_split]))::text, k::text || '|true');
+  perform pg_temp.expect('s10.4 keep''s own orphan upload never taken',
+    (select patient_id from public.appointment_attachments where id = a_orphan)::text, k::text);
+  perform pg_temp.expect('s10.5 unrecorded upload follows its booking back',
+    (select patient_id from public.appointment_attachments where id = a_follow)::text, s::text);
+end
+$s10$;
 
 rollback;

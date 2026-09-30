@@ -457,3 +457,298 @@ begin
     'moved', v_counts, 'filled', to_jsonb(v_filled), 'rechained', cardinality(v_rechained));
 end;
 $$;
+
+-- ---------------------------------------------------------------------------
+-- (7) undo_patient_merge_guarded — one transaction. Refusals: P0078 (actor),
+-- P0079 (not undoable — message passes through), P0072 (the affected results
+-- changed while waiting — retried once by the caller).
+-- ---------------------------------------------------------------------------
+create or replace function public.undo_patient_merge_guarded(
+  p_merge_id uuid, p_actor uuid, p_context jsonb default null
+)
+returns jsonb
+language plpgsql
+volatile
+security definer
+set search_path = pg_catalog, public, pg_temp
+as $$
+declare
+  k_fill constant text[] := array['middle_name', 'sex', 'phone', 'email', 'address', 'birthdate'];
+  v_ip          inet;
+  m             public.patient_merges%rowtype;
+  v_legacy      boolean;
+  v_resume      boolean := false;
+  v_keep        public.patients%rowtype;
+  v_source      public.patients%rowtype;
+  v_mv_visits   uuid[];
+  v_mv_appts    uuid[];
+  v_mv_audit    bigint[];
+  v_mv_alerts   uuid[];
+  v_mv_consents uuid[];
+  v_mv_attach   uuid[];
+  v_results     uuid[];
+  v_results2    uuid[];
+  v_split       uuid;
+  v_b_visits    uuid[];
+  v_b_appts     uuid[];
+  v_b_audit     bigint[];
+  v_b_alerts    uuid[];
+  v_b_consents  uuid[];
+  v_b_attach    uuid[];
+  v_kj          jsonb;
+  v_sj          jsonb;
+  v_revert      text[] := '{}';
+  v_kept        text[] := '{}';
+  v_before      jsonb := '{}'::jsonb;
+  v_rechained   uuid[];
+  v_left        jsonb;
+  v_report      jsonb;
+  f             text;
+begin
+  -- (1) Validate.
+  if p_actor is null or not exists (
+    select 1 from public.staff_profiles s
+     where s.id = p_actor and s.role = 'admin' and s.is_active and s.deleted_at is null
+  ) then
+    raise exception 'only an active admin can undo a merge' using errcode = 'P0078';
+  end if;
+  if p_context is not null and (
+       jsonb_typeof(p_context) <> 'object'
+       or exists (select 1 from jsonb_object_keys(p_context) k where k not in ('ip', 'user_agent'))
+     ) then
+    raise exception 'unexpected undo context' using errcode = 'P0079';
+  end if;
+  begin
+    v_ip := nullif(p_context->>'ip', '')::inet;
+  exception when invalid_text_representation then
+    v_ip := null;
+  end;
+
+  -- (2) The ledger row (plain read; re-read under lock below).
+  select * into m from public.patient_merges where id = p_merge_id;
+  if not found then
+    raise exception 'merge record not found' using errcode = 'P0079';
+  end if;
+  v_legacy := m.snapshot_version is null;
+  v_mv_visits   := array(select x::uuid   from jsonb_array_elements_text(coalesce(m.moved->'visits', '[]'::jsonb)) x);
+  v_mv_appts    := array(select x::uuid   from jsonb_array_elements_text(coalesce(m.moved->'appointments', '[]'::jsonb)) x);
+  v_mv_audit    := array(select x::bigint from jsonb_array_elements_text(coalesce(m.moved->'audit_log', '[]'::jsonb)) x);
+  v_mv_alerts   := array(select x::uuid   from jsonb_array_elements_text(coalesce(m.moved->'critical_alerts', '[]'::jsonb)) x);
+  v_mv_consents := array(select x::uuid   from jsonb_array_elements_text(coalesce(m.moved->'patient_consents', '[]'::jsonb)) x);
+  v_mv_attach   := array(select x::uuid   from jsonb_array_elements_text(coalesce(m.moved->'appointment_attachments', '[]'::jsonb)) x);
+
+  -- (3) Lock: result membership over the COMPLETE undo scope (every recorded
+  -- visit, whoever owns it now, and every alert on keep or source for their
+  -- tests) → patients → ledger row → patient rows; then re-resolve.
+  select coalesce(array_agg(distinct x.r order by x.r), '{}') into v_results
+    from (
+      select rtr.result_id as r
+        from public.result_test_requests rtr
+        join public.test_requests t on t.id = rtr.test_request_id
+       where t.visit_id = any(v_mv_visits)
+      union
+      select ca.result_id
+        from public.critical_alerts ca
+        join public.test_requests t on t.id = ca.test_request_id
+       where t.visit_id = any(v_mv_visits) and ca.patient_id in (m.keep_id, m.source_id)
+    ) x;
+
+  perform public.lifecycle_lock_results(v_results, false);
+  perform public.lifecycle_lock(array[m.keep_id, m.source_id] || m.rechained, true);
+  select * into m from public.patient_merges where id = p_merge_id for update;
+  perform 1 from public.patients p
+    where p.id = any(array[m.keep_id, m.source_id] || m.rechained)
+    order by p.id
+    for no key update;
+
+  select coalesce(array_agg(distinct x.r order by x.r), '{}') into v_results2
+    from (
+      select rtr.result_id as r
+        from public.result_test_requests rtr
+        join public.test_requests t on t.id = rtr.test_request_id
+       where t.visit_id = any(v_mv_visits)
+      union
+      select ca.result_id
+        from public.critical_alerts ca
+        join public.test_requests t on t.id = ca.test_request_id
+       where t.visit_id = any(v_mv_visits) and ca.patient_id in (m.keep_id, m.source_id)
+    ) x;
+  if not (v_results2 <@ v_results) then
+    raise exception 'the patient records changed while the undo was waiting — try again'
+      using errcode = 'P0072';
+  end if;
+
+  -- (4) Refusals.
+  if m.undone_at is not null then
+    raise exception 'this merge was already undone' using errcode = 'P0079';
+  end if;
+  if now() - m.merged_at >= interval '30 days' then
+    raise exception 'merges can only be undone within 30 days' using errcode = 'P0079';
+  end if;
+  select * into v_keep from public.patients where id = m.keep_id;
+  select * into v_source from public.patients where id = m.source_id;
+  if v_keep.merged_into_id is not null then
+    raise exception 'the kept record % has since been merged into another record — undo that merge first', v_keep.drm_id
+      using errcode = 'P0079';
+  end if;
+  if v_keep.deleted_at is not null then
+    raise exception 'the kept record % has since been deleted — restore it first', v_keep.drm_id
+      using errcode = 'P0079';
+  end if;
+  if v_source.deleted_at is not null then
+    raise exception 'the merged-in record % has since been deleted — restore it first', v_source.drm_id
+      using errcode = 'P0079';
+  end if;
+  if v_source.merged_into_id = m.keep_id then
+    null;
+  elsif v_source.merged_into_id is null and v_legacy then
+    v_resume := true;   -- the pre-3b app cleared the marker first and stopped part-way
+  else
+    raise exception '% is no longer merged into %, so this merge cannot be undone', v_source.drm_id, v_keep.drm_id
+      using errcode = 'P0079';
+  end if;
+
+  -- Split-result refusal: after the undo, every affected result must still
+  -- link tests of exactly one patient.
+  select x.result_id into v_split
+    from (
+      select rtr.result_id,
+             count(distinct case when v.patient_id = m.keep_id and v.id = any(v_mv_visits)
+                                 then m.source_id else v.patient_id end) as owners
+        from public.result_test_requests rtr
+        join public.test_requests t on t.id = rtr.test_request_id
+        join public.visits v on v.id = t.visit_id
+       where rtr.result_id = any(v_results2)
+       group by rtr.result_id
+    ) x
+   where x.owners > 1
+   limit 1;
+  if v_split is not null then
+    raise exception 'a lab result made after the merge combines tests from both records — correct that result before undoing'
+      using errcode = 'P0079', detail = v_split::text;
+  end if;
+
+  -- (5) Clear the source's marker FIRST: the source is active again, so
+  -- 0184's guards accept every move below without a bypass.
+  if not v_resume then
+    update public.patients set merged_into_id = null, merged_at = null where id = m.source_id;
+  end if;
+
+  -- (6) Move back. Recorded rows only while still on keep.
+  with b as (update public.visits set patient_id = m.source_id
+              where id = any(v_mv_visits) and patient_id = m.keep_id returning id)
+  select coalesce(array_agg(id order by id), '{}') into v_b_visits from b;
+  with b as (update public.appointments set patient_id = m.source_id
+              where id = any(v_mv_appts) and patient_id = m.keep_id returning id)
+  select coalesce(array_agg(id order by id), '{}') into v_b_appts from b;
+  with b as (update public.audit_log set patient_id = m.source_id
+              where id = any(v_mv_audit) and patient_id = m.keep_id returning id)
+  select coalesce(array_agg(id order by id), '{}') into v_b_audit from b;
+  -- Alerts follow their test's visit, recorded or not (created, acknowledged
+  -- or withdrawn after the merge), re-stamped with the source's DRM-ID.
+  with b as (update public.critical_alerts ca
+                set patient_id = m.source_id, patient_drm_id = v_source.drm_id
+               from public.test_requests t
+               join public.visits v on v.id = t.visit_id
+              where ca.test_request_id = t.id and ca.patient_id = m.keep_id and v.patient_id = m.source_id
+             returning ca.id)
+  select coalesce(array_agg(id order by id), '{}') into v_b_alerts from b;
+  with b as (update public.patient_consents set patient_id = m.source_id
+              where id = any(v_mv_consents) and patient_id = m.keep_id returning id)
+  select coalesce(array_agg(id order by id), '{}') into v_b_consents from b;
+  -- Attachments: evidence = the booking group's appointments that name a
+  -- patient. Unrecorded uploads move only on positive evidence; recorded ones
+  -- also move when the group has no evidence at all (empty / walk-in only).
+  with b as (
+    update public.appointment_attachments aa set patient_id = m.source_id
+     where aa.patient_id = m.keep_id
+       and (
+         (exists (select 1 from public.appointments ap
+                   where ap.booking_group_id = aa.booking_group_id and ap.patient_id is not null)
+          and not exists (select 1 from public.appointments ap
+                           where ap.booking_group_id = aa.booking_group_id and ap.patient_id is not null
+                             and ap.patient_id <> m.source_id))
+         or (aa.id = any(v_mv_attach)
+             and not exists (select 1 from public.appointments ap
+                              where ap.booking_group_id = aa.booking_group_id and ap.patient_id is not null))
+       )
+    returning aa.id)
+  select coalesce(array_agg(id order by id), '{}') into v_b_attach from b;
+
+  -- (7) Revert the fill.
+  select to_jsonb(p) into v_kj from public.patients p where p.id = m.keep_id;
+  select to_jsonb(p) into v_sj from public.patients p where p.id = m.source_id;
+  if v_resume then
+    v_kept := coalesce(m.filled_from_source, '{}');
+  elsif not v_legacy then
+    for f in select jsonb_object_keys(coalesce(m.fill_snapshot, '{}'::jsonb)) loop
+      if f = any(k_fill) and (v_kj->f) = (m.fill_snapshot->f->'after') then
+        v_revert := v_revert || f;
+        v_before := v_before || jsonb_build_object(f, m.fill_snapshot->f->'before');
+      else
+        v_kept := v_kept || f;
+      end if;
+    end loop;
+  else
+    foreach f in array coalesce(m.filled_from_source, '{}'::text[]) loop
+      if f = any(k_fill) and jsonb_typeof(v_kj->f) is distinct from 'null' and (v_kj->f) = (v_sj->f) then
+        v_revert := v_revert || f;
+        v_before := v_before || jsonb_build_object(f, null);
+      else
+        v_kept := v_kept || f;
+      end if;
+    end loop;
+  end if;
+  if cardinality(v_revert) > 0 then
+    update public.patients p set
+      middle_name = case when 'middle_name' = any(v_revert) then v_before->>'middle_name' else p.middle_name end,
+      sex         = case when 'sex' = any(v_revert) then v_before->>'sex' else p.sex end,
+      phone       = case when 'phone' = any(v_revert) then v_before->>'phone' else p.phone end,
+      email       = case when 'email' = any(v_revert) then v_before->>'email' else p.email end,
+      address     = case when 'address' = any(v_revert) then v_before->>'address' else p.address end,
+      birthdate   = case when 'birthdate' = any(v_revert) then (v_before->>'birthdate')::date else p.birthdate end
+     where p.id = m.keep_id;
+  end if;
+
+  -- (8) Restore the chain.
+  with c as (update public.patients set merged_into_id = m.source_id
+              where id = any(m.rechained) and merged_into_id = m.keep_id returning id)
+  select coalesce(array_agg(id order by id), '{}') into v_rechained from c;
+
+  -- (9) Consent cache for both.
+  perform public.recompute_patient_consent_cache(m.source_id);
+  perform public.recompute_patient_consent_cache(m.keep_id);
+
+  -- (10) Report + ledger + audit.
+  v_left := jsonb_build_object(
+    'visits', to_jsonb(array(select id from public.visits where id = any(v_mv_visits) and patient_id = m.keep_id order by id)),
+    'appointments', to_jsonb(array(select id from public.appointments where id = any(v_mv_appts) and patient_id = m.keep_id order by id)),
+    'audit_log', to_jsonb(array(select id from public.audit_log where id = any(v_mv_audit) and patient_id = m.keep_id order by id)),
+    'critical_alerts', to_jsonb(array(select id from public.critical_alerts where id = any(v_mv_alerts) and patient_id = m.keep_id order by id)),
+    'patient_consents', to_jsonb(array(select id from public.patient_consents where id = any(v_mv_consents) and patient_id = m.keep_id order by id)),
+    'appointment_attachments', to_jsonb(array(select id from public.appointment_attachments where id = any(v_mv_attach) and patient_id = m.keep_id order by id)));
+  v_report := jsonb_build_object(
+    'merge_id', m.id, 'keep_id', m.keep_id, 'source_id', m.source_id,
+    'kept_drm_id', v_keep.drm_id, 'source_drm_id', v_source.drm_id,
+    'resumed_interrupted_undo', v_resume,
+    'moved_back', jsonb_build_object(
+      'visits', cardinality(v_b_visits), 'appointments', cardinality(v_b_appts),
+      'audit_log', cardinality(v_b_audit), 'critical_alerts', cardinality(v_b_alerts),
+      'patient_consents', cardinality(v_b_consents), 'appointment_attachments', cardinality(v_b_attach)),
+    'left_on_keep', v_left,
+    'kept_fields', to_jsonb(v_kept),
+    'reverted_fields', to_jsonb(v_revert),
+    'rechained_back', cardinality(v_rechained));
+
+  update public.patient_merges
+     set undone_at = now(), undone_by = p_actor, undo_report = v_report
+   where id = m.id;
+
+  insert into public.audit_log (actor_id, actor_type, patient_id, action, resource_type, resource_id,
+                                metadata, ip_address, user_agent)
+  values (p_actor, 'staff', m.keep_id, 'patient.merge.undone', 'patient', m.source_id,
+          v_report, v_ip, left(nullif(p_context->>'user_agent', ''), 512));
+
+  return v_report;
+end;
+$$;
