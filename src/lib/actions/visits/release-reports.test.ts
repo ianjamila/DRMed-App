@@ -10,16 +10,22 @@ const fx = vi.hoisted(() => ({
   audits: [] as Array<Record<string, unknown>>,
   reported: [] as Array<{ scope: string }>,
   notifyThrows: false,
+  // What the mocked notifiers report back (the real ones return the outcome).
+  notice: { status: "sent", channels: ["email"], reason: null } as { status: string; channels: string[]; reason: string | null },
 }));
 vi.mock("@/lib/audit/log", () => ({ audit: async (e: Record<string, unknown>) => void fx.audits.push(e) }));
 vi.mock("@/lib/notifications/notify-released", () => ({
   notifyResultReleased: async (a: { testRequestId: string }) => {
     if (fx.notifyThrows) throw new Error("boom");
     fx.notified.push(a);
+    return fx.notice;
   },
 }));
 vi.mock("@/lib/notifications/notify-released-bulk", () => ({
-  notifyResultsReleasedBulk: async (a: { testRequestIds: string[] }) => void fx.notified.push(a),
+  notifyResultsReleasedBulk: async (a: { testRequestIds: string[] }) => {
+    fx.notified.push(a);
+    return fx.notice;
+  },
 }));
 vi.mock("@/lib/notifications/release-staff-alert", () => ({
   scheduleReleaseStaffAlert: (v: string, n: number) => void fx.alerts.push([v, n]),
@@ -66,6 +72,7 @@ beforeEach(() => {
   fx.audits.length = 0;
   fx.reported.length = 0;
   fx.notifyThrows = false;
+  fx.notice = { status: "sent", channels: ["email"], reason: null };
 });
 
 describe("releaseVisitSelection", () => {
@@ -88,7 +95,7 @@ describe("releaseVisitSelection", () => {
 
   it("an empty selection makes no call and returns an empty outcome", async () => {
     const { fake, out } = run([{ id: "a" }], [], []);
-    expect(await out).toEqual({ changedIds: [], alsoReleasedIds: [], skipped: [], warnings: [], announced: [] });
+    expect(await out).toEqual({ changedIds: [], alsoReleasedIds: [], skipped: [], warnings: [], announced: [], notice: null });
     expect(fake.rpcCalls).toHaveLength(0);
   });
 
@@ -101,9 +108,20 @@ describe("releaseVisitSelection", () => {
     expect(o.announced.find((r) => r.id === "a")).toEqual({ id: "a", name: "A" });
     expect(o.skipped).toEqual([]);
     expect(o.warnings).toEqual([]);
+    expect(o.notice).toEqual({ status: "sent", channels: ["email"], reason: null });
     expect(fx.notified).toHaveLength(1);
     expect(fx.notified[0].testRequestIds?.slice().sort()).toEqual(["a", "b", "c"]);
     expect(fx.alerts).toEqual([["v1", 3]]);
+  });
+
+  it("carries a skipped or failed notice through to the outcome instead of claiming it was sent", async () => {
+    fx.notice = { status: "skipped", channels: [], reason: "no email or phone on file" };
+    const skipped = await run([{ id: "a" }], [], ["a"]).out;
+    expect(skipped.announced).toHaveLength(1);
+    expect(skipped.notice).toEqual({ status: "skipped", channels: [], reason: "no email or phone on file" });
+    fx.notifyThrows = true;
+    const failed = await run([{ id: "a" }], [], ["a"]).out;
+    expect(failed.notice).toEqual({ status: "failed", channels: [], reason: "sending failed" });
   });
 
   it("a single released row gets the single-result notice", async () => {
@@ -180,7 +198,7 @@ describe("releaseVisitSelection", () => {
     const { fake, out } = run([{ id: "a" }], [], ["a"]);
     fake.overrideNextRpc("release_visit_results", { released: [], refused: [refusal("a", code, count)] });
     const o = await out;
-    expect(o).toEqual({ changedIds: [], alsoReleasedIds: [], skipped: [{ id: "a", reason }], warnings: [], announced: [] });
+    expect(o).toEqual({ changedIds: [], alsoReleasedIds: [], skipped: [{ id: "a", reason }], warnings: [], announced: [], notice: null });
     expect(fx.notified).toHaveLength(0);
     expect(fx.alerts).toHaveLength(0);
     expect(fx.audits).toHaveLength(0);
@@ -252,6 +270,7 @@ describe("releaseVisitSelection", () => {
       skipped: [{ id: "a", reason: RELEASE_BLOCKED_CONSENT }],
       warnings: [],
       announced: [],
+      notice: null,
     });
     expect(fx.notified).toHaveLength(0);
     expect(fx.alerts).toHaveLength(0);
@@ -297,6 +316,7 @@ describe("releaseVisitSelection", () => {
       ],
       warnings: [],
       announced: [],
+      notice: null,
     });
     expect(fx.reported).toHaveLength(1);
     expect(fx.notified).toHaveLength(0);
@@ -317,12 +337,23 @@ describe("notifyReleased", () => {
 
   it("never throws: a failing notice is reported instead", async () => {
     fx.notifyThrows = true;
-    await expect(notifyReleased("v1", [{ id: "a", name: "A" }], "email")).resolves.toBeUndefined();
+    await expect(notifyReleased("v1", [{ id: "a", name: "A" }], "email")).resolves.toEqual({
+      status: "failed",
+      channels: [],
+      reason: "sending failed",
+    });
     expect(fx.reported.map((r) => r.scope)).toEqual(["notify/result-released-selection"]);
   });
 
+  it("returns the notifier's real outcome for one and for many rows", async () => {
+    fx.notice = { status: "skipped", channels: [], reason: "no email or phone on file" };
+    expect(await notifyReleased("v1", [{ id: "a", name: "A" }], "email")).toEqual(fx.notice);
+    fx.notice = { status: "sent", channels: ["email", "sms"], reason: null };
+    expect(await notifyReleased("v1", [{ id: "a", name: "A" }, { id: "b", name: "B" }], "email")).toEqual(fx.notice);
+  });
+
   it("sends nothing for an empty list", async () => {
-    await notifyReleased("v1", [], "email");
+    expect(await notifyReleased("v1", [], "email")).toBeNull();
     expect(fx.notified).toHaveLength(0);
   });
 });

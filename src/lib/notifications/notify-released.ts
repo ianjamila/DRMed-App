@@ -16,6 +16,7 @@ import { isDoctorKind } from "@/lib/visits/order-lines";
 import { checkPatientRecipient } from "./active-patient-recipient";
 import { auditSkippedInactiveRecipient } from "./inactive-recipient-audit";
 import { SAMPLE_SKIP_REASON } from "@/lib/visits/sample";
+import { noticeFromChannels, noticeSkipped, type ReleaseNoticeOutcome } from "./release-notice-outcome";
 
 interface Input {
   testRequestId: string;
@@ -43,7 +44,7 @@ export async function notifyResultReleased({
   visitId,
   releaseMedium,
   bulkBatchId,
-}: Input): Promise<void> {
+}: Input): Promise<ReleaseNoticeOutcome> {
   const admin = createAdminClient();
 
   const { data: row } = await admin
@@ -66,14 +67,14 @@ export async function notifyResultReleased({
     .is("visits.deleted_at", null)
     .maybeSingle();
 
-  if (!row) return;
+  if (!row) return noticeSkipped("test not found");
   const visit = Array.isArray(row.visits) ? row.visits[0] : row.visits;
-  if (!visit) return;
+  if (!visit) return noticeSkipped("visit not found");
   const patient = Array.isArray(visit.patients)
     ? visit.patients[0]
     : visit.patients;
   const svc = Array.isArray(row.services) ? row.services[0] : row.services;
-  if (!patient || !svc) return;
+  if (!patient || !svc) return noticeSkipped("patient or test not found");
 
   // A doctor line has no result to collect, so there is nothing to announce:
   // this message says "Your DRMed lab result is ready" and links the portal,
@@ -83,7 +84,7 @@ export async function notifyResultReleased({
   // and one of them reached it with a consultation before (undo a released
   // consult → it parks at ready_for_release → the generic Release button).
   // Cheaper to refuse by kind here than to re-audit every caller.
-  if (isDoctorKind(svc.kind)) return;
+  if (isDoctorKind(svc.kind)) return noticeSkipped("consultation — nothing to announce");
 
   // M7: physical hand-off (printout collected in person) — record the notified
   // audit row as skipped on both channels and send nothing. A sample visit
@@ -116,7 +117,7 @@ export async function notifyResultReleased({
         ...(bulkBatchId ? { bulk_batch_id: bulkBatchId } : {}),
       },
     });
-    return;
+    return noticeSkipped(skipReason);
   }
 
   const portalUrl = PORTAL_URL;
@@ -185,7 +186,9 @@ export async function notifyResultReleased({
       resourceType: "test_request",
       resourceId: testRequestId,
     });
-    return;
+    return noticeSkipped(
+      recipient.kind === "inactive" ? "patient is not active" : "walk-in patient — no contact details",
+    );
   }
   const to = recipient.patient;
 
@@ -250,4 +253,5 @@ export async function notifyResultReleased({
       ...(bulkBatchId ? { bulk_batch_id: bulkBatchId } : {}),
     },
   });
+  return noticeFromChannels(smsResult, emailResult);
 }

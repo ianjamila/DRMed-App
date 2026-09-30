@@ -10,6 +10,7 @@ import { withLifecycleRetry } from "@/lib/patients/lifecycle-retry";
 import { translatePgError } from "@/lib/accounting/pg-errors";
 import { notifyResultReleased } from "@/lib/notifications/notify-released";
 import { notifyResultsReleasedBulk } from "@/lib/notifications/notify-released-bulk";
+import type { ReleaseNoticeOutcome } from "@/lib/notifications/release-notice-outcome";
 import { scheduleReleaseStaffAlert } from "@/lib/notifications/release-staff-alert";
 import { reportError } from "@/lib/observability/report-error";
 import { ipAndAgent } from "@/lib/server/action-helpers";
@@ -26,6 +27,8 @@ export type VisitReleaseOutcome = {
   warnings: string[];
   /** Every released row — a combined report is complete by construction, so all of it is announced. */
   announced: ReleasedRow[];
+  /** What actually happened to the patient's notice; null when nothing was announced or sent. */
+  notice: ReleaseNoticeOutcome | null;
 };
 
 export const RACED_REASON = "Released by someone else or changed just now.";
@@ -99,13 +102,13 @@ export async function notifyReleased(
   // The release call's bulk_batch_id, stamped on the notice's own audit row
   // so the batch's Undo does not read it as a later, unrelated change.
   bulkBatchId?: string,
-): Promise<void> {
-  if (rows.length === 0) return;
+): Promise<ReleaseNoticeOutcome | null> {
+  if (rows.length === 0) return null;
   try {
     if (rows.length === 1) {
-      await notifyResultReleased({ testRequestId: rows[0].id, visitId, releaseMedium: medium, bulkBatchId });
+      return await notifyResultReleased({ testRequestId: rows[0].id, visitId, releaseMedium: medium, bulkBatchId });
     } else {
-      await notifyResultsReleasedBulk({
+      return await notifyResultsReleasedBulk({
         visitId,
         testRequestIds: rows.map((r) => r.id),
         testNames: rows.map((r) => r.name),
@@ -119,6 +122,7 @@ export async function notifyReleased(
       error: err,
       metadata: { visit_id: visitId, test_request_ids: rows.map((r) => r.id) },
     });
+    return { status: "failed", channels: [], reason: "sending failed" };
   }
 }
 
@@ -160,12 +164,14 @@ export async function releaseVisitSelection(args: {
     changedIds: string[],
     alsoReleasedIds: string[],
     announced: ReleasedRow[],
+    notice: ReleaseNoticeOutcome | null = null,
   ): VisitReleaseOutcome => ({
     changedIds,
     alsoReleasedIds,
     skipped: selected.filter((id) => skipped.has(id)).map((id) => ({ id, reason: skipped.get(id)! })),
     warnings: [],
     announced,
+    notice,
   });
   if (selected.length === 0) return finish([], [], []);
   const audit = await releaseAuditArg(auditMeta);
@@ -205,9 +211,10 @@ export async function releaseVisitSelection(args: {
 
   const changedIds = released.filter((r) => r.selected).map((r) => r.id);
   const alsoReleasedIds = released.filter((r) => !r.selected).map((r) => r.id);
+  let notice: ReleaseNoticeOutcome | null = null;
   if (releasedRows.length > 0) {
-    await notifyReleased(visitId, releasedRows, medium, bulkBatchId);
+    notice = await notifyReleased(visitId, releasedRows, medium, bulkBatchId);
     scheduleReleaseStaffAlert(visitId, releasedRows.length);
   }
-  return finish(changedIds, alsoReleasedIds, releasedRows);
+  return finish(changedIds, alsoReleasedIds, releasedRows, notice);
 }

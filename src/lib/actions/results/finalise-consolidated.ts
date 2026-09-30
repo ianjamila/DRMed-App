@@ -26,6 +26,7 @@ import {
 } from "@/lib/results/value-rows";
 import { commitResultFinalise } from "@/lib/actions/results/result-edit-core";
 import { releaseFinalisedReport } from "@/lib/actions/results/finalise-release";
+import { noticeAuditMeta } from "@/lib/notifications/release-notice-outcome";
 import type { FinaliseDeferral } from "@/lib/actions/results/finalise-release-outcome";
 import { createLinkedResult } from "@/lib/actions/results/create-linked";
 
@@ -473,7 +474,9 @@ export async function finaliseConsolidatedReport(
         report_group_id: input.groupId,
         visit_id: input.visitId,
         release_medium: "other",
-        patient_notified: (releaseOut?.announced.length ?? 0) > 0,
+        // patient_notified is true only when a notice actually went out;
+        // patient_notice says what happened otherwise (skipped / failed).
+        ...noticeAuditMeta(releaseOut?.notice),
       },
       ip_address: ip,
       user_agent: ua,
