@@ -146,8 +146,8 @@ export function undoReportLines(r: UndoReport): string[] {
     const n = r.rechainedNotRestored.length;
     lines.push(
       n === 1
-        ? `1 older merged record still points at ${r.keptDrmId} — it was changed after the merge.`
-        : `${n} older merged records still point at ${r.keptDrmId} — they were changed after the merge.`,
+        ? `1 older merged record could not be re-pointed back to ${r.sourceDrmId} — it was changed after the merge; check it by hand.`
+        : `${n} older merged records could not be re-pointed back to ${r.sourceDrmId} — they were changed after the merge; check them by hand.`,
     );
   }
   return lines;

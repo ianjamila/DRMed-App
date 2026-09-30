@@ -558,7 +558,7 @@ begin
     raise exception 'merge record not found' using errcode = 'P0079';
   end if;
   v_legacy := m.snapshot_version is null;
-  -- Defensive (F6/M6): a hand-edited or otherwise malformed ledger row's
+  -- Defensive (F7/M6): a hand-edited or otherwise malformed ledger row's
   -- `moved` may hold null / a non-array scalar / a missing key for one of the
   -- six — jsonb_array_elements_text on anything but a JSON array raises a raw
   -- 22023, so treat anything that is not actually an array as empty.
@@ -830,6 +830,15 @@ grant execute on function public.undo_patient_merge_guarded(uuid, uuid, jsonb) t
 -- postgres does not inherit postgres's rights, so the writer needs its own.
 grant execute on function public.lifecycle_lock(uuid[], boolean) to patient_merge_writer;
 grant execute on function public.lifecycle_lock_results(uuid[], boolean) to patient_merge_writer;
+
+-- ---------------------------------------------------------------------------
+-- 0202's revokes, restated. On prod 0202 already ran, so these are no-ops;
+-- on a FRESH replay 0196 runs before 0202, while Supabase's default
+-- privileges still hand anon/authenticated full rights on these tables, and
+-- the 0202-invariant post-condition below would abort the replay.
+-- ---------------------------------------------------------------------------
+revoke all on public.patient_merges, public.patient_consents from public, anon, authenticated;
+revoke all on sequence public.patient_consents_seq_seq from public, anon, authenticated;
 
 -- ---------------------------------------------------------------------------
 -- (9) Post-conditions. A failure aborts the push; nothing is half-applied.

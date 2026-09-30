@@ -99,13 +99,13 @@ describe("undoReportLines", () => {
   it("chain members that could not be re-pointed (singular)", () => {
     expect(undoReportLines({ ...base, rechainedNotRestored: ["c1"] })).toEqual([
       "Moved back to DRM-0002: 2 visits.",
-      "1 older merged record still points at DRM-0001 — it was changed after the merge.",
+      "1 older merged record could not be re-pointed back to DRM-0002 — it was changed after the merge; check it by hand.",
     ]);
   });
   it("chain members that could not be re-pointed (plural)", () => {
     expect(undoReportLines({ ...base, rechainedNotRestored: ["c1", "c2"] })).toEqual([
       "Moved back to DRM-0002: 2 visits.",
-      "2 older merged records still point at DRM-0001 — they were changed after the merge.",
+      "2 older merged records could not be re-pointed back to DRM-0002 — they were changed after the merge; check them by hand.",
     ]);
   });
 });
