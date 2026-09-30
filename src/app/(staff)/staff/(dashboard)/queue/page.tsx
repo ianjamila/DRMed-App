@@ -778,7 +778,9 @@ export default async function QueuePage({ searchParams }: SearchProps) {
 
   return (
     <div className="px-4 py-8 sm:px-6 lg:px-8">
-      <ReleaseOutcomeProvider>
+      <ReleaseOutcomeProvider
+        resetKey={JSON.stringify([filter, mineOnly, start, end, q, visit, params.sort ?? "", params.dir ?? "", params.page ?? "", params.size ?? ""])}
+      >
       {viewingHistory ? null : (
         <RealtimeRefresher
           channelName="queue-page"

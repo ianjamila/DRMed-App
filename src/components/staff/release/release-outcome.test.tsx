@@ -53,6 +53,29 @@ describe("ReleaseOutcomeProvider", () => {
     fireEvent.click(screen.getByRole("button", { name: "Dismiss" }));
     expect(screen.queryByRole("status")).toBeNull();
   });
+  it("clears the notice when resetKey changes, and re-announces an identical message", () => {
+    const { rerender } = render(
+      <ReleaseOutcomeProvider resetKey="a">
+        <Trigger />
+      </ReleaseOutcomeProvider>,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "go" }));
+    const first = screen.getByRole("status");
+    fireEvent.click(screen.getByRole("button", { name: "go" }));
+    expect(screen.getByRole("status")).not.toBe(first); // remounted so the live region re-announces
+    rerender(
+      <ReleaseOutcomeProvider resetKey="a">
+        <Trigger />
+      </ReleaseOutcomeProvider>,
+    );
+    expect(screen.queryByRole("status")).not.toBeNull();
+    rerender(
+      <ReleaseOutcomeProvider resetKey="b">
+        <Trigger />
+      </ReleaseOutcomeProvider>,
+    );
+    expect(screen.queryByRole("status")).toBeNull();
+  });
   it("useReleaseOutcome is null outside a provider", () => {
     function Probe() {
       return <p>{useReleaseOutcome() === null ? "no provider" : "provider"}</p>;

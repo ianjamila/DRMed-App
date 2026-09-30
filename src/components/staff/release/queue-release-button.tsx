@@ -12,7 +12,8 @@ import { releaseOutcomeText, useReleaseOutcome } from "./release-outcome";
 // re-proves every row and releases a combined report whole or not at all.
 // Outcomes go to the page-level ReleaseOutcomeProvider (this button unmounts
 // on the refresh); the inline message is the no-provider fallback and the
-// place for input errors.
+// place for input errors. (The no-provider message is lost on refresh; every
+// planned mount has a provider.)
 export function QueueReleaseButton({
   testRequestIds,
   preferredMedium,
