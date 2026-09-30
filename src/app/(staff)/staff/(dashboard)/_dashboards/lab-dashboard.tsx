@@ -210,23 +210,40 @@ async function loadLabStats(
   // filter + package-header exclusion added to match the queue's own
   // predicate set; the label says "tests" now (not "external labs still
   // processing"), because `requested` rows haven't even left the building.
-  // "Updated (last 7 days)": corrections to results this role can read — RLS
-  // on the signed-in client scopes it the same way the archive/queue already
-  // do, so no explicit section filter is needed here.
+  // "Updated (last 7 days)": exactly the rows /staff/results?updated=7d lists
+  // for this role (the archive reads with the service-role client and gates
+  // sections itself, so the section filter is explicit here too).
   // R7: same rolling window updatedSinceIso() uses for the archive's
   // ?updated=7d filter (src/lib/results/updated-filter.ts) — reusing it
   // means the card's count and the filter it links to can't drift apart.
+  //
+  // It counts TESTS with the archive's own predicates (live line + visit,
+  // lab kinds only, this role's sections, active patient, result corrected
+  // within the window), not result_amendments rows: counting corrections
+  // counted a test edited twice as 2 while the archive lists it once, and
+  // counted corrections on deleted visits the archive hides.
   const since7d = updatedSinceIso();
+  let updated7dQuery = supabase
+    .from("test_requests")
+    .select(
+      "id, services!inner(id, section, kind), visits!inner(id, patients!inner(id)), result_test_requests!inner(results!inner(amended_at))",
+      { count: "exact", head: true },
+    )
+    .is("deleted_at", null)
+    .is("visits.deleted_at", null)
+    .not("services.kind", "in", DOCTOR_KINDS_PG_LIST)
+    .gte("result_test_requests.results.amended_at", since7d);
+  updated7dQuery = activeEmbeddedPatients(updated7dQuery, "visits.patients");
+  if (sections !== null) {
+    updated7dQuery =
+      sections.length === 0
+        ? updated7dQuery.eq("id", "00000000-0000-0000-0000-000000000000")
+        : updated7dQuery.in("services.section", sections);
+  }
   const updated7dPromise =
     show("lab.updated_7d") &&
     (role === "medtech" || role === "pathologist" || role === "xray_technician")
-      ? activeEmbeddedPatients(supabase
-          .from("result_amendments")
-          // The archive hides a deleted or merged-away patient's tests, so the
-          // card must not count their corrections either (2026-09-30).
-          .select("id, test_requests!inner(id, visits!inner(id, patients!inner(id)))", { count: "exact", head: true })
-          .gte("amended_at", since7d),
-        "test_requests.visits.patients")
+      ? updated7dQuery
       : SKIP_COUNT;
 
   const sendOutAwaitingPromise =

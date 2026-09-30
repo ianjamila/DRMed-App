@@ -94,3 +94,41 @@ begin
 
   raise notice '0151 smoke: no table lost its last policy.';
 end $$;
+
+-- Third assertion (0202): a table on the list above is service_role-only, so
+-- anon and authenticated must hold NO privilege on it. "RLS on, no policy"
+-- denies every row today, but a table-level grant left behind turns the first
+-- policy anyone adds — for any purpose — into a read or write path. Supabase's
+-- default privileges hand both roles ALL on every new table, so a table newly
+-- added to the list will fail here until its migration revokes them — on the
+-- table, any column, and any sequence it owns (a list of privileges passed to
+-- has_*_privilege is satisfied by ANY one of them, which is what detection wants).
+do $$
+declare
+  granted text;
+begin
+  select string_agg(distinct c.relname || ' (' || r.rolname || ')', ', ')
+    into granted
+  from pg_class c
+  join pg_namespace n on n.oid = c.relnamespace
+  cross join (values ('anon'), ('authenticated')) as r(rolname)
+  where n.nspname = 'public'
+    and c.relkind = 'r'
+    and c.relrowsecurity
+    and not exists (select 1 from pg_policy p where p.polrelid = c.oid)
+    and (has_table_privilege(r.rolname, c.oid,
+           'SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER,MAINTAIN')
+         or has_any_column_privilege(r.rolname, c.oid, 'SELECT,INSERT,UPDATE,REFERENCES')
+         -- an owned (identity/serial) sequence is part of the table's surface
+         or exists (select 1 from pg_depend d join pg_class sq on sq.oid = d.objid
+                     where d.refobjid = c.oid and d.deptype in ('a', 'i')
+                       and sq.relkind = 'S'
+                       and has_sequence_privilege(r.rolname, sq.oid, 'USAGE,SELECT,UPDATE')));
+
+  if granted is not null then
+    raise exception
+      '0151 smoke: RLS-on/no-policy tables still grant privileges to: %', granted;
+  end if;
+
+  raise notice '0151 smoke: no-policy tables grant nothing to anon/authenticated.';
+end $$;
