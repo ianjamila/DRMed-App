@@ -16,6 +16,12 @@ describe("planReportRelease", () => {
     expect(planReportRelease({ selectedIds: ["x"], members: [], visitId: "v1", allowedSections: ["chemistry"] }))
       .toEqual({ releaseIds: ["x"], alsoIds: [], rejected: [], reportOf: {} });
   });
+  it("a plain selection with no report has no pulled-in ids", () => {
+    const r = planReportRelease({ selectedIds: ["x", "y"], members: [m("x", { resultId: "rx" }), m("y", { resultId: "ry" })], visitId: "v1", allowedSections: ["chemistry"] });
+    expect(r.releaseIds.sort()).toEqual(["x", "y"]);
+    expect(r.alsoIds).toEqual([]);
+    expect(r.reportOf).toEqual({});
+  });
   it("pulls in every ready member of a touched report", () => {
     const r = planReportRelease({ selectedIds: ["a"], members: [m("a"), m("b"), m("c", { status: "released" })], visitId: "v1", allowedSections: ["chemistry"] });
     expect(r.releaseIds.sort()).toEqual(["a", "b"]);
@@ -26,6 +32,20 @@ describe("planReportRelease", () => {
     const r = planReportRelease({ selectedIds: ["a"], members: [m("a"), m("b", { status: "result_uploaded" })], visitId: "v1", allowedSections: ["chemistry"] });
     expect(r.releaseIds).toEqual([]);
     expect(r.rejected).toEqual([{ resultId: "r1", selectedIds: ["a"], reason: REPORT_REFUSAL.notFinished(1) }]);
+  });
+  it("with two combined reports, only the refused (mixed) one is dropped — the complete one is released whole", () => {
+    const r = planReportRelease({
+      selectedIds: ["a", "c"],
+      members: [
+        m("a", { resultId: "r1" }), m("b", { resultId: "r1", status: "result_uploaded" }),
+        m("c", { resultId: "r2" }), m("d", { resultId: "r2" }),
+      ],
+      visitId: "v1", allowedSections: ["chemistry"],
+    });
+    expect(r.releaseIds.sort()).toEqual(["c", "d"]);
+    expect(r.alsoIds).toEqual(["d"]);
+    expect(r.rejected).toHaveLength(1);
+    expect(r.rejected[0]).toMatchObject({ resultId: "r1", selectedIds: ["a"] });
   });
   it("refuses a report with a deleted, unreleased member", () => {
     const r = planReportRelease({ selectedIds: ["a"], members: [m("a"), m("b", { deleted: true })], visitId: "v1", allowedSections: ["chemistry"] });

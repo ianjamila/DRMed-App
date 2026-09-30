@@ -11,6 +11,7 @@ import { audit } from "@/lib/audit/log";
 import { notifyResultReleased } from "@/lib/notifications/notify-released";
 import { notifyResultsReleasedBulk } from "@/lib/notifications/notify-released-bulk";
 import { reportError } from "@/lib/observability/report-error";
+import type { Json } from "@/types/database";
 import type { ReleaseMedium } from "@/lib/visits/release-media";
 import { RELEASE_REFUSAL_PATIENT_INACTIVE } from "@/lib/visits/release-messages";
 
@@ -33,7 +34,7 @@ export async function releaseRows(args: {
   visitId: string;
   ids: readonly string[];
   medium: ReleaseMedium;
-  auditMeta?: Record<string, unknown>;
+  auditMeta?: Record<string, Json>;
 }): Promise<{ ok: true; released: ReleasedRow[] } | { ok: false; error: string }> {
   const { supabase, session, visitId, ids, medium } = args;
   // Lab read of test_requests: doctor lines never reach ready_for_release by
@@ -52,11 +53,16 @@ export async function releaseRows(args: {
     .is("visits.deleted_at", null);
   if (readErr) return { ok: false, error: translatePgError(readErr) };
   const rows = candidates ?? [];
-  // Self-guarding: every caller also checks, but the write must not depend on
-  // that — a merged/deleted patient's lines are never released (write-guards).
+  // The read above pins live, ready lines on a live visit; here a merged or
+  // deleted patient's lines are refused so the write does not depend on every
+  // caller checking (write-guards). Not airtight: nothing in the DB blocks
+  // releasing a deleted line/visit (0146 documents this), so a delete landing
+  // between this read and the UPDATE below is not refused by a trigger.
   const live = rows.filter((r) => {
     const v = one(r.visits as unknown as { patients: Lifecycle | Lifecycle[] | null } | null);
     const p = one(v?.patients);
+    // isActivePatient wants a full PatientLifecycle (incl. drm_id), but only
+    // deleted_at / merged_into_id are read here, so the id is a placeholder.
     return isActivePatient(p ? { drm_id: "", ...p } : null);
   });
   if (live.length !== rows.length) {
@@ -98,7 +104,7 @@ export async function releaseRows(args: {
         release_medium: medium,
         bulk: true,
         selection: true,
-        ...(args.auditMeta as Record<string, never> | undefined),
+        ...args.auditMeta,
       },
       ip_address: ip,
       user_agent: ua,

@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 vi.mock("server-only", () => ({}));
 const fx = vi.hoisted(() => ({
   releaseResult: { ok: true, released: [] } as unknown,
+  releaseCalls: [] as unknown[],
   notified: [] as unknown[][],
   revalidated: [] as unknown[][],
 }));
@@ -29,7 +30,10 @@ vi.mock("@/lib/notifications/notify-released", () => ({ notifyResultReleased: as
 vi.mock("@/lib/notifications/notify-released-bulk", () => ({ notifyResultsReleasedBulk: async () => {} }));
 vi.mock("@/lib/actions/visits/queue-deletion", () => ({ deleteVisitAction: async () => ({ ok: true }) }));
 vi.mock("@/lib/actions/visits/release-rows", () => ({
-  releaseRows: async () => fx.releaseResult,
+  releaseRows: async (a: unknown) => {
+    fx.releaseCalls.push(a);
+    return fx.releaseResult;
+  },
   notifyReleased: async (...a: unknown[]) => void fx.notified.push(a),
 }));
 
@@ -37,6 +41,7 @@ const { releaseSelectedAction } = await import("./actions");
 
 beforeEach(() => {
   fx.notified.length = 0;
+  fx.releaseCalls.length = 0;
   fx.revalidated.length = 0;
 });
 
@@ -46,6 +51,13 @@ describe("releaseSelectedAction (pin)", () => {
     fx.releaseResult = { ok: true, released };
     const r = await releaseSelectedAction("v1", ["a", "b"], "email");
     expect(r).toEqual({ ok: true, count: 2 });
+    expect(fx.releaseCalls).toHaveLength(1);
+    expect(fx.releaseCalls[0]).toMatchObject({
+      visitId: "v1",
+      ids: ["a", "b"],
+      medium: "email",
+      session: { user_id: "u1", role: "admin" },
+    });
     expect(fx.notified).toEqual([["v1", released, "email"]]);
     expect(fx.revalidated.length).toBeGreaterThan(0);
   });

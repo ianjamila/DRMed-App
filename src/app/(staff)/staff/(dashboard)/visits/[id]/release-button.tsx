@@ -1,9 +1,9 @@
 "use client";
 
-import { RELEASE_BLOCKED_CONSENT, RELEASE_BLOCKED_UNPAID } from "@/lib/visits/release-messages";
-import { RELEASE_MEDIUM_OPTIONS } from "@/lib/visits/release-media";
 import { useState, useTransition } from "react";
 import { Button } from "@/components/ui/button";
+import { RELEASE_BLOCKED_CONSENT, RELEASE_BLOCKED_UNPAID } from "@/lib/visits/release-messages";
+import { RELEASE_MEDIUM_OPTIONS } from "@/lib/visits/release-media";
 import { releaseTestAction, type ReleaseMedium } from "./actions";
 
 interface Props {

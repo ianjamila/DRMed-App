@@ -32,7 +32,7 @@ import {
 } from "@/lib/visits/bulk-selection";
 import { countResultViews } from "@/lib/results/viewed-count";
 import { canManuallyReleasePackageHeader } from "@/lib/visits/package-header-release";
-import { RELEASE_MEDIA, type ReleaseMedium } from "@/lib/visits/release-media";
+import { isReleaseMedium, type ReleaseMedium } from "@/lib/visits/release-media";
 import {
   expandUndoReleaseScope,
   undoUpdateIds,
@@ -55,8 +55,6 @@ export type ReleaseResult =
 export type BulkSelectionResult =
   | { ok: true; count: number }
   | { ok: false; error: string };
-
-const VALID_MEDIA: readonly ReleaseMedium[] = RELEASE_MEDIA;
 
 // User-facing text for expandUndoReleaseScope's rejections (0172). The whole
 // request is refused — no partial undo — so each message explains why
@@ -128,7 +126,7 @@ export async function releaseTestAction(
   visitId: string,
   releaseMedium: ReleaseMedium,
 ): Promise<ReleaseResult> {
-  if (!VALID_MEDIA.includes(releaseMedium)) {
+  if (!isReleaseMedium(releaseMedium)) {
     return { ok: false, error: "Invalid release medium." };
   }
   const session = await requireActiveStaff();
@@ -235,7 +233,7 @@ export async function releaseAllReadyComponentsAction(
   visitId: string,
   releaseMedium: ReleaseMedium,
 ): Promise<ReleaseResult> {
-  if (!VALID_MEDIA.includes(releaseMedium)) {
+  if (!isReleaseMedium(releaseMedium)) {
     return { ok: false, error: "Invalid release medium." };
   }
   const session = await requireActiveStaff();
@@ -462,7 +460,7 @@ export async function releaseSelectedAction(
   testRequestIds: string[],
   releaseMedium: ReleaseMedium,
 ): Promise<BulkSelectionResult> {
-  if (!VALID_MEDIA.includes(releaseMedium)) {
+  if (!isReleaseMedium(releaseMedium)) {
     return { ok: false, error: "Invalid release medium." };
   }
   if (testRequestIds.length === 0) {

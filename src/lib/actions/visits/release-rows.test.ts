@@ -25,6 +25,7 @@ vi.mock("@/lib/observability/report-error", () => ({
   reportError: async (a: unknown) => void fx.reported.push(a),
 }));
 
+import { DOCTOR_KINDS_PG_LIST } from "@/lib/visits/classification";
 import { RELEASE_BLOCKED_CONSENT, RELEASE_REFUSAL_PATIENT_INACTIVE } from "@/lib/visits/release-messages";
 const { releaseRows, notifyReleased } = await import("./release-rows");
 
@@ -41,7 +42,8 @@ function fakeDb(opts: {
   updateError?: { code: string; message: string };
   updateReturns?: string[];
 }) {
-  const calls = { updateIds: [] as string[], updated: false };
+  type Filter = { op: string; column: string; value: unknown };
+  const calls = { updateIds: [] as string[], updated: false, readFilters: [] as Filter[], updateFilters: [] as Filter[] };
   const db = {
     from: () => {
       let mode: "read" | "update" = "read";
@@ -53,12 +55,19 @@ function fakeDb(opts: {
         calls.updated = true;
         return q;
       };
-      q.in = (_c: string, ids: string[]) => {
+      const record = (f: Filter) => (mode === "read" ? calls.readFilters : calls.updateFilters).push(f);
+      q.in = (column: string, ids: string[]) => {
+        record({ op: "in", column, value: ids });
         inIds = ids;
         if (mode === "update") calls.updateIds = ids;
         return q;
       };
-      for (const m of ["eq", "not", "is"]) q[m] = () => q;
+      q.eq = (column: string, value: unknown) => (record({ op: "eq", column, value }), q);
+      q.is = (column: string, value: unknown) => (record({ op: "is", column, value }), q);
+      // not(column, operator, value) — recorded as op "not.<operator>".
+      q.not = (column: string, operator: string, value: unknown) => (
+        record({ op: `not.${operator}`, column, value }), q
+      );
       q.then = (resolve: (v: unknown) => unknown) => {
         if (mode === "read") {
           const data = opts.rows
@@ -106,6 +115,28 @@ describe("releaseRows", () => {
     const r = await releaseRows({ supabase: db, session: medtech, visitId: "v1", ids: ["a", "b"], medium: "email" });
     expect(calls.updateIds).toEqual(["a"]);
     expect(r).toEqual({ ok: true, released: [{ id: "a", name: "FBS" }] });
+  });
+
+  it("pins the filters on the read and on the UPDATE", async () => {
+    const { db, calls } = fakeDb({ rows: [{ id: "a", section: "chemistry", name: "FBS" }] });
+    await releaseRows({ supabase: db, session: admin, visitId: "v1", ids: ["a"], medium: "email" });
+    expect(calls.readFilters).toEqual(
+      expect.arrayContaining([
+        { op: "not.in", column: "services.kind", value: DOCTOR_KINDS_PG_LIST },
+        { op: "is", column: "deleted_at", value: null },
+        { op: "is", column: "visits.deleted_at", value: null },
+        { op: "eq", column: "status", value: "ready_for_release" },
+        { op: "eq", column: "is_package_header", value: false },
+        { op: "eq", column: "visit_id", value: "v1" },
+      ]),
+    );
+    expect(calls.updateFilters).toEqual(
+      expect.arrayContaining([
+        { op: "eq", column: "status", value: "ready_for_release" },
+        { op: "eq", column: "visit_id", value: "v1" },
+        { op: "in", column: "id", value: ["a"] },
+      ]),
+    );
   });
 
   it("audits one row per released id with auditMeta merged in", async () => {

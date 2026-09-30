@@ -1,9 +1,9 @@
 "use client";
 
-import { RELEASE_MEDIUM_OPTIONS } from "@/lib/visits/release-media";
 import { useState, useTransition } from "react";
 import { Button } from "@/components/ui/button";
 import { Panel } from "@/components/ui/panel";
+import { RELEASE_MEDIUM_OPTIONS } from "@/lib/visits/release-media";
 import {
   releaseSelectedAction,
   undoReleaseSelectedAction,
