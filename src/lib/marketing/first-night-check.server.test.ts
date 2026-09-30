@@ -139,7 +139,7 @@ describe("countPatientsCreated", () => {
     for (const log of calls) {
       expect(log).toContain("gte(created_at,2026-09-30T00:00:00+08:00)");
       expect(log).toContain("lt(created_at,2026-10-01T00:00:00+08:00)");
-      expect(log).toContain("is(deleted_at,)");
+      expect(log.some((l) => l.includes("deleted_at"))).toBe(false); // history read: never filtered
     }
     expect(calls.some((l) => l.includes("is(legacy_import_run_id,)"))).toBe(true);
     expect(calls.some((l) => l.includes("not(legacy_import_run_id,is,)"))).toBe(true);

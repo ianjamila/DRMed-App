@@ -31,13 +31,13 @@ export interface CheckDeps {
   countCreated: (client: Db, date: string) => Promise<Created>;
 }
 
-/** Records created on one Manila day: app registrations vs imported (Sheet Sync creates set legacy_import_run_id). */
+/** Records created on one Manila day (deleted or merged ones included — it is a count of what was created, not a directory): app registrations vs imported (Sheet Sync creates set legacy_import_run_id). */
 export async function countPatientsCreated(client: Db, date: string): Promise<Created> {
   const start = `${date}T00:00:00+08:00`;
   const end = `${shiftISODate(date, 1)}T00:00:00+08:00`;
   const base = () =>
     client.from("patients").select("id", { count: "exact", head: true })
-      .is("deleted_at", null).gte("created_at", start).lt("created_at", end);
+      .gte("created_at", start).lt("created_at", end);
   const [app, imported] = await Promise.all([
     base().is("legacy_import_run_id", null),
     base().not("legacy_import_run_id", "is", null),

@@ -35,11 +35,13 @@ export async function FirstNightCheck({ searchParams }: { searchParams: Record<s
   if (!parsed.ok) return <FirstNightCheckView form={form} paramErrors={parsed.errors} result={null} />;
 
   const supabase = await createClient();
+  let result: Awaited<ReturnType<typeof runFirstNightCheck>> | null = null;
   try {
-    const result = await runFirstNightCheck(supabase, parsed.params);
-    return <FirstNightCheckView form={form} paramErrors={[]} result={result} />;
+    result = await runFirstNightCheck(supabase, parsed.params);
   } catch (e) {
     console.error("first-night check failed", e);
+  }
+  if (!result) {
     return (
       <FirstNightCheckView
         form={form}
@@ -48,6 +50,7 @@ export async function FirstNightCheck({ searchParams }: { searchParams: Record<s
       />
     );
   }
+  return <FirstNightCheckView form={form} paramErrors={[]} result={result} />;
 }
 
 const VERDICT_VARIANT: Record<Verdict, "success" | "warning" | "destructive"> = {
