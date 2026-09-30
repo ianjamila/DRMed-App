@@ -246,8 +246,9 @@ function reassign(a: Actor, id: string, to: string): Promise<Outcome> {
   );
 }
 
-// deleteTestRequestsManyAction's UPDATE (lib/actions/visits/queue-deletion.ts),
-// issued through the service-role admin client.
+// The UPDATE deleteTestRequestsManyCore issues per visit (via
+// deleteTestRequestsForVisit, lib/actions/queue/bulk-delete-core.ts), through
+// the service-role admin client.
 function queueDelete(a: Actor, ids: readonly string[], visitId: string): Promise<Outcome> {
   return settle(
     a.c.query(

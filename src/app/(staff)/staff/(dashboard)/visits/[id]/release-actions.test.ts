@@ -58,7 +58,7 @@ function setup(rows: FakeTestRow[], links: FakeLink[] = []) {
     from(table: string) {
       if (table === "visits") {
         const q: Record<string, unknown> = {};
-        for (const m of ["select", "eq"]) q[m] = () => q;
+        for (const m of ["select", "eq", "is"]) q[m] = () => q;
         q.maybeSingle = async () => ({ data: { deleted_at: null }, error: null });
         return q;
       }
@@ -209,7 +209,16 @@ describe("releaseSelectedAction — whole-report rule", () => {
   it("6. pulls in the rest of a selected report and counts it separately", async () => {
     const fake = seed();
     const res = await releaseSelectedAction("v1", ["a", "x"], "physical");
-    expect(res).toEqual({ ok: true, count: 2, alsoReleasedCount: 1, skipped: [], warnings: [] });
+    // A physical hand-off sends no message, so notifiedCount is 0.
+    expect(res).toEqual({
+      ok: true,
+      count: 2,
+      alsoReleasedCount: 1,
+      skipped: [],
+      warnings: [],
+      batchId: expect.any(String),
+      notifiedCount: 0,
+    });
     expect(["a", "b", "x"].map((id) => statusOf(fake, id))).toEqual(["released", "released", "released"]);
     expect(fx.notifyBulk).toHaveLength(1);
     expect(fx.notifyBulk[0].testRequestIds.sort()).toEqual(["a", "b", "x"]);
@@ -225,6 +234,8 @@ describe("releaseSelectedAction — whole-report rule", () => {
       alsoReleasedCount: 0,
       skipped: [{ id: "a", reason: REPORT_REFUSAL.notFinished(1) }],
       warnings: [],
+      batchId: expect.any(String),
+      notifiedCount: 0,
     });
     expect([statusOf(fake, "a"), statusOf(fake, "x")]).toEqual(["ready_for_release", "released"]);
     expect(fx.notifyOne).toHaveLength(1);
@@ -251,6 +262,8 @@ describe("releaseSelectedAction — whole-report rule", () => {
       alsoReleasedCount: 1,
       skipped: [{ id: "x", reason: RELEASE_REFUSAL.notReady }],
       warnings: [],
+      batchId: expect.any(String),
+      notifiedCount: 0,
     });
   });
 
@@ -266,7 +279,66 @@ describe("releaseSelectedAction — whole-report rule", () => {
       alsoReleasedCount: 1,
       skipped: [{ id: "a", reason: REPORT_CHANGED_REASON }],
       warnings: [],
+      batchId: expect.any(String),
+      notifiedCount: 0,
     });
+  });
+});
+
+describe("releaseSelectedAction — Undo handle (bulk-select follow-ups)", () => {
+  it("stamps ONE server-minted batch id and the exact released_at on every released row's audit row, report-mates included", async () => {
+    const fake = seed();
+    const res = await releaseSelectedAction("v1", ["a", "x"], "email");
+    if (!res.ok) throw new Error(res.error);
+    expect(res.batchId).toMatch(/^[0-9a-f-]{36}$/);
+    expect(res.notifiedCount).toBe(3);
+    const released = fx.audits.filter((e) => e.action === "test_request.released");
+    // "b" was not selected: the whole-report rule pulled it in, and Undo must
+    // see it as this batch's own row.
+    expect(released.map((e) => e.resource_id).sort()).toEqual(["a", "b", "x"]);
+    for (const e of released) {
+      const meta = e.metadata as Record<string, unknown>;
+      expect(meta.bulk_batch_id).toBe(res.batchId);
+      expect(meta.visit_id).toBe("v1");
+      // The exact value written to the row — what Undo predicates its revert on.
+      expect(meta.released_at).toBe(fake.rows.find((r) => r.id === e.resource_id)!.releasedAt);
+    }
+    // The patient notice carries the batch id too, so its audit row is not
+    // read as a later, unrelated change that blocks the Undo.
+    expect(fx.notifyBulk).toHaveLength(1);
+    expect((fx.notifyBulk[0] as { bulkBatchId?: string }).bulkBatchId).toBe(res.batchId);
+  });
+
+  it("counts nothing as notified on a physical hand-off or a sample visit", async () => {
+    seed();
+    const physical = await releaseSelectedAction("v1", ["x"], "physical");
+    if (!physical.ok) throw new Error(physical.error);
+    expect(physical.notifiedCount).toBe(0);
+
+    seed();
+    // A sample visit: notify-released skips the message (SAMPLE_SKIP_REASON).
+    const wrapped = fx.db as { from: (t: string) => Record<string, unknown> };
+    fx.db = {
+      from(table: string) {
+        const q = wrapped.from(table);
+        if (table === "visits") q.maybeSingle = async () => ({ data: { deleted_at: null, is_sample: true }, error: null });
+        return q;
+      },
+    };
+    const sample = await releaseSelectedAction("v1", ["x"], "email");
+    if (!sample.ok) throw new Error(sample.error);
+    expect(sample.count).toBe(1);
+    expect(sample.notifiedCount).toBe(0);
+  });
+
+  it("mints a fresh batch id per call", async () => {
+    seed();
+    const one = await releaseSelectedAction("v1", ["x"], "email");
+    seed();
+    const two = await releaseSelectedAction("v1", ["x"], "email");
+    if (!one.ok || !two.ok) throw new Error("release failed");
+    expect(one.batchId).not.toBe(two.batchId);
+    expect((fx.notifyOne[0] as { bulkBatchId?: string }).bulkBatchId).toBe(one.batchId);
   });
 });
 

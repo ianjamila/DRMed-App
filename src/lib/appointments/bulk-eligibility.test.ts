@@ -2,8 +2,8 @@ import { describe, expect, it } from "vitest";
 import {
   BULK_TARGET,
   bulkActionPlan,
+  bulkAppointmentsMessage,
   conflictingGroupKeys,
-  outcomeMessage,
   summariseOutcome,
   type BulkGroup,
 } from "./bulk-eligibility";
@@ -58,6 +58,20 @@ describe("bulkActionPlan", () => {
   });
 });
 
+describe("bulkActionPlan skippedInactiveKeys", () => {
+  it("lists the inactive bookings each patient-bound button leaves out", () => {
+    const plan = bulkActionPlan(
+      [
+        { key: "a", status: "confirmed", patientActive: true },
+        { key: "d", status: "confirmed", patientActive: false },
+      ],
+      false,
+    );
+    expect(plan.arrive.skippedInactiveKeys).toEqual(["d"]);
+    expect(plan.cancel.skippedInactiveKeys).toEqual([]);
+  });
+});
+
 describe("conflictingGroupKeys", () => {
   it("is not conflicting when the same key repeats with the same status and same ids", () => {
     const groups = [
@@ -100,7 +114,7 @@ describe("conflictingGroupKeys", () => {
   });
 });
 
-describe("summariseOutcome / outcomeMessage", () => {
+describe("summariseOutcome / bulkAppointmentsMessage", () => {
   const groupsByKey = {
     a: { ids: ["a1", "a2"], status: "confirmed", patientActive: true },
     b: { ids: ["b1"], status: "confirmed", patientActive: true },
@@ -111,22 +125,36 @@ describe("summariseOutcome / outcomeMessage", () => {
     const s = summariseOutcome(["a", "b", "c"], groupsByKey, ["a1", "a2", "c1"]);
     expect(s).toEqual({ changed: ["a"], partly: ["c"], unchanged: ["b"] });
   });
+});
 
-  it("says nothing extra when everything changed", () => {
-    expect(outcomeMessage("Marked", "arrived", { changed: ["a", "b"], partly: [], unchanged: [] })).toBeNull();
-  });
-
-  it("explains partial results in bookings", () => {
-    expect(
-      outcomeMessage("Marked", "arrived", { changed: ["a"], partly: ["c"], unchanged: ["b"] }),
-    ).toBe(
-      "Marked 1 of 3 bookings arrived. 1 partly changed — open it to check. 1 had already changed.",
+describe("bulkAppointmentsMessage", () => {
+  const groups = {
+    a: { ids: ["a1"], status: "confirmed", patientActive: true, label: "Santos, Maria" },
+    b: { ids: ["b1"], status: "confirmed", patientActive: true, label: "Lim, Ben" },
+    c: { ids: ["c1", "c2"], status: "confirmed", patientActive: true, label: "Cruz, Ana, 2 services" },
+    d: { ids: ["d1"], status: "confirmed", patientActive: false, label: "Reyes, Jo" },
+  };
+  it("names changed-elsewhere, partly-changed and never-sent bookings", () => {
+    const msg = bulkAppointmentsMessage(
+      { verb: "Marked", pastTense: "arrived" },
+      { changed: ["a"], partly: ["c"], unchanged: ["b"] },
+      groups,
+      ["d"],
+    );
+    expect(msg).toBe(
+      [
+        "Marked 1 of 3 bookings arrived.",
+        "Not changed (2):",
+        "• Cruz, Ana, 2 services: partly changed — open it to check",
+        "• Lim, Ben: had already changed — refresh to see its status",
+        "Skipped (1):",
+        "• Reyes, Jo: patient record deleted or merged",
+      ].join("\n"),
     );
   });
-
-  it("omits the past tense cleanly instead of leaving a space before the period", () => {
+  it("falls back to 'A booking' for a key the page no longer renders", () => {
     expect(
-      outcomeMessage("Confirmed", "", { changed: ["a"], partly: [], unchanged: ["b"] }),
-    ).toBe("Confirmed 1 of 2 bookings. 1 had already changed.");
+      bulkAppointmentsMessage({ verb: "Cancelled", pastTense: "" }, { changed: [], partly: [], unchanged: ["zz"] }, groups, []),
+    ).toBe("Nothing cancelled.\nNot changed (1):\n• A booking: had already changed — refresh to see its status");
   });
 });

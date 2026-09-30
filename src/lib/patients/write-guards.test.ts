@@ -107,12 +107,14 @@ const EXEMPT: Record<string, string> = {
     "A deleted/merged patient has no open lines to claim; claiming does not bill or release.",
   [`src/app/(staff)/staff/(dashboard)/queue/actions.ts:performUnclaim`]:
     "Handing a claim back reduces work, same reasoning as claimTestAction; shared by unclaimTestAction/unclaimOwnTestAction/unclaimFromQueueAction.",
-  [`src/app/(staff)/staff/(dashboard)/queue/actions.ts:claimTestsAction`]:
-    "Bulk form of claimTestAction — claiming does not bill or release, and a deleted/merged patient has no open lines to claim.",
-  [`src/app/(staff)/staff/(dashboard)/queue/actions.ts:unclaimTestsAction`]:
-    "Bulk form of the queue list's Unclaim — handing a claim back reduces work, same reasoning as performUnclaim.",
+  [`src/lib/actions/queue/bulk-cores.ts:claimTestsCore`]:
+    "Bulk form of claimTestAction (the bulk bar's single-test Claim body, taking a server-minted batch id — called by claimQueueSelectionAction) — claiming does not bill or release, and a deleted/merged patient has no open lines to claim.",
+  [`src/lib/actions/queue/bulk-cores.ts:unclaimTestsCore`]:
+    "Bulk form of the queue list's Unclaim (the bulk bar's single-test Unclaim body, called by unclaimQueueSelectionAction) — handing a claim back reduces work, same reasoning as performUnclaim.",
   [`src/app/(staff)/staff/(dashboard)/queue/actions.ts:reassignTestAction`]:
     "Reassigning an already-claimed line does not put new work or money on the record.",
+  [`src/app/(staff)/staff/(dashboard)/queue/actions.ts:undoBulkQueueAction`]:
+    "Undo of a bulk claim (unclaim) or a bulk unclaim (reclaim) — same reasoning as performUnclaim/claimTestsCore: neither bills nor releases. The restore branch calls restoreTestRequestsForVisit (queue-restore-core.ts), which guards itself with assertVisitPatientActive.",
   [`src/lib/actions/queue/panel-writes.ts:claimPanelMembers`]:
     "Same as claimTestAction, for a consolidated report (the panel page's Claim and the queue list's panel Claim / bulk Claim) — claiming does not bill.",
   [`src/lib/actions/queue/panel-writes.ts:unclaimPanelMembers`]:
@@ -141,8 +143,8 @@ const EXEMPT: Record<string, string> = {
     "0184 review follow-up — only called by mergePatientsAction's own tombstone-failure branch, to undo a fill that already landed while the merge itself is being abandoned; same reviewed-separately reasoning as mergePatientsAction/undoMergeAction above, not a live merge write.",
   [`src/lib/actions/visits/queue-deletion.ts:deleteVisitAction`]:
     "Deletes stay unguarded by design (Task 23) — they remove work, never put it back.",
-  [`src/lib/actions/visits/queue-deletion.ts:deleteTestRequestsForVisit`]:
-    "Deletes stay unguarded by design (Task 23) — they remove work, never put it back. Shared core of deleteTestRequestsAction and deleteTestRequestsManyAction.",
+  [`src/lib/actions/queue/bulk-delete-core.ts:deleteTestRequestsForVisit`]:
+    "Deletes stay unguarded by design (Task 23) — they remove work, never put it back. Shared core of deleteTestRequestsAction and deleteTestRequestsManyCore (moved from queue-deletion.ts into its own plain module, bulk-delete-core.ts, so a server-minted batch context can be passed in).",
   [`src/app/(staff)/staff/(dashboard)/appointments/actions.ts:attachPatientToAppointmentAction`]:
     "The patient is resolved via an activePatients(...)-filtered read or resolvePatient (active-only, Task 9) earlier in this same function, before the attach write.",
   [`src/app/(staff)/staff/(dashboard)/appointments/actions.ts:deleteGroups`]:

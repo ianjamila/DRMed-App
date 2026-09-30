@@ -95,8 +95,17 @@ export async function releaseVisitSelection(args: {
   selectedIds: readonly string[];
   medium: ReleaseMedium;
   auditMeta: Record<string, Json>;
+  /**
+   * A server-minted id for a call that offers Undo (visit page Release
+   * selected): stamped as bulk_batch_id on EVERY released row's audit row —
+   * report-mates pulled in included — and on the patient notice's audit row.
+   */
+  bulkBatchId?: string;
 }): Promise<VisitReleaseOutcome> {
-  const { supabase, session, visitId, medium, auditMeta } = args;
+  const { supabase, session, visitId, medium, bulkBatchId } = args;
+  const auditMeta: Record<string, Json> = bulkBatchId
+    ? { ...args.auditMeta, bulk_batch_id: bulkBatchId }
+    : args.auditMeta;
   const selected = Array.from(new Set(args.selectedIds));
   const skipped = new Map<string, string>();
   const warnings: string[] = [];
@@ -229,7 +238,7 @@ export async function releaseVisitSelection(args: {
   // 7. Announce only plain rows and reports verified complete.
   const announced = released.filter((r) => !withheld.has(r.id));
   if (announced.length > 0) {
-    await notifyReleased(visitId, announced, medium);
+    await notifyReleased(visitId, announced, medium, bulkBatchId);
     scheduleReleaseStaffAlert(visitId, announced.length);
   }
   return finish(changedIds, alsoReleasedIds, announced);

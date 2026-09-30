@@ -72,11 +72,16 @@ export async function releaseRows(args: {
   const scoped = scopeToAllowedSections(live, sectionsForRole(session.role));
   if (scoped.length === 0) return { ok: true, released: [] };
 
+  // One instant for the whole statement, recorded on every audit row below:
+  // a 10-minute Undo (undoReleaseBatchAction) predicates its revert on this
+  // exact release, so a row unreleased and re-released by someone else in
+  // between never comes back.
+  const releasedAt = new Date().toISOString();
   const { data: updated, error } = await supabase
     .from("test_requests")
     .update({
       status: "released",
-      released_at: new Date().toISOString(),
+      released_at: releasedAt,
       released_by: session.user_id,
       release_medium: medium,
     })
@@ -107,6 +112,7 @@ export async function releaseRows(args: {
         bulk: true,
         selection: true,
         ...args.auditMeta,
+        released_at: releasedAt,
       },
       ip_address: ip,
       user_agent: ua,
@@ -120,17 +126,21 @@ export async function notifyReleased(
   visitId: string,
   rows: readonly ReleasedRow[],
   medium: ReleaseMedium,
+  // The release call's bulk_batch_id, stamped on the notice's own audit row
+  // so the batch's Undo does not read it as a later, unrelated change.
+  bulkBatchId?: string,
 ): Promise<void> {
   if (rows.length === 0) return;
   try {
     if (rows.length === 1) {
-      await notifyResultReleased({ testRequestId: rows[0].id, visitId, releaseMedium: medium });
+      await notifyResultReleased({ testRequestId: rows[0].id, visitId, releaseMedium: medium, bulkBatchId });
     } else {
       await notifyResultsReleasedBulk({
         visitId,
         testRequestIds: rows.map((r) => r.id),
         testNames: rows.map((r) => r.name),
         releaseMedium: medium,
+        bulkBatchId,
       });
     }
   } catch (err) {

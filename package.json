@@ -27,6 +27,8 @@
     "seed:physicians": "tsx scripts/seed-physicians.ts",
     "seed:signatures": "tsx scripts/seed-signatures.ts",
     "seed:sample-results": "tsx scripts/seed-sample-results.ts",
+    "seed:bulk-fixtures": "tsx scripts/seed-bulk-select-fixtures.ts",
+    "check:bulk-select": "tsx scripts/browser-check/bulk-select.ts",
     "smoke:legacy-parsers": "tsx scripts/smoke-legacy-parsers.ts",
     "smoke:results": "tsx scripts/smoke-render-results.ts",
     "verify:meta-capi": "tsx scripts/verify-meta-capi.ts",

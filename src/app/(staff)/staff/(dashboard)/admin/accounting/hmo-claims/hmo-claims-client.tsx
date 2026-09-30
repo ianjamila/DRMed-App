@@ -2,9 +2,13 @@
 
 import { Fragment, useMemo, useState, useTransition } from "react";
 import Link from "next/link";
-import { unstable_rethrow } from "next/navigation";
+import { unstable_rethrow, useRouter } from "next/navigation";
 import type { Database } from "@/types/database";
-import { snapshotHmoAgingAction, recordHmoExportAuditAction } from "./actions";
+import {
+  snapshotHmoAgingAction,
+  recordHmoExportAuditAction,
+  undoHistoricHmoBatchAction,
+} from "./actions";
 import { csvDocumentFromRecords } from "@/lib/csv/escape";
 import { REPORT_EXPORT_MAX_ROWS } from "@/lib/reports/paging";
 import type { HmoExportReportKey } from "@/lib/reports/export-audit";
@@ -14,8 +18,21 @@ import {
   WriteOffHistoricModal,
   type StaffPick,
   type PaymentMethod,
+  type HistoricBulkOutcome,
 } from "./_components/historic-claim-modals";
 import { Panel } from "@/components/ui/panel";
+import { FixedBottomBar } from "@/components/staff/fixed-bottom-bar";
+import { BulkOutcomePanel } from "@/components/staff/row-selection/bulk-outcome";
+import {
+  historicBulkOutcomeMessage,
+  type HistoricBulkKind,
+} from "@/lib/ui/historic-hmo-outcome";
+import {
+  UNDO_ALREADY,
+  UNDO_EXPIRED,
+  UNDO_WINDOW_MS,
+  undoOutcomeMessage,
+} from "@/lib/ui/bulk-undo";
 import { ExportCsvButton } from "@/components/staff/export-csv-link";
 import { manilaDate, manilaISODate, todayManilaISODate } from "@/lib/dates/manila";
 import {
@@ -194,6 +211,81 @@ function compareAging(a: StuckRow, b: StuckRow, sort: SortSpec<AgingSortColumn>)
       cmp = compareBlankLast(a[sort.key], b[sort.key], sort.dir);
   }
   return cmp !== 0 ? cmp : (a.item_id ?? "").localeCompare(b.item_id ?? "");
+}
+
+// ---------------------------------------------------------------------------
+// 10-minute Undo (owner 2026-09-28) for the three historic-claim bulk
+// actions. Shared between the two tables below (AllUnbilled, AllAging) since
+// both offer Mark billed / Mark paid / Write off on the same rows.
+// historicBulkOutcomeMessage / HistoricBulkKind live in
+// @/lib/ui/historic-hmo-outcome (unit-tested there — see its docstring for
+// why the message builder can't live in this "use client" file's own module
+// and still be importable from a plain node vitest run).
+// ---------------------------------------------------------------------------
+
+interface HistoricOutcomeState {
+  message: string;
+  /** null once there's nothing left to undo (already undone, expired, or a
+   * plain informational message like "Nothing changed"). */
+  batchId: string | null;
+  doneAt: number;
+}
+
+/**
+ * Shared outcome + Undo state for both historic-claims tables. Mirrors
+ * QueueBulkBar's runUndo: a retryable failure keeps the same batchId/doneAt
+ * (so the 10-minute window isn't silently restarted), UNDO_EXPIRED /
+ * UNDO_ALREADY drop it for good.
+ */
+function useHistoricHmoOutcome() {
+  const router = useRouter();
+  const [outcome, setOutcome] = useState<HistoricOutcomeState | null>(null);
+  const [undoing, startUndo] = useTransition();
+
+  function onActionSuccess(kind: HistoricBulkKind, sent: number, result: HistoricBulkOutcome) {
+    // The modal itself calls router.refresh() after this (every caller of
+    // these modals needs that, not only this page) — this only records the
+    // outcome + Undo state.
+    setOutcome({
+      message: historicBulkOutcomeMessage(kind, sent, result.updated),
+      batchId: result.updated > 0 && result.batchId ? result.batchId : null,
+      doneAt: Date.now(),
+    });
+  }
+
+  function runUndo() {
+    if (!outcome?.batchId || undoing) return;
+    const batchId = outcome.batchId;
+    const doneAt = outcome.doneAt;
+    const previousMessage = outcome.message;
+    startUndo(async () => {
+      const r = await undoHistoricHmoBatchAction({ batchId });
+      if (!r.ok) {
+        const gone = r.error === UNDO_EXPIRED || r.error === UNDO_ALREADY;
+        setOutcome({ message: `${r.error}\n\n${previousMessage}`, batchId: gone ? null : batchId, doneAt });
+        return;
+      }
+      const notRestoredLines = r.notRestored.map((n) => ({
+        label: `Claim ${n.id.slice(0, 8)}`,
+        reason: n.reason,
+      }));
+      setOutcome({
+        message: undoOutcomeMessage(
+          { one: "claim", many: "claims" },
+          { restored: r.restoredIds.length, notRestored: notRestoredLines },
+        ),
+        batchId: null,
+        doneAt: Date.now(),
+      });
+      router.refresh();
+    });
+  }
+
+  const undoProp = outcome?.batchId
+    ? { doneAt: outcome.doneAt, windowMs: UNDO_WINDOW_MS, pending: undoing, onUndo: runUndo }
+    : null;
+
+  return { outcome, setOutcome, undoProp, onActionSuccess };
 }
 
 export function HmoClaimsClient({
@@ -841,6 +933,7 @@ function AllUnbilled({
   const { filter, sort, size } = table;
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [bulkModal, setBulkModal] = useState<null | "billed" | "paid" | "writeoff">(null);
+  const { outcome, setOutcome, undoProp, onActionSuccess } = useHistoricHmoOutcome();
   const [rowModal, setRowModal] = useState<null | {
     kind: "billed" | "paid" | "writeoff";
     claimId: string;
@@ -1106,49 +1199,61 @@ function AllUnbilled({
           </tbody>
         </table>
       </Panel>
-      {selected.size > 0 && (
-        <Panel className="sticky bottom-0 z-10 flex flex-wrap items-center justify-between gap-3 p-3 shadow-sm">
-          <div className="text-xs text-[color:var(--color-brand-text-soft)]">
-            <span className="font-semibold text-[color:var(--color-brand-navy)]">
-              {selected.size}
-            </span>{" "}
-            historic claims selected · total{" "}
-            <span className="font-semibold text-[color:var(--color-brand-navy)]">
-              {PHP.format(selectedHistoricTotal)}
-            </span>
-          </div>
-          <div className="flex flex-nowrap items-center gap-2">
-            <button
-              type="button"
-              onClick={() => setBulkModal("billed")}
-              className="min-h-[44px] whitespace-nowrap rounded-md bg-[color:var(--color-brand-navy)] px-3 py-2 text-xs font-bold uppercase tracking-wider text-white"
-            >
-              Mark billed ({selected.size})
-            </button>
-            <button
-              type="button"
-              onClick={() => setBulkModal("paid")}
-              className="min-h-[44px] whitespace-nowrap rounded-md border border-emerald-600 bg-white px-3 py-2 text-xs font-bold uppercase tracking-wider text-emerald-700 hover:bg-emerald-600 hover:text-white"
-            >
-              Mark paid
-            </button>
-            <button
-              type="button"
-              onClick={() => setBulkModal("writeoff")}
-              className="min-h-[44px] whitespace-nowrap rounded-md border border-red-600 bg-white px-3 py-2 text-xs font-bold uppercase tracking-wider text-red-700 hover:bg-red-600 hover:text-white"
-            >
-              Write off
-            </button>
-            <button
-              type="button"
-              onClick={() => setSelected(new Set())}
-              className="min-h-[44px] whitespace-nowrap rounded-md border border-[color:var(--color-brand-bg-mid)] bg-white px-3 py-2 text-xs font-semibold text-[color:var(--color-brand-text-soft)]"
-            >
-              Clear
-            </button>
-          </div>
-        </Panel>
-      )}
+      {selected.size > 0 ? (
+        <FixedBottomBar>
+          <Panel className="flex flex-wrap items-center justify-between gap-3 p-3 shadow-lg">
+            {outcome ? (
+              <BulkOutcomePanel
+                inline
+                message={outcome.message}
+                undo={undoProp}
+                onDismiss={() => setOutcome(null)}
+              />
+            ) : null}
+            <div className="text-xs text-[color:var(--color-brand-text-soft)]">
+              <span className="font-semibold text-[color:var(--color-brand-navy)]">
+                {selected.size}
+              </span>{" "}
+              historic claims selected · total{" "}
+              <span className="font-semibold text-[color:var(--color-brand-navy)]">
+                {PHP.format(selectedHistoricTotal)}
+              </span>
+            </div>
+            <div className="flex flex-nowrap items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setBulkModal("billed")}
+                className="min-h-[44px] whitespace-nowrap rounded-md bg-[color:var(--color-brand-navy)] px-3 py-2 text-xs font-bold uppercase tracking-wider text-white"
+              >
+                Mark billed ({selected.size})
+              </button>
+              <button
+                type="button"
+                onClick={() => setBulkModal("paid")}
+                className="min-h-[44px] whitespace-nowrap rounded-md border border-emerald-600 bg-white px-3 py-2 text-xs font-bold uppercase tracking-wider text-emerald-700 hover:bg-emerald-600 hover:text-white"
+              >
+                Mark paid
+              </button>
+              <button
+                type="button"
+                onClick={() => setBulkModal("writeoff")}
+                className="min-h-[44px] whitespace-nowrap rounded-md border border-red-600 bg-white px-3 py-2 text-xs font-bold uppercase tracking-wider text-red-700 hover:bg-red-600 hover:text-white"
+              >
+                Write off
+              </button>
+              <button
+                type="button"
+                onClick={() => setSelected(new Set())}
+                className="min-h-[44px] whitespace-nowrap rounded-md border border-[color:var(--color-brand-bg-mid)] bg-white px-3 py-2 text-xs font-semibold text-[color:var(--color-brand-text-soft)]"
+              >
+                Clear
+              </button>
+            </div>
+          </Panel>
+        </FixedBottomBar>
+      ) : outcome ? (
+        <BulkOutcomePanel message={outcome.message} undo={undoProp} onDismiss={() => setOutcome(null)} />
+      ) : null}
       <ClientListPagination
         page={page}
         pageCount={totalPages}
@@ -1163,6 +1268,7 @@ function AllUnbilled({
           claimIds={selectedHistoricIds}
           totalAmount={selectedHistoricTotal}
           staff={staff}
+          onSuccess={(res) => onActionSuccess("billed", selectedHistoricIds.length, res)}
           onClose={() => { setBulkModal(null); setSelected(new Set()); }}
         />
       )}
@@ -1172,6 +1278,7 @@ function AllUnbilled({
           totalAmount={selectedHistoricTotal}
           staff={staff}
           paymentMethods={paymentMethods}
+          onSuccess={(res) => onActionSuccess("paid", selectedHistoricIds.length, res)}
           onClose={() => { setBulkModal(null); setSelected(new Set()); }}
         />
       )}
@@ -1180,6 +1287,7 @@ function AllUnbilled({
           claimIds={selectedHistoricIds}
           totalAmount={selectedHistoricTotal}
           staff={staff}
+          onSuccess={(res) => onActionSuccess("writeoff", selectedHistoricIds.length, res)}
           onClose={() => { setBulkModal(null); setSelected(new Set()); }}
         />
       )}
@@ -1188,6 +1296,7 @@ function AllUnbilled({
           claimIds={[rowModal.claimId]}
           totalAmount={rowModal.amount}
           staff={staff}
+          onSuccess={(res) => onActionSuccess("billed", 1, res)}
           onClose={() => setRowModal(null)}
         />
       )}
@@ -1197,6 +1306,7 @@ function AllUnbilled({
           totalAmount={rowModal.amount}
           staff={staff}
           paymentMethods={paymentMethods}
+          onSuccess={(res) => onActionSuccess("paid", 1, res)}
           onClose={() => setRowModal(null)}
         />
       )}
@@ -1205,6 +1315,7 @@ function AllUnbilled({
           claimIds={[rowModal.claimId]}
           totalAmount={rowModal.amount}
           staff={staff}
+          onSuccess={(res) => onActionSuccess("writeoff", 1, res)}
           onClose={() => setRowModal(null)}
         />
       )}
@@ -1232,6 +1343,7 @@ function AllAging({
   const { filter, sort, size } = table;
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [bulkModal, setBulkModal] = useState<null | "paid" | "writeoff">(null);
+  const { outcome, setOutcome, undoProp, onActionSuccess } = useHistoricHmoOutcome();
   const [rowModal, setRowModal] = useState<null | {
     kind: "paid" | "writeoff";
     claimId: string;
@@ -1499,42 +1611,54 @@ function AllAging({
           </tbody>
         </table>
       </Panel>
-      {selected.size > 0 && (
-        <Panel className="sticky bottom-0 z-10 flex flex-wrap items-center justify-between gap-3 p-3 shadow-sm">
-          <div className="text-xs text-[color:var(--color-brand-text-soft)]">
-            <span className="font-semibold text-[color:var(--color-brand-navy)]">
-              {selected.size}
-            </span>{" "}
-            historic claims selected · total{" "}
-            <span className="font-semibold text-[color:var(--color-brand-navy)]">
-              {PHP.format(selectedHistoricTotal)}
-            </span>
-          </div>
-          <div className="flex flex-nowrap items-center gap-2">
-            <button
-              type="button"
-              onClick={() => setBulkModal("paid")}
-              className="min-h-[44px] whitespace-nowrap rounded-md border border-emerald-600 bg-white px-3 py-2 text-xs font-bold uppercase tracking-wider text-emerald-700 hover:bg-emerald-600 hover:text-white"
-            >
-              Mark paid ({selected.size})
-            </button>
-            <button
-              type="button"
-              onClick={() => setBulkModal("writeoff")}
-              className="min-h-[44px] whitespace-nowrap rounded-md border border-red-600 bg-white px-3 py-2 text-xs font-bold uppercase tracking-wider text-red-700 hover:bg-red-600 hover:text-white"
-            >
-              Write off
-            </button>
-            <button
-              type="button"
-              onClick={() => setSelected(new Set())}
-              className="min-h-[44px] whitespace-nowrap rounded-md border border-[color:var(--color-brand-bg-mid)] bg-white px-3 py-2 text-xs font-semibold text-[color:var(--color-brand-text-soft)]"
-            >
-              Clear
-            </button>
-          </div>
-        </Panel>
-      )}
+      {selected.size > 0 ? (
+        <FixedBottomBar>
+          <Panel className="flex flex-wrap items-center justify-between gap-3 p-3 shadow-lg">
+            {outcome ? (
+              <BulkOutcomePanel
+                inline
+                message={outcome.message}
+                undo={undoProp}
+                onDismiss={() => setOutcome(null)}
+              />
+            ) : null}
+            <div className="text-xs text-[color:var(--color-brand-text-soft)]">
+              <span className="font-semibold text-[color:var(--color-brand-navy)]">
+                {selected.size}
+              </span>{" "}
+              historic claims selected · total{" "}
+              <span className="font-semibold text-[color:var(--color-brand-navy)]">
+                {PHP.format(selectedHistoricTotal)}
+              </span>
+            </div>
+            <div className="flex flex-nowrap items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setBulkModal("paid")}
+                className="min-h-[44px] whitespace-nowrap rounded-md border border-emerald-600 bg-white px-3 py-2 text-xs font-bold uppercase tracking-wider text-emerald-700 hover:bg-emerald-600 hover:text-white"
+              >
+                Mark paid ({selected.size})
+              </button>
+              <button
+                type="button"
+                onClick={() => setBulkModal("writeoff")}
+                className="min-h-[44px] whitespace-nowrap rounded-md border border-red-600 bg-white px-3 py-2 text-xs font-bold uppercase tracking-wider text-red-700 hover:bg-red-600 hover:text-white"
+              >
+                Write off
+              </button>
+              <button
+                type="button"
+                onClick={() => setSelected(new Set())}
+                className="min-h-[44px] whitespace-nowrap rounded-md border border-[color:var(--color-brand-bg-mid)] bg-white px-3 py-2 text-xs font-semibold text-[color:var(--color-brand-text-soft)]"
+              >
+                Clear
+              </button>
+            </div>
+          </Panel>
+        </FixedBottomBar>
+      ) : outcome ? (
+        <BulkOutcomePanel message={outcome.message} undo={undoProp} onDismiss={() => setOutcome(null)} />
+      ) : null}
       <ClientListPagination
         page={page}
         pageCount={totalPages}
@@ -1550,6 +1674,7 @@ function AllAging({
           totalAmount={selectedHistoricTotal}
           staff={staff}
           paymentMethods={paymentMethods}
+          onSuccess={(res) => onActionSuccess("paid", selectedHistoricIds.length, res)}
           onClose={() => { setBulkModal(null); setSelected(new Set()); }}
         />
       )}
@@ -1558,6 +1683,7 @@ function AllAging({
           claimIds={selectedHistoricIds}
           totalAmount={selectedHistoricTotal}
           staff={staff}
+          onSuccess={(res) => onActionSuccess("writeoff", selectedHistoricIds.length, res)}
           onClose={() => { setBulkModal(null); setSelected(new Set()); }}
         />
       )}
@@ -1567,6 +1693,7 @@ function AllAging({
           totalAmount={rowModal.amount}
           staff={staff}
           paymentMethods={paymentMethods}
+          onSuccess={(res) => onActionSuccess("paid", 1, res)}
           onClose={() => setRowModal(null)}
         />
       )}
@@ -1575,6 +1702,7 @@ function AllAging({
           claimIds={[rowModal.claimId]}
           totalAmount={rowModal.amount}
           staff={staff}
+          onSuccess={(res) => onActionSuccess("writeoff", 1, res)}
           onClose={() => setRowModal(null)}
         />
       )}

@@ -107,6 +107,18 @@ export interface ReverseJournalEntryBySourceInput {
   sourceId: string;
   actorId: string;
   reason: string;
+  /**
+   * Optional caller-known id of the posted entry it expects to reverse (read
+   * moments earlier, before any awaits). When given, a lookup that finds
+   * nothing posted, or finds a *different* entry than expected, is an error
+   * rather than the ordinary no-op — the caller already committed to
+   * reversing a specific entry (e.g. HMO Undo re-validates the claim row and
+   * then reverses `step.journalEntryId`) and silently doing nothing, or
+   * reversing the wrong entry, would leave that caller's own state
+   * inconsistent. Callers that don't pass it keep the original
+   * nothing-posted-is-fine behaviour.
+   */
+  expectedEntryId?: string;
 }
 
 /**
@@ -122,33 +134,60 @@ export interface ReverseJournalEntryBySourceInput {
  *
  * A no-op (returns `null`) when nothing posted is found for that source —
  * e.g. cancelling a gift code that was never sold, or a code sold under a
- * method with no sale-side JE. Returns a user-facing error string on
- * failure; on failure the original entry is left exactly as found (posted).
+ * method with no sale-side JE — UNLESS `expectedEntryId` is given, in which
+ * case that is an error instead (see the field's doc comment). Returns a
+ * user-facing error string on failure; on failure the original entry is left
+ * exactly as found (posted). The initial lookup's own error is never
+ * discarded (fail closed) — an earlier version returned `null` on a failed
+ * lookup indistinguishably from "nothing to reverse", which let at least one
+ * caller (HMO Undo) restore its own row while the original entry stayed
+ * posted. The posted→draft transition that follows is the atomic claim on
+ * the entry: it is conditioned on `status = 'posted'` and checked for zero
+ * rows, so two concurrent callers that both found the same posted entry
+ * can't both build a reversal for it — only the caller whose conditional
+ * update actually matched a row proceeds; the other gets an error and
+ * touches nothing.
  */
 export async function reverseJournalEntryBySource(
   admin: AdminClient,
   input: ReverseJournalEntryBySourceInput,
 ): Promise<string | null> {
-  const { data: original } = await admin
+  const { data: original, error: lookupErr } = await admin
     .from("journal_entries")
     .select("id")
     .eq("source_kind", input.sourceKind)
     .eq("source_id", input.sourceId)
     .eq("status", "posted")
     .maybeSingle();
-  if (!original) return null;
+  if (lookupErr) return translatePgError(lookupErr);
+  if (!original) {
+    return input.expectedEntryId
+      ? "The journal entry is no longer posted — nothing was reversed."
+      : null;
+  }
+  if (input.expectedEntryId && original.id !== input.expectedEntryId) {
+    return "This is a different journal entry than expected — nothing was reversed.";
+  }
 
-  // Every write from here on is checked and, on failure, the original entry
-  // is restored to exactly the state it was found in (posted) rather than
-  // left half-reversed — see the go-live review Finding 3: this function
-  // used to discard every one of these errors, which could leave the
-  // original marked 'reversed' with an incomplete or missing reversal entry
-  // behind it.
-  const { error: draftErr } = await admin
+  // The posted→draft transition IS the claim: conditioning it on the status
+  // we just observed and checking the row count catches a second concurrent
+  // caller that read the same posted `original` a moment earlier. Every
+  // write from here on is checked and, on failure, the original entry is
+  // restored to exactly the state it was found in (posted) rather than left
+  // half-reversed — see the go-live review Finding 3: this function used to
+  // discard every one of these errors, which could leave the original
+  // marked 'reversed' with an incomplete or missing reversal entry behind
+  // it.
+  const { data: draftRows, error: draftErr } = await admin
     .from("journal_entries")
     .update({ status: "draft" })
-    .eq("id", original.id);
+    .eq("id", original.id)
+    .eq("status", "posted")
+    .select("id");
   if (draftErr) return translatePgError(draftErr);
+  if (!draftRows || draftRows.length === 0) {
+    return "This journal entry was already reversed or changed — nothing was reversed.";
+  }
 
   const { data: lines, error: linesReadErr } = await admin
     .from("journal_lines")
