@@ -30,3 +30,36 @@ export function stillCommittedRows<T extends CommittedRowState>(
  * failed compensation — the panel is refused, but never silently. */
 export const PARTIAL_PANEL_LEFTOVER_REASON =
   "Part of this panel changed and could not be put back — open it to check.";
+
+/**
+ * Groups already-validated ids by the exact `deleted_at` string each one
+ * carries (P1, finding 3: a bulk-delete Undo's restore write must predicate
+ * on the EXACT deleted_at it read, not merely "is not null" — otherwise a
+ * restore-and-re-delete landing between the read and the write is silently
+ * undone). Callers issue one predicated UPDATE per group. Insertion order is
+ * preserved within each group.
+ */
+export function groupIdsByDeletedAt(rows: readonly { id: string; deleted_at: string }[]): Map<string, string[]> {
+  const byValue = new Map<string, string[]>();
+  for (const r of rows) {
+    const list = byValue.get(r.deleted_at) ?? [];
+    list.push(r.id);
+    byValue.set(r.deleted_at, list);
+  }
+  return byValue;
+}
+
+/**
+ * Of a panel's member ids, which ones a restore write brought back when NOT
+ * ALL of them did (P2, finding 6: a member that changed in the instant
+ * between pre-validation and the restore write must be compensated back to
+ * its prior deleted state, not left restored while the panel is reported as
+ * refused). Returns null when there is nothing to compensate: either none of
+ * the ids came back (the caller already reports the whole panel refused) or
+ * every one of them did (a clean, fully-restored panel).
+ */
+export function partiallyRestoredIds(ids: readonly string[], restoredIds: ReadonlySet<string>): string[] | null {
+  const restored = ids.filter((id) => restoredIds.has(id));
+  if (restored.length === 0 || restored.length === ids.length) return null;
+  return restored;
+}

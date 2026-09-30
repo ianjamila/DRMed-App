@@ -15,6 +15,7 @@ import { ipAndAgent } from "@/lib/server/action-helpers";
 import { translatePgError } from "@/lib/accounting/pg-errors";
 import { assertVisitPatientActive } from "@/lib/patients/require-active";
 import { sameInstant } from "@/lib/ui/bulk-undo";
+import { groupIdsByDeletedAt } from "@/lib/queue/partial-panel";
 
 // Every surface that renders visits or queue rows and must drop (or show)
 // deleted entries immediately. Moved here from queue-deletion.ts so both
@@ -86,19 +87,55 @@ export async function restoreTestRequestsForVisit(
     };
   }
 
-  const { data: restored, error } = await admin
-    .from("test_requests")
-    .update({ deleted_at: null, deleted_by: null, delete_reason: null })
-    .in(
-      "id",
-      rows.map((r) => r.id),
-    )
-    .eq("visit_id", visitId)
-    .not("deleted_at", "is", null)
-    .select("id");
-  if (error) return { ok: false, error: translatePgError(error) };
-  if (!restored || restored.length === 0) {
-    return { ok: false, error: "None of the selected tests can be restored." };
+  let restored: { id: string }[];
+  if (expectedDeletedAtOf) {
+    // One UPDATE per distinct deleted_at value read above, each predicated on
+    // that EXACT value — not merely "deleted_at is not null" like the branch
+    // below. Without this, a restore-and-re-delete landing in the instant
+    // between the read above and this write would still satisfy "is not
+    // null" and get silently undone by a bulk Undo it has nothing to do with
+    // (P1, finding 3). The rows here already passed the sameInstant filter
+    // against expectedDeletedAtOf, so grouping by their own (matching)
+    // deleted_at is exactly grouping by what each id was expected to carry.
+    const byDeletedAt = groupIdsByDeletedAt(rows.map((r) => ({ id: r.id, deleted_at: r.deleted_at! })));
+    restored = [];
+    let firstError: { code?: string; message?: string; details?: string } | null = null;
+    for (const [deletedAtValue, ids] of byDeletedAt) {
+      const { data, error: writeError } = await admin
+        .from("test_requests")
+        .update({ deleted_at: null, deleted_by: null, delete_reason: null })
+        .in("id", ids)
+        .eq("visit_id", visitId)
+        .eq("deleted_at", deletedAtValue)
+        .select("id");
+      if (writeError) {
+        firstError ??= writeError;
+        continue;
+      }
+      restored.push(...(data ?? []));
+    }
+    if (restored.length === 0) {
+      return { ok: false, error: firstError ? translatePgError(firstError) : "None of the selected tests can be restored." };
+    }
+  } else {
+    // Manual Restore path (restoreTestRequestsAction) — unaffected: no
+    // expected value to pin the write to, so the original "is not null"
+    // predicate is unchanged.
+    const { data, error } = await admin
+      .from("test_requests")
+      .update({ deleted_at: null, deleted_by: null, delete_reason: null })
+      .in(
+        "id",
+        rows.map((r) => r.id),
+      )
+      .eq("visit_id", visitId)
+      .not("deleted_at", "is", null)
+      .select("id");
+    if (error) return { ok: false, error: translatePgError(error) };
+    if (!data || data.length === 0) {
+      return { ok: false, error: "None of the selected tests can be restored." };
+    }
+    restored = data;
   }
 
   const rowById = new Map(rows.map((r) => [r.id, r]));

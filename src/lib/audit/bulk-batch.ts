@@ -36,6 +36,13 @@ export async function loadOwnBatchRows(opts: {
       .gte("created_at", lookback)
       .eq("metadata->>bulk_batch_id", opts.batchId)
       .order("created_at", { ascending: true })
+      // 1000 is a safe bound here, unpaginated: this is THIS actor's OWN rows
+      // for ONE batch, and a bulk action caps at MAX_BULK_RECORDS (500,
+      // src/lib/ui/bulk-selection.ts) resource ids with at most a couple of
+      // audit rows per id (the action itself, plus an occasional panel/bulk
+      // summary row) — nowhere near 1000. The `laterRows` query below has no
+      // such bound (every OTHER actor's rows too, unbounded by this batch's
+      // size) and is paginated for real.
       .limit(1000),
     admin
       .from("audit_log")
@@ -74,14 +81,32 @@ export async function loadOwnBatchRows(opts: {
   }
   const changedSince = new Set<string>();
   if (resourceIds.length > 0) {
-    const { data: laterRows } = await admin
-      .from("audit_log")
-      .select("resource_id, created_at, metadata")
-      .eq("resource_type", opts.resourceType)
-      .in("resource_id", resourceIds)
-      .gte("created_at", earliest)
-      .order("created_at", { ascending: true });
-    for (const r of laterRows ?? []) {
+    // Unbounded (every OTHER actor's audit rows for these ids since
+    // `earliest`, not just this batch's own) — PostgREST caps a bare select
+    // at 1000, so this must be paged rather than trust a single page as "all
+    // of it" (finding 5: a missing page used to read identically to "no
+    // newer changes", i.e. fail OPEN on exactly the check meant to stop Undo
+    // from overwriting a newer change). `id` is the tie-break: without one,
+    // `.range()` can drop or repeat rows across pages when `created_at` ties.
+    const laterRows: { resource_id: string | null; created_at: string; metadata: unknown }[] = [];
+    let from = 0;
+    for (;;) {
+      const { data, error: laterError } = await admin
+        .from("audit_log")
+        .select("resource_id, created_at, metadata")
+        .eq("resource_type", opts.resourceType)
+        .in("resource_id", resourceIds)
+        .gte("created_at", earliest)
+        .order("created_at", { ascending: true })
+        .order("id", { ascending: true })
+        .range(from, from + 999);
+      if (laterError) return { ok: false, error: "Could not read what that bulk change did — try again." };
+      const page = data ?? [];
+      laterRows.push(...page);
+      if (page.length < 1000) break;
+      from += 1000;
+    }
+    for (const r of laterRows) {
       if (!r.resource_id) continue;
       const ownCreatedAt = firstSeenAt.get(r.resource_id);
       // Instant comparison, not string — same reason as the deadline above.

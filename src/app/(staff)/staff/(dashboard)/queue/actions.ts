@@ -22,12 +22,12 @@ import {
 import { ipAndAgent } from "@/lib/server/action-helpers";
 import { panelKey, parsePanelKey, type BulkQueueResult, type PanelRef, type SkippedRow } from "@/lib/queue/bulk-queue";
 import { loadPanelMembers } from "@/lib/queue/panel-members";
-import { stillCommittedRows, PARTIAL_PANEL_LEFTOVER_REASON } from "@/lib/queue/partial-panel";
+import { stillCommittedRows, PARTIAL_PANEL_LEFTOVER_REASON, partiallyRestoredIds } from "@/lib/queue/partial-panel";
 import { MAX_BULK_RECORDS } from "@/lib/ui/bulk-selection";
 import { QUEUE_DELETE_ROLES } from "@/lib/visits/deletion";
 import { labQueueGate } from "@/lib/visits/lab-gate";
 import { loadOwnBatchRows } from "@/lib/audit/bulk-batch";
-import { restoreTestRequestsForVisit } from "@/lib/actions/visits/queue-restore-core";
+import { restoreTestRequestsForVisit, revalidateQueueSurfaces } from "@/lib/actions/visits/queue-restore-core";
 import {
   BULK_UNDO_VIA,
   CHANGED_SINCE_REASON,
@@ -42,24 +42,45 @@ import {
 
 // Shared shape for the fresh re-read after a failed panel-write compensation
 // (claim/unclaim/undo-reclaim): whatever is STILL in the state this call put
-// it in must be audited, never dropped silently (P1).
+// it in must be audited, never dropped silently (P1). Takes the rows the
+// compensation attempt targeted (not just their ids) so a failed
+// verification read still has enough (visit_id) to audit them by (finding 7).
 async function auditLeftoverPanelRows(
   supabase: Awaited<ReturnType<typeof createClient>>,
-  ids: readonly string[],
+  rows: readonly { id: string; visit_id: string }[],
   isCommitted: (row: { id: string; visit_id: string; status: string; assigned_to: string | null; started_at: string | null }) => boolean,
   buildAudit: (row: { id: string; visit_id: string }) => Parameters<typeof audit>[0],
 ): Promise<string[]> {
-  if (ids.length === 0) return [];
+  if (rows.length === 0) return [];
+  const ids = rows.map((r) => r.id);
   // deleted_at / visits.deleted_at: excluded rather than merely selected — a
   // row a concurrent DELETE has since removed from the queue is covered by
   // that delete's own audit row, not this one.
-  const { data: fresh } = await supabase
+  const { data: fresh, error } = await supabase
     .from("test_requests")
     .select("id, visit_id, status, assigned_to, started_at, deleted_at, visits!inner ( deleted_at )")
-    .in("id", [...ids])
+    .in("id", ids)
     .is("deleted_at", null)
     .is("visits.deleted_at", null);
-  const leftover = stillCommittedRows(fresh ?? [], isCommitted);
+  if (error || !fresh) {
+    // Fail CLOSED (finding 7): the write that got us here already committed
+    // every one of `rows` — this read only tells us which are STILL in that
+    // state. If the read itself fails, we cannot tell "compensation fully
+    // reverted everything" from "we have no idea", and the old code treated
+    // that ambiguity as "nothing to audit" — audit every row instead, flagged
+    // unverified, so the caller reports the panel as changed rather than
+    // silently trusting an empty leftover list.
+    for (const row of rows) {
+      const built = buildAudit(row);
+      const metadata =
+        built.metadata && typeof built.metadata === "object" && !Array.isArray(built.metadata)
+          ? (built.metadata as Record<string, unknown>)
+          : {};
+      await audit({ ...built, metadata: { ...metadata, outcome_unverified: true } });
+    }
+    return ids;
+  }
+  const leftover = stillCommittedRows(fresh, isCommitted);
   for (const row of leftover) {
     await audit(buildAudit({ id: row.id, visit_id: row.visit_id }));
   }
@@ -485,7 +506,7 @@ export async function claimTestsAction(input: unknown): Promise<BulkQueueResult>
         // like any other claim, never dropped silently (P1).
         leftoverIds = await auditLeftoverPanelRows(
           supabase,
-          compensateIds,
+          got,
           (r) => r.status === "in_progress" && r.assigned_to === session.user_id && sameInstant(r.started_at, startedAt),
           (row) => ({
             actor_id: session.user_id,
@@ -763,7 +784,7 @@ export async function unclaimTestsAction(input: unknown): Promise<BulkQueueResul
       // must be audited like any other, never dropped silently (P1).
       const leftoverIds = await auditLeftoverPanelRows(
         supabase,
-        compensateIds,
+        got,
         (r) => r.status === "requested" && r.assigned_to === null,
         (row) => ({
           actor_id: session.user_id,
@@ -1124,7 +1145,7 @@ export async function undoBulkQueueAction(input: unknown): Promise<BulkUndoResul
             // unclaimed and must be audited, never dropped silently (P1).
             leftoverIds = await auditLeftoverPanelRows(
               supabase,
-              got.map((r) => r.id),
+              got,
               (r) => r.status === "requested" && r.assigned_to === null,
               (row) => ({
                 actor_id: session.user_id,
@@ -1299,7 +1320,7 @@ export async function undoBulkQueueAction(input: unknown): Promise<BulkUndoResul
             // happen and must be audited, never dropped silently (P1).
             leftoverIds = await auditLeftoverPanelRows(
               supabase,
-              got.map((r) => r.id),
+              got,
               (r) => r.status === "in_progress" && r.assigned_to === holder,
               (row) => ({
                 actor_id: session.user_id,
@@ -1383,15 +1404,28 @@ export async function undoBulkQueueAction(input: unknown): Promise<BulkUndoResul
       // against what this batch recorded. visits.deleted_at is selected only
       // as evidence: restoreTestRequestsForVisit applies its own
       // visit-deleted refusal below, whole-visit, same as a single Restore.
+      // deleted_by / delete_reason ride along too (finding 6): if a
+      // partially-restored panel needs compensating back to deleted, this is
+      // its prior state, not a synthetic one.
       const { data: current } =
         allIds.length > 0
           ? await admin
               .from("test_requests")
-              .select("id, deleted_at, visits ( deleted_at )")
+              .select("id, deleted_at, deleted_by, delete_reason, visits ( deleted_at )")
               .in("id", allIds)
               .not("deleted_at", "is", null)
-          : { data: [] as { id: string; deleted_at: string | null }[] };
+          : {
+              data: [] as {
+                id: string;
+                deleted_at: string | null;
+                deleted_by: string | null;
+                delete_reason: string | null;
+              }[],
+            };
       const currentDeletedAtById = new Map((current ?? []).map((r) => [r.id, r.deleted_at]));
+      const priorOf = new Map(
+        (current ?? []).map((r) => [r.id, { deleted_by: r.deleted_by, delete_reason: r.delete_reason }]),
+      );
 
       const expectedDeletedAtOf = new Map<string, string>();
       const idsByVisit = new Map<string, string[]>();
@@ -1428,6 +1462,87 @@ export async function undoBulkQueueAction(input: unknown): Promise<BulkUndoResul
           for (const id of outcome.restoredIds) restoredTestIds.add(id);
         }
       }
+
+      // A group where SOME but not all of its pre-validated members came
+      // back is a genuine race in the instant between the read above and the
+      // write inside restoreTestRequestsForVisit — put the restored ones back
+      // to exactly their prior deleted state rather than leaving the panel
+      // half-restored (P2, finding 6). The core already wrote each restored
+      // id a `test_request.restored` audit row; a successful compensation
+      // gets its own `test_request.deleted` row so the trail says what really
+      // happened, and a FAILED compensation leaves that `restored` row as the
+      // only (accurate) record — nothing is unaudited either way.
+      const compensationReasonOf = new Map<string, string>();
+      if (restoreGroups.some((g) => validGroupKeys.has(g.key))) {
+        const { ip, ua } = await ipAndAgent();
+        for (const group of restoreGroups) {
+          if (!validGroupKeys.has(group.key)) continue;
+          const ids = group.steps.map((s) => s.id);
+          const partial = partiallyRestoredIds(ids, restoredTestIds);
+          if (!partial) continue;
+          anyChanged = true;
+          const stepById = new Map(group.steps.map((s) => [s.id, s]));
+          const compensatedIds: string[] = [];
+          const visitIdsTouched = new Set<string>();
+          for (const id of partial) {
+            const step = stepById.get(id)!;
+            const prior = priorOf.get(id);
+            const { data: compensated, error: compensateError } = await admin
+              .from("test_requests")
+              .update({
+                deleted_at: step.deletedAt,
+                deleted_by: prior?.deleted_by ?? null,
+                delete_reason: prior?.delete_reason ?? null,
+              })
+              .eq("id", id)
+              .is("deleted_at", null)
+              .select("id")
+              .maybeSingle();
+            if (compensateError || !compensated) {
+              console.error("bulk undo restore compensation failed", {
+                key: group.key,
+                id,
+                error: compensateError ?? "expected to re-delete 1 row, matched 0",
+              });
+              continue;
+            }
+            compensatedIds.push(id);
+            restoredTestIds.delete(id);
+            visitIdsTouched.add(step.visitId);
+            await audit({
+              actor_id: session.user_id,
+              actor_type: "staff",
+              action: "test_request.deleted",
+              resource_type: "test_request",
+              resource_id: id,
+              metadata: {
+                visit_id: step.visitId,
+                reason: "Undo of a bulk delete could not restore the whole panel — put back",
+                deleted_at: step.deletedAt,
+                via: BULK_UNDO_VIA,
+                undo_of_batch: parsed.data.batchId,
+                bulk_batch_id: undoBatchId,
+                panel_key: group.key,
+                compensation: true,
+              },
+              ip_address: ip,
+              user_agent: ua,
+            });
+          }
+          for (const visitId of visitIdsTouched) revalidateQueueSurfaces(visitId);
+          const stillLeftover = partial.filter((id) => !compensatedIds.includes(id));
+          // Either outcome means this group can never be a clean restore —
+          // whether compensation cleanly put the rest back (RESTORE_PANEL_CHANGED)
+          // or failed for some (PARTIAL_PANEL_LEFTOVER_REASON: those stay
+          // restored, a real committed change, but already audited above via
+          // the core's own restore rows).
+          compensationReasonOf.set(
+            group.key,
+            stillLeftover.length > 0 ? PARTIAL_PANEL_LEFTOVER_REASON : RESTORE_PANEL_CHANGED,
+          );
+        }
+      }
+
       if (restoredTestIds.size > 0) anyChanged = true;
       for (const group of restoreGroups) {
         if (!validGroupKeys.has(group.key)) continue; // already reported above
@@ -1439,7 +1554,7 @@ export async function undoBulkQueueAction(input: unknown): Promise<BulkUndoResul
           // Pre-validated but still didn't fully come back — a genuine race
           // in the instant between the check above and the write. Refused
           // whole, same as any other panel mismatch.
-          notRestored.push({ id: group.key, reason: RESTORE_PANEL_CHANGED });
+          notRestored.push({ id: group.key, reason: compensationReasonOf.get(group.key) ?? RESTORE_PANEL_CHANGED });
         }
       }
     }
