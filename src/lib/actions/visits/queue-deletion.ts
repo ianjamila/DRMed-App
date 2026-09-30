@@ -27,6 +27,7 @@ import type { BulkQueueResult } from "@/lib/queue/bulk-queue";
 import {
   deleteTestRequestsForVisit,
   deleteTestRequestsManyCore,
+  NOT_QUEUE_DELETE_STAFF,
   parseQueueDeleteReason,
 } from "@/lib/actions/queue/bulk-delete-core";
 import { revalidateQueueSurfaces, restoreTestRequestsForVisit } from "@/lib/actions/visits/queue-restore-core";
@@ -40,7 +41,7 @@ async function requireQueueDeleteStaff() {
   if (!QUEUE_DELETE_ROLES.has(session.role)) {
     return {
       session: null,
-      error: "Only reception or admin can delete queue entries.",
+      error: NOT_QUEUE_DELETE_STAFF,
     } as const;
   }
   return { session, error: null } as const;

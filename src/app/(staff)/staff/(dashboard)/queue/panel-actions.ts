@@ -38,6 +38,7 @@ import {
   unclaimPanelMembers,
   type PanelOutcome,
 } from "@/lib/actions/queue/panel-writes";
+import { NOT_QUEUE_DELETE_STAFF } from "@/lib/actions/queue/bulk-delete-core";
 import { deleteTestRequestsManyAction } from "@/lib/actions/visits/queue-deletion";
 import { claimTestsAction, unclaimTestsAction } from "./actions";
 
@@ -279,7 +280,7 @@ export async function deleteQueueSelectionAction(input: unknown): Promise<BulkQu
   // single-test bulk delete.
   const session = await requireActiveStaff();
   if (!QUEUE_DELETE_ROLES.has(session.role)) {
-    return { ok: false, error: "Only reception or admin can delete queue entries." };
+    return { ok: false, error: NOT_QUEUE_DELETE_STAFF };
   }
   const supabase = await createClient();
   const singleIds = Array.from(new Set(parsed.data.testRequestIds));

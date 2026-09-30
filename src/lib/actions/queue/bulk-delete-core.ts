@@ -19,7 +19,7 @@ import { revalidateQueueSurfaces } from "@/lib/actions/visits/queue-restore-core
 import type { BulkQueueResult, SkippedRow } from "@/lib/queue/bulk-queue";
 import type { BulkBatchContext } from "@/lib/actions/queue/bulk-cores";
 
-const NOT_QUEUE_DELETE_STAFF = "Only reception or admin can delete queue entries.";
+export const NOT_QUEUE_DELETE_STAFF = "Only reception or admin can delete queue entries.";
 
 export function parseQueueDeleteReason(
   reason: string,
@@ -172,7 +172,7 @@ export async function deleteTestRequestsManyCore(
       error: "Nothing to delete — these tests were already deleted or no longer exist.",
     };
   }
-  const visitOfSingle = new Map((candidates ?? []).map((c) => [c.id, c.visit_id]));
+  const visitOfSingle = new Map(candidates.map((c) => [c.id, c.visit_id]));
 
   const byVisit = new Map<string, string[]>();
   const skipped: SkippedRow[] = [];

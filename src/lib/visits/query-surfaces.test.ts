@@ -448,7 +448,7 @@ const LIFECYCLES: Record<string, LifecycleSurface> = {
   },
   "lib/actions/visits/queue-deletion.ts": {
     lifecycle: "any",
-    why: "Delete and restore. The restore path reads with .not('deleted_at','is',null) on purpose — it is looking for exactly the rows every other surface hides.",
+    why: "The public delete / restore endpoints: whole-visit delete and restore (the visit restore reads with .not('deleted_at','is',null) on purpose — it is looking for exactly the visits every other surface hides) and thin wrappers over the delete / restore cores in bulk-delete-core.ts and queue-restore-core.ts.",
   },
   "lib/actions/visits/queue-restore-core.ts": {
     lifecycle: "any",
