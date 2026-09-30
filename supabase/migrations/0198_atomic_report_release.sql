@@ -47,7 +47,12 @@
 --      0183's accepted waive-vs-undo cycle for undo_visit_release callers;
 --   4. every test_requests row of this visit that the call may read or
 --      write — the selection, every member of every touched report, and the
---      package header above each of them — FOR NO KEY UPDATE, ORDER BY id.
+--      package header above each of them — FOR UPDATE, ORDER BY id. FOR
+--      UPDATE (not NO KEY UPDATE) because it also blocks FOR KEY SHARE, the
+--      lock a new result_test_requests link takes on its test: no selected
+--      test can join a new report while this call holds it, and the report
+--      set is re-read once more after these locks (40001 when it moved in
+--      the gap between step 1 and here).
 --      LockRows sits above the sort, so the lock order is the id order
 --      whatever plan the planner picks (the concurrency proof checks both
 --      the local seq-scan and prod's indexed plan). The header is locked so
@@ -57,6 +62,12 @@
 --      ones would each have seen the other still pending and left the
 --      header at ready_for_release;
 --   5. re-read under the locks, plan, one UPDATE, return what it did.
+-- One cycle remains and is left to Postgres: soft-deleting a line locks the
+-- line, then its cascade updates the visit (fn_queue_delete_cascade), the
+-- reverse of steps 3→4. Only an HMO visit can be both deletable (unpaid) and
+-- releasable, so it needs a delete and a release of the same HMO visit at the
+-- same instant; one side aborts with 40P01 ("try again"), nothing half done,
+-- and the release side retries once by itself (withLifecycleRetry).
 -- claim_panel_members / unclaim_panel_members (0191) only ever write rows
 -- that are requested / in_progress, and a report with such a member is
 -- refused here before any write — so they never write a row this function
@@ -211,14 +222,23 @@ begin
     where tr.id = any (v_lock_ids)
       and tr.visit_id = p_visit_id
     order by tr.id
-      for no key update;
+      for update;
+
+  -- The report set once more, now that no selected test can be linked anew.
+  if array(
+       select distinct rtr.result_id
+         from public.result_test_requests rtr
+        where rtr.test_request_id = any (p_ids)
+        order by 1) is distinct from v_reports then
+    raise exception 'The tests on this report changed just now — try again.' using errcode = '40001';
+  end if;
 
   return v_reports;
 end;
 $$;
 
 comment on function public.release_report_locks(uuid, uuid[], text) is
-  'Private helper of release_visit_results / undo_visit_release (0198): takes the membership (shared) → patient (shared) → visit (FOR SHARE) → test_requests (FOR NO KEY UPDATE, id order) locks and returns the report ids the selection touches. 40001 when the selection''s reports changed before the lock; P0081 when the visit is missing or deleted.';
+  'Private helper of release_visit_results / undo_visit_release (0198): takes the membership (shared) → patient (shared) → visit (FOR SHARE) → test_requests (FOR UPDATE, id order) locks and returns the report ids the selection touches. 40001 when the selection''s reports changed before the lock; P0081 when the visit is missing or deleted.';
 
 revoke all on function public.release_report_locks(uuid, uuid[], text) from public, anon, authenticated, service_role;
 
@@ -430,7 +450,8 @@ declare
   v_cands    uuid[];
   v_undone   jsonb;
   v_count    int;
-  v_batch    boolean := p_expected_released_at is not null;
+  v_batch    boolean := p_expected_released_at is not null
+                         and jsonb_typeof(p_expected_released_at) <> 'null';
   v_refused  uuid[]  := '{}';  -- members of reports a batch Undo must leave alone
   v_skipped  jsonb;
   r          record;

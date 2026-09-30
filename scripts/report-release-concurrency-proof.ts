@@ -9,7 +9,7 @@
 // waits for the other, both commit, and the report ends {A ready, B released}:
 // split. Both functions now lock the same rows in the same order (result
 // membership shared -> patient shared -> visit FOR SHARE -> every member and
-// package header FOR NO KEY UPDATE, ORDER BY id) and plan on what the winner
+// package header FOR UPDATE, ORDER BY id) and plan on what the winner
 // committed. This runner proves that with separate `pg` connections, each
 // acting as `authenticated` with its own JWT `sub` (invoker rights, so the
 // medtech section rule, RLS and 0190's holder guard apply exactly as for the
@@ -58,7 +58,7 @@
 //
 // TWO PLAN MODES. Lock order is the SORT order inside release_report_locks:
 // `select 1 from test_requests where id = any(..) and visit_id = .. order by id
-// for no key update` plans as LockRows over an id-ordered input whatever the
+// for update` plans as LockRows over an id-ordered input whatever the
 // scan. Read-only EXPLAIN on prod (2026-09-30):
 //   LockRows -> Sort (Sort Key: id) -> Index Scan using idx_test_requests_visit_id
 //     (Index Cond: visit_id = ..., Filter: id = ANY(..))
@@ -1318,7 +1318,7 @@ async function lockPlan(mode: Mode): Promise<string[]> {
     const { rows } = await monitor.query(
       `explain (costs off) select 1 from public.test_requests tr
         where tr.id = any($1::uuid[]) and tr.visit_id = $2
-        order by tr.id for no key update`,
+        order by tr.id for update`,
       [[randomUUID(), randomUUID(), randomUUID()], randomUUID()],
     );
     return rows.map((r) => String(r["QUERY PLAN"]));
@@ -1376,9 +1376,9 @@ interface Mutant {
 const MUTANTS: Mutant[] = [
   {
     key: "M1",
-    what: "no row locks (release_report_locks drops FOR NO KEY UPDATE)",
+    what: "no row locks (release_report_locks drops FOR UPDATE)",
     fn: "release_report_locks",
-    from: "for no key update;",
+    from: "      for update;",
     to: ";",
     mustFail: ["B1", "B2"],
   },
