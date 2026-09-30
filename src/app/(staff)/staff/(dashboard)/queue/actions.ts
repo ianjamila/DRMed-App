@@ -460,8 +460,10 @@ export async function reassignTestAction(
 // nothing. Un-claiming a panel is atomic in the database
 // (unclaim_panel_members, 0191: every member or none, P0077 on a lost race),
 // so it needs no compensation. Reclaim and restore are still per-row
-// conditional writes: a partial write is compensated back, and anything the
-// compensation could not revert is audited (auditLeftoverPanelRows).
+// conditional writes: a partial write is compensated back. Reclaim audits
+// anything the compensation could not revert (auditLeftoverPanelRows);
+// restore re-deletes and audits what it compensated, and reports a panel it
+// could not fully put back (stillCommittedRows / partiallyRestoredIds).
 //   claimed   → unclaim  (still in progress, held by the caller, at the exact
 //                         started_at the claim stamped)
 //   unclaimed → reclaim  (still requested and unheld; the old holder is still
@@ -610,7 +612,7 @@ export async function undoBulkQueueAction(input: unknown): Promise<BulkUndoResul
               visit_id: row.visit_id,
               previous_assignee: session.user_id,
               reason: "Undo of a bulk claim",
-              self_service: true,
+              self_service: session.role !== "admin",
               via: BULK_UNDO_VIA,
               undo_of_batch: parsed.data.batchId,
               bulk_batch_id: undoBatchId,

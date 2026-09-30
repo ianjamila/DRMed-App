@@ -97,7 +97,7 @@ describe("finding 7: auditLeftoverPanelRows fails CLOSED when its verification r
     // Undo's panel un-claim goes through unclaim_panel_members (0191's own
     // atomicity, no app-level compensation left to audit).
     const calls = [...src.matchAll(/auditLeftoverPanelRows\(\s*supabase,\s*([a-zA-Z.()=> ]+),/g)];
-    expect(calls.length).toBeGreaterThanOrEqual(1);
+    expect(calls.length).toBe(1);
     for (const m of calls) {
       expect(m[1].trim()).toBe("got");
     }
