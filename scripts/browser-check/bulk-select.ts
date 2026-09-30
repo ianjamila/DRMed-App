@@ -891,62 +891,73 @@ async function sectionAuditFilter(c: CheckContext, admin: Page): Promise<void> {
 // release"), never typed.
 // ---------------------------------------------------------------------------
 async function sectionVisitRelease(c: CheckContext, admin: Page): Promise<void> {
-  await check(c, "V1 visit Release -> Undo returns tests to ready", async () => {
-    const [v] = await c.sql("select id from visits where visit_number = '9101'");
-    // Visit-page release only offers a checkbox on ready_for_release rows —
-    // every BSQ fixture test starts at "requested" (same one-off tweak F2
-    // uses). 9101 is PAID (bulk-select-fixtures.sql), so release is unblocked.
-    await c.sql(
-      `update test_requests set status = 'ready_for_release'
-       where visit_id = $1 and service_id in (select id from services where code in ('BSQ-CBC','BSQ-ESR'))`,
-      [v.id],
-    );
-    await goto(admin, `${APP_BASE}/staff/visits/${v.id}`);
-    const cbcBox = admin.locator('tbody input[type="checkbox"][aria-label*="Complete Blood Count"]');
-    const esrBox = admin.locator('tbody input[type="checkbox"][aria-label*="ESR"]');
-    await cbcBox.check();
-    await esrBox.check();
-    await admin.waitForSelector(VISIT_BAR, { timeout: 10_000 });
-    await admin.locator(VISIT_BAR).locator("button", { hasText: /^Release selected/ }).click();
-    await sleep(900);
+  // V1: an Email release sends the patient a notice (its result.notified
+  // audit row carries the batch id, so Undo still works) — the outcome says
+  // so, before and after Undo. V1b: a Physical hand-off sends nothing, so
+  // neither message may claim the patient was notified.
+  for (const [label, medium, notified] of [
+    ["V1 visit Release (Email) -> Undo returns tests to ready", "email", true],
+    ["V1b visit Release (Physical) -> Undo, no notified claim", "physical", false],
+  ] as const) {
+    await check(c, label, async () => {
+      const [v] = await c.sql("select id from visits where visit_number = '9101'");
+      // Visit-page release only offers a checkbox on ready_for_release rows —
+      // every BSQ fixture test starts at "requested" (same one-off tweak F2
+      // uses). 9101 is PAID (bulk-select-fixtures.sql), so release is unblocked.
+      await c.sql(
+        `update test_requests set status = 'ready_for_release'
+         where visit_id = $1 and service_id in (select id from services where code in ('BSQ-CBC','BSQ-ESR'))`,
+        [v.id],
+      );
+      await goto(admin, `${APP_BASE}/staff/visits/${v.id}`);
+      const cbcBox = admin.locator('tbody input[type="checkbox"][aria-label*="Complete Blood Count"]');
+      const esrBox = admin.locator('tbody input[type="checkbox"][aria-label*="ESR"]');
+      await cbcBox.check();
+      await esrBox.check();
+      await admin.waitForSelector(VISIT_BAR, { timeout: 10_000 });
+      await admin.locator(VISIT_BAR).locator('select[title="Release medium"]').selectOption(medium);
+      await admin.locator(VISIT_BAR).locator("button", { hasText: /^Release selected/ }).click();
+      await sleep(900);
 
-    const afterRelease = await c.sql(
-      `select tr.status from test_requests tr join services s on s.id = tr.service_id
-       where tr.visit_id = $1 and s.code in ('BSQ-CBC','BSQ-ESR')`,
-      [v.id],
-    );
-    const batchId = await latestBatchId(c, "test_request.released");
-    const outcomeAfterRelease = await outcomeText(admin);
-    const undoBtn = admin.locator('button:has-text("↶ Undo")').first();
-    const hadUndo = (await waitForCount(undoBtn)) > 0;
-    if (hadUndo) await undoBtn.click();
-    await sleep(900);
+      const afterRelease = await c.sql(
+        `select tr.status from test_requests tr join services s on s.id = tr.service_id
+         where tr.visit_id = $1 and s.code in ('BSQ-CBC','BSQ-ESR')`,
+        [v.id],
+      );
+      const batchId = await latestBatchId(c, "test_request.released");
+      const outcomeAfterRelease = await outcomeText(admin);
+      const undoBtn = admin.locator('button:has-text("↶ Undo")').first();
+      const hadUndo = (await waitForCount(undoBtn)) > 0;
+      if (hadUndo) await undoBtn.click();
+      await sleep(900);
 
-    const afterUndo = await c.sql(
-      `select tr.status from test_requests tr join services s on s.id = tr.service_id
-       where tr.visit_id = $1 and s.code in ('BSQ-CBC','BSQ-ESR')`,
-      [v.id],
-    );
-    const outcomeAfterUndo = await outcomeText(admin);
-    let auditCount = 0;
-    if (batchId) auditCount = await undoRowCount(c, batchId);
+      const afterUndo = await c.sql(
+        `select tr.status from test_requests tr join services s on s.id = tr.service_id
+         where tr.visit_id = $1 and s.code in ('BSQ-CBC','BSQ-ESR')`,
+        [v.id],
+      );
+      const outcomeAfterUndo = await outcomeText(admin);
+      let auditCount = 0;
+      if (batchId) auditCount = await undoRowCount(c, batchId);
 
-    const ok =
-      afterRelease.length === 2 &&
-      afterRelease.every((r) => r.status === "released") &&
-      !!outcomeAfterRelease &&
-      outcomeAfterRelease.includes("already notified") &&
-      hadUndo &&
-      afterUndo.length === 2 &&
-      afterUndo.every((r) => r.status === "ready_for_release") &&
-      !!outcomeAfterUndo &&
-      outcomeAfterUndo.includes("back to Ready for release") &&
-      auditCount > 0;
-    return {
-      ok,
-      detail: { afterRelease, afterUndo, outcomeAfterRelease, outcomeAfterUndo, batchId, auditCount },
-    };
-  });
+      const ok =
+        afterRelease.length === 2 &&
+        afterRelease.every((r) => r.status === "released") &&
+        !!outcomeAfterRelease &&
+        outcomeAfterRelease.includes("already notified") === notified &&
+        hadUndo &&
+        afterUndo.length === 2 &&
+        afterUndo.every((r) => r.status === "ready_for_release") &&
+        !!outcomeAfterUndo &&
+        outcomeAfterUndo.includes("back to Ready for release") &&
+        outcomeAfterUndo.includes("already notified") === notified &&
+        auditCount > 0;
+      return {
+        ok,
+        detail: { afterRelease, afterUndo, outcomeAfterRelease, outcomeAfterUndo, batchId, auditCount },
+      };
+    });
+  }
 }
 
 // ---------------------------------------------------------------------------
