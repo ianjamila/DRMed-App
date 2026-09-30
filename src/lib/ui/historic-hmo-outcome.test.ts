@@ -8,19 +8,19 @@ describe("historicBulkOutcomeMessage", () => {
 
   it("mark paid: says Undo reverses the journal entries", () => {
     expect(historicBulkOutcomeMessage("paid", 2, 2)).toBe(
-      "Marked 2 claims as paid. Undo within 10 minutes reverses the journal entries and puts them back to billed.",
+      "Marked 2 claims as paid. Undo within 10 minutes reverses the journal entries and returns them to the status they had before.",
     );
   });
 
   it("write off, singular: says Undo reverses the journal entry", () => {
     expect(historicBulkOutcomeMessage("writeoff", 1, 1)).toBe(
-      "Wrote off 1 claim. Undo within 10 minutes reverses the journal entry and puts it back to billed.",
+      "Wrote off 1 claim. Undo within 10 minutes reverses the journal entry and returns it to the status it had before.",
     );
   });
 
   it("partial: some requested claims were skipped (already in a different state)", () => {
     expect(historicBulkOutcomeMessage("paid", 5, 3)).toBe(
-      "Marked 3 of 5 claims as paid. Undo within 10 minutes reverses the journal entries and puts them back to billed.",
+      "Marked 3 of 5 claims as paid. Undo within 10 minutes reverses the journal entries and returns them to the status they had before.",
     );
   });
 

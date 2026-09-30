@@ -919,6 +919,11 @@ export async function markHistoricClaimsBilledAction(
       billed_by_staff_id: parsed.data.billed_by_staff_id,
       billed_by_name: staff.full_name,
       claim_ids: parsed.data.claim_ids,
+      // Carries this batch's id so Undo's changed-since guard
+      // (loadOwnBatchRows) reads this summary row as part of the batch, not
+      // as a later change to claim_ids[0] by someone else — without it the
+      // first claim of every Mark paid / Write off batch was refused Undo.
+      bulk_batch_id: batchId,
     },
     ...meta,
   });
@@ -1180,6 +1185,11 @@ export async function markHistoricClaimsPaidAction(
       payment_method: parsed.data.payment_method,
       paid_by_name: staff.full_name,
       claim_ids: parsed.data.claim_ids,
+      // Carries this batch's id so Undo's changed-since guard
+      // (loadOwnBatchRows) reads this summary row as part of the batch, not
+      // as a later change to claim_ids[0] by someone else — without it the
+      // first claim of every Mark paid / Write off batch was refused Undo.
+      bulk_batch_id: batchId,
     },
     ...meta,
   });
@@ -1337,6 +1347,11 @@ export async function writeOffHistoricClaimsAction(
       failed,
       reason: parsed.data.reason,
       claim_ids: parsed.data.claim_ids,
+      // Carries this batch's id so Undo's changed-since guard
+      // (loadOwnBatchRows) reads this summary row as part of the batch, not
+      // as a later change to claim_ids[0] by someone else — without it the
+      // first claim of every Mark paid / Write off batch was refused Undo.
+      bulk_batch_id: batchId,
     },
     ...meta,
   });

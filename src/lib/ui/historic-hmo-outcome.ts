@@ -33,5 +33,5 @@ export function historicBulkOutcomeMessage(kind: HistoricBulkKind, sent: number,
   });
   if (changed === 0 || kind === "billed") return head;
   // Paid / write-off post a journal entry per claim — Undo reverses it.
-  return `${head} Undo within 10 minutes reverses the journal entr${changed === 1 ? "y" : "ies"} and puts ${changed === 1 ? "it" : "them"} back to billed.`;
+  return `${head} Undo within 10 minutes reverses the journal entr${changed === 1 ? "y" : "ies"} and returns ${changed === 1 ? "it" : "them"} to the status ${changed === 1 ? "it" : "they"} had before.`;
 }

@@ -65,3 +65,22 @@ describe("markHistoricClaimsPaidAction / writeOffHistoricClaimsAction post the J
     expect(body).toMatch(/source_kind:\s*"history_import" as never,\s*\n\s*(\/\/.*\n\s*)*source_id:\s*c\.id,/);
   });
 });
+
+// Browser check H2/H3 (2026-09-30): the summary audit row each bulk action
+// writes (historic_hmo.marked_paid etc., resource_id = the first claim) was
+// written AFTER the per-claim rows without a bulk_batch_id, so Undo's
+// changed-since guard read it as someone else's later change and refused the
+// first claim of every Mark paid / Write off batch.
+describe("every historic bulk action's summary audit row carries its batch id", () => {
+  it.each([
+    ["markHistoricClaimsBilledAction", "historic_hmo.marked_billed"],
+    ["markHistoricClaimsPaidAction", "historic_hmo.marked_paid"],
+    ["writeOffHistoricClaimsAction", "historic_hmo.written_off"],
+  ])("%s stamps bulk_batch_id on %s", (fnName, action) => {
+    const body = bodyOf(fnName);
+    const at = body.indexOf(`action: "${action}"`);
+    expect(at, `${action} audit not found in ${fnName}`).toBeGreaterThan(-1);
+    const auditCall = body.slice(at, body.indexOf("...meta", at));
+    expect(auditCall).toMatch(/bulk_batch_id:\s*batchId/);
+  });
+});
