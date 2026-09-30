@@ -218,8 +218,13 @@
 //   #  L  the fill's not-found branch back to "n_skipped := n_skipped + 1; continue;"                                               (g) deleted target (+ check 36)
 //   #  M  hold op: "hold_reason, held_patient_id)" insert value -> NULL, i.e. mutate "= excluded.held_patient_id" -> "= null"   (39) run 2 loses the deleted id
 //   # (S1 and S4 are pinned by customer-plan.test.ts and review-queue.test.tsx.)
+//   # 0204 (check 40) re-creates sheet_sync_revert_run + sheet_review_resolve. Its own control loads the 0170 bodies under temp names
+//   # and asserts held_patient_id survives them. To see the live check bite instead, re-apply the 0170 sheet_review_resolve body
+//   # (or mutate: "hold_reason = null,\n        held_patient_id = null;" -> "hold_reason = null;") -> FAIL check 40 (Link resolve ...).
 import "./lib/load-env";
 import { requireLocalOrExplicitProd } from "./lib/env-guard";
+import fs from "node:fs";
+import path from "node:path";
 import { Client, type QueryResult, type QueryResultRow } from "pg";
 import { planCustomers } from "../src/lib/sheet-sync/customer-plan";
 import { buildPatientIndex } from "../src/lib/sheet-sync/patient-index";
@@ -3686,6 +3691,146 @@ async function main() {
         `select held_patient_id, hold_reason from public.sheet_patient_links where link_key = $1`, [key]);
       assert(cleared.rows[0].held_patient_id === null && cleared.rows[0].hold_reason === "several patients share this full name",
         `any other hold must clear held_patient_id, got ${JSON.stringify(cleared.rows[0])}`);
+    });
+
+    // 40. 0204: held_patient_id is cleared when the key stops meaning "held for that deleted patient" -----
+    // Resolution paths (Link / Create) and every Undo re-hold clear it; Dismiss "Keep deleted", the sync's own
+    // re-hold of the SAME deleted patient, and a revert that never touches the row leave it alone. A control loads
+    // the 0170 bodies (which never touched the column) under temp names and shows the stale pointer survives them.
+    await check("0204: Link / Create and every Undo re-hold clear held_patient_id; Keep deleted, a same-patient re-hold and an untouched row keep it; the 0170 bodies leave it set", async () => {
+      const DEL = (n: number) => `00000000-0000-4000-8000-0000000004${String(n).padStart(2, "0")}`;
+      const held = async (key: string) => (await q<{ decision: string; method: string; hold_reason: string | null; held: string | null }>(
+        `select decision, method, hold_reason, held_patient_id::text as held from public.sheet_patient_links where link_key = $1`, [key])).rows[0];
+      const mkHeld = async (key: string, delId: string, kind = "possible_existing_patient") => {
+        await setRole("postgres", null);
+        await q(`insert into public.sheet_patient_links (link_key, patient_id, decision, method, hold_reason, held_patient_id)
+                 values ($1, null, 'review', 'auto_exact', 'matches_deleted_patient', $2::uuid)`, [key, delId]);
+        return (await q<{ id: string }>(
+          `insert into public.sheet_sync_review_items (tab, item_key, kind, payload)
+           values ('customers', $1, $2, jsonb_build_object('link_keys', jsonb_build_array($1::text))) returning id::text`, [key, kind])).rows[0].id;
+      };
+      const resolve = async (id: string, action: string, patient: string | null) => {
+        await setRole("service_role", null);
+        await q(`select public.sheet_review_resolve($1::uuid, $2::uuid, $3, $4::uuid)`, [id, fx.adminId, action, patient]);
+        await setRole("postgres", null);
+      };
+      const svcApply = async (ops: unknown[], trigger = "manual") => {
+        await setRole("postgres", null);
+        const lease = await acquire(trigger, false);
+        await setRole("service_role", null);
+        const j = (await q<{ j: Json }>(`select public.sheet_sync_apply_customer_ops($1::uuid, $2::jsonb) as j`, [lease.token, JSON.stringify(ops)])).rows[0].j;
+        await finish(lease.token);
+        await setRole("postgres", null);
+        return { j, runId: lease.runId };
+      };
+      const undo = async (runId: string, revertFn = "sheet_sync_revert_run") => {
+        await setRole("postgres", null);
+        const lease = await acquire("revert", false);
+        await setRole("service_role", null);
+        const j = (await q<{ j: Json }>(`select public.${revertFn}($1::uuid, $2::uuid) as j`, [lease.token, runId])).rows[0].j;
+        await finish(lease.token);
+        await setRole("postgres", null);
+        return j;
+      };
+      const newPat = async (last: string) => (await q<{ id: string }>(
+        `insert into public.patients (first_name, last_name, birthdate) values ('Held', $1, '1990-01-01') returning id`, [last])).rows[0].id;
+      const createOp = (key: string, last: string) => ({ op: "create", create_key: key, method: "auto_exact",
+        fields: { first_name: "Held", last_name: last, middle_name: null }, link_keys: [key], admin_link_keys: [],
+        legacy_intake: {}, facts: { registered_on: null, new_repeat: null, source_ref: key } });
+
+      // -- resolution paths ------------------------------------------------
+      const iLink = await mkHeld("h4:link", DEL(1));
+      await resolve(iLink, "link", fx.patientPId);
+      let s = await held("h4:link");
+      assert(s.decision === "link" && s.method === "admin" && s.hold_reason === null && s.held === null,
+        `Link resolve: expected an admin link with no held_patient_id, got ${JSON.stringify(s)}`);
+      const iCreate = await mkHeld("h4:create", DEL(2), "ambiguous_patient");
+      await resolve(iCreate, "create", null);
+      s = await held("h4:create");
+      assert(s.decision === "create" && s.method === "admin" && s.held === null,
+        `Create resolve: expected an admin create with no held_patient_id, got ${JSON.stringify(s)}`);
+      // Keep deleted (Dismiss on a matches_deleted_patient hold) leaves the row held for THAT patient: keep the id.
+      const iKeep = await mkHeld("h4:keep", DEL(3));
+      await resolve(iKeep, "dismiss", null);
+      s = await held("h4:keep");
+      assert(s.decision === "review" && s.hold_reason === "matches_deleted_patient" && s.held === DEL(3),
+        `Keep deleted: the hold and its deleted-patient id must stay, got ${JSON.stringify(s)}`);
+      // The sync re-holding the SAME deleted patient keeps (re-writes) the id.
+      await svcApply([{ op: "hold", link_key: "h4:keep", reason: "matches_deleted_patient", deleted_patient_id: DEL(3) }]);
+      s = await held("h4:keep");
+      assert(s.held === DEL(3), `a re-hold for the same deleted patient must keep the id, got ${JSON.stringify(s)}`);
+
+      // -- Undo re-holds: a stale pointer is planted on the LIVE link, the undo must drop it ----------------
+      const stale = async (key: string, delId: string) => {
+        await setRole("postgres", null);
+        await q(`update public.sheet_patient_links set held_patient_id = $2::uuid where link_key = $1`, [key, delId]);
+      };
+      // (3) the done sweep: a run whose only effect is a link op (no patient change) — held at the end of the undo
+      const p3 = await newPat("HeldSweep");
+      const r3 = await svcApply([{ op: "link", link_key: "h4:sweep", patient_id: p3, method: "auto_exact" }]);
+      await stale("h4:sweep", DEL(4));
+      const u3 = await undo(r3.runId);
+      s = await held("h4:sweep");
+      assert(s.decision === "review" && s.hold_reason === "undone by an admin" && s.held === null,
+        `undo done-sweep re-hold: expected 'undone by an admin' with no held_patient_id, got ${JSON.stringify(s)} (${JSON.stringify(u3)})`);
+      // (2) a created patient is deleted by the undo and its key held
+      const r2 = await svcApply([createOp("h4:created", "HeldCreated")]);
+      await stale("h4:created", DEL(5));
+      await undo(r2.runId);
+      s = await held("h4:created");
+      assert(s.decision === "review" && s.hold_reason === "undone by an admin" && s.held === null,
+        `undo of a create: expected the key held with no held_patient_id, got ${JSON.stringify(s)}`);
+      // (1) a restored patient: the fill is put back and the auto link that would re-fill it is held
+      const p1 = await newPat("HeldRestore");
+      const r1 = await svcApply([{ op: "fill", patient_id: p1, fields: { email: "held-restore@example.test" } },
+                                 { op: "link", link_key: "h4:restore", patient_id: p1, method: "auto_exact" }]);
+      assert(r1.j.counts.filled === 1, `setup: expected the fill to apply, got ${JSON.stringify(r1.j.counts)}`);
+      await stale("h4:restore", DEL(6));
+      const u1 = await undo(r1.runId);
+      assert(u1.restored === 1, `setup: expected restored=1, got ${JSON.stringify(u1)}`);
+      s = await held("h4:restore");
+      assert(s.decision === "review" && s.hold_reason === "undone by an admin" && s.held === null,
+        `undo of a fill: expected the link held with no held_patient_id, got ${JSON.stringify(s)}`);
+      // An untouched deleted-patient hold that carries the undone run's id keeps its pointer (the undo only re-holds LINKS).
+      const r4 = await svcApply([{ op: "link", link_key: "h4:other", patient_id: p3, method: "auto_exact" }]);
+      await mkHeld("h4:bystander", DEL(7));
+      await q(`update public.sheet_patient_links set run_id = $2::uuid where link_key = $1`, [ "h4:bystander", r4.runId ]);
+      await undo(r4.runId);
+      s = await held("h4:bystander");
+      assert(s.decision === "review" && s.hold_reason === "matches_deleted_patient" && s.held === DEL(7),
+        `a deleted-patient hold the undo does not re-hold must keep its id, got ${JSON.stringify(s)}`);
+
+      // -- ACL + control: the 0170 bodies leave a stale pointer set ---------------------------------------
+      await scoped(async () => {
+        await setRole("postgres", null);
+        const old = fs.readFileSync(path.resolve(process.cwd(), "supabase/migrations/0170_sheet_sync_foundation.sql"), "utf8");
+        const load = (name: string, temp: string, argsSig: string) => {
+          const start = old.indexOf(`create or replace function public.${name}(`);
+          const end = old.indexOf("end $$;", start) + 7;
+          assert(start > 0 && end > start, `could not extract the 0170 ${name}`);
+          const body = old.slice(start, end).replace(`public.${name}(`, `public.${temp}(`);
+          assert(!body.includes("held_patient_id"), `the 0170 ${name} must not mention held_patient_id`);
+          return { body, grant: `grant execute on function public.${temp}(${argsSig}) to service_role` };
+        };
+        const oldResolve = load("sheet_review_resolve", "_srr_0170", "uuid, uuid, text, uuid");
+        const oldRevert = load("sheet_sync_revert_run", "_ssrr_0170", "uuid, uuid, integer");
+        for (const x of [oldResolve, oldRevert]) { await q(x.body); await q(x.grant); }
+
+        const iC = await mkHeld("h4:ctl-resolve", DEL(8));
+        await setRole("service_role", null);
+        await q(`select public._srr_0170($1::uuid, $2::uuid, 'link', $3::uuid)`, [iC, fx.adminId, fx.patientPId]);
+        await setRole("postgres", null);
+        s = await held("h4:ctl-resolve");
+        assert(s.decision === "link" && s.held === DEL(8), `control: the 0170 resolve must leave held_patient_id set (that is what 0204 fixes), got ${JSON.stringify(s)}`);
+
+        const pc = await newPat("HeldControl");
+        const rc = await svcApply([{ op: "link", link_key: "h4:ctl-undo", patient_id: pc, method: "auto_exact" }]);
+        await stale("h4:ctl-undo", DEL(9));
+        await undo(rc.runId, "_ssrr_0170");
+        s = await held("h4:ctl-undo");
+        assert(s.decision === "review" && s.hold_reason === "undone by an admin" && s.held === DEL(9),
+          `control: the 0170 revert must leave held_patient_id set, got ${JSON.stringify(s)}`);
+      });
     });
   } finally {
     // Never persisted. This proof never writes anything real.
