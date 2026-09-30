@@ -27,6 +27,7 @@ import {
 import { ipAndAgent } from "@/lib/server/action-helpers";
 import type { BulkQueueResult, BulkReleaseResult, SkippedRow } from "@/lib/queue/bulk-queue";
 import { unclaimPanelMembers } from "@/lib/actions/queue/panel-writes";
+import { mapWithConcurrency } from "@/lib/async/map-with-concurrency";
 import { withLifecycleRetry } from "@/lib/patients/lifecycle-retry";
 
 export type ClaimResult = { ok: true } | { ok: false; error: string };
@@ -515,20 +516,6 @@ export async function releaseTestsAction(input: unknown): Promise<BulkReleaseRes
     skipped: ids.filter((id) => skipped.has(id) && !changedSet.has(id)).map((id) => ({ id, reason: skipped.get(id)! })),
     warnings,
   };
-}
-
-/** Run `fn` over `items` with at most `limit` in flight; results keep input order. */
-async function mapWithConcurrency<T, R>(items: readonly T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> {
-  const results = new Array<R>(items.length);
-  let next = 0;
-  const worker = async () => {
-    while (next < items.length) {
-      const i = next++;
-      results[i] = await fn(items[i]);
-    }
-  };
-  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
-  return results;
 }
 
 const BulkUnclaimSchema = z.object({

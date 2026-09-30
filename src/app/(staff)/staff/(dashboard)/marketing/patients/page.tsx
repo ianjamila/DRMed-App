@@ -8,7 +8,7 @@ import { ipAndAgent } from "@/lib/server/action-helpers";
 import { manilaDate, manilaDateTime, todayManilaISODate } from "@/lib/dates/manila";
 import { firstParam, PATIENT_SOURCES_MIN_DATE, periodHref, resolvePeriod } from "@/lib/marketing/period";
 import {
-  GRAIN_LABEL, MODE_LABEL, channelTable, chartData, costPerNewPatient, parseGrain, parseMode, previousPeriod,
+  GRAIN_LABEL, MODE_LABEL, channelTable, formatNewCounts, chartData, costPerNewPatient, parseGrain, parseMode, previousPeriod,
   sheetBanner, type Grain, type Mode,
 } from "@/lib/marketing/patient-sources";
 import {
@@ -137,7 +137,7 @@ export default async function PatientSourcesPage({
 
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <StatCard label="New customers" href={peopleHref("new")}
-          value={`${s.new_confirmed.toLocaleString("en-PH")} confirmed · ${s.new_unconfirmed.toLocaleString("en-PH")} unconfirmed`}
+          value={formatNewCounts(s.new_confirmed, s.new_unconfirmed)}
           hint="First visit recorded since Dec 2023 (or registration, if no visit yet)" />
         <StatCard label="Returning, first time in our records" href={peopleHref("returning")}
           value={s.returning_first_recorded.toLocaleString("en-PH")}
