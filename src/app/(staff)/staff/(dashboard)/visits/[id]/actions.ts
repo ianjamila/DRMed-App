@@ -42,7 +42,6 @@ import {
   type UndoScopeRejectionReason,
 } from "@/lib/visits/undo-release-scope";
 
-export type { ReleaseMedium };
 
 export type ReleaseResult =
   | { ok: true }

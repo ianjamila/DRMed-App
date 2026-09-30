@@ -3,7 +3,8 @@
 import { useState, useTransition } from "react";
 import { Button } from "@/components/ui/button";
 import { releaseOutcomeText, useReleaseOutcome } from "@/components/staff/release/release-outcome";
-import { releaseAllReadyComponentsAction, type ReleaseMedium } from "./actions";
+import { releaseAllReadyComponentsAction } from "./actions";
+import type { ReleaseMedium } from "@/lib/visits/release-media";
 
 interface Props {
   headerId: string;

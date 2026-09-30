@@ -3,13 +3,9 @@
 import { useState, useTransition } from "react";
 import { Button } from "@/components/ui/button";
 import { Panel } from "@/components/ui/panel";
-import { RELEASE_MEDIUM_OPTIONS } from "@/lib/visits/release-media";
+import { RELEASE_MEDIUM_OPTIONS, type ReleaseMedium } from "@/lib/visits/release-media";
 import { releaseOutcomeText, useReleaseOutcome } from "@/components/staff/release/release-outcome";
-import {
-  releaseSelectedAction,
-  undoReleaseSelectedAction,
-  type ReleaseMedium,
-} from "./actions";
+import { releaseSelectedAction, undoReleaseSelectedAction } from "./actions";
 import { useRowSelection } from "./selection-context";
 
 interface Props {

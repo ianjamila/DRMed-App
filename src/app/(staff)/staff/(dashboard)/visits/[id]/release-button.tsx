@@ -5,7 +5,8 @@ import { Button } from "@/components/ui/button";
 import { RELEASE_BLOCKED_CONSENT, RELEASE_BLOCKED_UNPAID } from "@/lib/visits/release-messages";
 import { RELEASE_MEDIUM_OPTIONS } from "@/lib/visits/release-media";
 import { releaseOutcomeText, useReleaseOutcome } from "@/components/staff/release/release-outcome";
-import { releaseTestAction, type ReleaseMedium } from "./actions";
+import { releaseTestAction } from "./actions";
+import type { ReleaseMedium } from "@/lib/visits/release-media";
 
 interface Props {
   testRequestId: string;
