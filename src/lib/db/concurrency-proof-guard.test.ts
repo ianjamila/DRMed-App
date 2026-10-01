@@ -177,7 +177,7 @@ describe("concurrency-proof guard (real migrations)", () => {
     // checkGuard already asserts existence and the per-function annotation;
     // this pins that REGISTRY is non-trivial.
     const proofs = Object.values(REGISTRY).filter((e) => "proof" in e);
-    expect(proofs.length).toBe(18);
+    expect(proofs.length).toBe(22);
   });
 });
 
