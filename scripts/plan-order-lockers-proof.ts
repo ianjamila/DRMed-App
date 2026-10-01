@@ -20,7 +20,7 @@
 // OBSERVE which row the writer already holds while queued and demand the matching
 // outcome - the same shape as report-release's L2x.
 //
-// OBSERVE-ONLY (printed, never counted): Q3 (header delete vs release - the known
+// KNOWN (printed, never counted; fixed by PR 3b): Q1, Q2, Q3/Q3b (header delete vs release - the known
 // accepted cycle) and Q5 (bulk plain-line delete vs claim - not fixed in this PR).
 //
 // THE APP STATEMENTS, mirrored:
@@ -791,24 +791,28 @@ interface Result {
   detail: string;
 }
 const results: Result[] = [];
-const only: string[] | null = process.env.PLO_ONLY ? process.env.PLO_ONLY.split(",") : null;
+let only: string[] | null = process.env.PLO_ONLY ? process.env.PLO_ONLY.split(",") : null;
+let sink: Result[] = results; // control rounds collect into their own list
+let quiet = false; // control rounds print one line per mutant, not per scenario
 
 async function scenario(
   id: string,
   title: string,
   body: () => Promise<string | void>,
-  opts: { observe?: boolean } = {},
+  opts: { observe?: boolean; known?: string } = {},
 ): Promise<void> {
   if (aborting || (only && !only.includes(id))) return;
-  const observed = opts.observe === true;
+  const observed = opts.observe === true || opts.known !== undefined;
+  // KNOWN = a proven race that a later PR fixes: printed, never counted.
+  const tag = opts.known !== undefined ? `KNOWN - fixed by ${opts.known}` : "OBSERVED";
   try {
     const note = (await body()) ?? "";
-    results.push({ id, name: title, ok: true, observed, detail: note });
-    console.log(`  ${observed ? "OBSERVED" : "PASS    "} ${id} ${title}${note ? ` - ${note}` : ""}`);
+    sink.push({ id, name: title, ok: true, observed, detail: note });
+    if (!quiet) console.log(`  ${observed ? tag : "PASS    "} ${id} ${title}${note ? ` - ${note}` : ""}`);
   } catch (e) {
     const detail = e instanceof Error ? e.message : String(e);
-    results.push({ id, name: title, ok: false, observed, detail });
-    console.log(`  ${observed ? "OBSERVED (scenario error)" : "FAIL    "} ${id} ${title} - ${detail}`);
+    sink.push({ id, name: title, ok: false, observed, detail });
+    if (!quiet) console.log(`  ${observed ? `${tag} (still reproduces)` : "FAIL    "} ${id} ${title} - ${detail}`);
   } finally {
     await closeActors();
   }
@@ -1139,10 +1143,12 @@ async function cascadeScenarios(): Promise<void> {
   // concurrency-proof: fn_queue_delete_cascade
   await scenario("Q1", "header delete (cascade in plan order) vs claim of the components, heap order reversed: must not deadlock", () =>
     cascadeRace("claim"),
+    { known: "PR 3b" },
   );
   // concurrency-proof: fn_queue_delete_cascade
   await scenario("Q2", "header delete (cascade in plan order) vs unclaim of the components, heap order reversed: must not deadlock", () =>
     cascadeRace("unclaim"),
+    { known: "PR 3b" },
   );
 
   // Q3 (OBSERVE ONLY): header delete vs RELEASE of a component on an HMO visit. The
@@ -1195,7 +1201,7 @@ async function cascadeScenarios(): Promise<void> {
           `${w1.text}; ${w2.text}; after W commits: ${cycle}`
         );
       },
-      { observe: true },
+      { known: "PR 3b" },
     );
   }
 
@@ -1258,7 +1264,7 @@ async function cascadeScenarios(): Promise<void> {
         `claim: ${fmtOut(rw)}; delete: ${fmtOut(rd)}). ${w1.text}; ${w2.text}; after W commits: ${cycle}`
       );
     },
-    { observe: true },
+    { known: "PR 3b" },
   );
 }
 
@@ -1394,6 +1400,132 @@ async function headerReleaseScenarios(): Promise<void> {
     const state = await expectHeadersConsistent("after both", t);
     return `no deadlock - ${held}; ${w1.text}; ${w2.text}; final ${state}`;
   });
+}
+
+
+// ---------------------------------------------------------------------------
+// Control rounds (--control): prove the proof can fail
+// ---------------------------------------------------------------------------
+//
+// Each mutant is a copy of the LIVE recompute function in a throwaway schema
+// (plo_ctl_<hex>, never public - the stack is shared) with ONE guard removed; the
+// named scenarios run against it through fn.recomputeSchema and the round passes
+// only if every one of them FAILS ("caught"). B0 is the unmutated copy and must
+// pass them all, so a broken copy cannot make every mutant look caught.
+//   M1  the pre-0215 (0184) body: no visit/line pre-lock, one UPDATE over a CTE
+//   M2  no visit pre-lock (b): lines are locked first, the 0183 guard then takes the visit
+//   M3  no line pre-lock (c): the UPDATE locks the lines in plan order
+//   M4  no predicate re-check in (d): updates every line collected in (a)
+// NOT covered: the guards that live in triggers on public tables
+// (guard_test_request_on_waived_visit) - a trigger on a public table fires for
+// every session, so a mutant of it cannot be isolated.
+
+const CTL_SCHEMA = `plo_ctl_${TAG.slice(4)}`;
+
+// The pre-0215 body (0184), verbatim from pg_get_functiondef before 0215 was applied.
+const PRE_FIX_BODY = "CREATE OR REPLACE FUNCTION public.recompute_clinic_fee_for_unreleased()\n RETURNS jsonb\n LANGUAGE plpgsql\n SECURITY DEFINER\n SET search_path TO 'pg_catalog', 'public', 'pg_temp'\nAS $function$\ndeclare\n  v_affected int;\nbegin\n  with target_ids as (\n    select tr.id\n    from public.test_requests tr\n    join public.visits v on v.id = tr.visit_id\n    join public.patients pt on pt.id = v.patient_id   -- 0184: only an active patient's line\n    left join public.physicians p\n      on p.id = coalesce(tr.attending_physician_id, v.attending_physician_id)\n    left join public.physician_compensation pc on pc.physician_id = p.id\n    where coalesce(\n            pc.clinic_cut_php,\n            case when pc.compensation_arrangement in ('rent_paying', 'shareholder') then 0 else 100 end\n          ) = 0\n      and tr.clinic_fee_php > 0\n      and pt.deleted_at is null and pt.merged_into_id is null   -- 0184\n      and not exists (\n        select 1 from public.journal_entries je\n        where je.source_kind = 'test_request'\n          and je.source_id = tr.id\n          and je.status = 'posted'\n      )\n  ),\n  updated as (\n    update public.test_requests tr2\n      set clinic_fee_php = 0,\n          doctor_pf_php = tr2.final_price_php\n      where tr2.id in (select id from target_ids)\n      returning tr2.id\n  )\n  select count(*) into v_affected from updated;\n\n  return jsonb_build_object('rows_affected', v_affected);\nend;\n$function$";
+
+interface Mutant {
+  key: string;
+  what: string;
+  // [from, to] replacements applied in order to the LIVE definition; each must match.
+  edits: Array<[string, string]>;
+  replaceWhole?: boolean; // M1: use PRE_FIX_BODY instead of the live definition
+  mustFail: string[];
+}
+
+const MUTANTS: Mutant[] = [
+  {
+    key: "M1",
+    what: "the pre-0215 body (one UPDATE over a CTE, no pre-lock)",
+    edits: [],
+    replaceWhole: true,
+    mustFail: ["R1", "R2a", "R3-claim", "R3-unclaim", "R4", "R5", "P3"],
+  },
+  {
+    key: "M2",
+    what: "no visit pre-lock (b)",
+    edits: [["  perform 1 from public.visits\n   where id = any (v_visits)\n   order by id\n     for update;", ""]],
+    mustFail: ["R1", "R4", "R5", "P3"],
+  },
+  {
+    key: "M3",
+    what: "no line pre-lock (c) - lines locked by the UPDATE, plan order",
+    edits: [["  perform 1 from public.test_requests\n   where id = any (v_lines)\n   order by id\n     for update;", ""]],
+    mustFail: ["R3-claim", "R3-unclaim"],
+  },
+  {
+    key: "M4",
+    what: "no eligibility re-check in (d) - updates every line collected in (a)",
+    edits: [
+      ["     where tr2.id = any (v_lines)\n       and tr2.id in (", "     where tr2.id = any (v_lines)\n       and (true or tr2.id in ("],
+      ["            )\n       )\n    returning tr2.id", "            )\n       ))\n    returning tr2.id"],
+    ],
+    mustFail: ["R2a"],
+  },
+];
+
+async function installCopy(m: Mutant | null): Promise<void> {
+  let def: string;
+  if (m?.replaceWhole) def = PRE_FIX_BODY;
+  else {
+    const { rows } = await monitor.query<{ d: string }>(
+      "select pg_get_functiondef('public.recompute_clinic_fee_for_unreleased()'::regprocedure) as d",
+    );
+    def = rows[0].d;
+  }
+  for (const [from, to] of m?.edits ?? []) {
+    if (!def.includes(from)) throw new Error(`mutant ${m?.key}: text to replace not found in the live body`);
+    def = def.replace(from, to);
+  }
+  def = def.replace("public.recompute_clinic_fee_for_unreleased", `${CTL_SCHEMA}.recompute_clinic_fee_for_unreleased`);
+  await monitor.query(`drop schema if exists ${CTL_SCHEMA} cascade`);
+  await monitor.query(`create schema ${CTL_SCHEMA}`);
+  await monitor.query(`grant usage on schema ${CTL_SCHEMA} to service_role`);
+  await monitor.query(def);
+  await monitor.query(`grant execute on function ${CTL_SCHEMA}.recompute_clinic_fee_for_unreleased() to service_role`);
+}
+
+const CONTROL_SCENARIOS = ["R1", "R2a", "R3-claim", "R3-unclaim", "R4", "R5", "P3"];
+
+async function controlRounds(): Promise<void> {
+  console.log("\ncontrol rounds (a mutant must make its scenarios FAIL):");
+  const savedOnly = only;
+  const rounds: Array<{ key: string; what: string; m: Mutant | null; list: string[]; wantPass: boolean }> = [
+    { key: "B0", what: "unmutated copy of the live body", m: null, list: CONTROL_SCENARIOS, wantPass: true },
+    ...MUTANTS.map((m) => ({ key: m.key, what: m.what, m, list: m.mustFail, wantPass: false })),
+  ];
+  for (const r of rounds) {
+    await installCopy(r.m);
+    fn.recomputeSchema = CTL_SCHEMA;
+    only = r.list;
+    const mine: Result[] = [];
+    sink = mine;
+    quiet = true;
+    try {
+      await recomputeScenarios();
+      await headerReleaseScenarios();
+    } finally {
+      sink = results;
+      quiet = false;
+      fn.recomputeSchema = "public";
+      only = savedOnly;
+    }
+    const got = new Map(mine.map((x) => [x.id, x]));
+    const missing = r.list.filter((id) => !got.has(id));
+    const wrong = r.list.filter((id) => got.has(id) && got.get(id)!.ok !== r.wantPass);
+    const ok = missing.length === 0 && wrong.length === 0;
+    const caught = r.list.filter((id) => got.get(id) && !got.get(id)!.ok);
+    const label = r.wantPass ? `B0 baseline: ${r.list.length - wrong.length - missing.length}/${r.list.length} scenarios pass` : `${r.key} (${r.what}): caught by ${caught.join(", ") || "nothing"} (${caught.length}/${r.list.length})`;
+    results.push({
+      id: `control-${r.key}`,
+      name: label,
+      ok,
+      observed: false,
+      detail: ok ? "" : `${missing.length ? `not run: ${missing.join(",")}. ` : ""}${wrong.length ? (r.wantPass ? `failed on the unmutated copy: ${wrong.map((id) => `${id} (${got.get(id)!.detail.slice(0, 120)})`).join("; ")}` : `SURVIVED (passed): ${wrong.join(",")}`) : ""}`,
+    });
+    console.log(`  ${ok ? "PASS" : "FAIL"}  ${label}${ok ? "" : ` - ${results[results.length - 1].detail}`}`);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -1560,6 +1692,7 @@ async function seed(): Promise<void> {
 
 async function teardown(c: Client = monitor): Promise<void> {
   await closeActors();
+  await c.query(`drop schema if exists ${CTL_SCHEMA} cascade`);
   await sweepTagged(TAG, c);
   const left = await countTagged(TAG, c);
   if (left > 0) {
@@ -1581,6 +1714,7 @@ async function abortCleanup(sig: string): Promise<void> {
   await cleaner.connect();
   await cleaner.query("select pg_terminate_backend(pid) from pg_stat_activity where pid <> pg_backend_pid() and application_name = $1", [APP_NAME]);
   await sleep(300);
+  await cleaner.query(`drop schema if exists ${CTL_SCHEMA} cascade`);
   await sweepTagged(TAG, cleaner);
   const left = await countTagged(TAG, cleaner);
   console.log(left > 0 ? `  FAIL     teardown - ${left} fixture rows left behind` : "  teardown: every fixture row removed");
@@ -1616,6 +1750,8 @@ async function main(): Promise<void> {
   try {
     await checkPrerequisites();
     await sweepTagged("plo-");
+    const { rows: stale } = await monitor.query<{ n: string }>("select nspname as n from pg_namespace where nspname ~ '^plo_ctl_[0-9a-f]{6}$'");
+    for (const { n } of stale) await monitor.query(`drop schema ${n} cascade`);
     console.log(`plan-order lockers proof - fixtures tagged ${TAG}`);
     await seed();
     seeded = true;
@@ -1624,13 +1760,7 @@ async function main(): Promise<void> {
     await cascadeScenarios();
     await headerReleaseScenarios();
 
-    if (process.argv.includes("--control")) {
-      console.log(
-        "\n  --control: no mutant bodies yet. The fixes do not exist; each fix lands with a mutant that restores the pre-fix body " +
-          "(recompute: a copy in a plo_ctl_<hex> schema via PLO_RECOMPUTE_SCHEMA; the cascade / header-release trigger functions: swapped in " +
-          "inside the scenario's own setup and restored in teardown). Today's bodies ARE the pre-fix bodies, so the plain run is the control.",
-      );
-    }
+    if (process.argv.includes("--control")) await controlRounds();
   } finally {
     if (aborting) await sleep(60000); // the signal handler is cleaning up and will exit
     if (seeded || (await countTagged(TAG)) > 0) await teardown();
