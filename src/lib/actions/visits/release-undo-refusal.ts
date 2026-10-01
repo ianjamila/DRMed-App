@@ -1,5 +1,7 @@
 import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { readInChunks } from "@/lib/supabase/in-chunks";
+import { reportError } from "@/lib/observability/report-error";
 
 /**
  * Why a 10-minute release Undo leaves a combined report alone when a member
@@ -22,7 +24,8 @@ interface ReportLink {
  * combined report has a LIVE, RELEASED member this batch did not release
  * (`batchIds` = every line with a test_request.released row in the batch).
  * Wording only — the database already decided; so it never throws, and any
- * failed read flags nothing (the caller keeps CHANGED_SINCE_REASON).
+ * failed read flags nothing (the caller keeps CHANGED_SINCE_REASON). Every
+ * id-list read is chunked (a batch can carry 500 ids) and fails closed.
  */
 export async function idsWithMateReleasedOutsideBatch(
   supabase: SupabaseClient,
@@ -30,36 +33,42 @@ export async function idsWithMateReleasedOutsideBatch(
   batchIds: ReadonlySet<string>,
 ): Promise<Set<string>> {
   const none = new Set<string>();
-  if (refusedIds.length === 0) return none;
+  const unique = Array.from(new Set(refusedIds));
+  if (unique.length === 0) return none;
   try {
-    const { data: own, error: ownErr } = await supabase
-      .from("result_test_requests")
-      .select("result_id, test_request_id")
-      .in("test_request_id", [...refusedIds]);
-    const ownLinks = (own ?? []) as ReportLink[];
-    if (ownErr || ownLinks.length === 0) return none;
-    const reportOf = new Map(ownLinks.map((l) => [l.test_request_id, l.result_id]));
+    const own = await readInChunks<ReportLink>(unique, (chunk) =>
+      supabase.from("result_test_requests").select("result_id, test_request_id").in("test_request_id", chunk),
+    );
+    if (!own.ok) throw own.error;
+    if (own.rows.length === 0) return none;
+    const reportOf = new Map(own.rows.map((l) => [l.test_request_id, l.result_id]));
 
-    const { data: members, error: memErr } = await supabase
-      .from("result_test_requests")
-      .select("result_id, test_request_id")
-      .in("result_id", [...new Set(reportOf.values())]);
-    if (memErr || !members) return none;
-    const outside = (members as ReportLink[]).filter((m) => !batchIds.has(m.test_request_id));
+    const members = await readInChunks<ReportLink>([...new Set(reportOf.values())], (chunk) =>
+      supabase.from("result_test_requests").select("result_id, test_request_id").in("result_id", chunk),
+    );
+    if (!members.ok) throw members.error;
+    const outside = members.rows.filter((m) => !batchIds.has(m.test_request_id));
     if (outside.length === 0) return none;
 
-    const { data: released, error: relErr } = await supabase
-      .from("test_requests")
-      .select("id, visits!inner ( id )")
-      .in("id", outside.map((m) => m.test_request_id))
-      .eq("status", "released")
-      .is("deleted_at", null)
-      .is("visits.deleted_at", null);
-    if (relErr || !released) return none;
-    const releasedSet = new Set((released as Array<{ id: string }>).map((r) => r.id));
+    const released = await readInChunks<{ id: string }>(
+      outside.map((m) => m.test_request_id),
+      (chunk) =>
+        supabase.from("test_requests").select("id, visits!inner ( id )")
+          .in("id", chunk)
+          .eq("status", "released")
+          .is("deleted_at", null)
+          .is("visits.deleted_at", null),
+    );
+    if (!released.ok) throw released.error;
+    const releasedSet = new Set(released.rows.map((r) => r.id));
     const flagged = new Set(outside.filter((m) => releasedSet.has(m.test_request_id)).map((m) => m.result_id));
-    return new Set(refusedIds.filter((id) => flagged.has(reportOf.get(id) ?? "")));
-  } catch {
+    return new Set(unique.filter((id) => flagged.has(reportOf.get(id) ?? "")));
+  } catch (error) {
+    try {
+      await reportError({ scope: "release/undo-refusal-lookup", error, metadata: { ids: unique } });
+    } catch {
+      // Reporting itself failed — the generic reason stands.
+    }
     return none;
   }
 }
