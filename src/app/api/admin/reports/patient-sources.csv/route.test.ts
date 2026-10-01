@@ -5,6 +5,7 @@ import { NextRequest } from "next/server";
 // (reversed, over 400 days, or before 2023-12-01) instead of silently exporting
 // this month under a filename that claims the requested dates (0193 P4).
 const loaders = vi.hoisted(() => ({
+  loadPatientSourcesReport: vi.fn(),
   loadPatientSourcesSummary: vi.fn(),
   loadPatientSourcesSeries: vi.fn(),
   loadAllPeople: vi.fn(),
@@ -25,6 +26,9 @@ const req = (path: string, qs: string) => new NextRequest(`http://localhost/api/
 
 beforeEach(() => {
   vi.clearAllMocks();
+  loaders.loadPatientSourcesReport.mockResolvedValue({ ok: true, data: {
+    summary: {}, series: [], current: [], previous: null, new_by_day: [], revenue: [], overlaps: [], referrers: [],
+  } });
   loaders.loadPatientSourcesSummary.mockResolvedValue({ ok: true, data: {} });
   loaders.loadPatientSourcesSeries.mockResolvedValue({ ok: true, data: { rows: [], truncated: false } });
   loaders.loadAllPeople.mockResolvedValue({ ok: true, data: { rows: [], truncated: false } });
@@ -48,6 +52,7 @@ describe.each([
     expect(res.status).toBe(400);
     expect(await res.text()).toMatch(/can't be shown/);
     expect(csv).not.toHaveBeenCalled();
+    expect(loaders.loadPatientSourcesReport).not.toHaveBeenCalled();
     expect(loaders.loadPatientSourcesSummary).not.toHaveBeenCalled();
     expect(loaders.loadPatientSourcesSeries).not.toHaveBeenCalled();
     expect(loaders.loadAllPeople).not.toHaveBeenCalled();
@@ -68,5 +73,27 @@ describe.each([
     const res = await GET(req(name, ""));
     expect(res.status).toBe(200);
     expect(csv.mock.calls[0]![0].filters).toMatchObject({ from: "2026-09-01", to: "2026-09-28" });
+  });
+});
+
+describe("patient-sources.csv reads one report", () => {
+  it("asks for the period, grain and mode with no comparison, and exports its summary + series", async () => {
+    const s = { bucket_start: "2026-08-01", channel: "walk_in", confirmed: 1, unconfirmed: 0 };
+    loaders.loadPatientSourcesReport.mockResolvedValueOnce({ ok: true, data: {
+      summary: { new_confirmed: 1 }, series: [s], current: [], previous: null, new_by_day: [], revenue: [], overlaps: [], referrers: [],
+    } });
+    const res = await seriesGet(req("patient-sources.csv", "from=2026-08-01&to=2026-08-31&grain=week&mode=served"));
+    expect(res.status).toBe(200);
+    expect(loaders.loadPatientSourcesReport).toHaveBeenCalledTimes(1);
+    expect(loaders.loadPatientSourcesReport.mock.calls[0][1]).toEqual({ from: "2026-08-01", to: "2026-08-31", grain: "week", mode: "served", prev: null });
+    expect(loaders.loadPatientSourcesSummary).not.toHaveBeenCalled();
+    expect(loaders.loadPatientSourcesSeries).not.toHaveBeenCalled();
+    expect(csv.mock.calls[0][0]).toMatchObject({ truncated: false });
+  });
+  it.each([["forbidden", 403], ["invalid", 500], ["error", 500]] as const)("answers %s with %i", async (kind, status) => {
+    loaders.loadPatientSourcesReport.mockResolvedValueOnce({ ok: false, kind, message: "m" });
+    const res = await seriesGet(req("patient-sources.csv", "from=2026-08-01&to=2026-08-31"));
+    expect(res.status).toBe(status);
+    expect(csv).not.toHaveBeenCalled();
   });
 });
