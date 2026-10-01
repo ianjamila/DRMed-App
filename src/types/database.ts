@@ -7379,6 +7379,14 @@ export type Database = {
         Returns: undefined
       }
       _ps_doctor_norm: { Args: { p: string }; Returns: string }
+      _ps_encounter_list: {
+        Args: Record<PropertyKey, never>
+        Returns: unknown[][]
+      }
+      _ps_identity_list: {
+        Args: Record<PropertyKey, never>
+        Returns: unknown[][]
+      }
       _ps_loose_key: {
         Args: { p_first: string; p_last: string }
         Returns: string
@@ -7388,6 +7396,10 @@ export type Database = {
         Returns: string
       }
       _ps_name_norm: { Args: { p: string }; Returns: string }
+      _ps_revenue_line_list: {
+        Args: { p_from: string; p_to: string }
+        Returns: unknown[][]
+      }
       _ps_revenue_lines: {
         Args: { p_from: string; p_to: string }
         Returns: {
@@ -7397,6 +7409,76 @@ export type Database = {
           service_date: string
           source: string
           survivor_id: string
+        }[]
+      }
+      _ps_sec_overlaps: {
+        Args: { p_lines: unknown[][] }
+        Returns: {
+          app_php: number
+          drm_id: string
+          patient_id: string
+          service_date: string
+          sheet_php: number
+        }[]
+      }
+      _ps_sec_referrers: {
+        Args: {
+          p_from: string
+          p_ids: unknown[][]
+          p_limit: number
+          p_to: string
+        }
+        Returns: {
+          doctor_label: string
+          new_confirmed: number
+          new_unconfirmed: number
+        }[]
+      }
+      _ps_sec_revenue: {
+        Args: { p_ids: unknown[][]; p_lines: unknown[][] }
+        Returns: {
+          channel: string
+          confirmed_php: number
+          unconfirmed_php: number
+        }[]
+      }
+      _ps_sec_series: {
+        Args: {
+          p_enc: unknown[][]
+          p_from: string
+          p_grain: string
+          p_ids: unknown[][]
+          p_mode: string
+          p_to: string
+        }
+        Returns: {
+          bucket_start: string
+          channel: string
+          confirmed: number
+          unconfirmed: number
+        }[]
+      }
+      _ps_sec_summary: {
+        Args: {
+          p_enc: unknown[][]
+          p_from: string
+          p_ids: unknown[][]
+          p_to: string
+        }
+        Returns: {
+          last_run_status: string
+          last_synced_at: string
+          new_confirmed: number
+          new_unconfirmed: number
+          returning_first_recorded: number
+          served_confirmed: number
+          served_unconfirmed: number
+          sheet_last_dates: Json
+          sheet_rows_present: boolean
+          source_recorded: number
+          source_total: number
+          sync_paused: boolean
+          undated_registrations: number
         }[]
       }
       _ps_survivors: {
@@ -7759,6 +7841,17 @@ export type Database = {
           new_confirmed: number
           new_unconfirmed: number
         }[]
+      }
+      patient_sources_report: {
+        Args: {
+          p_from: string
+          p_grain: string
+          p_mode: string
+          p_prev_from?: string
+          p_prev_to?: string
+          p_to: string
+        }
+        Returns: Json
       }
       patient_sources_revenue: {
         Args: { p_from: string; p_to: string }
@@ -8286,7 +8379,32 @@ export type Database = {
       period_status: "open" | "closed"
     }
     CompositeTypes: {
-      [_ in never]: never
+      _ps_encounter: {
+        identity: string | null
+        survivor_id: string | null
+        loose_key: string | null
+        service_date: string | null
+        source: string | null
+      }
+      _ps_identity: {
+        identity: string | null
+        confirmed: boolean | null
+        survivor_id: string | null
+        loose_key: string | null
+        first_date: string | null
+        basis: string | null
+        is_returning: boolean | null
+        channel: string | null
+        referrer_raw: string | null
+      }
+      _ps_revenue_line: {
+        identity: string | null
+        survivor_id: string | null
+        service_date: string | null
+        source: string | null
+        php: number | null
+        overlap: boolean | null
+      }
     }
   }
 }

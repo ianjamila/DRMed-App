@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 
 vi.mock("server-only", () => ({}));
 
-import { loadAdSpendRows } from "./patient-sources.server";
+import { loadAdSpendRows, loadPatientSourcesReport } from "./patient-sources.server";
 import type { AdSpendDbRow } from "./patient-sources";
 
 const row = (i: number): AdSpendDbRow => ({
@@ -63,5 +63,47 @@ describe("loadAdSpendRows", () => {
     expect(await loadAdSpendRows(fake(1, { code: "42501" }).supabase, "a", "b")).toMatchObject({ ok: false, kind: "forbidden" });
     expect(await loadAdSpendRows(fake(1, { code: "22023" }).supabase, "a", "b")).toMatchObject({ ok: false, kind: "invalid" });
     expect(await loadAdSpendRows(fake(1, { code: "XX000" }).supabase, "a", "b")).toMatchObject({ ok: false, kind: "error" });
+  });
+});
+
+describe("loadPatientSourcesReport", () => {
+  const s = { bucket_start: "2026-06-01", channel: "walk_in", confirmed: 1, unconfirmed: 0 };
+  const reply = {
+    summary: {
+      new_confirmed: 1, new_unconfirmed: 0, returning_first_recorded: 0, served_confirmed: 1, served_unconfirmed: 0,
+      undated_registrations: 0, source_recorded: 1, source_total: 1, sheet_last_dates: {}, sync_paused: true,
+      last_synced_at: null, sheet_rows_present: false, last_run_status: null,
+    },
+    series: [s], current: [s], previous: null, new_by_day: [s], revenue: [], overlaps: [], referrers: [],
+  };
+  function one(data: unknown, error: { code: string } | null = null) {
+    const calls: [string, unknown][] = [];
+    const supabase = { rpc(name: string, args: unknown) { calls.push([name, args]); return Promise.resolve({ data, error }); } };
+    return { supabase: supabase as never, calls };
+  }
+
+  it("makes exactly one call with the period, grain, mode and no comparison", async () => {
+    const { supabase, calls } = one(reply);
+    const res = await loadPatientSourcesReport(supabase, { from: "2026-06-01", to: "2026-06-30", grain: "week", mode: "served", prev: null });
+    expect(calls).toEqual([["patient_sources_report", {
+      p_from: "2026-06-01", p_to: "2026-06-30", p_grain: "week", p_mode: "served", p_prev_from: null, p_prev_to: null,
+    }]]);
+    expect(res).toMatchObject({ ok: true, data: { series: [s], previous: null } });
+  });
+  it("passes the comparison period when given", async () => {
+    const { supabase, calls } = one({ ...reply, previous: [s] });
+    await loadPatientSourcesReport(supabase, { from: "2026-06-01", to: "2026-06-30", grain: "day", mode: "new", prev: { from: "2026-05-02", to: "2026-05-31" } });
+    expect(calls[0][1]).toMatchObject({ p_prev_from: "2026-05-02", p_prev_to: "2026-05-31" });
+  });
+  it.each([["42501", "forbidden"], ["22023", "invalid"], ["0A000", "converted"], ["XX000", "error"]] as const)(
+    "classifies SQLSTATE %s as %s", async (code, kind) => {
+      const { supabase } = one(null, { code });
+      const res = await loadPatientSourcesReport(supabase, { from: "2026-06-01", to: "2026-06-30", grain: "day", mode: "new", prev: null });
+      expect(res).toMatchObject({ ok: false, kind });
+    });
+  it("treats a malformed reply as an error, never a crash", async () => {
+    const { supabase } = one({ summary: {} });
+    const res = await loadPatientSourcesReport(supabase, { from: "2026-06-01", to: "2026-06-30", grain: "day", mode: "new", prev: null });
+    expect(res).toMatchObject({ ok: false, kind: "error" });
   });
 });
