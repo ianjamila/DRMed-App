@@ -400,6 +400,35 @@ describe("undoReleaseBatchAction — a Queue batch across visits", () => {
     expect(statusOf(fake, "b")).toBe("released");
   });
 
+  it("visits are undone in sorted id order whatever order the batch lists them in", async () => {
+    const fake = setup([{ id: "a", visitId: "v1", ...REL }, { id: "y", visitId: "v2", ...REL }]);
+    loadBatchAcross({ y: "v2", a: "v1" });
+    const res = await undoReleaseBatchAction({ batchId: BATCH });
+    if (!res.ok) throw new Error(res.error);
+    expect(undoCalls(fake).map((c) => c.args.p_visit_id)).toEqual(["v1", "v2"]);
+    expect(res.restoredIds).toEqual(["a", "y"]);
+  });
+
+  it("every visit failing is an error carrying the FIRST visit's message", async () => {
+    const fake = setup([{ id: "a", visitId: "v1", ...REL }, { id: "y", visitId: "v2", ...REL }]);
+    loadBatchAcross({ a: "v1", y: "v2" });
+    fake.failNextRpc("undo_visit_release", { code: "P0081", message: "First visit refused." });
+    fake.failNextRpc("undo_visit_release", { code: "P0081", message: "Second visit refused." });
+    expect(await undoReleaseBatchAction({ batchId: BATCH })).toEqual({ ok: false, error: "First visit refused." });
+  });
+
+  it("a failed visit's page is still refreshed, and the shared surfaces are refreshed exactly once", async () => {
+    const fake = setup([{ id: "a", visitId: "v1", ...REL }, { id: "y", visitId: "v2", ...REL }]);
+    loadBatchAcross({ a: "v1", y: "v2" });
+    fake.failNextRpc("undo_visit_release", { code: "P0081", message: "Nope." });
+    const res = await undoReleaseBatchAction({ batchId: BATCH });
+    if (!res.ok) throw new Error(res.error);
+    const pages = fx.revalidate.filter(([p]) => p.startsWith("/staff/visits/")).map(([p]) => p);
+    expect(pages.sort()).toEqual(["/staff/visits/v1", "/staff/visits/v2"]);
+    expect(fx.revalidate.filter(([p]) => p === "/staff")).toHaveLength(1);
+    expect(fx.revalidate.filter(([p]) => p.includes("/queue"))).toHaveLength(1);
+  });
+
   it("lines refused up front (changed since) keep their reason and are never sent", async () => {
     const fake = setup([{ id: "a", visitId: "v1", ...REL }, { id: "y", visitId: "v2", ...REL }]);
     loadBatchAcross({ a: "v1", y: "v2" }, { changedSince: ["a"] });

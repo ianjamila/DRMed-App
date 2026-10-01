@@ -115,10 +115,13 @@ async function refuseIfVisitDeleted(
 // "layout" matches no tag (next/…/revalidate.js). The layout revalidation
 // covers /staff/queue, /staff/queue/[id] and the consolidated report page;
 // "/staff" (untyped, a concrete URL) is the dashboard.
-function revalidateReleaseSurfaces(visitId: string) {
-  revalidatePath(`/staff/visits/${visitId}`);
+function revalidateSharedReleaseSurfaces() {
   revalidatePath("/(staff)/staff/(dashboard)/queue", "layout");
   revalidatePath("/staff");
+}
+function revalidateReleaseSurfaces(visitId: string) {
+  revalidatePath(`/staff/visits/${visitId}`);
+  revalidateSharedReleaseSurfaces();
 }
 
 /** The three visit-page lab release actions (rev 5: new names — `ReleaseResult` / `BulkSelectionResult` are NOT widened). */
@@ -500,6 +503,48 @@ export async function releaseSelectedAction(
 // the outbox is retrying (status "retrying": nothing has gone out yet;
 // noticeRetrying tells the bar to say so).
 
+type BatchReleaseRow = { resource_id: string | null; metadata?: Record<string, unknown> | null };
+
+// Splits a bulk Release batch's test_request.released audit rows for the Undo:
+// visit -> the lines still to send on it (and the exact released_at each
+// line's audit row recorded — the release identity undoReleasedRows' write is
+// predicated on), every id THIS batch released (only these are ever named,
+// never a report-mate released separately), and the lines named up front.
+// A Queue release spans visits; the visit page's is one.
+function groupBatchReleaseByVisit(
+  releasedRows: readonly BatchReleaseRow[],
+  changedSince: ReadonlySet<string>,
+) {
+  const byVisit = new Map<string, { ids: string[]; expected: Map<string, string> }>();
+  const batchReleasedIds = new Set<string>();
+  const preNamed: Array<{ id: string; reason: string }> = [];
+  const seen = new Set<string>();
+  for (const row of releasedRows) {
+    const id = row.resource_id;
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    batchReleasedIds.add(id);
+    if (changedSince.has(id)) {
+      preNamed.push({ id, reason: CHANGED_SINCE_REASON });
+      continue;
+    }
+    const vid = row.metadata?.visit_id;
+    if (typeof vid !== "string" || vid === "") {
+      // release_visit_results always stamps visit_id; never guess a visit.
+      preNamed.push({ id, reason: CHANGED_SINCE_REASON });
+      continue;
+    }
+    const group = byVisit.get(vid) ?? { ids: [], expected: new Map<string, string>() };
+    group.ids.push(id);
+    const releasedAt = row.metadata?.released_at;
+    // A row whose audit row lacks released_at is sent but left out of the map,
+    // so the database refuses it rather than restoring it on a guess.
+    if (typeof releasedAt === "string") group.expected.set(id, releasedAt);
+    byVisit.set(vid, group);
+  }
+  return { byVisit, batchReleasedIds, preNamed };
+}
+
 // Server-checked 10-minute Undo for a bulk Release (the visit page's
 // releaseSelectedAction AND the Queue's releaseTestsAction): same window/
 // same-staff/own-batch rules as every other bulk Undo (loadOwnBatchRows),
@@ -548,39 +593,11 @@ export async function undoReleaseBatchAction(
   );
   if (releasedRows.length === 0) return { ok: false, error: UNDO_EXPIRED };
 
-  const notRestored: Array<{ id: string; reason: string }> = [];
-  // Every id THIS batch released (has its own test_request.released audit row
-  // in it), regardless of changedSince — only these are ever named in
-  // notRestored, never a report-mate released separately (Finding 4, P1).
-  const batchReleasedIds = new Set<string>();
-  // visit -> the batch's lines on it, and the exact released_at each line's
-  // audit row recorded — the release identity undoReleasedRows' write is
-  // predicated on. A Queue release spans visits; the visit page's is one.
-  const byVisit = new Map<string, { ids: string[]; expected: Map<string, string> }>();
-  const seen = new Set<string>();
-  for (const row of releasedRows) {
-    const id = row.resource_id;
-    if (!id || seen.has(id)) continue;
-    seen.add(id);
-    batchReleasedIds.add(id);
-    if (loaded.changedSince.has(id)) {
-      notRestored.push({ id, reason: CHANGED_SINCE_REASON });
-      continue;
-    }
-    const vid = row.metadata?.visit_id;
-    if (typeof vid !== "string" || vid === "") {
-      // release_visit_results always stamps visit_id; never guess a visit.
-      notRestored.push({ id, reason: CHANGED_SINCE_REASON });
-      continue;
-    }
-    const group = byVisit.get(vid) ?? { ids: [], expected: new Map<string, string>() };
-    group.ids.push(id);
-    const releasedAt = row.metadata?.released_at;
-    // A row whose audit row lacks released_at is sent but left out of the map,
-    // so the database refuses it rather than restoring it on a guess.
-    if (typeof releasedAt === "string") group.expected.set(id, releasedAt);
-    byVisit.set(vid, group);
-  }
+  const { byVisit, batchReleasedIds, preNamed } = groupBatchReleaseByVisit(
+    releasedRows,
+    loaded.changedSince,
+  );
+  const notRestored = [...preNamed];
   if (byVisit.size === 0) {
     return notRestored.length > 0
       ? { ok: true, restoredIds: [], notRestored }
@@ -589,15 +606,6 @@ export async function undoReleaseBatchAction(
 
   const supabase = await createClient();
 
-  // Finding 4 (P1), 0198: combined reports come back whole or not at all, and
-  // only as THIS batch released them. The rule is decided by undo_visit_release
-  // under its locks, from each visit's identity map: a member changed since
-  // this batch (by audit) is left out of it, and the database restores a
-  // report only when EVERY member is in the map and still carries that exact
-  // release — so a member this batch never released, or one changed since,
-  // keeps its whole report released, and a line re-released by someone else
-  // inside the window never comes back.
-
   // ONE new batch id for the whole Undo, every visit — so the Undo is itself
   // one traceable batch (audit "Whole batch"), as on every other bar.
   const undoBatchId = crypto.randomUUID();
@@ -605,10 +613,21 @@ export async function undoReleaseBatchAction(
   const refusedByDb: string[] = [];
   let failedVisits = 0;
   let firstError: string | null = null;
-  // Sequential, in visit-id order: deterministic, and a batch is at most a few
-  // visits. The database's locks make each visit's undo all-or-nothing per report.
+  // Sequential by design, in visit-id order (deterministic). A Queue batch is
+  // bounded by the bulk cap (MAX_BULK_RECORDS lines per call, so at most that
+  // many visits), and each visit's undo takes the database's locks — running
+  // them one at a time keeps lock order stable and never races two visits.
   for (const visitId of [...byVisit.keys()].sort()) {
     const group = byVisit.get(visitId)!;
+    // Finding 4 (P1), 0198: combined reports come back whole or not at all,
+    // and only as THIS batch released them. The rule is decided by
+    // undo_visit_release under its locks, from this visit's identity map
+    // (group.expected): a member changed since this batch (by audit) is left
+    // out of it, and the database restores a report only when EVERY member is
+    // in the map and still carries that exact release — so a member this
+    // batch never released, or one changed since, keeps its whole report
+    // released, and a line re-released by someone else inside the window
+    // never comes back.
     const result = await undoReleasedRows(
       supabase,
       session,
@@ -623,9 +642,9 @@ export async function undoReleaseBatchAction(
       },
       group.expected,
     );
-    // The Queue's Pending release tab and the dashboard cards list ready
-    // work too (#261), so refresh every release surface, as Unrelease does.
-    revalidateReleaseSurfaces(visitId);
+    // Every attempted visit's own page is refreshed, a failed one included
+    // (the call may have partly landed); the shared surfaces go once, below.
+    revalidatePath(`/staff/visits/${visitId}`);
     if (!result.ok) {
       failedVisits += 1;
       firstError ??= result.error;
@@ -639,6 +658,9 @@ export async function undoReleaseBatchAction(
       if (batchReleasedIds.has(id)) refusedByDb.push(id);
     }
   }
+  // The Queue's Pending release tab and the dashboard cards list ready work
+  // too (#261): refresh them once for the whole Undo, as Unrelease does.
+  revalidateSharedReleaseSurfaces();
   // Every visit's call failed: an error, exactly as the one-visit Undo
   // returned (the bar keeps its Undo for a retry).
   if (failedVisits === byVisit.size && firstError !== null) {
