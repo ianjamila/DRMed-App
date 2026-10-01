@@ -1,4 +1,5 @@
 import { describe, it, expect } from "vitest";
+import { CONTACT } from "@/lib/marketing/site";
 import {
   escapeHtml,
   emailParagraph,
@@ -63,6 +64,10 @@ describe("renderEmailShell", () => {
     expect(html).toContain("Your Family"); // tagline
     expect(html).toContain("google.com/maps"); // get directions
     expect(html).toContain("10+ major HMO providers");
+    // hours: Mon–Sat line, then the Sunday lab-only line beneath it
+    expect(html).toContain(CONTACT.hours);
+    expect(html).toContain(escapeHtml(CONTACT.hoursSunday));
+    expect(html.indexOf(CONTACT.hours)).toBeLessThan(html.indexOf(escapeHtml(CONTACT.hoursSunday)));
     expect(html).toContain("Facebook");
     expect(html).toContain(">drmed.ph</a>"); // website link
   });

@@ -133,14 +133,22 @@ export async function claimPanelAction(input: unknown): Promise<PanelOutcome> {
   const supabase = await createClient();
   const resolved = await resolvePanels(supabase, session, [parsed.data]);
   if (!resolved.ok) return resolved;
-  const state = resolved.states.get(panelRowKey(parsed.data.visitId, parsed.data.groupId));
+  const key = panelRowKey(parsed.data.visitId, parsed.data.groupId);
+  const state = resolved.states.get(key);
   if (!state || state.benchIds.length === 0) return { ok: false, error: NOTHING_ON_BENCH };
-  const result = await claimPanelMembers(session, supabase, state.benchIds, {
-    visit_id: parsed.data.visitId,
-    report_group_id: parsed.data.groupId,
-  });
-  if (result.ok) revalidatePath("/staff/queue");
-  return result;
+  // One-panel "bulk" batch, minted here (never from the input), so the
+  // report page can offer the bar's 10-minute Undo for this claim too.
+  const batchId = crypto.randomUUID();
+  const result = await claimPanelMembers(
+    session,
+    supabase,
+    state.benchIds,
+    { visit_id: parsed.data.visitId, report_group_id: parsed.data.groupId },
+    { batchId, batchSize: 1, panelKey: key, visitId: parsed.data.visitId },
+  );
+  if (!result.ok) return result;
+  revalidatePath("/staff/queue");
+  return { ok: true, batchId };
 }
 
 const ClaimSelectionSchema = z

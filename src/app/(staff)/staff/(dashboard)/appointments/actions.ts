@@ -1002,12 +1002,16 @@ export async function undoBulkAppointmentsAction(input: unknown): Promise<BulkUn
   let failed = false;
   for (const bucket of bucketAppointmentUndo(toWrite)) {
     for (const part of chunk(bucket.ids, BULK_ID_CHUNK)) {
-      const { data, error } = await supabase
-        .from("appointments")
-        .update({ status: bucket.restoreTo })
-        .in("id", part)
-        .eq("status", bucket.current)
-        .select("id, patient_id");
+      // Retried once on a lost lifecycle race (P0072/40P01/40001 — #263
+      // parity): the chunk is one UPDATE that rolls back whole on a loss.
+      const { data, error } = await withLifecycleRetry(() =>
+        supabase
+          .from("appointments")
+          .update({ status: bucket.restoreTo })
+          .in("id", part)
+          .eq("status", bucket.current)
+          .select("id, patient_id"),
+      );
       if (error) {
         failed = true;
         for (const id of part) erroredIds.add(id);

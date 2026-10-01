@@ -486,12 +486,42 @@ describe("deleteQueueSelectionAction", () => {
 });
 
 describe("claimPanelAction (the row button)", () => {
-  it("claims with no batch, so it leaves the single grouped audit row and no Undo", async () => {
-    panelRead({ [KEY]: [member(M1)] });
+  it("mints a one-panel batch, audits per member under it, and returns the id for the report page's Undo", async () => {
+    panelRead({ [KEY]: [member(M1), member(M2)] });
     const r = await claimPanelAction({ visitId: VISIT, groupId: GROUP });
-    expect(r).toEqual({ ok: true });
+    expect(r).toEqual({ ok: true, batchId: expect.stringMatching(/^[0-9a-f-]{36}$/) });
     const args = h.claimPanelMembers.mock.calls[0]!;
-    expect(args).toHaveLength(4);
-    expect(args[4]).toBeUndefined();
+    expect(args[2]).toEqual([M1, M2]);
+    expect(args[3]).toEqual({ visit_id: VISIT, report_group_id: GROUP });
+    // The batch the panel write audits per member: this id, a size of one
+    // panel, the panel's row key and its visit (started_at is stamped by the write).
+    const batchId = (r as { batchId: string }).batchId;
+    expect(args[4]).toEqual({ batchId, batchSize: 1, panelKey: KEY, visitId: VISIT });
+  });
+
+  it("ignores a batch id the browser sends — the returned id is minted here", async () => {
+    panelRead({ [KEY]: [member(M1)] });
+    const forged = "99999999-9999-4999-8999-999999999999";
+    const r = await claimPanelAction({ visitId: VISIT, groupId: GROUP, batchId: forged, panelKey: "forged" });
+    expect(r).toMatchObject({ ok: true });
+    expect((r as { batchId: string }).batchId).not.toBe(forged);
+    const batch = h.claimPanelMembers.mock.calls[0]![4];
+    expect(batch.batchId).not.toBe(forged);
+    expect(batch.batchId).toBe((r as { batchId: string }).batchId);
+    expect(batch.panelKey).toBe(KEY);
+  });
+
+  it("mints a fresh id for every call", async () => {
+    panelRead({ [KEY]: [member(M1)] });
+    await claimPanelAction({ visitId: VISIT, groupId: GROUP });
+    await claimPanelAction({ visitId: VISIT, groupId: GROUP });
+    expect(h.claimPanelMembers.mock.calls[0]![4].batchId).not.toBe(h.claimPanelMembers.mock.calls[1]![4].batchId);
+  });
+
+  it("returns no batch id when the claim is refused — there is nothing to undo", async () => {
+    panelRead({ [KEY]: [member(M1)] });
+    h.claimPanelMembers.mockResolvedValue({ ok: false, error: "changed" });
+    const r = await claimPanelAction({ visitId: VISIT, groupId: GROUP });
+    expect(r).toEqual({ ok: false, error: "changed" });
   });
 });

@@ -61,6 +61,7 @@
     "ad-spend:concurrency-proof": "tsx scripts/ad-spend-concurrency-proof.ts",
     "panel-claim:concurrency-proof": "tsx scripts/panel-claim-concurrency-proof.ts",
     "merge:concurrency-proof": "tsx scripts/merge-concurrency-proof.ts",
+    "panel-undo:concurrency-proof": "tsx scripts/panel-undo-concurrency-proof.ts",
     "report-release:concurrency-proof": "tsx scripts/report-release-concurrency-proof.ts",
     "waiver:concurrency-proof": "tsx scripts/waiver-concurrency-proof.ts",
     "ps-digest-claim:concurrency-proof": "tsx scripts/ps-digest-claim-concurrency-proof.ts",

@@ -103,10 +103,13 @@ describe("the bulk bar's public actions mint the batch id themselves", () => {
     }
   });
 
-  it("claimPanelAction (the row button) passes no batch and mints nothing", () => {
+  it("claimPanelAction (the row button) mints its own one-panel batch, never from the input", () => {
     const body = bodyOf(panelActionsSrc, "claimPanelAction");
     expect(body).toContain("claimPanelMembers(");
-    expect(body).not.toMatch(/randomUUID|panelBatch\(|batch/);
+    expect(body.match(/crypto\.randomUUID\(\)/g)).toHaveLength(1);
+    expect(body).toMatch(/batchId,\s*batchSize:\s*1,\s*panelKey:\s*key/);
+    expect(body).toMatch(/ok:\s*true,\s*batchId/);
+    expect(constOf(panelActionsSrc, "PanelSchema")).not.toMatch(/batchId|batch_id|bulk_batch|panelKey|panel_key/);
   });
 });
 

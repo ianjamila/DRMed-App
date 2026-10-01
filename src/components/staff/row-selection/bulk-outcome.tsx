@@ -1,8 +1,22 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useSyncExternalStore } from "react";
 import { Panel } from "@/components/ui/panel";
 import { FixedBottomBar } from "@/components/staff/fixed-bottom-bar";
+
+// A clock that is safe to render on the server. The panel can be server-
+// rendered (the report page's claim notice), so nothing derived from Date.now()
+// may reach the first render or the title would mismatch on hydration.
+// useSyncExternalStore gives React a separate server snapshot — the action's
+// own doneAt, i.e. "just done, window fully open" — used for the server render
+// AND the hydrating client render, after which the real clock takes over.
+// Whole-second snapshots keep getSnapshot stable between ticks; the 15 s tick
+// is the same cadence the minutes label always updated on.
+const subscribeToClock = (onTick: () => void) => {
+  const t = setInterval(onTick, 15_000);
+  return () => clearInterval(t);
+};
+const clientNow = () => Math.floor(Date.now() / 1000) * 1000;
 
 export interface OutcomeUndo {
   /** Epoch ms when the action finished; the button hides when the window closes. */
@@ -37,7 +51,7 @@ export function BulkOutcomePanel({
   inline?: boolean;
 }) {
   const ref = useRef<HTMLDivElement>(null);
-  const [now, setNow] = useState(() => Date.now());
+  const now = useSyncExternalStore(subscribeToClock, clientNow, () => undo?.doneAt ?? 0);
 
   useEffect(() => {
     if (inline) return;
@@ -46,11 +60,6 @@ export function BulkOutcomePanel({
   }, [inline]);
 
   const open = undo ? now - undo.doneAt < undo.windowMs : false;
-  useEffect(() => {
-    if (!undo || !open) return;
-    const t = setInterval(() => setNow(Date.now()), 15_000);
-    return () => clearInterval(t);
-  }, [undo, open]);
   const minutesLeft = undo ? Math.max(1, Math.ceil((undo.windowMs - (now - undo.doneAt)) / 60_000)) : 0;
 
   const content = (

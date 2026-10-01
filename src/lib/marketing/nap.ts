@@ -22,6 +22,21 @@ export function hoursSundayLabel(): string {
   return CONTACT.hoursSunday;
 }
 
+/** "8:00" -> "8am", "12:00" -> "12nn", "16:30" -> "4:30pm" — for length-limited SMS. */
+export function to12hCompact(hhmm: string): string {
+  const [h, m] = hhmm.split(":").map((n) => parseInt(n, 10));
+  if (h === 12 && m === 0) return "12nn";
+  const mer = h < 12 ? "am" : "pm";
+  const h12 = h % 12 === 0 ? 12 : h % 12;
+  return m === 0 ? `${h12}${mer}` : `${h12}:${String(m).padStart(2, "0")}${mer}`;
+}
+
+/** Short Sunday lab-only hours for SMS: "Sun 8am–12nn lab only". Derived from HOURS.sunday. */
+export function hoursSundayShort(): string {
+  const { day, opens, closes } = HOURS.sunday;
+  return `${day.slice(0, 3)} ${to12hCompact(opens)}–${to12hCompact(closes)} lab only`;
+}
+
 /** [Mon–Sat line, Sunday line] — for stacked displays (footer, contact). */
 export function hoursLines(): [string, string] {
   return [CONTACT.hours, CONTACT.hoursSunday];

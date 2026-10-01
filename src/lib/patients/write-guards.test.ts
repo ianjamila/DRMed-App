@@ -64,6 +64,8 @@ const KNOWN_WRITER_RPCS = new Set<string>([
   "undo_patient_merge_guarded",
   "claim_panel_members", // panel-writes.ts claimPanelMembers — all-or-nothing panel claim (0191).
   "unclaim_panel_members", // panel-writes.ts unclaimPanelMembers — all-or-nothing panel hand-back (0191).
+  "reclaim_panel_members", // panel-writes.ts reclaimPanelMembers — all-or-nothing Undo of a panel hand-back (0200).
+  "restore_panel_members", // panel-writes.ts restorePanelMembers — all-or-nothing Undo of a panel queue delete (0200).
   "create_visit_encounter", // visits/new/actions.ts createVisitAction — visit, lines, PIN in one transaction (0184).
   "result_create_linked", // create-linked.ts — a result row and its links (0184).
   "record_hmo_settlement", // hmo-claims/actions.ts recordHmoSettlementAction (0184).
@@ -118,12 +120,18 @@ const EXEMPT: Record<string, string> = {
     "Bulk form of the queue list's Unclaim (the bulk bar's single-test Unclaim body, called by unclaimQueueSelectionAction) — handing a claim back reduces work, same reasoning as performUnclaim.",
   [`src/app/(staff)/staff/(dashboard)/queue/actions.ts:reassignTestAction`]:
     "Reassigning an already-claimed line does not put new work or money on the record.",
-  [`src/app/(staff)/staff/(dashboard)/queue/actions.ts:undoBulkQueueAction`]:
-    "Undo of a bulk claim (unclaim) or a bulk unclaim (reclaim) — same reasoning as performUnclaim/claimTestsCore: neither bills nor releases. The restore branch calls restoreTestRequestsForVisit (queue-restore-core.ts), which guards itself with assertVisitPatientActive.",
+  // undoBulkQueueAction has NO entry any more: its restore branch now calls assertVisitPatientActive(admin, visitId)
+  // itself, right before restorePanelMembers (the promise that function's entry below makes), so the walk credits the
+  // whole function. Its claim/unclaim/reclaim writes still neither bill nor release (same reasoning as performUnclaim);
+  // actions.undo-behaviour.test.ts pins that an inactive patient's panel is refused with no rpc and no write.
   [`src/lib/actions/queue/panel-writes.ts:claimPanelMembers`]:
     "Same as claimTestAction, for a consolidated report (the panel page's Claim and the queue list's panel Claim / bulk Claim) — claiming does not bill.",
   [`src/lib/actions/queue/panel-writes.ts:unclaimPanelMembers`]:
     "Handing a consolidated report back reduces work, same reasoning as performUnclaim (its group path and the queue's bulk Unclaim both call this).",
+  [`src/lib/actions/queue/panel-writes.ts:reclaimPanelMembers`]:
+    "Undo of a bulk panel hand-back — puts back a claim the operator just handed back; neither bills nor releases, same reasoning as performUnclaim / claimPanelMembers. reclaim_panel_members (0200) also requires a live visit, and the lifecycle trigger (0184) refuses a deleted or merged patient.",
+  [`src/lib/actions/queue/panel-writes.ts:restorePanelMembers`]:
+    "Undo of a bulk panel queue-delete — its caller (undoBulkQueueAction) checks the visit's patient is active before calling, like restoreTestRequestsForVisit's assertVisitPatientActive; restore_panel_members (0200) also refuses a deleted visit, and the lifecycle trigger (0184) refuses a deleted or merged patient.",
   [`src/app/(marketing)/appointments/cancel/[id]/actions.ts:cancelAppointmentAction`]:
     "Public cancel-by-link reduces work (cancels), same reasoning as staff cancel.",
   [`src/app/(marketing)/schedule/actions.ts:storeLabRequestFiles`]:

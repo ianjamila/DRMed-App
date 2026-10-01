@@ -8087,6 +8087,14 @@ export type Database = {
           test_request_id: string
         }[]
       }
+      reclaim_panel_members: {
+        Args: {
+          p_holders: string[]
+          p_started_at: (string | null)[]
+          p_test_request_ids: string[]
+        }
+        Returns: number
+      }
       recompute_clinic_fee_for_unreleased: {
         Args: Record<PropertyKey, never>
         Returns: Json
@@ -8194,6 +8202,14 @@ export type Database = {
       resolve_revenue_account: {
         Args: { p_service_kind: string }
         Returns: string
+      }
+      restore_panel_members: {
+        Args: {
+          p_deleted_at: string[]
+          p_test_request_ids: string[]
+          p_visit_id: string
+        }
+        Returns: number
       }
       restore_patient: {
         Args: { p_actor: string; p_context: Json; p_patient_id: string }
