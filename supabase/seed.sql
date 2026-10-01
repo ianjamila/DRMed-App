@@ -197,3 +197,9 @@ revoke all on public.pf_disbursement_year_counters from public, anon, authentica
 revoke all on public.sheet_mirror_staging          from public, anon, authenticated;
 revoke all on sequence public.patient_consents_seq_seq     from public, anon, authenticated;
 revoke all on sequence public.sheet_mirror_staging_seq_seq from public, anon, authenticated;
+
+-- 0210: the release-notice outbox and its switch are service_role-only (RLS on,
+-- no policy); only the service-role client and the claim/finish/retry functions
+-- touch them, so anon/authenticated hold nothing.
+revoke all on public.release_notices          from public, anon, authenticated;
+revoke all on public.release_notice_settings  from public, anon, authenticated;
