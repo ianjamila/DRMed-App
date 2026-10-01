@@ -344,3 +344,21 @@ export function renderPatientSourcesDigest(
     text: [subject, ...blocks.map((b) => b.text)].join("\n\n"),
   };
 }
+
+export type DigestParams = { ok: true; periodFrom: string | null; includeUnknown: boolean } | { ok: false; error: string };
+
+/**
+ * The cron routes' query string (CRON_SECRET callers only). `period_from` re-runs an
+ * EARLIER period (Monday / 1st, finished, ≤ 62 days old); `include_unknown=1` — only
+ * with `period_from`, after checking the Resend dashboard — re-sends rows left in
+ * the `unknown` state. Nothing re-sends an unknown row automatically.
+ */
+export function parseDigestParams(search: URLSearchParams, kind: DigestKind, todayISO: string): DigestParams {
+  const periodFrom = search.get("period_from");
+  const includeUnknown = search.get("include_unknown") === "1";
+  if (periodFrom === null) {
+    return includeUnknown ? { ok: false, error: "include_unknown needs period_from." } : { ok: true, periodFrom: null, includeUnknown: false };
+  }
+  const problem = retryPeriodError(kind, periodFrom, todayISO);
+  return problem ? { ok: false, error: problem } : { ok: true, periodFrom, includeUnknown };
+}

@@ -3,6 +3,7 @@ import {
   aggregateSpend,
   DIGEST_ALERT_KEY,
   digestPeriods,
+  parseDigestParams,
   periodEnd,
   renderPatientSourcesDigest,
   retryPeriodError,
@@ -322,5 +323,28 @@ describe("renderPatientSourcesDigest — data health, footer", () => {
     expect(out.html).toContain("Open Patient Sources");
     expect(out.text).toContain("Confirmed counts are patient records.");
     expect(out.text).toContain("You get this as an admin; change it in Admin Tools › Email Alerts.");
+  });
+});
+describe("parseDigestParams", () => {
+  const q = (s: string) => new URLSearchParams(s);
+  it("no parameters = the latest completed period, no unknowns", () => {
+    expect(parseDigestParams(q(""), "week", "2026-10-12")).toEqual({ ok: true, periodFrom: null, includeUnknown: false });
+  });
+  it("accepts a valid retry period and include_unknown=1 together", () => {
+    expect(parseDigestParams(q("period_from=2026-10-05&include_unknown=1"), "week", "2026-10-12")).toEqual({
+      ok: true, periodFrom: "2026-10-05", includeUnknown: true,
+    });
+  });
+  it("only the literal 1 turns include_unknown on", () => {
+    expect(parseDigestParams(q("period_from=2026-10-05&include_unknown=true"), "week", "2026-10-12")).toMatchObject({ includeUnknown: false });
+  });
+  it("refuses include_unknown without period_from (unknowns are an operator action on a named period)", () => {
+    expect(parseDigestParams(q("include_unknown=1"), "week", "2026-10-12")).toEqual({
+      ok: false, error: "include_unknown needs period_from.",
+    });
+  });
+  it("refuses an invalid period_from with the reason", () => {
+    expect(parseDigestParams(q("period_from=2026-10-07"), "week", "2026-10-12")).toMatchObject({ ok: false, error: expect.stringMatching(/Monday/) });
+    expect(parseDigestParams(q("period_from=2026-10-12"), "week", "2026-10-12")).toMatchObject({ ok: false, error: expect.stringMatching(/not finished/) });
   });
 });
