@@ -103,6 +103,8 @@ begin
     end if;
     if has_function_privilege(r, fn, 'execute') then raise exception 'smoke: % can execute _ps_digest_claim', r; end if;
   end loop;
+  if has_table_privilege('service_role', rel, 'DELETE,TRUNCATE') then raise exception 'smoke: service_role can delete claim rows (seed.sql service_role re-revoke missing?)'; end if;
+  if not has_table_privilege('service_role', rel, 'SELECT,INSERT,UPDATE') then raise exception 'smoke: service_role lost select/insert/update on the claim table'; end if;
   if not has_function_privilege('service_role', fn, 'execute') then raise exception 'smoke: service_role cannot execute the claim'; end if;
   if not has_table_privilege('service_role', 'public.ad_spend_daily'::regclass, 'SELECT') then raise exception 'smoke: service_role cannot read ad_spend_daily'; end if;
   if not (select relrowsecurity from pg_class where oid = rel) then raise exception 'smoke: RLS is off'; end if;

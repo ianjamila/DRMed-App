@@ -202,3 +202,5 @@ revoke all on sequence public.sheet_mirror_staging_seq_seq from public, anon, au
 -- state (RLS on, no policy). The blanket grants above would hand anon/authenticated
 -- ALL on a fresh local database while prod holds nothing for them — re-revoke by name.
 revoke all on public.patient_sources_digest_sends from anon, authenticated;
+-- seed.sql grants ALL to service_role above; 0213 keeps it to select/insert/update (a claim row is never deleted).
+revoke delete, truncate, references, trigger on public.patient_sources_digest_sends from service_role;
