@@ -13,6 +13,33 @@ const fx = vi.hoisted(() => ({
   // What the mocked notifiers report back (the real ones return the outcome).
   notice: { status: "sent", channels: ["email"], reason: null } as { status: string; channels: string[]; reason: string | null },
 }));
+// 0210/0212 outbox fast path: the admin client only answers the flag and the claim,
+// and the sender is a recording stub — the legacy notifiers above stay the default.
+const outbox = vi.hoisted(() => ({
+  enabled: true as unknown,
+  enabledError: null as null | { message: string },
+  claimData: [{ id: "n1", lease_token: "lease-1", status: "sending" }] as unknown[],
+  claimError: null as null | { message: string },
+  rpcs: [] as Array<{ name: string; args: unknown }>,
+  sent: [] as unknown[],
+  sendResult: { outcome: { status: "sent", channels: ["email"], reason: null }, finalStatus: "sent" } as unknown,
+}));
+vi.mock("@/lib/supabase/admin", () => ({
+  createAdminClient: () => ({
+    rpc: async (name: string, args: unknown) => {
+      outbox.rpcs.push({ name, args });
+      if (name === "release_notices_enabled") return { data: outbox.enabled, error: outbox.enabledError };
+      if (name === "claim_release_notice") return { data: outbox.claimData, error: outbox.claimError };
+      throw new Error("unexpected rpc " + name);
+    },
+  }),
+}));
+vi.mock("@/lib/notifications/release-notice-sender", () => ({
+  sendReleaseNotice: async (row: unknown) => {
+    outbox.sent.push(row);
+    return outbox.sendResult;
+  },
+}));
 vi.mock("@/lib/audit/log", () => ({ audit: async (e: Record<string, unknown>) => void fx.audits.push(e) }));
 vi.mock("@/lib/notifications/notify-released", () => ({
   notifyResultReleased: async (a: { testRequestId: string }) => {
@@ -73,6 +100,13 @@ beforeEach(() => {
   fx.reported.length = 0;
   fx.notifyThrows = false;
   fx.notice = { status: "sent", channels: ["email"], reason: null };
+  outbox.enabled = true;
+  outbox.enabledError = null;
+  outbox.claimData = [{ id: "n1", lease_token: "lease-1", status: "sending" }];
+  outbox.claimError = null;
+  outbox.rpcs.length = 0;
+  outbox.sent.length = 0;
+  outbox.sendResult = { outcome: { status: "sent", channels: ["email"], reason: null }, finalStatus: "sent" };
 });
 
 describe("releaseVisitSelection", () => {
@@ -404,6 +438,96 @@ describe("notifyReleased", () => {
 
   it("sends nothing for an empty list", async () => {
     expect(await notifyReleased("v1", [], "email")).toBeNull();
+    expect(fx.notified).toHaveLength(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 0210/0212 — the outbox fast path. PR 3 makes release_visit_results return
+// notice_id; until then it is absent and the legacy sender must run unchanged.
+// ---------------------------------------------------------------------------
+describe("outbox fast path", () => {
+  const withNotice = (noticeId: unknown) => (f: ReturnType<typeof makeFakeReleaseDb>) =>
+    f.overrideNextRpc("release_visit_results", {
+      released: [{ id: "a", name: "A", report_id: null, selected: true, released_at: FAKE_RELEASED_AT }],
+      refused: [],
+      notice_id: noticeId,
+    });
+  const adminRpcs = () => outbox.rpcs.map((r) => r.name);
+
+  it("without a notice_id (every release today) the legacy sender runs and the outbox is never touched", async () => {
+    const o = await run([{ id: "a" }], [], ["a"]).out;
+    expect(fx.notified).toHaveLength(1);
+    expect(outbox.rpcs).toHaveLength(0);
+    expect(outbox.sent).toHaveLength(0);
+    expect(o.notice).toEqual({ status: "sent", channels: ["email"], reason: null });
+  });
+
+  it("a notice_id but the strict flag OFF: the legacy sender runs, only the flag was read", async () => {
+    outbox.enabled = false;
+    const o = await run([{ id: "a" }], [], ["a"], withNotice("n1")).out;
+    expect(adminRpcs()).toEqual(["release_notices_enabled"]);
+    expect(fx.notified).toHaveLength(1);
+    expect(outbox.sent).toHaveLength(0);
+    expect(o.notice?.status).toBe("sent");
+  });
+
+  it("a notice_id and a flag read that ERRORS (or answers anything but true) is OFF too", async () => {
+    outbox.enabledError = { message: "boom" };
+    await run([{ id: "a" }], [], ["a"], withNotice("n1")).out;
+    outbox.enabledError = null;
+    outbox.enabled = "true";
+    await run([{ id: "a" }], [], ["a"], withNotice("n1")).out;
+    expect(fx.notified).toHaveLength(2);
+    expect(outbox.sent).toHaveLength(0);
+  });
+
+  it.each([42, "", null, {}])("an unusable notice_id (%j) is ignored: legacy path, no outbox read", async (bad) => {
+    await run([{ id: "a" }], [], ["a"], withNotice(bad)).out;
+    expect(fx.notified).toHaveLength(1);
+    expect(outbox.rpcs).toHaveLength(0);
+  });
+
+  it("a notice_id with the flag ON claims THAT notice (limit 1), sends through the outbox and skips the legacy sender", async () => {
+    outbox.sendResult = { outcome: { status: "retrying", channels: [], reason: "will retry automatically" }, finalStatus: "retry" };
+    const o = await run([{ id: "a" }], [], ["a"], withNotice("n1")).out;
+    expect(outbox.rpcs).toEqual([
+      { name: "release_notices_enabled", args: undefined },
+      { name: "claim_release_notice", args: { p_id: "n1", p_limit: 1 } },
+    ]);
+    expect(outbox.sent).toEqual([{ id: "n1", lease_token: "lease-1", status: "sending" }]);
+    expect(fx.notified).toHaveLength(0);
+    expect(o.notice).toEqual({ status: "retrying", channels: [], reason: "will retry automatically" });
+    expect(o.announced).toHaveLength(1);
+    expect(fx.alerts).toEqual([["v1", 1]]);
+  });
+
+  it("carries a sent outcome from the outbox unchanged", async () => {
+    const o = await run([{ id: "a" }], [], ["a"], withNotice("n1")).out;
+    expect(o.notice).toEqual({ status: "sent", channels: ["email"], reason: null });
+  });
+
+  it("a claim that returns nothing (the row is leased elsewhere / not due) tells the operator it will retry — nothing is sent twice", async () => {
+    outbox.claimData = [];
+    const o = await run([{ id: "a" }], [], ["a"], withNotice("n1")).out;
+    expect(o.notice).toEqual({ status: "retrying", channels: [], reason: "will retry automatically" });
+    expect(outbox.sent).toHaveLength(0);
+    expect(fx.notified).toHaveLength(0);
+  });
+
+  it("a claim that errors is reported and also reads as retrying (the sweeper owns the row)", async () => {
+    outbox.claimError = { message: "boom" };
+    const o = await run([{ id: "a" }], [], ["a"], withNotice("n1")).out;
+    expect(o.notice?.status).toBe("retrying");
+    expect(fx.reported.map((r) => r.scope)).toContain("notify/release-notice:claim");
+    expect(fx.notified).toHaveLength(0);
+  });
+
+  it("notifyReleased passes a notice id through the same gate", async () => {
+    expect(await notifyReleased("v1", [{ id: "a", name: "A" }], "email", "batch", "n9")).toEqual({
+      status: "sent", channels: ["email"], reason: null,
+    });
+    expect(outbox.rpcs[1]).toEqual({ name: "claim_release_notice", args: { p_id: "n9", p_limit: 1 } });
     expect(fx.notified).toHaveLength(0);
   });
 });

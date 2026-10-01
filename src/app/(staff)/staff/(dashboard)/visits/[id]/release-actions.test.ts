@@ -374,6 +374,21 @@ describe("releaseSelectedAction — Undo handle (bulk-select follow-ups)", () =>
     if (!failed.ok) throw new Error(failed.error);
     expect(failed.count).toBe(1);
     expect(failed.notifiedCount).toBe(0);
+    expect(failed).not.toHaveProperty("noticeRetrying");
+
+    // 0210 outbox: the first send did not finish and will retry by itself.
+    // Nothing has gone out, so it is NOT counted as notified — the bar says so
+    // through noticeRetrying (present only then).
+    seed();
+    fx.notice = { status: "retrying", channels: [], reason: "will retry automatically" };
+    const retrying = await releaseSelectedAction("v1", ["x"], "email");
+    if (!retrying.ok) throw new Error(retrying.error);
+    expect(retrying.count).toBe(1);
+    expect(retrying.notifiedCount).toBe(0);
+    expect(retrying.noticeRetrying).toBe(true);
+    seed();
+    fx.notice = { status: "sent", channels: ["email"], reason: null };
+    expect(await releaseSelectedAction("v1", ["x"], "email")).not.toHaveProperty("noticeRetrying");
   });
 
   it("mints a fresh batch id per call", async () => {

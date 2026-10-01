@@ -7,6 +7,7 @@ import { translatePgError } from "@/lib/accounting/pg-errors";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { fetchOutdatedCopies } from "@/lib/results/copy-followups.server";
 import { canRetryNotice } from "@/lib/results/copy-followups";
+import { audit } from "@/lib/audit/log";
 import { notifyResultCorrected } from "@/lib/notifications/notify-corrected";
 
 export type MarkCopyContactedResult = { ok: true; data: null } | { ok: false; error: string };
@@ -76,4 +77,39 @@ export async function retryPatientNoticeAction(amendmentId: string): Promise<Ret
   });
   revalidatePath("/staff/result-follow-ups");
   return { ok: true as const, data: { outcome } };
+}
+
+export type RetryReleaseNoticeResult = { ok: true; data: { queued: true } } | { ok: false; error: string };
+
+// 0210/0212: the manual Retry for a "result ready" notice the sender gave up on
+// (status `abandoned`). Admin only, judged on the EFFECTIVE role (an admin
+// viewing as reception cannot). retry_release_notice is service_role-only, so it
+// goes through the admin client after the role check; it puts the notice back in
+// the queue as due now with a fresh set of attempts (a channel already sent stays
+// sent and a text with an unknown outcome is still never resent) and the 5-minute
+// sweeper sends it. Nothing about the patient or the message comes from the browser.
+export async function retryReleaseNoticeAction(noticeId: string): Promise<RetryReleaseNoticeResult> {
+  const session = await requireActiveStaff();
+  if (session.role !== "admin") {
+    return { ok: false as const, error: "Only an admin can retry a result notice." };
+  }
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(noticeId)) {
+    return { ok: false as const, error: "That notice isn't valid — refresh the list." };
+  }
+  const admin = createAdminClient();
+  const { data, error } = await admin.rpc("retry_release_notice", { p_id: noticeId });
+  if (error) return { ok: false as const, error: "Couldn't queue the retry — try again in a moment." };
+  if (data !== true) {
+    return { ok: false as const, error: "That notice isn't waiting for a retry any more — refresh the list." };
+  }
+  await audit({
+    actor_id: session.user_id,
+    actor_type: "staff",
+    action: "result.notice_retry_requested",
+    resource_type: "release_notice",
+    resource_id: noticeId,
+    metadata: { notice_id: noticeId },
+  });
+  revalidatePath("/staff/result-follow-ups");
+  return { ok: true as const, data: { queued: true as const } };
 }

@@ -57,7 +57,7 @@ doctor line, no contact) stay in TS and resolve the row to `skipped` at send tim
   `released_at` (drop undone ones; none left → `cancelled`), visit live and not sample, medium not physical/pickup,
   patient active with contact details, decision 1 (`suppressed`), and a strict enabled flag (missing row or read
   error = do nothing).
-- **No double send:** `finish` is fenced on `lease_token`; email carries `Idempotency-Key: result-notice:<id>:email`;
+- **No double send:** `finish` is fenced on `lease_token`; email carries `Idempotency-Key: result-notice:<id>:email:<12-hex hash of the rendered subject+text>` (identical content dedups across a crash; changed content gets a new key instead of a Resend 409 loop; after an `invalid_idempotent_request` 409 the attempt number is mixed in);
   SMS writes `sms_state = 'unknown'` before sending and is never resent from `unknown` (decision 4).
 - `finish` writes `result.notified` once, at the terminal state, with `bulk_batch_id` and `review_cta.shown` only
   when the email went out. New audits: `result.notice_abandoned|cancelled|suppressed`.
@@ -81,6 +81,8 @@ Failed / abandoned notices on `/staff/result-follow-ups` (existing `RetryNoticeB
    `pending` / `retry` row `undo_visit_release` cancels (a CHECK ties every terminal status to `resolved_at`;
    `sent_at` only with `sent`; `audited_at` only once resolved); (b) the report-release concurrency proof must
    set and restore `release_notice_settings.enabled` itself once release enqueues, since the flag is OFF by default.
+
+   (c) **Flag race at fast-path time.** When a release returns `notice_id`, the app must use the outbox path regardless of the flag read at send time, because the row exists only because the flag was ON in the release transaction. If the flag is OFF at fast-path time, cancel that row (fenced) and run the legacy send, so the notice is never both legacy-sent and swept later. PR 3 therefore needs a fenced cancel function (e.g. `cancel_release_notice(p_id)`: `pending` -> `cancelled` with `resolved_at`, no lease needed) or must reuse `finish_release_notice` via a claim. (PR 2's fast path currently falls back to the legacy send when the flag reads OFF; that is correct only while no row is ever enqueued, i.e. until PR 3.)
 
    Added in PR 1 review: `release_notices.audited_at` + `mark_release_notice_audited(p_id)` (fenced stamp on a
    terminal row, false on a second call). PR 2 writes the terminal audit row, then stamps; its sweeper also picks up

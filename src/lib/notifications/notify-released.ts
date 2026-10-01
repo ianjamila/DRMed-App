@@ -2,15 +2,9 @@ import "server-only";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { audit } from "@/lib/audit/log";
 import { reportError } from "@/lib/observability/report-error";
-import { SITE } from "@/lib/marketing/site";
-import { reviewLinkAbsolute } from "@/lib/seo/review";
 import { sendEmail } from "./email";
-import { STATEMENT_NOTE } from "./statement-note";
 import { sendSms } from "./sms";
-import { PORTAL_URL } from "./portal-url";
-import {
-  renderEmailShell, emailParagraph, emailDetailBox, emailButton, emailFinePrint, escapeHtml, emailReviewCta,
-} from "./branded-email";
+import { renderSingleNotice } from "./release-notice-content";
 import { patientAlreadyAskedForReview } from "./review-cta";
 import { isDoctorKind } from "@/lib/visits/order-lines";
 import { checkPatientRecipient } from "./active-patient-recipient";
@@ -120,8 +114,6 @@ export async function notifyResultReleased({
     return noticeSkipped(skipReason);
   }
 
-  const portalUrl = PORTAL_URL;
-  const greeting = patient.first_name || "there";
   const testName = svc.name;
 
   // Review CTA: only on a patient's FIRST delivered result email, and only if
@@ -131,50 +123,11 @@ export async function notifyResultReleased({
     ? await patientAlreadyAskedForReview(admin, patient.id)
     : false;
   const includeReviewCta = hasEmail && !alreadyAsked;
-  const reviewUrl = reviewLinkAbsolute(SITE.url, "email");
 
-  const smsBody =
-    `Hi ${greeting}, your DRMed lab result for ${testName} is ready. ` +
-    `Sign in at ${portalUrl} with DRM-ID ${patient.drm_id} and your Secure PIN. — DRMED`;
-
-  const emailSubject = `Your DRMed lab result is ready (${testName})`;
-  const emailText = [
-    `Hi ${greeting},`,
-    "",
-    `Your laboratory result for ${testName} has been released.`,
-    "",
-    `Sign in at ${portalUrl} with:`,
-    `  DRM-ID: ${patient.drm_id}`,
-    `  Secure PIN: (printed on your receipt)`,
-    "",
-    "Your PIN is valid for 60 days. Keep it private — anyone with your PIN can view your lab results.",
-    "",
-    STATEMENT_NOTE,
-    ...(includeReviewCta
-      ? [
-          "",
-          "How was your visit? A quick Google review helps other families find us:",
-          reviewUrl,
-        ]
-      : []),
-    "",
-    "— DRMed Clinic and Laboratory",
-  ].join("\n");
-
-  const emailHtml = renderEmailShell({
-    heading: "Your lab result is ready",
-    contentHtml:
-      emailParagraph(`Hi <b>${escapeHtml(greeting)}</b>,`) +
-      emailParagraph(`Your laboratory result for <b>${escapeHtml(testName)}</b> has been released. You can view and download it securely in the patient portal.`) +
-      emailDetailBox([
-        { label: "DRM-ID", value: patient.drm_id },
-        { label: "Secure PIN", value: "printed on your receipt" },
-      ]) +
-      emailButton("Sign in to view your result", portalUrl, "cyan") +
-      emailFinePrint("Your PIN is valid for 60 days. Keep it private — anyone with your PIN can view your lab results.") +
-      emailFinePrint(escapeHtml(STATEMENT_NOTE)) +
-      (includeReviewCta ? emailReviewCta(reviewUrl) : ""),
-    receivedNote: "You received this because a result was released for your DRMed visit.",
+  const { smsBody, emailSubject, emailText, emailHtml } = renderSingleNotice({
+    patient,
+    testName,
+    includeReviewCta,
   });
 
   const recipient = await checkPatientRecipient(admin, patient.id);

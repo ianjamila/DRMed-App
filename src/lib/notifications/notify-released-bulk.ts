@@ -2,15 +2,9 @@ import "server-only";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { audit } from "@/lib/audit/log";
 import { reportError } from "@/lib/observability/report-error";
-import { SITE } from "@/lib/marketing/site";
-import { reviewLinkAbsolute } from "@/lib/seo/review";
 import { sendEmail } from "./email";
-import { STATEMENT_NOTE } from "./statement-note";
 import { sendSms } from "./sms";
-import { PORTAL_URL } from "./portal-url";
-import {
-  renderEmailShell, emailParagraph, emailDetailBox, emailButton, emailFinePrint, escapeHtml, emailReviewCta,
-} from "./branded-email";
+import { renderBulkNotice } from "./release-notice-content";
 import { SAMPLE_SKIP_REASON } from "@/lib/visits/sample";
 import { patientAlreadyAskedForReview } from "./review-cta";
 import { checkPatientRecipient } from "./active-patient-recipient";
@@ -33,8 +27,6 @@ interface Input {
   // test.
   bulkBatchId?: string;
 }
-
-const MAX_LISTED = 6;
 
 // Fired by the bulk-release server action (releaseAllReadyComponentsAction).
 // Sends ONE consolidated SMS + email covering every component released in
@@ -108,8 +100,6 @@ export async function notifyResultsReleasedBulk({
     return noticeSkipped(skipReason);
   }
 
-  const portalUrl = PORTAL_URL;
-  const greeting = patient.first_name || "there";
 
   // Review CTA: only on a patient's FIRST delivered result email, and only if
   // they have an email on file. Suppressed thereafter via the audit flag.
@@ -118,61 +108,11 @@ export async function notifyResultsReleasedBulk({
     ? await patientAlreadyAskedForReview(admin, patient.id)
     : false;
   const includeReviewCta = hasEmail && !alreadyAsked;
-  const reviewUrl = reviewLinkAbsolute(SITE.url, "email");
 
-  const smsBody =
-    `Hi ${greeting}, ${count} result${count === 1 ? "" : "s"} from your DRMed visit ${count === 1 ? "is" : "are"} ready. ` +
-    `Sign in at ${portalUrl} with DRM-ID ${patient.drm_id} and your Secure PIN. — DRMED`;
-
-  const listedNames = testNames.slice(0, MAX_LISTED);
-  const extraCount = testNames.length - listedNames.length;
-
-  const emailSubject = `${count} lab result${count === 1 ? "" : "s"} ready — DRMed`;
-  const emailText = [
-    `Hi ${greeting},`,
-    "",
-    `${count} result${count === 1 ? "" : "s"} from your visit have been released:`,
-    ...listedNames.map((n) => `  - ${n}`),
-    ...(extraCount > 0 ? [`  + ${extraCount} more`] : []),
-    "",
-    `Sign in at ${portalUrl} with:`,
-    `  DRM-ID: ${patient.drm_id}`,
-    `  Secure PIN: (printed on your receipt)`,
-    "",
-    "Your PIN is valid for 60 days. Keep it private — anyone with your PIN can view your lab results.",
-    "",
-    STATEMENT_NOTE,
-    ...(includeReviewCta
-      ? [
-          "",
-          "How was your visit? A quick Google review helps other families find us:",
-          reviewUrl,
-        ]
-      : []),
-    "",
-    "— DRMed Clinic and Laboratory",
-  ].join("\n");
-
-  const testNameRows = [
-    ...listedNames.map((n) => ({ label: "Result", value: n })),
-    ...(extraCount > 0 ? [{ label: "", value: `+${extraCount} more` }] : []),
-  ];
-
-  const emailHtml = renderEmailShell({
-    heading: "Your lab results are ready",
-    contentHtml:
-      emailParagraph(`Hi <b>${escapeHtml(greeting)}</b>,`) +
-      emailParagraph(`<b>${count} result${count === 1 ? "" : "s"}</b> from your visit have been released. You can view and download them securely in the patient portal.`) +
-      emailDetailBox(testNameRows) +
-      emailDetailBox([
-        { label: "DRM-ID", value: patient.drm_id },
-        { label: "Secure PIN", value: "printed on your receipt" },
-      ]) +
-      emailButton("Sign in to view your results", portalUrl, "cyan") +
-      emailFinePrint("Your PIN is valid for 60 days. Keep it private — anyone with your PIN can view your lab results.") +
-      emailFinePrint(escapeHtml(STATEMENT_NOTE)) +
-      (includeReviewCta ? emailReviewCta(reviewUrl) : ""),
-    receivedNote: "You received this because results were released for your DRMed visit.",
+  const { smsBody, emailSubject, emailText, emailHtml } = renderBulkNotice({
+    patient,
+    testNames,
+    includeReviewCta,
   });
 
   const recipient = await checkPatientRecipient(admin, patient.id);

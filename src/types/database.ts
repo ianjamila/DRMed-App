@@ -8092,6 +8092,10 @@ export type Database = {
         Args: Record<PropertyKey, never>
         Returns: boolean
       }
+      release_notice_sweep_tick: {
+        Args: Record<PropertyKey, never>
+        Returns: number
+      }
       release_report_locks: {
         Args: { p_deleted_message: string; p_ids: string[]; p_visit_id: string }
         Returns: string[]
