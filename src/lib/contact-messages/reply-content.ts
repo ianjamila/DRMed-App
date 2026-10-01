@@ -140,7 +140,7 @@ export function replyTemplates(firstName: string): ReplyTemplate[] {
     {
       id: "prices-hours",
       label: "Prices & hours",
-      body: `Hi ${firstName}, thanks for your interest! We're open ${CONTACT.hours} at ${shortAddress}. Call us at ${CONTACT.phone.mobile} and we'll be happy to give you the current prices.`,
+      body: `Hi ${firstName}, thanks for your interest! We're open ${CONTACT.hours}, and ${CONTACT.hoursSunday}, at ${shortAddress}. Call us at ${CONTACT.phone.mobile} and we'll be happy to give you the current prices.`,
     },
     {
       id: "good-time",

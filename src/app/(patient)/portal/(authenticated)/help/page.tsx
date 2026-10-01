@@ -85,7 +85,7 @@ export default function PatientHelpPage() {
           >
             {CONTACT.phone.landline}
           </a>{" "}
-          during {CONTACT.hours}, or email{" "}
+          during {CONTACT.hours}, and {CONTACT.hoursSunday}, or email{" "}
           <a
             href={`mailto:${CONTACT.email}`}
             className="link-brand font-semibold"

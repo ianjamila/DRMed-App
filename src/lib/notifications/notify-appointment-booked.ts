@@ -2,7 +2,8 @@ import "server-only";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { audit } from "@/lib/audit/log";
 import { reportError } from "@/lib/observability/report-error";
-import { SITE, CONTACT } from "@/lib/marketing/site";
+import { SITE } from "@/lib/marketing/site";
+import { walkInSmsBody, walkInWhenLine, walkInAlsoOpen } from "./booking-walk-in";
 import { sendEmail } from "./email";
 import { sendSms } from "./sms";
 import { formatManilaDateTime } from "./format-manila-datetime";
@@ -130,14 +131,16 @@ export async function notifyAppointmentBooked({
     // NORMAL shape for this branch, not a missing value. L2: don't claim
     // the patient picked a time they never picked; tell them when the
     // clinic is actually open, from the one source of truth for hours
-    // (CONTACT.hours), never a hardcoded copy of it.
+    // (CONTACT.hours + the Sunday lab-only line), never a hardcoded copy.
     const when = appt.scheduled_at ? formatManilaDateTime(appt.scheduled_at) : null;
-    const whenLine = when ?? `Walk in any time — ${CONTACT.hours}`;
+    const whenLine = when ?? walkInWhenLine();
+    // A booked slot is a specific time, so only the walk-in case also says
+    // the clinic is open Sunday mornings for lab tests.
+    const alsoOpen = when ? null : walkInAlsoOpen();
     smsBody = when
       ? `Hi ${greeting}, your DRMed booking for ${serviceName} on ${when} is confirmed. ` +
         `Cancel: ${cancelUrl} — DRMED`
-      : `Hi ${greeting}, your DRMed booking for ${serviceName} is confirmed. Walk in any time — ${CONTACT.hours}. ` +
-        `Cancel: ${cancelUrl} — DRMED`;
+      : walkInSmsBody({ greeting, serviceName, cancelUrl });
     emailSubject = when
       ? `Booking confirmed — ${serviceName} on ${when}`
       : `Booking confirmed — ${serviceName}`;
@@ -148,6 +151,7 @@ export async function notifyAppointmentBooked({
       "",
       `Service: ${serviceName}`,
       `Date / time: ${whenLine}`,
+      ...(alsoOpen ? [`${alsoOpen.label}: ${alsoOpen.value}`] : []),
       ...formNote,
       "",
       `Need to cancel or reschedule? Open this link:`,
@@ -165,6 +169,7 @@ export async function notifyAppointmentBooked({
         emailDetailBox([
           { label: "Service", value: serviceName },
           { label: "Date / time", value: whenLine },
+          ...(alsoOpen ? [alsoOpen] : []),
         ]) +
         (formCount > 0 ? emailParagraph(`<span style="color:#0a7c44;">&#10003; We received your doctor's request form (${formCount} file${formCount === 1 ? "" : "s"}).</span>`) : "") +
         emailButton("View or cancel booking", cancelUrl, "navy") +

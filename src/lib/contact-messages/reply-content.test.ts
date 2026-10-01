@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { CONTACT } from "@/lib/marketing/site";
 import { REPLY_BODY_MAX, REPLY_SMS_MAX } from "./labels";
 import {
   ReplyInputSchema,
@@ -178,6 +179,12 @@ describe("replyTemplates", () => {
       expect(t.id.length).toBeGreaterThan(0);
       expect(t.label.length).toBeGreaterThan(0);
     }
+  });
+
+  it("prices-hours template names both the Mon–Sat and the Sunday lab hours", () => {
+    const body = replyTemplates("Maria").find((t) => t.id === "prices-hours")!.body;
+    expect(body).toContain(CONTACT.hours);
+    expect(body).toContain(CONTACT.hoursSunday);
   });
 
   it("has stable, unique template ids", () => {
