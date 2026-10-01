@@ -1,4 +1,5 @@
 // Concurrency proof for public.ad_spend_import (supabase/migrations/0189_patient_sources.sql).
+// concurrency-proof: ad_spend_import
 //
 // Unlike scripts/patient-sources-db-proof.ts (one rolled-back transaction), this proof needs REAL
 // concurrent sessions, so it COMMITS. It therefore:
@@ -311,6 +312,7 @@ async function main() {
         refused && s7.rows.length === 0, `refused=${refused}; rows persisted=${s7.rows.length} (${s7.text})`);
     }
 
+    // concurrency-proof: ad_spend_delete
     // ---- Case 5d: ad_spend_delete also serialises behind an open import ----
     {
       const camp = `${P}-c5d`; await clean(db, camp);
