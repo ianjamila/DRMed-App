@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   to12h, hoursLabel, hoursWithLastRegistration, addressLines, streetAddressLine,
   telHref, directionsHrefs, mapEmbedSrc, isOpenNow, clinicStatus, hoursLines, hoursAllLabel,
-  openingHoursStrings,
+  openingHoursStrings, hoursSundayShort, to12hCompact,
 } from "./nap";
 import { CONTACT, HOURS } from "./site";
 
@@ -125,5 +125,21 @@ describe("isOpenNow (Asia/Manila, Mon–Sat 08:00–17:00)", () => {
   it("Sunday afternoon and evening are closed", () => {
     // 2026-06-21 is a Sunday. 06:00Z = 14:00 Manila Sun (after the 12nn lab-only close).
     expect(isOpenNow(new Date("2026-06-21T06:00:00Z"))).toBe(false);
+  });
+});
+
+describe("SMS-short hours", () => {
+  it("to12hCompact drops :00 and writes noon as 12nn", () => {
+    expect(to12hCompact("08:00")).toBe("8am");
+    expect(to12hCompact("12:00")).toBe("12nn");
+    expect(to12hCompact("16:30")).toBe("4:30pm");
+    expect(to12hCompact("00:00")).toBe("12am");
+  });
+  it("hoursSundayShort is derived from HOURS.sunday and stays short", () => {
+    expect(hoursSundayShort()).toBe("Sun 8am–12nn lab only");
+    expect(hoursSundayShort().length).toBeLessThanOrEqual(24);
+    // The short form must keep saying it is lab-only, like the long form.
+    expect(CONTACT.hoursSunday).toMatch(/lab tests only/);
+    expect(hoursSundayShort()).toMatch(/lab only/);
   });
 });
