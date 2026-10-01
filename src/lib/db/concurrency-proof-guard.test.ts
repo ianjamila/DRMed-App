@@ -101,6 +101,11 @@ const REGISTRY: Record<string, RegistryEntry> = {
   sheet_review_resolve: { proof: ["scripts/sheet-sync-db-proof.ts"] },
   merge_patients_guarded: { proof: ["scripts/merge-concurrency-proof.ts"] },
   undo_patient_merge_guarded: { proof: ["scripts/merge-concurrency-proof.ts"] },
+  view_as_transition: { proof: ["scripts/view-as-restore-concurrency-proof.ts"] },
+  view_as_expire: { proof: ["scripts/view-as-restore-concurrency-proof.ts"] },
+  view_as_end_for: { proof: ["scripts/view-as-restore-concurrency-proof.ts"] },
+  restore_patient: { proof: ["scripts/view-as-restore-concurrency-proof.ts"] },
+  bridge_payment_delete: { proof: ["scripts/view-as-restore-concurrency-proof.ts"] },
   queue_claim_remarks: {
     exempt:
       "false positive on the name: a read-only SECURITY DEFINER reader over audit_log that takes no lock and claims nothing",
@@ -109,8 +114,6 @@ const REGISTRY: Record<string, RegistryEntry> = {
 
 /** FROZEN pre-guard functions with no proof. May only shrink. Name -> definition file. */
 const BASELINE: Record<string, string> = {
-  bridge_payment_delete: "0141_manila_posting_dates_remainder.sql",
-  restore_patient: "0184_patient_lifecycle_locks.sql",
   _sheet_sync_fence: "0170_sheet_sync_foundation.sql",
   sheet_sync_acquire: "0170_sheet_sync_foundation.sql",
   sheet_sync_apply_customer_ops: "0193_sync_review_gaps.sql",
@@ -147,9 +150,6 @@ const BASELINE: Record<string, string> = {
   result_mark_copy_contacted: "0179_result_copy_followups.sql",
   result_save_draft: "0184_patient_lifecycle_locks.sql",
   test_requests_claim_holder_guard: "0190_claim_holder_guard_and_view_as_end_for.sql",
-  view_as_end_for: "0190_claim_holder_guard_and_view_as_end_for.sql",
-  view_as_expire: "0187_view_as_followups.sql",
-  view_as_transition: "0187_view_as_followups.sql",
 };
 
 function loadMigrations(): MigrationFile[] {
@@ -191,7 +191,7 @@ describe("concurrency-proof guard (real migrations)", () => {
     // checkGuard already asserts existence and the per-function annotation;
     // this pins that REGISTRY is non-trivial.
     const proofs = Object.values(REGISTRY).filter((e) => "proof" in e);
-    expect(proofs.length).toBe(28);
+    expect(proofs.length).toBe(33);
   });
 });
 
