@@ -407,6 +407,7 @@ begin
   -- =====================================================================
   -- Scenario 1: payment-then-waive
   -- =====================================================================
+  -- concurrency-proof: waive_visit_balance
   perform dblink_exec('s1', 'begin');
   perform dblink_exec('s1', format(
     $sql$insert into public.payments (id, visit_id, amount_php, method, received_by, received_at) values (%L, %L, 400, 'cash', %L, now())$sql$,
