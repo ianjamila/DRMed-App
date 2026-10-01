@@ -48,6 +48,7 @@ vi.mock("@/lib/results/viewed-count", () => ({ countResultViews: async (id: stri
 vi.mock("@/lib/notifications/release-staff-alert", () => ({ scheduleReleaseStaffAlert: () => {} }));
 
 import { BULK_UNDO_VIA, CHANGED_SINCE_REASON, UNDO_ALREADY, UNDO_EXPIRED } from "@/lib/ui/bulk-undo";
+import { RELEASED_SEPARATELY_REASON } from "@/lib/actions/visits/release-undo-refusal";
 import { FAKE_RELEASED_AT, makeFakeReleaseDb, type FakeLink, type FakeTestRow } from "@/lib/actions/visits/fake-release-db";
 
 const { undoReleaseBatchAction, undoReleaseSelectedAction } = await import("./actions");
@@ -107,6 +108,22 @@ function loadBatch(ids: string[], opts: { changedSince?: string[]; at?: Record<s
     }),
   };
 }
+/**
+ * loadBatch for a Queue batch across visits: `visitOf` maps each id to its audit
+ * row's metadata.visit_id ("" = omit visit_id, like a row this action never wrote).
+ */
+function loadBatchAcross(visitOf: Record<string, string>, opts: { changedSince?: string[] } = {}) {
+  fx.loaded = {
+    ok: true,
+    alreadyUndone: false,
+    changedSince: new Set(opts.changedSince ?? []),
+    rows: Object.entries(visitOf).map(([id, visitId]) => ({
+      action: "test_request.released",
+      resource_id: id,
+      metadata: { ...(visitId === "" ? {} : { visit_id: visitId }), released_at: FAKE_RELEASED_AT },
+    })),
+  };
+}
 /** The release_undone rows the database (as the fake models it) wrote; TypeScript writes none. */
 const undoAudits = (fake: Fake) => fake.dbAudits.filter((a) => a.action === "test_request.release_undone");
 const tsUndoAudits = () => fx.audits.filter((a) => a.action === "test_request.release_undone");
@@ -148,14 +165,14 @@ describe("undoReleaseBatchAction — reports", () => {
     expect(undoAudits(fake).map((a) => a.resource_id)).toEqual(["x"]);
   });
 
-  it("a report-mate this batch did NOT release keeps the report released and is not named", async () => {
+  it("a report-mate this batch did NOT release keeps the report released: the batch line is named with the released-separately reason, and the mate itself is not named", async () => {
     const fake = seed();
     // b is in a's report but released separately: no audit row in this batch.
     loadBatch(["a", "x"]);
     const res = await undoReleaseBatchAction({ batchId: BATCH });
     if (!res.ok) throw new Error(res.error);
     expect(res.restoredIds).toEqual(["x"]);
-    expect(res.notRestored).toEqual([{ id: "a", reason: CHANGED_SINCE_REASON }]);
+    expect(res.notRestored).toEqual([{ id: "a", reason: RELEASED_SEPARATELY_REASON }]);
     expect(res.notRestored.some((n) => n.id === "b")).toBe(false);
     expect([statusOf(fake, "a"), statusOf(fake, "b")]).toEqual(["released", "released"]);
   });
@@ -302,6 +319,122 @@ describe("undoReleaseBatchAction — audit and outcome", () => {
       error: "Couldn't read which release to undo — try again.",
     });
     expect(tsUndoAudits()).toEqual([]);
+  });
+});
+
+describe("undoReleaseBatchAction — a Queue batch across visits", () => {
+  it("undoes every visit's lines, one undo_visit_release per visit, all under ONE new batch id", async () => {
+    const fake = setup([
+      { id: "a", visitId: "v1", ...REL },
+      { id: "x", visitId: "v1", ...REL },
+      { id: "y", visitId: "v2", ...REL },
+    ]);
+    loadBatchAcross({ a: "v1", x: "v1", y: "v2" });
+    const res = await undoReleaseBatchAction({ batchId: BATCH });
+    expect(res).toEqual({ ok: true, restoredIds: ["a", "x", "y"], notRestored: [] });
+    const calls = undoCalls(fake);
+    expect(calls.map((c) => [c.args.p_visit_id, c.args.p_test_request_ids])).toEqual([
+      ["v1", ["a", "x"]],
+      ["v2", ["y"]],
+    ]);
+    const undoIds = calls.map((c) => (c.args.p_audit as { metadata: { bulk_batch_id: string } }).metadata.bulk_batch_id);
+    expect(new Set(undoIds).size).toBe(1);
+    expect(undoIds[0]).not.toBe(BATCH);
+    expect(calls[0].args.p_expected_released_at).toEqual({ a: FAKE_RELEASED_AT, x: FAKE_RELEASED_AT });
+    expect(calls[1].args.p_expected_released_at).toEqual({ y: FAKE_RELEASED_AT });
+    // Every visit's release surfaces are refreshed.
+    expect(fx.revalidate).toEqual(expect.arrayContaining([["/staff/visits/v1", undefined], ["/staff/visits/v2", undefined]]));
+  });
+
+  it("one visit's database refusal names that visit's lines; the other visit still comes back", async () => {
+    const fake = setup([{ id: "a", visitId: "v1", ...REL }, { id: "y", visitId: "v2", ...REL }]);
+    loadBatchAcross({ a: "v1", y: "v2" });
+    fake.failNextRpc("undo_visit_release", { code: "P0081", message: "This visit was deleted from the queue. Restore it before undoing a release." });
+    const res = await undoReleaseBatchAction({ batchId: BATCH });
+    if (!res.ok) throw new Error(res.error);
+    expect(res.restoredIds).toEqual(["y"]);
+    expect(res.notRestored).toEqual([{ id: "a", reason: "This visit was deleted from the queue. Restore it before undoing a release." }]);
+  });
+
+  it("every visit refused: an error, not an empty success", async () => {
+    const fake = setup([{ id: "a", visitId: "v1", ...REL }]);
+    loadBatchAcross({ a: "v1" });
+    fake.failNextRpc("undo_visit_release", { code: "P0081", message: "Nope." });
+    expect(await undoReleaseBatchAction({ batchId: BATCH })).toEqual({ ok: false, error: "Nope." });
+  });
+
+  it("a batch row with no visit_id is named, not guessed onto another visit", async () => {
+    setup([{ id: "a", visitId: "v1", ...REL }, { id: "b", visitId: "v1", ...REL }]);
+    loadBatchAcross({ a: "v1", b: "" });
+    const res = await undoReleaseBatchAction({ batchId: BATCH });
+    if (!res.ok) throw new Error(res.error);
+    expect(res.restoredIds).toEqual(["a"]);
+    expect(res.notRestored).toEqual([{ id: "b", reason: CHANGED_SINCE_REASON }]);
+  });
+
+  it("a visit's report-mate released outside the batch is named released-separately; another visit's refusal stays changed-since", async () => {
+    // a (v1) completes report r1 with b, released separately; y (v2) was re-released by someone else.
+    const fake = setup(
+      [
+        { id: "a", visitId: "v1", ...REL },
+        { id: "b", visitId: "v1", ...REL },
+        { id: "y", visitId: "v2", ...REL, releasedAt: OTHER_AT },
+        { id: "z", visitId: "v2", ...REL },
+      ],
+      [
+        { testRequestId: "a", resultId: "r1" },
+        { testRequestId: "b", resultId: "r1" },
+      ],
+    );
+    loadBatchAcross({ a: "v1", y: "v2", z: "v2" });
+    const res = await undoReleaseBatchAction({ batchId: BATCH });
+    if (!res.ok) throw new Error(res.error);
+    expect(res.restoredIds).toEqual(["z"]);
+    expect(res.notRestored).toEqual(
+      expect.arrayContaining([
+        { id: "a", reason: RELEASED_SEPARATELY_REASON },
+        { id: "y", reason: CHANGED_SINCE_REASON },
+      ]),
+    );
+    expect(res.notRestored).toHaveLength(2);
+    expect(statusOf(fake, "b")).toBe("released");
+  });
+
+  it("visits are undone in sorted id order whatever order the batch lists them in", async () => {
+    const fake = setup([{ id: "a", visitId: "v1", ...REL }, { id: "y", visitId: "v2", ...REL }]);
+    loadBatchAcross({ y: "v2", a: "v1" });
+    const res = await undoReleaseBatchAction({ batchId: BATCH });
+    if (!res.ok) throw new Error(res.error);
+    expect(undoCalls(fake).map((c) => c.args.p_visit_id)).toEqual(["v1", "v2"]);
+    expect(res.restoredIds).toEqual(["a", "y"]);
+  });
+
+  it("every visit failing is an error carrying the FIRST visit's message", async () => {
+    const fake = setup([{ id: "a", visitId: "v1", ...REL }, { id: "y", visitId: "v2", ...REL }]);
+    loadBatchAcross({ a: "v1", y: "v2" });
+    fake.failNextRpc("undo_visit_release", { code: "P0081", message: "First visit refused." });
+    fake.failNextRpc("undo_visit_release", { code: "P0081", message: "Second visit refused." });
+    expect(await undoReleaseBatchAction({ batchId: BATCH })).toEqual({ ok: false, error: "First visit refused." });
+  });
+
+  it("a failed visit's page is still refreshed, and the shared surfaces are refreshed exactly once", async () => {
+    const fake = setup([{ id: "a", visitId: "v1", ...REL }, { id: "y", visitId: "v2", ...REL }]);
+    loadBatchAcross({ a: "v1", y: "v2" });
+    fake.failNextRpc("undo_visit_release", { code: "P0081", message: "Nope." });
+    const res = await undoReleaseBatchAction({ batchId: BATCH });
+    if (!res.ok) throw new Error(res.error);
+    const pages = fx.revalidate.filter(([p]) => p.startsWith("/staff/visits/")).map(([p]) => p);
+    expect(pages.sort()).toEqual(["/staff/visits/v1", "/staff/visits/v2"]);
+    expect(fx.revalidate.filter(([p]) => p === "/staff")).toHaveLength(1);
+    expect(fx.revalidate.filter(([p]) => p.includes("/queue"))).toHaveLength(1);
+  });
+
+  it("lines refused up front (changed since) keep their reason and are never sent", async () => {
+    const fake = setup([{ id: "a", visitId: "v1", ...REL }, { id: "y", visitId: "v2", ...REL }]);
+    loadBatchAcross({ a: "v1", y: "v2" }, { changedSince: ["a"] });
+    const res = await undoReleaseBatchAction({ batchId: BATCH });
+    expect(res).toEqual({ ok: true, restoredIds: ["y"], notRestored: [{ id: "a", reason: CHANGED_SINCE_REASON }] });
+    expect(undoCalls(fake).map((c) => c.args.p_visit_id)).toEqual(["v2"]);
   });
 });
 
