@@ -134,10 +134,14 @@ export function QueueBulkBar({ rowsByKey }: Props) {
     setErr(null);
   }
 
+  // Always called after an action's await (`start(async () => done(…, await …))`),
+  // so every state update here is re-wrapped in the transition — otherwise it
+  // commits urgently beside a still-pending button (transition-state.test.ts
+  // cannot see through this helper: position is lexical).
   function done(verb: string, keys: string[], result: BulkQueueResult, inPanel: boolean, doneAt: number) {
     if (!result.ok) {
       // Nothing was attempted (role / input / reason) — keep the selection.
-      if (inPanel) setErr(result.error);
+      if (inPanel) start(() => setErr(result.error));
       else alert(result.error);
       return;
     }
@@ -157,14 +161,16 @@ export function QueueBulkBar({ rowsByKey }: Props) {
     // Counted in TESTS: a panel row stands for several (sentTestCount) — its
     // bench members for Claim / Unclaim, all of them for Delete.
     const scope = verb === "Deleted" ? "all" : "bench";
-    setOutcome({
-      message: bulkQueueMessage(verb, sentTestCount(result, rowsByKey, scope), result, rowsByKey),
-      edits: selectionEdits,
-      undo,
+    start(() => {
+      setOutcome({
+        message: bulkQueueMessage(verb, sentTestCount(result, rowsByKey, scope), result, rowsByKey),
+        edits: selectionEdits,
+        undo,
+      });
+      // Pruning wins (spec §4): clear everything sent; the outcome panel is the record.
+      clearKeys(keys);
+      closePanel();
     });
-    // Pruning wins (spec §4): clear everything sent; the outcome panel is the record.
-    clearKeys(keys);
-    closePanel();
     router.refresh();
   }
 
@@ -294,9 +300,9 @@ export function QueueBulkBar({ rowsByKey }: Props) {
           edits: selectionEdits,
           undo: null,
         });
+        clearKeys(keys);
+        closePanel();
       });
-      clearKeys(keys);
-      closePanel();
       router.refresh();
     });
   }
@@ -355,9 +361,9 @@ export function QueueBulkBar({ rowsByKey }: Props) {
           edits: selectionEdits,
           undo: null,
         });
+        clearKeys(keys);
+        closePanel();
       });
-      clearKeys(keys);
-      closePanel();
       router.refresh();
     });
   }
