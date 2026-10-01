@@ -201,7 +201,8 @@ export function BulkActionBar({
       if (!result.ok) {
         // Nothing was released — keep the selection. #261's page-level
         // notice carries the reason; alert is the no-provider fallback.
-        if (releaseNotice) releaseNotice.show(result.error);
+        // Re-wrapped so the notice commits with the end of "Releasing…".
+        if (releaseNotice) startRelease(() => releaseNotice.show(result.error));
         else alert(result.error);
         return;
       }

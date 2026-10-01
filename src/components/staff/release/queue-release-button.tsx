@@ -56,7 +56,7 @@ export function QueueReleaseButton({
         warnings: res.warnings,
       });
       if (text) {
-        if (outcome) outcome.show(text);
+        if (outcome) start(() => outcome.show(text));
         else start(() => setMessage(text));
       }
       if (res.changedIds.length > 0 || res.alsoReleasedIds.length > 0) router.refresh();

@@ -24,7 +24,9 @@
  * transition starter (the second element of `useTransition()` destructured in
  * the same file, or `startTransition` imported from "react"), and inside it
  * every call to a state setter (the second element of a `useState` /
- * `useReducer` destructure, or — as a fallback — any `setXxx` identifier) that
+ * `useReducer` destructure, a state-setting method of a custom hook listed in
+ * `STATE_HOOK_METHODS` such as `outcome.show(…)`, or — as a fallback — any
+ * `setXxx` identifier) that
  * executes after the first `await` of that callback, including inside nested
  * callbacks, try/catch/finally and `.then` bodies. A setter inside a nested
  * synchronous `X(() => …)` is fine, and is how the fix is written.
@@ -49,6 +51,16 @@ const SRC_DIR = join(process.cwd(), "src");
 
 /** Keyed `<path relative to src/>#<setterName>`; value is the required `why`. */
 const ALLOWED: Record<string, string> = {};
+
+/**
+ * Custom hooks whose returned object's methods set React state, so a post-await
+ * call is the same bug as a bare setter: `const outcome = useReleaseOutcome();`
+ * then `outcome.show(text)` after an await showed a refusal beside a button
+ * still reading "Releasing…" (the bulk-action-bar flake, 2026-10-01).
+ */
+const STATE_HOOK_METHODS: Record<string, readonly string[]> = {
+  useReleaseOutcome: ["show"],
+};
 
 /** `/^set[A-Z]/` also matches these browser globals; they are not state. */
 const NOT_SETTERS = new Set(["setTimeout", "setInterval", "setImmediate"]);
@@ -104,6 +116,8 @@ export function scanSource(text: string, full: string): Hit[] {
 
   const starters = new Set<string>();
   const setters = new Set<string>();
+  // `const outcome = useReleaseOutcome();` → outcome ↦ its state-setting methods.
+  const stateObjects = new Map<string, readonly string[]>();
   let reactNs: string | null = null;
   // Local names of React hooks, so `import { useTransition as usePending }` resolves.
   const transitionHooks = new Set(["useTransition"]);
@@ -153,6 +167,23 @@ export function scanSource(text: string, full: string): Hit[] {
     }
     if (
       ts.isVariableDeclaration(node) &&
+      node.initializer &&
+      ts.isCallExpression(node.initializer)
+    ) {
+      const fn = calleeName(node.initializer.expression);
+      const methods = fn ? STATE_HOOK_METHODS[fn] : undefined;
+      if (methods && ts.isIdentifier(node.name)) stateObjects.set(node.name.text, methods);
+      if (methods && ts.isObjectBindingPattern(node.name)) {
+        for (const el of node.name.elements) {
+          const key = (el.propertyName ?? el.name) as ts.Node;
+          if (ts.isIdentifier(key) && methods.includes(key.text) && ts.isIdentifier(el.name)) {
+            setters.add(el.name.text);
+          }
+        }
+      }
+    }
+    if (
+      ts.isVariableDeclaration(node) &&
       ts.isIdentifier(node.name) &&
       node.initializer &&
       ts.isIdentifier(node.initializer)
@@ -192,6 +223,17 @@ export function scanSource(text: string, full: string): Hit[] {
 
   const isSetterName = (name: string) =>
     setters.has(name) || (!NOT_SETTERS.has(name) && /^set[A-Z]/.test(name));
+
+  /** The setter's display name when `call` sets state: `setX(…)` or `outcome.show(…)`. */
+  const setterCalled = (call: ts.CallExpression): string | null => {
+    const c = call.expression;
+    if (ts.isIdentifier(c)) return isSetterName(c.text) ? c.text : null;
+    if (ts.isPropertyAccessExpression(c) && ts.isIdentifier(c.expression)) {
+      const methods = stateObjects.get(c.expression.text);
+      if (methods?.includes(c.name.text)) return `${c.expression.text}.${c.name.text}`;
+    }
+    return null;
+  };
 
   /** A function passed to a timer / scheduler, or used as an event handler. */
   const isDeferred = (fn: ts.Node): boolean => {
@@ -257,12 +299,8 @@ export function scanSource(text: string, full: string): Hit[] {
     };
 
     const visit = (n: ts.Node) => {
-      if (
-        ts.isCallExpression(n) &&
-        ts.isIdentifier(n.expression) &&
-        isSetterName(n.expression.text) &&
-        afterSuspension(n)
-      ) {
+      const setter = ts.isCallExpression(n) ? setterCalled(n) : null;
+      if (setter && afterSuspension(n)) {
         // Exempt only when the setter's NEAREST enclosing function is the
         // synchronous starter callback itself (no other function boundary),
         // or when it sits in a deferred callback (timer / event handler):
@@ -293,7 +331,7 @@ export function scanSource(text: string, full: string): Hit[] {
           hits.set(`${n.getStart(src)}`, {
             file,
             line,
-            setter: n.expression.text,
+            setter,
           });
         }
       }
@@ -559,6 +597,37 @@ export function C() {
     expect(scanSource(code, join(SRC_DIR, "x/demo.tsx")).map((h) => h.setter)).toEqual([
       "setX",
     ]);
+  });
+});
+
+describe("state-setting hook methods (STATE_HOOK_METHODS)", () => {
+  const OUTCOME = `const outcome = useReleaseOutcome();\n`;
+
+  it("flags outcome.show / outcome?.show after an await", () => {
+    expect(
+      scan(`${OUTCOME}start(async () => { const r = await go(); outcome.show(r.error); });`),
+    ).toEqual(["outcome.show"]);
+    expect(
+      scan(`${OUTCOME}start(async () => { const r = await go(); if (outcome) outcome?.show(r.error); });`),
+    ).toEqual(["outcome.show"]);
+  });
+
+  it("ignores outcome.show re-wrapped in start(() => …) or called before the await", () => {
+    expect(
+      scan(`${OUTCOME}start(async () => { const r = await go(); start(() => outcome.show(r.error)); });`),
+    ).toEqual([]);
+    expect(scan(`${OUTCOME}start(async () => { outcome.show("…"); await go(); });`)).toEqual([]);
+  });
+
+  it("flags a destructured show, and ignores other methods or objects", () => {
+    expect(
+      scan(`const { show: announce } = useReleaseOutcome();
+start(async () => { await go(); announce("x"); });`),
+    ).toEqual(["announce"]);
+    expect(
+      scan(`${OUTCOME}const other = useOther();
+start(async () => { await go(); outcome.hide(); other.show("x"); });`),
+    ).toEqual([]);
   });
 });
 
