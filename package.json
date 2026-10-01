@@ -56,6 +56,7 @@
     "sheet-sync:db-proof": "tsx scripts/sheet-sync-db-proof.ts",
     "sheet:sync": "tsx scripts/sheet-sync.ts",
     "first-night:check": "tsx --require ./scripts/lib/server-only-shim.cjs scripts/first-night-check.ts",
+    "email:preview": "tsx --require ./scripts/lib/server-only-shim.cjs scripts/email-preview.mts",
     "patient-sources:db-proof": "tsx scripts/patient-sources-db-proof.ts",
     "ad-spend:concurrency-proof": "tsx scripts/ad-spend-concurrency-proof.ts",
     "panel-claim:concurrency-proof": "tsx scripts/panel-claim-concurrency-proof.ts",
@@ -63,6 +64,7 @@
     "panel-undo:concurrency-proof": "tsx scripts/panel-undo-concurrency-proof.ts",
     "report-release:concurrency-proof": "tsx scripts/report-release-concurrency-proof.ts",
     "waiver:concurrency-proof": "tsx scripts/waiver-concurrency-proof.ts",
+    "ps-digest-claim:concurrency-proof": "tsx scripts/ps-digest-claim-concurrency-proof.ts",
     "release-notice:concurrency-proof": "tsx scripts/release-notice-concurrency-proof.ts"
   },
   "dependencies": {

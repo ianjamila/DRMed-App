@@ -20,8 +20,8 @@ jobs:
         env:
           SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
         run: |
-          # Source: vercel.json (eight schedules across seven routes) plus release-notices (pg_cron, 0212).
-          # Daily 30h / weekly 8d allow Vercel jitter and GitHub scheduling delay.
+          # Source: vercel.json (eleven schedules across ten routes) plus release-notices (pg_cron, 0212).
+          # Daily 30h / weekly 8d / monthly 32d allow Vercel jitter and GitHub scheduling delay.
           # Add each scheduled leg as one row in this threshold table.
           # active_from is a one-time bootstrap guard; these initial dates will
           # be in the past for future readers. A new cron added later gets its
@@ -41,6 +41,8 @@ jobs:
               -- from masking a stopped Vercel cron here too.
               ('sheet-sync', ARRAY['sheet_sync.completed', 'sheet_sync.skipped'], interval '30 hours', date '2026-09-29', 'cron', NULL::text),
               ('stale-bookings', ARRAY['system.stale_bookings.completed'], interval '30 hours', date '2026-09-27', NULL::text, NULL::text),
+              ('patient-sources-weekly', ARRAY['system.patient_sources_weekly.completed'], interval '8 days', date '2026-10-05', NULL::text, NULL::text),
+              ('patient-sources-monthly', ARRAY['system.patient_sources_monthly.completed'], interval '32 days', date '2026-11-02', NULL::text, NULL::text),
               -- release-notices is scheduled by a Supabase pg_cron job (0212),
               -- not vercel.json, every 5 minutes. It only ticks while the strict
               -- release-notice flag is on, so it is watched ONLY while

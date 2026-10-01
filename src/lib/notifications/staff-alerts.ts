@@ -18,6 +18,8 @@ export const STAFF_ALERT_KEYS = [
   "dedup_digest",
   "stale_bookings",
   "result_released",
+  "patient_sources_weekly",
+  "patient_sources_monthly",
 ] as const;
 export type StaffAlertKey = (typeof STAFF_ALERT_KEYS)[number];
 
@@ -88,6 +90,21 @@ export const STAFF_ALERTS: Record<StaffAlertKey, StaffAlertDef> = {
       "Sent when the lab releases results, so the counter can print them for a waiting patient. One email per release per visit. It shows the patient’s first name and last initial, the visit number and how many results — never which tests, the results themselves, or contact details.",
     defaultRoles: ["reception"],
     sentAction: "test_request.released.staff_alert_sent",
+  },
+  patient_sources_weekly: {
+    key: "patient_sources_weekly",
+    label: "Weekly patient sources",
+    description:
+      "Monday 7:00 AM: last week's new patients by channel, served, revenue, top referrers and cost per new patient, compared with the week before.",
+    defaultRoles: ["admin"],
+    sentAction: "system.patient_sources_weekly.sent",
+  },
+  patient_sources_monthly: {
+    key: "patient_sources_monthly",
+    label: "Monthly patient sources",
+    description: "1st of the month, 8:00 AM: the same for last month vs the month before.",
+    defaultRoles: ["admin"],
+    sentAction: "system.patient_sources_monthly.sent",
   },
 };
 

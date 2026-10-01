@@ -1,19 +1,25 @@
 import "server-only";
 import { PROVIDER_TIMEOUT_MS, emailStatus } from "./channel-status";
 
-interface SendEmailInput {
+export interface SendEmailInput {
   to: string;
   subject: string;
   text: string;
   html?: string;
-  // Resend `Idempotency-Key`: a retry of the SAME send with the same key inside
-  // Resend's 24 h window returns the first response instead of mailing again.
+  /**
+   * Sent as Resend's `Idempotency-Key`: a retry of the SAME send with the same key
+   * inside Resend's 24 h window returns the first response instead of mailing again.
+   * Callers that must not double-send claim the send first and never rely on this alone.
+   */
   idempotencyKey?: string;
 }
 
 export type SendResult =
   | { ok: true; id: string }
-  | { ok: false; kind: "error"; error: string }
+  // definite: true ONLY when an HTTP response with a non-2xx status was read —
+  // Resend refused the mail. false/absent means the request may have reached
+  // Resend (fetch threw, or a 2xx body could not be read): the mail may exist.
+  | { ok: false; kind: "error"; error: string; definite?: boolean }
   | { ok: false; kind: "skipped"; reason: string };
 
 // Resend transactional email. We hit the REST API directly — no SDK needed.
@@ -58,6 +64,7 @@ export async function sendEmail(input: SendEmailInput): Promise<SendResult> {
         ok: false,
         kind: "error",
         error: `Resend ${res.status}: ${body.slice(0, 200)}`,
+        definite: true,
       };
     }
     const data = (await res.json()) as { id?: string };
@@ -67,6 +74,7 @@ export async function sendEmail(input: SendEmailInput): Promise<SendResult> {
       ok: false,
       kind: "error",
       error: err instanceof Error ? err.message : "unknown",
+      definite: false,
     };
   }
 }

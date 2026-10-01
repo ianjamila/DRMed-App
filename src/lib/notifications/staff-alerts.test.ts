@@ -123,3 +123,18 @@ describe("alertSkipReason", () => {
     expect(r).not.toContain("nobody is switched on");
   });
 });
+
+describe("Patient Sources owner emails", () => {
+  it("are admin-default alerts with their own sent actions", () => {
+    expect(STAFF_ALERTS.patient_sources_weekly).toMatchObject({
+      label: "Weekly patient sources",
+      defaultRoles: ["admin"],
+      sentAction: "system.patient_sources_weekly.sent",
+    });
+    expect(STAFF_ALERTS.patient_sources_monthly).toMatchObject({
+      label: "Monthly patient sources",
+      defaultRoles: ["admin"],
+      sentAction: "system.patient_sources_monthly.sent",
+    });
+  });
+});

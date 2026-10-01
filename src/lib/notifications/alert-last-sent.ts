@@ -38,3 +38,8 @@ export function normaliseAlertSentMetadata(metadata: unknown): AlertLastSentSumm
     skipped: typeof m.skipped === "string" ? m.skipped : null,
   };
 }
+
+/** "sent to 3 of 4, 1 failed (reason)" — the Email Alerts "Last sent" wording, shared with its test. */
+export function alertLastSentLine(s: AlertLastSentSummary): string {
+  return `sent to ${s.sent} of ${s.recipients}${s.failed > 0 ? `, ${s.failed} failed` : ""}${s.skipped ? ` (${s.skipped})` : ""}`;
+}

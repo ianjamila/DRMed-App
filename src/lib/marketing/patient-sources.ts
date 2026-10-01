@@ -6,7 +6,7 @@
  */
 import { REFERRAL_NOT_RECORDED_LABEL, referralSourceLabel } from "@/lib/patients/referral-sources";
 import { humaniseCode } from "@/lib/format/humanise-code";
-import { daysBetweenISO, isoDateParts, isoWeekday, manilaDateTime, shiftISODate } from "@/lib/dates/manila";
+import { daysBetweenISO, isoDateParts, isoWeekday, manilaDate, manilaDateTime, shiftISODate } from "@/lib/dates/manila";
 
 export const NOT_RECORDED = "not_recorded";
 export type Mode = "new" | "served";
@@ -237,7 +237,7 @@ export interface ChannelTableRow {
   change: number | null;
 }
 
-function totalsByChannel(rows: readonly SeriesRow[]): Map<string, { confirmed: number; unconfirmed: number }> {
+export function totalsByChannel(rows: readonly SeriesRow[]): Map<string, { confirmed: number; unconfirmed: number }> {
   const m = new Map<string, { confirmed: number; unconfirmed: number }>();
   for (const r of rows) {
     const t = m.get(r.channel) ?? { confirmed: 0, unconfirmed: 0 };
@@ -272,6 +272,118 @@ export function channelTable(current: readonly SeriesRow[], previous: readonly S
       };
     })
     .sort((a, b) => b.total - a.total || a.label.localeCompare(b.label) || a.channel.localeCompare(b.channel));
+}
+
+export interface ChannelDelta {
+  channel: string;
+  label: string;
+  /** This period: confirmed + unconfirmed. */
+  now: number;
+  /** The comparison period: confirmed + unconfirmed. */
+  before: number;
+  change: number;
+  /** change / before as a fraction (0.5 = +50%); null when there was nothing before. */
+  pct: number | null;
+}
+
+/**
+ * Per-channel change for the owner email (spec §2). Includes channels that are
+ * zero now but were positive before, so a fall to zero stays visible. Ordered
+ * like `channelTable` (this period's total, then label, then code). No
+ * comparison period → no deltas.
+ */
+export function channelDeltas(current: readonly SeriesRow[], previous: readonly SeriesRow[] | null): ChannelDelta[] {
+  if (previous === null) return [];
+  const cur = totalsByChannel(current);
+  const prev = totalsByChannel(previous);
+  return [...new Set([...cur.keys(), ...prev.keys()])]
+    .map((channel) => {
+      const c = cur.get(channel);
+      const p = prev.get(channel);
+      const now = (c?.confirmed ?? 0) + (c?.unconfirmed ?? 0);
+      const before = (p?.confirmed ?? 0) + (p?.unconfirmed ?? 0);
+      return {
+        channel,
+        label: channelLabel(channel),
+        now,
+        before,
+        change: now - before,
+        pct: before === 0 ? null : (now - before) / before,
+      };
+    })
+    // A channel with rows but nobody in either period says nothing (spec §4.5 item 7).
+    .filter((d) => d.now > 0 || d.before > 0)
+    .sort((a, b) => b.now - a.now || a.label.localeCompare(b.label) || a.channel.localeCompare(b.channel));
+}
+
+/** A channel must move by at least this many people to be called out. */
+export const BIGGEST_MOVER_MIN = 3;
+
+/**
+ * The channel with the largest |change| of at least BIGGEST_MOVER_MIN. A tie on
+ * |change| goes to the larger |pct| (null ranks last), then to list order — the
+ * deltas arrive in channel-table order, so a strictly-greater test keeps the
+ * earlier one.
+ */
+export function biggestMover(deltas: readonly ChannelDelta[]): ChannelDelta | null {
+  let best: ChannelDelta | null = null;
+  for (const d of deltas) {
+    if (Math.abs(d.change) < BIGGEST_MOVER_MIN) continue;
+    if (best === null) {
+      best = d;
+      continue;
+    }
+    const a = Math.abs(d.change);
+    const b = Math.abs(best.change);
+    if (a > b) best = d;
+    else if (a === b) {
+      const pa = d.pct === null ? -1 : Math.abs(d.pct);
+      const pb = best.pct === null ? -1 : Math.abs(best.pct);
+      if (pa > pb) best = d;
+    }
+  }
+  return best;
+}
+
+/**
+ * An observation, never a cause (spec §2): the period had served customers on a
+ * Sunday and the period before recorded none. No claim about opening hours.
+ * `current` / `previous` are served-by-day rows (any channel split).
+ */
+export function sundayObservation(
+  current: readonly SeriesRow[],
+  previous: readonly SeriesRow[] | null,
+  unit: "week" | "month",
+): string | null {
+  if (previous === null) return null;
+  const onSundays = (rows: readonly SeriesRow[]) =>
+    rows
+      .filter((r) => isoWeekday(r.bucket_start) === 0)
+      .reduce((s, r) => s + Number(r.confirmed) + Number(r.unconfirmed), 0);
+  const now = onSundays(current);
+  if (now < 1 || onSundays(previous) > 0) return null;
+  return `Sunday activity was recorded this ${unit} (${now} served); none was recorded on Sunday the ${unit} before.`;
+}
+
+const SHEET_TAB_LABEL: Record<string, string> = { lab: "Lab", consult: "Consultations", customers: "Customers" };
+
+/**
+ * "Latest service date in the sheet: Lab …. Latest registration date in the
+ * sheet: …." — the Patient Sources page's own wording (leading space on each
+ * sentence, "" when there is nothing to say), shared so the page and the owner
+ * email cannot drift. "customers" is the latest REGISTRATION date, not a sync
+ * time (0189); lab/consult are the latest service dates.
+ */
+export function sheetDatesText(s: Pick<SummaryRow, "sheet_last_dates">): string {
+  const dates = Object.entries(s.sheet_last_dates ?? {}).filter(([, d]) => d);
+  const service = dates.filter(([tab]) => tab !== "customers");
+  const registration = dates.find(([tab]) => tab === "customers")?.[1];
+  return (
+    (service.length > 0
+      ? ` Latest service date in the sheet: ${service.map(([tab, d]) => `${SHEET_TAB_LABEL[tab] ?? tab} ${manilaDate(d as string)}`).join(" · ")}.`
+      : "") +
+    (registration ? ` Latest registration date in the sheet: ${manilaDate(registration as string)}.` : "")
+  );
 }
 
 export const CHANNEL_PALETTE = [

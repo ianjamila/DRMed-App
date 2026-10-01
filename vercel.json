@@ -37,6 +37,14 @@
     {
       "path": "/api/cron/sheet-sync",
       "schedule": "0 16 * * *"
+    },
+    {
+      "path": "/api/cron/patient-sources-weekly",
+      "schedule": "0 23 * * 0"
+    },
+    {
+      "path": "/api/cron/patient-sources-monthly",
+      "schedule": "0 0 1 * *"
     }
   ]
 }

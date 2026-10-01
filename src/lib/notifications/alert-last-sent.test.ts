@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { normaliseAlertSentMetadata } from "./alert-last-sent";
+import { alertLastSentLine, normaliseAlertSentMetadata } from "./alert-last-sent";
 
 describe("normaliseAlertSentMetadata", () => {
   it("reads the website_message shape (contact_message.alert_sent): {recipients, sent, failed, skipped?}", () => {
@@ -54,5 +54,21 @@ describe("normaliseAlertSentMetadata", () => {
     expect(
       normaliseAlertSentMetadata({ recipients: "5", sent: null, skipped: 42 }),
     ).toEqual({ recipients: 0, sent: 0, failed: 0, skipped: null });
+  });
+});
+describe("alertLastSentLine", () => {
+  it("is the Email Alerts wording: sent to X of Y, failures, then the reason in brackets", () => {
+    expect(alertLastSentLine({ recipients: 4, sent: 3, failed: 1, skipped: null })).toBe("sent to 3 of 4, 1 failed");
+    expect(alertLastSentLine({ recipients: 2, sent: 2, failed: 0, skipped: null })).toBe("sent to 2 of 2");
+    expect(alertLastSentLine({ recipients: 0, sent: 0, failed: 0, skipped: "turned off in Email Alerts" })).toBe(
+      "sent to 0 of 0 (turned off in Email Alerts)",
+    );
+  });
+  it("reads a Patient Sources digest row: already-sent is a reason, not a failure", () => {
+    const meta = {
+      period_from: "2026-09-28", period_to: "2026-10-04", recipients: 3, sent: 0, failed: 0, unknown: 0, already_sent: 3,
+      skipped: "already sent to everyone for this period",
+    };
+    expect(alertLastSentLine(normaliseAlertSentMetadata(meta))).toBe("sent to 0 of 3 (already sent to everyone for this period)");
   });
 });

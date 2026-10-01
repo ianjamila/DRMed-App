@@ -28,14 +28,23 @@ describe("describeCronSchedule", () => {
   });
 
   it("does not guess at a shape it cannot read", () => {
-    for (const schedule of ["*/0 * * * *", "*/60 * * * *", "*/5 * * 1 *", "0 9 1 * *", "0 9 * * 1-5", "0 9 * *", "0 24 * * *", "60 9 * * *", "0 9 * * 8"]) {
+    for (const schedule of ["*/0 * * * *", "*/60 * * * *", "*/5 * * 1 *", "0 9 29 * *", "0 9 1 * 1", "0 9 1 1 *", "0 9 0 * *", "0 9 * * 1-5", "0 9 * *", "0 24 * * *", "60 9 * * *", "0 9 * * 8"]) {
       expect(describeCronSchedule(schedule)).toBe(`Custom schedule (${schedule}, UTC)`);
     }
   });
 
+  it("reads a monthly run on one day of the month, moving the day forward when the Manila shift crosses midnight", () => {
+    expect(describeCronSchedule("0 0 1 * *")).toBe("On the 1st of every month at 8:00 AM");
+    expect(describeCronSchedule("0 9 1 * *")).toBe("On the 1st of every month at 5:00 PM");
+    expect(describeCronSchedule("0 16 1 * *")).toBe("On the 2nd of every month at 12:00 AM");
+    expect(describeCronSchedule("30 20 2 * *")).toBe("On the 3rd of every month at 4:30 AM");
+    expect(describeCronSchedule("0 20 11 * *")).toBe("On the 12th of every month at 4:00 AM");
+    expect(describeCronSchedule("0 20 21 * *")).toBe("On the 22nd of every month at 4:00 AM");
+  });
+
   it("reads every registered schedule without falling back", () => {
     for (const cron of CRON_HEARTBEATS) {
-      expect(describeCronSchedule(cron.schedule), cron.key).toMatch(/^Every (\w+ at \d{1,2}:\d{2} [AP]M|\d+ minutes?)$/);
+      expect(describeCronSchedule(cron.schedule), cron.key).toMatch(/^(Every (\w+ at \d{1,2}:\d{2} [AP]M|\d+ minutes?)|On the \d{1,2}(st|nd|rd|th) of every month at \d{1,2}:\d{2} [AP]M)$/);
     }
   });
 });

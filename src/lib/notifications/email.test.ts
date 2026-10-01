@@ -45,3 +45,31 @@ describe("provider timeout", () => {
     expect(PROVIDER_TIMEOUT_MS).toBe(15_000);
   });
 });
+
+describe("sendEmail — definite vs uncertain failures (Patient Sources digest, at most once)", () => {
+  const INPUT = { to: "owner@example.com", subject: "S", text: "T" };
+
+  it("marks a non-2xx answer as a DEFINITE failure (Resend read the request and refused it)", async () => {
+    fetchMock.mockResolvedValue(new Response("invalid", { status: 422 }));
+    const r = await sendEmail(INPUT);
+    expect(r).toMatchObject({ ok: false, kind: "error", definite: true });
+    expect((r as { error: string }).error).toContain("422");
+  });
+
+  it("marks a thrown fetch (incl. a timeout) as NOT definite (the request may have reached Resend)", async () => {
+    fetchMock.mockRejectedValue(new Error("socket hang up"));
+    expect(await sendEmail(INPUT)).toMatchObject({ ok: false, kind: "error", definite: false, error: "socket hang up" });
+  });
+
+  it("marks a 2xx with an unreadable body as NOT definite (the mail was probably accepted)", async () => {
+    fetchMock.mockResolvedValue(new Response("<html>not json</html>", { status: 200 }));
+    expect(await sendEmail(INPUT)).toMatchObject({ ok: false, kind: "error", definite: false });
+  });
+
+  it("skips (and never calls fetch) when this environment is not live", async () => {
+    vi.stubEnv("NOTIFICATIONS_LIVE", "");
+    const r = await sendEmail(INPUT);
+    expect(r).toMatchObject({ ok: false, kind: "skipped" });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+});

@@ -18,7 +18,7 @@ import {
   type AlertStaffMember,
 } from "@/lib/notifications/staff-alerts";
 import { isValidAlertEmail } from "@/lib/notifications/alert-email";
-import type { AlertLastSentSummary } from "@/lib/notifications/alert-last-sent";
+import { alertLastSentLine, type AlertLastSentSummary } from "@/lib/notifications/alert-last-sent";
 import {
   setAlertEnabledAction,
   setStaffAlertAction,
@@ -28,6 +28,13 @@ import {
   removeAlertEmailAction,
   sendTestAlertAction,
 } from "./actions";
+import { sendPatientSourcesPreviewAction } from "./preview-actions";
+
+// The two Patient Sources emails get a "Send me a preview" button; the other alerts do not.
+const PREVIEW_KIND: Partial<Record<StaffAlertKey, "week" | "month">> = {
+  patient_sources_weekly: "week",
+  patient_sources_monthly: "month",
+};
 
 export interface AlertStaffMemberProp extends AlertStaffMember {
   fullName: string;
@@ -79,6 +86,10 @@ export function AlertCard({
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<string | null>(null);
   const [testError, setTestError] = useState<string | null>(null);
+  const [previewing, setPreviewing] = useState(false);
+  const [previewResult, setPreviewResult] = useState<string | null>(null);
+  const [previewError, setPreviewError] = useState<string | null>(null);
+  const previewKind = PREVIEW_KIND[alertKey];
 
   const overridesMap = new Map(Object.entries(overrides));
   const recipients = computeAlertRecipients({
@@ -220,6 +231,21 @@ export function AlertCard({
           setError(res.error);
         });
       }
+    });
+  }
+
+  function sendPreview() {
+    if (!previewKind) return;
+    setPreviewError(null);
+    setPreviewResult(null);
+    setPreviewing(true);
+    startTransition(async () => {
+      const res = await sendPatientSourcesPreviewAction(previewKind);
+      startTransition(() => {
+        setPreviewing(false);
+        if (res.ok) setPreviewResult(`Preview sent to ${res.data.sentTo}.`);
+        else setPreviewError(res.error);
+      });
     });
   }
 
@@ -437,9 +463,7 @@ export function AlertCard({
         </p>
         {lastSent ? (
           <p className="mt-1 text-sm text-[color:var(--color-brand-text-soft)]">
-            {manilaDateTime(lastSent.at)} — sent to {lastSent.sent} of {lastSent.recipients}
-            {lastSent.failed > 0 ? `, ${lastSent.failed} failed` : ""}
-            {lastSent.skipped ? ` (${lastSent.skipped})` : ""}
+            {manilaDateTime(lastSent.at)} — {alertLastSentLine(lastSent)}
           </p>
         ) : (
           <p className="mt-1 text-sm text-[color:var(--color-brand-text-soft)]">Never sent yet.</p>
@@ -464,6 +488,18 @@ export function AlertCard({
         )}
         {testResult && <span className="text-xs text-green-700">{testResult}</span>}
         {testError && <span className="text-xs text-red-600">{testError}</span>}
+        {previewKind && (
+          <button
+            type="button"
+            onClick={sendPreview}
+            disabled={previewing}
+            className="min-h-9 rounded-md border border-[color:var(--color-brand-navy)] px-3 py-1.5 text-sm font-semibold text-[color:var(--color-brand-navy)] disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {previewing ? "Sending…" : "Send me a preview"}
+          </button>
+        )}
+        {previewResult && <span className="text-xs text-green-700">{previewResult}</span>}
+        {previewError && <span className="text-xs text-red-600">{previewError}</span>}
       </div>
     </Panel>
   );
