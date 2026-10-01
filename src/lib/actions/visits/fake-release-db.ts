@@ -20,6 +20,19 @@
 //    `p_audit` / `p_reason` arguments (rpcCalls), not these rows. The undo's
 //    viewed_count comes from the seed's `viewedCounts` (default 0).
 //
+//  - Migration 0214 (the release-notice outbox, PR 3): while `outboxEnabled` is
+//    true (seed option, default OFF; flip it with `setOutboxEnabled`) a release
+//    that releases at least one line also enqueues ONE pending `notices` row
+//    covering every released id (report-mates included) and returns its id as
+//    `notice_id`; an undo cancels this visit's pending / retry notices none of
+//    whose tests is still released with that release (partly undone and sending
+//    rows are left alone) whatever the flag says; `cancel_release_notice` is the
+//    fenced cancel (pending / retry only) and `release_notices_enabled` the flag
+//    read. With the flag OFF a release returns exactly {released, refused}. Every
+//    call is its own transaction here, so the same-transaction merge (two calls
+//    sharing one now()) is NOT modelled — supabase/tests/0214_release_notice_enqueue_smoke.sql
+//    proves it. `markNoticeSending` stands in for a claimer's lease.
+//
 // Failure injection is one-shot: `failNext(table, "read")` errors the next
 // SELECT, `failNextRpc(name, err)` errors the next call of that RPC,
 // `overrideNextRpc(name, data)` makes it return `data` instead (malformed
@@ -100,7 +113,25 @@ export interface FakeDbAudit {
   user_agent: string | null;
 }
 
+/** A release_notices row as the fake models it (the fields 0214's release / undo / cancel touch). */
+export interface FakeNotice {
+  id: string;
+  visit_id: string;
+  released_at: string;
+  test_request_ids: string[];
+  release_medium: string;
+  bulk_batch_id: string | null;
+  status: "pending" | "sending" | "retry" | "sent" | "skipped" | "suppressed" | "cancelled" | "abandoned";
+  next_attempt_at: string;
+  lease_token: string | null;
+  resolved_at: string | null;
+  audited_at: string | null;
+  skip_reason: string | null;
+}
+
 export function makeFakeReleaseDb(seed: {
+  /** Start with the release-notice outbox flag ON (0214; default OFF, like prod). */
+  outboxEnabled?: boolean;
   rows: FakeTestRow[];
   links?: FakeLink[];
   actorRole?: string | (() => string);
@@ -133,6 +164,9 @@ export function makeFakeReleaseDb(seed: {
   const failures: Array<{ table: string; phase: FailPhase; error: Err }> = [];
   const rpcCalls: FakeRpcCall[] = [];
   const dbAudits: FakeDbAudit[] = [];
+  const notices: FakeNotice[] = [];
+  let outboxEnabled = seed.outboxEnabled ?? false;
+  let noticeSeq = 0;
   const auditParts = (args: Record<string, unknown>) => {
     const a = (args.p_audit ?? {}) as { metadata?: Record<string, unknown>; ip?: string | null; user_agent?: string | null };
     return { extras: a.metadata ?? {}, ip: a.ip ?? null, ua: a.user_agent ?? null };
@@ -330,7 +364,27 @@ export function makeFakeReleaseDb(seed: {
         refused.push({ id, code: "not_ready", report_id: null, count: 0 });
       }
     }
-    return { data: { released, refused }, error: null };
+    let noticeId: string | null = null;
+    if (outboxEnabled && released.length > 0) {
+      const batch = extras.bulk_batch_id;
+      const notice: FakeNotice = {
+        id: `notice-${++noticeSeq}`,
+        visit_id: visitId,
+        released_at: FAKE_RELEASED_AT,
+        test_request_ids: released.map((r) => r.id),
+        release_medium: args.p_medium as string,
+        bulk_batch_id: batch == null || batch === "" ? null : String(batch).slice(0, 100),
+        status: "pending",
+        next_attempt_at: FAKE_RELEASED_AT,
+        lease_token: null,
+        resolved_at: null,
+        audited_at: null,
+        skip_reason: null,
+      };
+      notices.push(notice);
+      noticeId = notice.id;
+    }
+    return { data: { released, refused, ...(noticeId ? { notice_id: noticeId } : {}) }, error: null };
   }
 
   function undoVisitRelease(args: Record<string, unknown>): { data: unknown; error: Err | null } {
@@ -393,14 +447,42 @@ export function makeFakeReleaseDb(seed: {
         r.releaseMedium = null;
         return prior;
       });
+    // 0214: cancel this visit's pending / retry notices with nothing left released under their release.
+    for (const n of notices) {
+      if (n.visit_id !== visitId || (n.status !== "pending" && n.status !== "retry")) continue;
+      const stillReleased = n.test_request_ids.some((id) => {
+        const r = rows.find((x) => x.id === id);
+        return r !== undefined && r.status === "released" && r.releasedAt === n.released_at;
+      });
+      if (stillReleased) continue;
+      n.status = "cancelled";
+      n.resolved_at = FAKE_RELEASED_AT;
+      n.audited_at = FAKE_RELEASED_AT;
+      n.lease_token = null;
+      n.skip_reason = "release undone";
+    }
     const undoneIds = new Set(undone.map((u) => u.id));
     const skipped = ids.filter((id) => !undoneIds.has(id)).map((id) => ({ id, code: batch ? "changed_since" : "not_released" }));
     return { data: { undone, skipped }, error: null };
   }
 
+  // The fenced cancel (0214): pending / retry only; false for a sending / terminal / unknown row.
+  function cancelReleaseNotice(args: Record<string, unknown>): { data: unknown; error: Err | null } {
+    const n = notices.find((x) => x.id === args.p_id);
+    if (!n || (n.status !== "pending" && n.status !== "retry")) return { data: false, error: null };
+    n.status = "cancelled";
+    n.resolved_at = FAKE_RELEASED_AT;
+    n.audited_at = FAKE_RELEASED_AT;
+    n.lease_token = null;
+    n.skip_reason = typeof args.p_reason === "string" ? args.p_reason.slice(0, 200) : n.skip_reason;
+    return { data: true, error: null };
+  }
+
   const models: Record<string, (args: Record<string, unknown>) => { data: unknown; error: Err | null }> = {
     release_visit_results: releaseVisitResults,
     undo_visit_release: undoVisitRelease,
+    cancel_release_notice: cancelReleaseNotice,
+    release_notices_enabled: () => ({ data: outboxEnabled, error: null }),
   };
   const rpc = async (name: string, args: Record<string, unknown>) => {
     rpcCalls.push({ name, args });
@@ -414,5 +496,20 @@ export function makeFakeReleaseDb(seed: {
     return model(args);
   };
 
-  return { client: { ...client, rpc } as never, rows, links, calls, rpcCalls, dbAudits, hooks, failNext, failNextRpc, overrideNextRpc };
+  const setOutboxEnabled = (on: boolean) => {
+    outboxEnabled = on;
+  };
+  /** A claimer leased the notice (status sending): undo and cancel must leave it alone. */
+  const markNoticeSending = (id: string) => {
+    const n = notices.find((x) => x.id === id);
+    if (!n) throw new Error(`fake db: no notice ${id}`);
+    n.status = "sending";
+    n.lease_token = `lease-${id}`;
+  };
+
+  return {
+    client: { ...client, rpc } as never,
+    rows, links, calls, rpcCalls, dbAudits, notices, hooks,
+    failNext, failNextRpc, overrideNextRpc, setOutboxEnabled, markNoticeSending,
+  };
 }

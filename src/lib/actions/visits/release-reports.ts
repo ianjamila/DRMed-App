@@ -111,7 +111,7 @@ export async function releaseAuditArg(metadata: Record<string, Json>): Promise<J
  * is held elsewhere, the claim fails) leaves the row pending, which the 5-minute
  * sweeper picks up — so the operator is told it "will retry automatically".
  */
-async function notifyViaOutbox(noticeId: string, visitId: string): Promise<ReleaseNoticeOutcome> {
+async function notifyViaOutbox(noticeId: string, visitId: string): Promise<ReleaseNoticeOutcome | "legacy"> {
   const admin = createAdminClient();
   const { data, error } = await admin.rpc("claim_release_notice", { p_id: noticeId, p_limit: 1 });
   if (error) {
@@ -123,8 +123,43 @@ async function notifyViaOutbox(noticeId: string, visitId: string): Promise<Relea
     return noticeRetrying();
   }
   const claimed = (data ?? [])[0] as ReleaseNoticeRow | undefined;
-  if (!claimed) return noticeRetrying();
+  if (!claimed) {
+    // claim_release_notice returns nothing while the flag is OFF. If it was flipped OFF between
+    // our flag read and the claim, the row would sit behind a dormant sweeper: take the
+    // flag-off path (cancel, then the legacy send) instead of stranding the patient.
+    if (!(await outboxEnabled())) {
+      const cancelled = await cancelEnqueuedNotice(noticeId, visitId);
+      return cancelled === "legacy" ? "legacy" : cancelled;
+    }
+    return noticeRetrying();
+  }
   return (await sendReleaseNotice(claimed)).outcome;
+}
+
+/**
+ * A release enqueued a notice (it returned notice_id) but the strict flag now reads
+ * OFF — it was flipped between the release transaction and this send. The row must
+ * not be both legacy-sent here and swept later, so it is cancelled FIRST (fenced:
+ * only pending / retry), and the legacy sender then runs as before. Returns
+ * "legacy" when it is safe to send that way, or the outcome to hand back when it
+ * is not: the cancel found the row already owned or finished by the outbox (no
+ * second send), or the cancel itself failed (unknown state, so no second send —
+ * the failure is reported and the operator is told the notice did not go out).
+ */
+async function cancelEnqueuedNotice(noticeId: string, visitId: string): Promise<"legacy" | ReleaseNoticeOutcome> {
+  const { data, error } = await createAdminClient().rpc("cancel_release_notice", {
+    p_id: noticeId,
+    p_reason: "outbox switched off before the send; sent directly",
+  });
+  if (error) {
+    await reportError({
+      scope: "notify/release-notice:cancel",
+      error: new Error(error.message),
+      metadata: { visit_id: visitId, notice_id: noticeId },
+    });
+    return { status: "failed", channels: [], reason: "sending failed" };
+  }
+  return data === true ? "legacy" : noticeRetrying();
 }
 
 /** Strict: only an explicit true counts; a failed read is OFF (legacy path). */
@@ -145,14 +180,24 @@ export async function notifyReleased(
   // The release call's bulk_batch_id, stamped on the notice's own audit row
   // so the batch's Undo does not read it as a later, unrelated change.
   bulkBatchId?: string,
-  // The release_notices row release_visit_results enqueued (0210). With it AND the
-  // strict flag on, the outbox sends (durable retry, 24 h dedup); without either,
-  // the legacy one-shot sender below runs exactly as before.
+  // The release_notices row release_visit_results enqueued (0214, only while the
+  // flag was ON inside the release). WITH it the outbox owns the notice whatever
+  // the flag reads now (durable retry, 24 h dedup): flag still ON -> claim + send;
+  // flag flipped OFF since -> cancel the row (fenced), then the legacy sender.
+  // Without a notice id the legacy one-shot sender below runs exactly as before.
   noticeId?: string | null,
 ): Promise<ReleaseNoticeOutcome | null> {
   if (rows.length === 0) return null;
   try {
-    if (noticeId && (await outboxEnabled())) return await notifyViaOutbox(noticeId, visitId);
+    if (noticeId) {
+      if (await outboxEnabled()) {
+        const viaOutbox = await notifyViaOutbox(noticeId, visitId);
+        if (viaOutbox !== "legacy") return viaOutbox;
+      } else {
+      const cancelled = await cancelEnqueuedNotice(noticeId, visitId);
+      if (cancelled !== "legacy") return cancelled;
+      }
+    }
     if (rows.length === 1) {
       return await notifyResultReleased({ testRequestId: rows[0].id, visitId, releaseMedium: medium, bulkBatchId });
     } else {

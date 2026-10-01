@@ -88,6 +88,25 @@
 //       serialise on H's lock, so H auto-releases exactly once.
 //   F   RRC_ROUNDS (default 25) free rounds of release-vs-undo and
 //       release-vs-release, random 0-20 ms stagger: invariants only.
+//   N   0214: the release-notice outbox rides these functions. The runner turns
+//       release_notice_settings.enabled ON for its whole run and restores the
+//       prior value in teardown (normal end, failure, SIGINT, SIGTERM), so the
+//       flag-ON enqueue path is the one every scenario above exercises.
+//       N0  flag OFF: a release enqueues nothing and returns no notice_id.
+//       N1  two releases of one visit: the winner enqueues ONE notice, the loser
+//           (refused not_ready) none - exactly one row, owned by the winner.
+//       N2  undo leaves a partly undone notice alone and cancels it once every
+//           test is un-released (resolved_at set, lease cleared).
+//       N3a undo vs a claimer on the same notice, claim first: the undo WAITS on
+//           the notice row, then SKIPS the now-'sending' row (the lease survives).
+//       N3b the undo's cancel first: the claimer's FOR UPDATE SKIP LOCKED skips
+//           the row at once (no wait, no lock cycle), and finds nothing after.
+//       N5  a rollback leaves no orphan notice: the payment gate (23514) and a
+//           caller rollback after a successful call. (No control mutant: a
+//           pure-SQL mutant cannot escape the transaction it runs in.)
+//       N6  a notice covers every released line, report-mates included.
+//       F1/F2 also assert the final notices: released -> exactly one pending
+//       notice naming every released line; ready -> none pending.
 //   B-legacy (documentation, not counted): the pre-0198 app statements, forced
 //       to overlap, DO split the report - prints "legacy path splits: yes/no".
 //
@@ -138,6 +157,10 @@
 // from the batch Undo's report check (B4b), M6 drops 0205's string-type check on
 // the batch Undo map (B4c), M7 reverts the report check to the null-unsafe
 // `not (...)` form (B4d), M8 stamps the undo's audit rows with now() (B6),
+// M14 enqueues for the LOSER of a race too (N1), M15 lets undo cancel a
+// 'sending' notice (N3a), M16 lets undo cancel a partly undone one (N2), M17
+// enqueues with the flag OFF (N0), M18 leaves the report-mates out of the
+// notice (N6),
 // M9 locks the lines in DESC id order (L1a, L3a), M10 never takes the visit row
 // FOR SHARE (caught MID-SET by L1a), M11 drops the lock statement's ORDER BY
 // (L1a, L3a: heap order is reversed there), M12 / M13 remove the ORDER BY from
@@ -304,6 +327,8 @@ async function beginRaw(a: Actor, mode: Mode): Promise<void> {
 type Out<T> = { ok: true; v: T } | { ok: false; code: string; message: string };
 
 interface ReleaseJson {
+  /** 0214: the release_notices row enqueued by this call (only with the flag ON and a line released). */
+  notice_id?: string;
   released: Array<{ id: string; name: string; report_id: string | null; selected: boolean; released_at: string }>;
   refused: Array<{ id: string; code: string; report_id: string | null; count: number }>;
 }
@@ -641,7 +666,7 @@ interface Fix {
 
 let visitSeq = 0;
 // Every id this run minted that a leftover check can look up by primary key.
-const made = { tests: [] as string[], payments: [] as string[], results: [] as string[] };
+const made = { tests: [] as string[], payments: [] as string[], results: [] as string[], visits: [] as string[] };
 
 // A visit of `states.length` chemistry lines (100 each) on ONE combined report
 // (when 2+ members), paid by one payment of the full total unless paid=false.
@@ -668,6 +693,7 @@ async function mkFix(spec: {
   const payment = spec.paid === false ? null : randomUUID();
   const seq = ++visitSeq;
   made.tests.push(...ids);
+  made.visits.push(visit);
   if (payment) made.payments.push(payment);
   if (result) made.results.push(result);
   await monitor.query("begin");
@@ -745,6 +771,7 @@ async function mkPackage(): Promise<PkgFix> {
   const payment = randomUUID();
   const seq = ++visitSeq;
   made.tests.push(header, x, y);
+  made.visits.push(visit);
   made.payments.push(payment);
   await monitor.query("begin");
   try {
@@ -891,6 +918,94 @@ async function expectAudit(
   }
 }
 
+// ---------------------------------------------------------------------------
+// 0214: the release-notice outbox (flag, committed-state readers)
+// ---------------------------------------------------------------------------
+
+// The proof switches release_notice_settings.enabled ON for its whole run (the
+// outbox is what release_visit_results now enqueues into) and puts it back in
+// teardown. null = there was no settings row.
+let flagBefore: boolean | null | undefined;
+
+async function setFlag(on: boolean): Promise<void> {
+  await monitor.query(
+    "insert into public.release_notice_settings (id, enabled) values (true, $1) on conflict (id) do update set enabled = excluded.enabled",
+    [on],
+  );
+}
+
+async function restoreFlag(): Promise<void> {
+  if (flagBefore === undefined) return; // never touched
+  if (flagBefore === null) await monitor.query("delete from public.release_notice_settings where id is true");
+  else await setFlag(flagBefore);
+  flagBefore = undefined;
+}
+
+interface NoticeRow {
+  id: string;
+  status: string;
+  ids: string[];
+  medium: string | null;
+  lease: string | null;
+  attempts: number;
+  resolved: boolean;
+}
+
+async function noticesOf(visit: string): Promise<NoticeRow[]> {
+  const { rows } = await monitor.query<{
+    id: string;
+    status: string;
+    test_request_ids: string[];
+    release_medium: string | null;
+    lease_token: string | null;
+    attempts: number;
+    resolved: boolean;
+  }>(
+    `select id, status, test_request_ids, release_medium, lease_token, attempts, resolved_at is not null as resolved
+       from public.release_notices where visit_id = $1 order by created_at, id`,
+    [visit],
+  );
+  return rows.map((r) => ({
+    id: r.id,
+    status: r.status,
+    ids: [...r.test_request_ids].sort(),
+    medium: r.release_medium,
+    lease: r.lease_token,
+    attempts: r.attempts,
+    resolved: r.resolved,
+  }));
+}
+
+// Notices of a visit, in creation order: status (and, when given, the exact id set).
+// A terminal status must be resolved with no lease; a pending / retry row must be neither.
+function expectNotices(label: string, got: NoticeRow[], want: Array<{ status: string; ids?: readonly string[] }>): void {
+  if (got.length !== want.length) {
+    throw new Fail(`${label}: expected ${want.length} notice(s) for the visit, got ${got.length} [${got.map((g) => g.status).join(",")}]`);
+  }
+  want.forEach((w, i) => {
+    const g = got[i];
+    if (g.status !== w.status) throw new Fail(`${label}: notice ${i} expected status ${w.status}, got ${g.status}`);
+    if (w.ids && g.ids.join(",") !== [...w.ids].sort().join(",")) {
+      throw new Fail(`${label}: notice ${i} expected ids [${[...w.ids].sort().map((x) => x.slice(0, 4)).join(",")}], got [${g.ids.map((x) => x.slice(0, 4)).join(",")}]`);
+    }
+    if (g.status === "cancelled" && (!g.resolved || g.lease !== null)) {
+      throw new Fail(`${label}: a cancelled notice must be resolved with no lease`);
+    }
+    if ((g.status === "pending" || g.status === "retry") && (g.resolved || g.lease !== null)) {
+      throw new Fail(`${label}: a ${g.status} notice must be unresolved with no lease`);
+    }
+  });
+}
+
+// claim_release_notice(p_id, 1), as the sender / sweeper calls it (service role).
+// concurrency-proof: undo_visit_release (N3a/N3b race its cancel against this claim's row lock)
+function claimNotice(a: Actor, id: string): Promise<Out<Array<{ id: string; status: string; lease_token: string | null; attempts: number }>>> {
+  return settle(
+    a.c.query("select id, status, lease_token, attempts from public.claim_release_notice($1::uuid, 1)", [id]),
+    (r) => r.rows as Array<{ id: string; status: string; lease_token: string | null; attempts: number }>,
+  );
+}
+
 async function visitMoney(visit: string): Promise<{ status: string; paid: number }> {
   const { rows } = await monitor.query<{ payment_status: string; paid_php: string }>(
     "select payment_status, paid_php from public.visits where id = $1",
@@ -1022,6 +1137,8 @@ async function forcedScenarios(mode: Mode): Promise<void> {
     await expectJes("journal", f.ids, three);
     // Exactly the winner's three audit rows; the loser (nothing released) wrote none.
     await expectAudit("audit", f.ids, { released: 3, undone: 0, releasedBy: fx.med1 });
+    // 0214: exactly the winner's notice (the loser released nothing, so it enqueued nothing).
+    expectNotices("notices", await noticesOf(f.visit), [{ status: "pending", ids: f.ids }]);
   });
 
   // --- B. release vs undo on a PARTIAL report (the pre-0198 split) -----------
@@ -1046,6 +1163,8 @@ async function forcedScenarios(mode: Mode): Promise<void> {
     ]);
     // a was released by the fixture (no audit row); the RPC released b and c, then undid all three.
     await expectAudit("audit", f.ids, { released: 2, undone: 3 });
+    // 0214: the release's notice (b, c) was cancelled by the undo that waited for it.
+    expectNotices("notices", await noticesOf(f.visit), [{ status: "cancelled", ids: [f.ids[1], f.ids[2]] }]);
   });
 
   await sc("B6", "undo BEGAN before the release it waits for -> its audit rows are still stamped after the release's", async () => {
@@ -1109,6 +1228,8 @@ async function forcedScenarios(mode: Mode): Promise<void> {
     ]);
     // The undo touched only a (the sole released line); the release then released all three.
     await expectAudit("audit", f.ids, { released: 3, undone: 1 });
+    // 0214: the undo found no notice to cancel; the release then enqueued ONE for all three.
+    expectNotices("notices", await noticesOf(f.visit), [{ status: "pending", ids: f.ids }]);
   });
 
   // --- B3-B5. the 10-minute batch Undo (p_expected_released_at) ----------------
@@ -1738,6 +1859,151 @@ async function forcedScenarios(mode: Mode): Promise<void> {
       { posted: 0, reversed: 0 },
     ]);
   });
+
+  // --- N. 0214: the release-notice outbox ------------------------------------------
+  await sc("N0", "flag OFF -> a release enqueues nothing and returns no notice_id", async () => {
+    const f = await mkFix({ states: ["ready", "ready", "ready"] });
+    await setFlag(false);
+    try {
+      const a = await actor("M1", fx.med1);
+      await begin(a, mode);
+      const v = expectOk("M1 release", await release(a, f.visit, f.ids));
+      if (v.released.length !== 3) throw new Fail(`M1 release: expected 3 released, got ${v.released.length}`);
+      if ("notice_id" in v) throw new Fail("flag OFF but the result carries notice_id");
+      await a.c.query("commit");
+    } finally {
+      await setFlag(true);
+    }
+    expectNotices("flag off", await noticesOf(f.visit), []);
+  });
+
+  await sc("N1", "two releases of one visit -> the winner enqueues ONE notice, the loser (not_ready) none", async () => {
+    const f = await mkFix({ states: ["ready", "ready", "ready"] });
+    const a = await actor("M1", fx.med1);
+    const b = await actor("M2", fx.med2);
+    await begin(a, mode);
+    const va = expectOk("M1 release", await release(a, f.visit, f.ids));
+    if (!va.notice_id) throw new Fail("M1 release: the flag is ON but no notice_id came back");
+    await begin(b, mode);
+    const pb = release(b, f.visit, f.ids);
+    await mustWait(b, "M2 queues behind M1's row locks");
+    await a.c.query("commit");
+    const vb = expectOk("M2 release", await pb);
+    if (vb.released.length !== 0 || vb.refused.length !== 3 || vb.refused.some((r) => r.code !== "not_ready")) {
+      throw new Fail("M2 release: expected nothing released and three not_ready");
+    }
+    if ("notice_id" in vb) throw new Fail("the loser released nothing but its result carries a notice_id");
+    // PostgREST COMMITS a call that answered (a refusal is an answer, not an error): so must the proof,
+    // or a loser that wrongly enqueued would be rolled away and never seen.
+    await b.c.query("commit");
+    const ns = await noticesOf(f.visit);
+    expectNotices("after", ns, [{ status: "pending", ids: f.ids }]);
+    if (ns[0].id !== va.notice_id) throw new Fail("the one notice is not the winner's notice_id");
+    if (ns[0].medium !== "email") throw new Fail(`notice medium: expected email, got ${ns[0].medium}`);
+  });
+
+  await sc("N2", "undo leaves a partly undone notice alone, then cancels it once every test is un-released", async () => {
+    const f = await mkFix({ states: ["ready", "ready", "ready"], report: false });
+    const m = await actor("M1", fx.med1);
+    await begin(m, mode);
+    expectOk("M1 release", await release(m, f.visit, f.ids));
+    await m.c.query("commit");
+    const adm = await actor("A", fx.admin1);
+    await begin(adm, mode);
+    expectOk("A undo [a]", await undo(adm, f.visit, [f.ids[0]]));
+    await adm.c.query("commit");
+    expectNotices("after undoing a only", await noticesOf(f.visit), [{ status: "pending", ids: f.ids }]);
+    await begin(adm, mode);
+    expectOk("A undo [b, c]", await undo(adm, f.visit, [f.ids[1], f.ids[2]]));
+    await adm.c.query("commit");
+    expectNotices("after undoing the rest", await noticesOf(f.visit), [{ status: "cancelled", ids: f.ids }]);
+  });
+
+  await sc("N3a", "undo vs a claimer on the same notice, claim first -> undo WAITS, then SKIPS the sending row (lease survives)", async () => {
+    const f = await mkFix({ states: ["ready", "ready", "ready"] });
+    const m = await actor("M1", fx.med1);
+    await begin(m, mode);
+    const noticeId = expectOk("M1 release", await release(m, f.visit, f.ids)).notice_id;
+    if (!noticeId) throw new Fail("M1 release: no notice_id");
+    await m.c.query("commit");
+    const sv = await actor("S", null);
+    await begin(sv, mode);
+    const got = expectOk("claim", await claimNotice(sv, noticeId));
+    if (got.length !== 1 || got[0].status !== "sending") throw new Fail("the claim did not lease the notice");
+    const adm = await actor("A", fx.admin1);
+    await begin(adm, mode);
+    const pu = undo(adm, f.visit, [f.ids[0]]);
+    await mustWait(adm, "the undo's cancel queues behind the claimer's lock on the notice row");
+    await sv.c.query("commit");
+    const u = expectOk("A undo", await pu);
+    if (u.undone.length !== 3) throw new Fail(`A undo: expected 3 undone, got ${u.undone.length}`);
+    await adm.c.query("commit");
+    await expectState("after", f.ids, ["rdy:-", "rdy:-", "rdy:-"]);
+    const [n] = await noticesOf(f.visit);
+    if (!n || n.status !== "sending" || n.lease === null || n.resolved || n.attempts !== 1) {
+      throw new Fail(`the sending notice must be untouched by the undo (a cancelled / un-leased sending notice), got ${n ? `${n.status} lease=${n.lease !== null} resolved=${n.resolved} attempts=${n.attempts}` : "no row"}`);
+    }
+  });
+
+  await sc("N3b", "undo's cancel first -> the claimer's SKIP LOCKED skips the row at once and finds nothing after", async () => {
+    const f = await mkFix({ states: ["ready", "ready", "ready"] });
+    const m = await actor("M1", fx.med1);
+    await begin(m, mode);
+    const noticeId = expectOk("M1 release", await release(m, f.visit, f.ids)).notice_id;
+    if (!noticeId) throw new Fail("M1 release: no notice_id");
+    await m.c.query("commit");
+    const adm = await actor("A", fx.admin1);
+    await begin(adm, mode);
+    expectOk("A undo", await undo(adm, f.visit, [f.ids[0]])); // holds the (now cancelled) notice row, uncommitted
+    const sv = await actor("S", null);
+    await begin(sv, mode);
+    const during = expectOk("claim during the undo", await mustNotWait(sv, claimNotice(sv, noticeId), "FOR UPDATE SKIP LOCKED never queues"));
+    if (during.length !== 0) throw new Fail("the claim leased a notice the undo holds");
+    await sv.c.query("commit");
+    await adm.c.query("commit");
+    await begin(sv, mode);
+    const after = expectOk("claim after the undo", await claimNotice(sv, noticeId));
+    if (after.length !== 0) throw new Fail("the claim leased a cancelled notice");
+    await sv.c.query("commit");
+    expectNotices("after", await noticesOf(f.visit), [{ status: "cancelled", ids: f.ids }]);
+  });
+
+  await sc("N5", "a rolled-back release leaves no orphan notice (payment gate 23514; caller rollback after a successful call)", async () => {
+    const unpaid = await mkFix({ states: ["ready", "ready", "ready"], paid: false });
+    const a = await actor("M1", fx.med1);
+    await begin(a, mode);
+    expectCode("unpaid release", await release(a, unpaid.visit, unpaid.ids), "23514");
+    await a.c.query("rollback");
+    expectNotices("after the payment gate", await noticesOf(unpaid.visit), []);
+    await expectState("unpaid lines", unpaid.ids, ["rdy:-", "rdy:-", "rdy:-"]);
+
+    const f = await mkFix({ states: ["ready", "ready", "ready"] });
+    const b = await actor("M2", fx.med2);
+    await begin(b, mode);
+    const v = expectOk("M2 release", await release(b, f.visit, f.ids));
+    if (!v.notice_id) throw new Fail("M2 release: no notice_id");
+    await b.c.query("rollback"); // the answer was lost on the way back / the commit never happened
+    expectNotices("after the caller rollback", await noticesOf(f.visit), []);
+    await expectState("rolled-back lines", f.ids, ["rdy:-", "rdy:-", "rdy:-"]);
+  });
+
+  await sc("N6", "a notice covers EVERY released line: selecting one member of a report releases + notifies all three", async () => {
+    const f = await mkFix({ states: ["ready", "ready", "ready"] });
+    const m = await actor("M1", fx.med1);
+    await begin(m, mode);
+    const v = expectOk("M1 release [a]", await release(m, f.visit, [f.ids[0]]));
+    if (v.released.length !== 3 || v.released.filter((r) => r.selected).length !== 1) {
+      throw new Fail("expected the whole report released with one selected line");
+    }
+    await m.c.query("commit");
+    expectNotices("notice", await noticesOf(f.visit), [{ status: "pending", ids: f.ids }]);
+    // ...and undoing the report whole cancels it.
+    const adm = await actor("A", fx.admin1);
+    await begin(adm, mode);
+    expectOk("A undo [a]", await undo(adm, f.visit, [f.ids[0]]));
+    await adm.c.query("commit");
+    expectNotices("after the whole-report undo", await noticesOf(f.visit), [{ status: "cancelled", ids: f.ids }]);
+  });
 }
 
 // The payment's original journal entry is reversed by exactly one mirror.
@@ -1799,6 +2065,16 @@ async function freeRaces(mode: Mode, rounds: number): Promise<void> {
       if (live.some((n) => n !== wantLive)) {
         throw new Fail(`round ${i}: report is ${SHORT[end] ?? end} but posted release entries are [${live.join(",")}]`);
       }
+      // 0214: released -> exactly one pending notice naming every released line; ready -> none pending.
+      const ns = await noticesOf(f.visit);
+      const pend = ns.filter((n) => n.status === "pending");
+      if (end === "released") {
+        if (pend.length !== 1 || pend[0].ids.join(",") !== f.ids.join(",") || ns.some((n) => n.status !== "pending" && n.status !== "cancelled")) {
+          throw new Fail(`round ${i}: released but notices are [${ns.map((n) => n.status + ":" + n.ids.length).join(",")}]`);
+        }
+      } else if (pend.length !== 0 || ns.some((n) => n.status !== "cancelled")) {
+        throw new Fail(`round ${i}: ready but notices are [${ns.map((n) => n.status + ":" + n.ids.length).join(",")}]`);
+      }
       tally[end] = (tally[end] ?? 0) + 1;
       await closeActors();
     }
@@ -1830,6 +2106,8 @@ async function freeRaces(mode: Mode, rounds: number): Promise<void> {
       await expectNoOpenTransactions(`round ${i}`);
       await expectUniform(`round ${i}`, f.ids);
       await expectJes(`round ${i} journal`, f.ids, three);
+      // 0214: exactly one notice (the winner's), naming all three.
+      expectNotices(`round ${i} notices`, await noticesOf(f.visit), [{ status: "pending", ids: f.ids }]);
       const who = (await stateOf(f.ids))[0];
       tally[who] = (tally[who] ?? 0) + 1;
       await closeActors();
@@ -1930,6 +2208,8 @@ async function sweepTagged(like: string): Promise<void> {
         where actor_id in (select id from rrc_staff)
            or resource_id in (select id from rrc_tr) or resource_id in (select id from rrc_pay)
            or resource_id in (select id from rrc_visits)`,
+      // 0214: the notices of the fixture visits (session_replication_role = replica disables the FK cascade).
+      `delete from public.release_notices where visit_id in (select id from rrc_visits)`,
       `delete from public.result_test_requests where test_request_id in (select id from rrc_tr)`,
       `delete from public.results where uploaded_by in (select id from rrc_staff)`,
       `delete from public.payments where id in (select id from rrc_pay)`,
@@ -1965,8 +2245,9 @@ async function countTagged(like: string): Promise<number> {
           + (select count(*) from public.journal_entries
               where source_id = any($6::uuid[]) or source_id = any($7::uuid[]))
           + (select count(*) from public.audit_log
-              where resource_type = 'test_request' and resource_id = any($6::uuid[])) as n`,
-    [`${like}%@example.test`, `${like}%`, `${up}%`, `DRM-${up}%`, `V-${up}%`, made.tests, made.payments, made.results],
+              where resource_type = 'test_request' and resource_id = any($6::uuid[]))
+          + (select count(*) from public.release_notices where visit_id = any($9::uuid[])) as n`,
+    [`${like}%@example.test`, `${like}%`, `${up}%`, `DRM-${up}%`, `V-${up}%`, made.tests, made.payments, made.results, made.visits],
   );
   return Number(rows[0].n);
 }
@@ -2207,6 +2488,50 @@ const MUTANTS: Mutant[] = [
     mustFail: ["L2x-unclaim", "L3x-unclaim"],
     reason: /DEADLOCKED, victim = \w+ \(40P01\)/,
   },
+  // M14-M18: the 0214 outbox. Each is a mutant of the enqueue / cancel text.
+  {
+    key: "M14",
+    what: "release enqueues even when it released nothing (the loser of a race gets a notice for ids it never released)",
+    fn: "release_visit_results",
+    edits: [
+      ["  if cardinality(v_release) > 0 then\n    with upd as (", "  if true then\n    with upd as ("],
+      ["(p_visit_id, now(), v_release, p_medium,", "(p_visit_id, now(), v_ids, p_medium,"],
+    ],
+    mustFail: ["N1"],
+    reason: /loser released nothing but its result carries a notice_id|expected 1 notice\(s\) for the visit, got 2/,
+  },
+  {
+    key: "M15",
+    what: "undo cancels a 'sending' notice too (the sender's lease is torn up under it)",
+    fn: "undo_visit_release",
+    edits: [["     and n.status in ('pending', 'retry')\n     and not exists (", "     and n.status in ('pending', 'retry', 'sending')\n     and not exists ("]],
+    mustFail: ["N3a"],
+    reason: /sending notice must be untouched/,
+  },
+  {
+    key: "M16",
+    what: "undo cancels a PARTLY undone notice (drops the 'nothing left released' test)",
+    fn: "undo_visit_release",
+    edits: [["              and tr.released_at = n.released_at);", "              and tr.released_at = n.released_at and false);"]],
+    mustFail: ["N2"],
+    reason: /expected status pending, got cancelled/,
+  },
+  {
+    key: "M17",
+    what: "release enqueues with the flag OFF (drops the strict-flag gate)",
+    fn: "release_visit_results",
+    edits: [["    if public.release_notices_enabled() then\n      begin", "    if true then\n      begin"]],
+    mustFail: ["N0"],
+    reason: /flag OFF but the result carries notice_id/,
+  },
+  {
+    key: "M18",
+    what: "the notice names only the SELECTED ids (report-mates released with them are left out)",
+    fn: "release_visit_results",
+    edits: [["(p_visit_id, now(), v_release, p_medium,", "(p_visit_id, now(), v_ids, p_medium,"]],
+    mustFail: ["N6"],
+    reason: /notice 0 expected ids/,
+  },
 ];
 
 const FN_SIGS: Record<FnName, string> = {
@@ -2335,12 +2660,13 @@ async function teardown(): Promise<void> {
   await closeActors();
   await monitor.query(`drop schema if exists rrc_ctl_${TAG.slice(4)} cascade`);
   await sweepTagged(TAG);
+  await restoreFlag();
   const left = await countTagged(TAG);
   if (left > 0) {
     results.push({ name: "teardown", ok: false, detail: `${left} fixture rows left behind` });
     console.log(`  FAIL  teardown - ${left} fixture rows left behind`);
   } else {
-    console.log("  teardown: every fixture row removed");
+    console.log("  teardown: every fixture row removed; release-notice flag restored");
   }
 }
 
@@ -2365,12 +2691,15 @@ async function main(): Promise<void> {
   let seeded = false;
   // Ctrl-C: tear down before exiting, so committed fixtures never outlive the
   // run (open transactions roll back when their connections close).
-  process.once("SIGINT", () => {
-    console.log("\n  interrupted - tearing down");
-    teardown()
-      .catch((e) => console.error(e))
-      .finally(() => process.exit(130));
-  });
+  // SIGINT / SIGTERM: the flag is a global switch, so it must never outlive the run.
+  for (const [sig, code] of [["SIGINT", 130], ["SIGTERM", 143]] as const) {
+    process.once(sig, () => {
+      console.log(`\n  ${sig} received - tearing down`);
+      teardown()
+        .catch((e) => console.error(e))
+        .finally(() => process.exit(code));
+    });
+  }
   try {
     const { rows: fn } = await monitor.query<{ n: string }>(
       "select count(*) as n from pg_proc where proname in ('release_visit_results', 'undo_visit_release', 'release_report_locks', 'release_actor')",
@@ -2381,7 +2710,14 @@ async function main(): Promise<void> {
           and to_regprocedure('public.undo_visit_release(uuid,uuid[],uuid,jsonb,text,jsonb)') is not null as ok`,
     );
     if (!v205[0].ok) throw new Error("0205 is not applied to the local stack");
+    const { rows: v214 } = await monitor.query<{ ok: boolean }>(
+      `select to_regprocedure('public.cancel_release_notice(uuid,text)') is not null
+          and to_regprocedure('public.claim_release_notice(uuid,integer)') is not null as ok`,
+    );
+    if (!v214[0].ok) throw new Error("0214 (with 0210) is not applied to the local stack");
 
+    // A crashed earlier run may have left the flag ON; its fixtures give it away.
+    const staleFixtures = await countTagged("rrc-");
     await sweepTagged("rrc-");
     // Control-round schemas a crashed run left behind (always rrc_ctl_<hex>).
     const { rows: stale } = await monitor.query<{ n: string }>(
@@ -2391,6 +2727,10 @@ async function main(): Promise<void> {
     console.log(`report-release concurrency proof - fixtures tagged ${TAG}`);
     await seed();
     seeded = true;
+    // 0214: switch the outbox ON for the run (restored in teardown). Releases enqueue into it.
+    const { rows: cur } = await monitor.query<{ enabled: boolean }>("select enabled from public.release_notice_settings");
+    flagBefore = staleFixtures > 0 ? false : cur.length ? cur[0].enabled : null;
+    await setFlag(true);
     await printPlans();
 
     for (const mode of ["seq", "indexed"] as Mode[]) {

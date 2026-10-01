@@ -7685,6 +7685,10 @@ export type Database = {
         Args: { p_end: string; p_start: string }
         Returns: Json
       }
+      cancel_release_notice: {
+        Args: { p_id: string; p_reason?: string }
+        Returns: boolean
+      }
       cash_denomination_total_php: { Args: { p: Json }; Returns: number }
       cash_drawer_state: {
         Args: { p_business_date: string; p_shift_id: string }
