@@ -55,6 +55,7 @@
     "perf:rls-structural": "tsx scripts/perf/rls-structural-prove.ts",
     "perf:rls-fixture": "tsx scripts/perf/seed-rls-fixture.ts",
     "sheet-sync:db-proof": "tsx scripts/sheet-sync-db-proof.ts",
+    "sheet-sync:concurrency-proof": "tsx scripts/sheet-sync-concurrency-proof.ts",
     "sheet:sync": "tsx scripts/sheet-sync.ts",
     "first-night:check": "tsx --require ./scripts/lib/server-only-shim.cjs scripts/first-night-check.ts",
     "email:preview": "tsx --require ./scripts/lib/server-only-shim.cjs scripts/email-preview.mts",
