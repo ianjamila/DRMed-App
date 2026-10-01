@@ -31,6 +31,21 @@ describe("releaseUndoMessage", () => {
       ].join("\n"),
     );
   });
+  it("a partial undo says how many were restored, then lists the rest", () => {
+    expect(
+      releaseUndoMessage({
+        restored: 2,
+        notRestored: [{ label: "CBC — Santos, Maria", reason: "changed again since — refresh to see its status" }],
+        notified: false,
+      }),
+    ).toBe(
+      [
+        "Undone — 2 tests are back to Ready for release.",
+        "Not undone (1):",
+        "• CBC — Santos, Maria: changed again since — refresh to see its status",
+      ].join("\n"),
+    );
+  });
   it("keeps the shared wording the visit bar used", () => {
     expect(ALREADY_NOTIFIED).toBe("The patient was already notified that results are ready — tell them if needed.");
     expect(NOTICE_RETRYING).toBe(
