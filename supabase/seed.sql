@@ -197,3 +197,8 @@ revoke all on public.pf_disbursement_year_counters from public, anon, authentica
 revoke all on public.sheet_mirror_staging          from public, anon, authenticated;
 revoke all on sequence public.patient_consents_seq_seq     from public, anon, authenticated;
 revoke all on sequence public.sheet_mirror_staging_seq_seq from public, anon, authenticated;
+
+-- 0213: the Patient Sources owner-email send claims are service_role-only server
+-- state (RLS on, no policy). The blanket grants above would hand anon/authenticated
+-- ALL on a fresh local database while prod holds nothing for them — re-revoke by name.
+revoke all on public.patient_sources_digest_sends from anon, authenticated;

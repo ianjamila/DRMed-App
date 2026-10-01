@@ -83,7 +83,11 @@ begin
       -- apply step. Only the service-role sync RPCs read or write it (0170
       -- revokes anon/authenticated: "Staging: no policy"), and no admin page
       -- shows it, so any policy here would only widen access.
-      'sheet_mirror_staging'
+      'sheet_mirror_staging',
+      -- 0213: Patient Sources owner-email send claims. Only the service-role cron
+      -- (via _ps_digest_claim) reads or writes it; no admin page shows it, so a
+      -- policy would only widen access. anon/authenticated hold nothing (third assertion).
+      'patient_sources_digest_sends'
     );
 
   if newly_unprotected is not null then
