@@ -7914,10 +7914,6 @@ export type Database = {
         }[]
       }
       patient_delete_blockers: { Args: { p_patient_id: string }; Returns: Json }
-      patient_has_live_v2_merge: {
-        Args: { p_patient_id: string }
-        Returns: boolean
-      }
       patient_kept_counts: {
         Args: { p_patient_ids: string[] }
         Returns: {
