@@ -95,6 +95,10 @@ create table if not exists public.release_notices (
   created_at        timestamptz not null default now(),
   sent_at           timestamptz,
   resolved_at       timestamptz,
+  -- Stamped (mark_release_notice_audited) once the terminal audit row is written, so a
+  -- crash between finish and the audit write, or a claim that abandoned an exhausted
+  -- lease, is found again by the sweeper and audited exactly once.
+  audited_at        timestamptz,
 
   constraint release_notices_visit_released_key unique (visit_id, released_at),
   constraint release_notices_status_check check (
@@ -107,6 +111,8 @@ create table if not exists public.release_notices (
   constraint release_notices_resolved_check check (
     (status in ('sent', 'skipped', 'suppressed', 'cancelled', 'abandoned')) = (resolved_at is not null)),
   constraint release_notices_sent_at_check check ((status = 'sent') = (sent_at is not null)),
+  -- Only a resolved row can have been audited.
+  constraint release_notices_audited_check check (audited_at is null or resolved_at is not null),
   -- A lease exists exactly while the row is `sending`, and a leased row has had an attempt.
   constraint release_notices_lease_check check (
     (status = 'sending') = (lease_token is not null)
@@ -129,6 +135,11 @@ create index if not exists idx_release_notices_due
 create index if not exists idx_release_notices_lease
   on public.release_notices (lease_expires_at)
   where status = 'sending';
+
+-- Terminal rows still waiting for their audit row.
+create index if not exists idx_release_notices_unaudited
+  on public.release_notices (resolved_at, id)
+  where resolved_at is not null and audited_at is null;
 
 alter table public.release_notices enable row level security;
 
@@ -287,6 +298,7 @@ declare
   v_status text;
   v_delay  interval;
   v_error  text;
+  v_reason text;
 begin
   if p_final_status is null
      or p_final_status not in ('sent', 'skipped', 'suppressed', 'cancelled', 'retry') then
@@ -321,7 +333,14 @@ begin
     v_status := p_final_status;
   end if;
 
-  v_error := nullif(left(regexp_replace(coalesce(p_error, ''), '[^[:space:]@<>"'']+@[^[:space:]<>"'']+', '[redacted]', 'g'), 500), '');
+  -- Redact address-shaped text, then phone-shaped digit runs (7+ digits, optional
+  -- + and space / - / () separators), then cut. Applied to the error and the skip reason.
+  v_error := nullif(left(regexp_replace(regexp_replace(coalesce(p_error, ''),
+      '[^[:space:]@<>"'']+@[^[:space:]<>"'']+', '[redacted]', 'g'),
+      '\+?[0-9][0-9 ()-]{6,}[0-9]', '[redacted]', 'g'), 500), '');
+  v_reason := nullif(left(regexp_replace(regexp_replace(coalesce(p_skip_reason, ''),
+      '[^[:space:]@<>"'']+@[^[:space:]<>"'']+', '[redacted]', 'g'),
+      '\+?[0-9][0-9 ()-]{6,}[0-9]', '[redacted]', 'g'), 200), '');
 
   return query
   update public.release_notices n
@@ -332,8 +351,9 @@ begin
                                   else coalesce(p_sms_state, n.sms_state) end,
          email_provider_id = coalesce(left(p_email_provider_id, 200), n.email_provider_id),
          sms_provider_id   = coalesce(left(p_sms_provider_id, 200), n.sms_provider_id),
-         last_error        = coalesce(v_error, n.last_error),
-         skip_reason       = coalesce(left(p_skip_reason, 200), n.skip_reason),
+         -- a success clears the stale error of an earlier failed attempt
+         last_error        = case when v_status = 'sent' then null else coalesce(v_error, n.last_error) end,
+         skip_reason       = coalesce(v_reason, n.skip_reason),
          next_attempt_at   = case when v_status = 'retry' then v_now + v_delay else n.next_attempt_at end,
          sent_at           = case when v_status = 'sent' then v_now else n.sent_at end,
          resolved_at       = case when v_status = 'retry' then null else v_now end,
@@ -374,6 +394,7 @@ begin
          attempts         = 0,
          next_attempt_at  = clock_timestamp(),
          resolved_at      = null,
+         audited_at       = null,   -- it will resolve (and be audited) again
          lease_token      = null,
          lease_expires_at = null
    where n.id = p_id
@@ -388,6 +409,36 @@ comment on function public.retry_release_notice(uuid) is
   '0210: admin manual retry — resets attempts and next_attempt_at on an abandoned or waiting (retry) notice. Never touches a sending row or a live lease. Channel states are kept. Admin authority is checked in TypeScript.';
 
 -- ---------------------------------------------------------------------------
+-- mark_release_notice_audited(p_id)
+-- ---------------------------------------------------------------------------
+-- Stamps audited_at on a TERMINAL row that has not been stamped yet and returns
+-- whether it did. The sender (and the sweeper, which also picks up terminal rows
+-- with audited_at null: a crash between finish and the audit write, or a claim
+-- that closed an exhausted lease as abandoned) writes the audit row and then
+-- calls this; the fenced stamp makes a second caller get false, so the audit is
+-- written once. Admin / actor checks are in TypeScript.
+create or replace function public.mark_release_notice_audited(p_id uuid)
+returns boolean
+language plpgsql
+set search_path = pg_catalog, public, pg_temp
+as $$
+declare
+  v_id uuid;
+begin
+  update public.release_notices n
+     set audited_at = clock_timestamp()
+   where n.id = p_id
+     and n.resolved_at is not null
+     and n.audited_at is null
+  returning n.id into v_id;
+  return v_id is not null;
+end;
+$$;
+
+comment on function public.mark_release_notice_audited(uuid) is
+  '0210: fenced stamp of release_notices.audited_at on a terminal, not-yet-audited row; returns whether it stamped. A second caller gets false, so the terminal audit row is written once.';
+
+-- ---------------------------------------------------------------------------
 -- ACLs, stated by name
 -- ---------------------------------------------------------------------------
 revoke all on function public.release_notices_enabled()                 from public, anon, authenticated;
@@ -395,11 +446,13 @@ revoke all on function public.claim_release_notice(uuid, integer)       from pub
 revoke all on function public.finish_release_notice(uuid, uuid, text, text, text, text, text, text, text)
   from public, anon, authenticated;
 revoke all on function public.retry_release_notice(uuid)                from public, anon, authenticated;
+revoke all on function public.mark_release_notice_audited(uuid)         from public, anon, authenticated;
 grant execute on function public.release_notices_enabled()              to service_role;
 grant execute on function public.claim_release_notice(uuid, integer)    to service_role;
 grant execute on function public.finish_release_notice(uuid, uuid, text, text, text, text, text, text, text)
   to service_role;
 grant execute on function public.retry_release_notice(uuid)             to service_role;
+grant execute on function public.mark_release_notice_audited(uuid)      to service_role;
 
 -- ---------------------------------------------------------------------------
 -- Post-condition
@@ -444,7 +497,8 @@ begin
     'public.release_notices_enabled()',
     'public.claim_release_notice(uuid,integer)',
     'public.finish_release_notice(uuid,uuid,text,text,text,text,text,text,text)',
-    'public.retry_release_notice(uuid)'] loop
+    'public.retry_release_notice(uuid)',
+    'public.mark_release_notice_audited(uuid)'] loop
     if has_function_privilege('anon', f, 'EXECUTE')
        or has_function_privilege('authenticated', f, 'EXECUTE')
        or not has_function_privilege('service_role', f, 'EXECUTE') then

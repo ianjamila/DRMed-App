@@ -77,6 +77,16 @@ Failed / abandoned notices on `/staff/result-follow-ups` (existing `RetryNoticeB
    came back; otherwise the legacy path is unchanged.
 3. **Migration B:** re-create `release_visit_results` (enqueue + `notice_id`, gated in SQL by the strict flag) and
    `undo_visit_release` (cancel); update `fake-release-db.ts`; extend the report-release proof.
+   PR 3 must also: (a) set `resolved_at` on any row it inserts as `suppressed` / `cancelled` and on any
+   `pending` / `retry` row `undo_visit_release` cancels (a CHECK ties every terminal status to `resolved_at`;
+   `sent_at` only with `sent`; `audited_at` only once resolved); (b) the report-release concurrency proof must
+   set and restore `release_notice_settings.enabled` itself once release enqueues, since the flag is OFF by default.
+
+   Added in PR 1 review: `release_notices.audited_at` + `mark_release_notice_audited(p_id)` (fenced stamp on a
+   terminal row, false on a second call). PR 2 writes the terminal audit row, then stamps; its sweeper also picks up
+   terminal rows with `audited_at is null` (a crash between finish and the audit write, or a claim that closed an
+   exhausted lease as `abandoned`) and audits them, idempotent through the stamp. `last_error` / `skip_reason`
+   are redacted of addresses and phone-shaped digit runs in SQL; a `sent` finish clears `last_error`.
 
 Then: set the Vault secrets, flip the flag on prod after verifying. Rollback = flip the flag off (never delete
 the row).

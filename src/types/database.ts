@@ -4864,6 +4864,7 @@ export type Database = {
       release_notices: {
         Row: {
           attempts: number
+          audited_at: string | null
           bulk_batch_id: string | null
           created_at: string
           email_provider_id: string | null
@@ -4886,6 +4887,7 @@ export type Database = {
         }
         Insert: {
           attempts?: number
+          audited_at?: string | null
           bulk_batch_id?: string | null
           created_at?: string
           email_provider_id?: string | null
@@ -4908,6 +4910,7 @@ export type Database = {
         }
         Update: {
           attempts?: number
+          audited_at?: string | null
           bulk_batch_id?: string | null
           created_at?: string
           email_provider_id?: string | null
@@ -7674,6 +7677,7 @@ export type Database = {
         Args: { p_id?: string; p_limit?: number }
         Returns: {
           attempts: number
+          audited_at: string | null
           bulk_batch_id: string | null
           created_at: string
           email_provider_id: string | null
@@ -7776,6 +7780,7 @@ export type Database = {
         }
         Returns: {
           attempts: number
+          audited_at: string | null
           bulk_batch_id: string | null
           created_at: string
           email_provider_id: string | null
@@ -7878,6 +7883,7 @@ export type Database = {
         Args: { p_for_delete?: boolean; p_id: string; p_kind: string }
         Returns: string[]
       }
+      mark_release_notice_audited: { Args: { p_id: string }; Returns: boolean }
       merge_patients_guarded: {
         Args: {
           p_actor: string

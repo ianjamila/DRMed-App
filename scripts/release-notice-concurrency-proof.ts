@@ -31,6 +31,8 @@
 //       the old attempt's finish queues on the row the reclaim holds.
 //   S4  manual retry vs a live `sending` lease: refused (committed, and raced
 //       behind a claim that holds the row); a plain abandoned row is reset.
+//   S6  two audit stampers (mark_release_notice_audited) on one terminal row: the
+//       second queues on the row and gets false - exactly one stamps.
 //   S5  flag OFF (and a missing settings row): claim returns nothing, inline and
 //       sweeper, and changes nothing.
 //
@@ -551,6 +553,23 @@ async function forcedScenarios(mode: Mode): Promise<void> {
   });
 
   // S5: the strict flag - OFF or a missing settings row means claim returns nothing (flag read by release_notices_enabled)
+  // concurrency-proof: mark_release_notice_audited (S6: two stampers race one terminal row; the second queues on it and gets false)
+  // ---- S6 the audit stamp is single-shot ----------------------------------
+  await scenario("S6", "two audit stampers on one terminal row: exactly one stamps", async () => {
+    const r = await mkNotice({ status: "abandoned", attempts: 6 });
+    const [a, b] = [await actor("S6-A"), await actor("S6-B")];
+    const stamp = (x: Actor) =>
+      settle(x.c.query("select public.mark_release_notice_audited($1::uuid) as r", [r]), (q) => q.rows[0].r as boolean);
+    await begin(a, mode);
+    if (expectOk("S6 first stamp", await stamp(a)) !== true) throw new Fail("the first stamp returned false");
+    await begin(b, mode);
+    const second = andEnd(b, stamp(b));
+    await mustWait(b, "the second stamp queues on the row the first holds");
+    await a.c.query("commit");
+    if (expectOk("S6 second stamp", await second) !== false) throw new Fail("a DOUBLE stamp returned true");
+    return "first stamp true, queued second stamp false";
+  });
+
   // ---- S5 flag OFF ---------------------------------------------------------
   await scenario("S5", "flag OFF (or no settings row): claim returns nothing", async () => {
     const r1 = await mkNotice();
@@ -816,10 +835,14 @@ async function restoreFlag(): Promise<void> {
 }
 
 async function teardown(): Promise<void> {
-  await closeActors();
-  await monitor.query(`drop schema if exists rnp_ctl_${TAG.slice(4)} cascade`);
-  await sweepTagged(TAG);
-  await restoreFlag();
+  try {
+    await closeActors();
+    await monitor.query(`drop schema if exists rnp_ctl_${TAG.slice(4)} cascade`);
+    await sweepTagged(TAG);
+  } finally {
+    // its own finally: a throwing sweep must never leave the flag ON
+    await restoreFlag();
+  }
   const left = await countTagged(TAG);
   if (left > 0) {
     results.push({ name: "teardown", ok: false, detail: `${left} fixture rows left behind` });

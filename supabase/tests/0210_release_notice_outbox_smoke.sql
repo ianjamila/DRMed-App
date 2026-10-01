@@ -29,6 +29,7 @@
 --   9. last_error is truncated and address-shaped text is redacted.
 --  10. retry_release_notice: only abandoned / retry rows; refuses a sending row.
 --  11. Constraints: unique (visit_id, released_at), status / channel checks.
+--  13. mark_release_notice_audited stamps terminal rows once (double stamp false); retry clears it.
 --  12. ACLs: service_role only (anon / authenticated / PUBLIC refused).
 -- =============================================================================
 
@@ -193,7 +194,31 @@ begin
   if r.last_error like '%@%' or r.last_error not like '%[redacted]%' or char_length(r.last_error) > 500 then
     raise exception '9: last_error not redacted/truncated: %', left(r.last_error, 80);
   end if;
-  raise notice '9 ok: error redacted + truncated';
+  -- phone numbers (local, +63, spaced) are redacted too, in the error and the skip reason
+  declare p text; v_p uuid;
+  begin
+    foreach p in array array['09171234567', '+639171234567', '63 917 123 4567', '(02) 8123-4567'] loop
+      v_p := pg_temp.mk_notice();
+      select * into r from public.claim_release_notice(v_p);
+      select * into r from public.finish_release_notice(v_p, r.lease_token, 'skipped', null, null, null, null,
+        'sms to ' || p || ' failed', 'no contact ' || p);
+      if r.last_error ~ '[0-9]{5}' or r.skip_reason ~ '[0-9]{5}'
+         or r.last_error not like '%[redacted]%' or r.skip_reason not like '%[redacted]%' then
+        raise exception '9: phone % survived: % / %', p, r.last_error, r.skip_reason;
+      end if;
+    end loop;
+    -- short numbers (an HTTP status, a count) are left alone
+    v_p := pg_temp.mk_notice();
+    select * into r from public.claim_release_notice(v_p);
+    select * into r from public.finish_release_notice(v_p, r.lease_token, 'retry', null, null, null, null, 'Resend 422 after 3 tries');
+    if r.last_error <> 'Resend 422 after 3 tries' then raise exception '9: short numbers were redacted: %', r.last_error; end if;
+    -- a success clears the stale error of the earlier failed attempt
+    update public.release_notices set next_attempt_at = now() - interval '1 second' where id = v_p;
+    select * into r from public.claim_release_notice(v_p);
+    select * into r from public.finish_release_notice(v_p, r.lease_token, 'sent', 'sent');
+    if r.status <> 'sent' or r.last_error is not null then raise exception '9: sent kept a stale last_error: %', r.last_error; end if;
+  end;
+  raise notice '9 ok: error + skip reason redacted (emails, phones), truncated; success clears the error';
 end $$;
 
 -- 10 --------------------------------------------------------------------------
@@ -246,12 +271,39 @@ begin
   raise notice '11 ok: constraints';
 end $$;
 
+-- 13 --------------------------------------------------------------------------
+do $$
+declare v_id uuid := pg_temp.mk_notice(); v_ab uuid := pg_temp.mk_notice(); r public.release_notices;
+begin
+  if public.mark_release_notice_audited(v_id) then raise exception '13: stamped a pending row'; end if;
+  select * into r from public.claim_release_notice(v_id);
+  if public.mark_release_notice_audited(v_id) then raise exception '13: stamped a sending row'; end if;
+  select * into r from public.finish_release_notice(v_id, r.lease_token, 'sent', 'sent');
+  if r.audited_at is not null then raise exception '13: finish stamped audited_at'; end if;
+  if not exists (select 1 from public.release_notices where resolved_at is not null and audited_at is null and id = v_id) then
+    raise exception '13: a terminal unaudited row is not findable';
+  end if;
+  if not public.mark_release_notice_audited(v_id) then raise exception '13: first stamp returned false'; end if;
+  if public.mark_release_notice_audited(v_id) then raise exception '13: DOUBLE stamp returned true'; end if;
+  if public.mark_release_notice_audited(gen_random_uuid()) then raise exception '13: stamped a missing row'; end if;
+  -- a claim that closes an exhausted lease leaves an unaudited abandoned row; a manual retry clears the stamp
+  update public.release_notices set status = 'sending', attempts = 6, lease_token = gen_random_uuid(),
+         lease_expires_at = now() - interval '1 second' where id = v_ab;
+  perform 1 from public.claim_release_notice(null, 50);
+  select * into r from public.release_notices where id = v_ab;
+  if r.status <> 'abandoned' or r.audited_at is not null then raise exception '13: claim-abandoned row wrong: % %', r.status, r.audited_at; end if;
+  if not public.mark_release_notice_audited(v_ab) then raise exception '13: abandoned row not stampable'; end if;
+  if not public.retry_release_notice(v_ab) then raise exception '13: retry of abandoned failed'; end if;
+  if (select audited_at from public.release_notices where id = v_ab) is not null then raise exception '13: retry kept audited_at'; end if;
+  raise notice '13 ok: audit stamp fenced (double stamp false), retry clears it';
+end $$;
+
 -- 12 --------------------------------------------------------------------------
 do $$
 declare f text;
 begin
   foreach f in array array['public.release_notices_enabled()', 'public.claim_release_notice(uuid,integer)',
-    'public.finish_release_notice(uuid,uuid,text,text,text,text,text,text,text)', 'public.retry_release_notice(uuid)'] loop
+    'public.finish_release_notice(uuid,uuid,text,text,text,text,text,text,text)', 'public.retry_release_notice(uuid)', 'public.mark_release_notice_audited(uuid)'] loop
     if has_function_privilege('anon', f, 'execute') or has_function_privilege('authenticated', f, 'execute')
        or not has_function_privilege('service_role', f, 'execute') then
       raise exception '12: bad ACL on %', f;
