@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   NOT_RECORDED, bucketLabel, capRows, channelLabel, comparisonPeriod, channelTable, newPatientsTile, chartData, classifyReportError,
   costPerNewPatient, parsePatientSourcesReport, formatNewToday, parseGrain, parseMode, previousPeriod, seriesCsvRows, sheetBanner,
-  asOfLabel, lastCompletedWeek, previousWeek, lastCompletedMonth, previousMonth, trendWeeks, trendCardData,
+  asOfLabel, lastCompletedWeek, previousWeek, lastCompletedMonth, previousMonth, trendWeeks, trendCardData, todayRows,
   type SeriesRow, type SummaryRow,
 } from "./patient-sources";
 
@@ -244,6 +244,18 @@ describe("periods", () => {
     expect(w).toHaveLength(8);
     expect(w[7]).toEqual({ from: "2026-09-21", to: "2026-09-27" });
     expect(w[0]).toEqual({ from: "2026-08-03", to: "2026-08-09" });
+  });
+});
+
+describe("todayRows", () => {
+  it("gives the tile the same rows the single-day call would", () => {
+    const rows = [
+      { bucket_start: "2026-09-30", channel: "walk_in", confirmed: 1, unconfirmed: 0 },
+      { bucket_start: "2026-10-01", channel: "walk_in", confirmed: 2, unconfirmed: 1 },
+      { bucket_start: "2026-10-01", channel: "online_google", confirmed: 1, unconfirmed: 0 },
+    ];
+    expect(todayRows(rows, "2026-10-01")).toEqual(rows.slice(1));
+    expect(formatNewToday(todayRows(rows, "2026-10-01"))).toEqual(formatNewToday(rows.slice(1)));
   });
 });
 

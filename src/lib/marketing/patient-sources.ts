@@ -442,6 +442,11 @@ export function sheetBanner(
   return null;
 }
 
+/** Today's rows out of a trend's new_by_day — what loadNewPatientsToday returns for the same day. */
+export function todayRows(newByDay: readonly SeriesRow[], todayISO: string): SeriesRow[] {
+  return newByDay.filter((r) => r.bucket_start === todayISO);
+}
+
 /** Admin dashboard tile: "5 Walk-in · 3 Facebook · … · N more (M unconfirmed)". */
 export function formatNewToday(rows: readonly SeriesRow[]): { total: number; unconfirmed: number; hint: string } {
   const totals = [...totalsByChannel(rows).entries()]
