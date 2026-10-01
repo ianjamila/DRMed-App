@@ -90,6 +90,8 @@ const REGISTRY: Record<string, RegistryEntry> = {
   reschedule_closure_appointments: { proof: ["scripts/smoke-lifecycle-locks.ts"] },
   result_edit_commit: { proof: ["scripts/smoke-lifecycle-locks.ts"] },
   sheet_review_resolve: { proof: ["scripts/sheet-sync-db-proof.ts"] },
+  merge_patients_guarded: { proof: ["scripts/merge-concurrency-proof.ts"] },
+  undo_patient_merge_guarded: { proof: ["scripts/merge-concurrency-proof.ts"] },
   queue_claim_remarks: {
     exempt:
       "false positive on the name: a read-only SECURITY DEFINER reader over audit_log that takes no lock and claims nothing",
@@ -180,7 +182,7 @@ describe("concurrency-proof guard (real migrations)", () => {
     // checkGuard already asserts existence and the per-function annotation;
     // this pins that REGISTRY is non-trivial.
     const proofs = Object.values(REGISTRY).filter((e) => "proof" in e);
-    expect(proofs.length).toBe(21);
+    expect(proofs.length).toBe(23);
   });
 });
 

@@ -226,6 +226,16 @@ async function main() {
     return db.query<R>(sql, params);
   }
 
+  // 0196/0197: merge markers are written through the private merge writer,
+  // both columns together (0197 refuses anything else). Session-level SET ROLE
+  // (not SET LOCAL, which is a no-op outside a transaction block), undone
+  // right after the one statement.
+  async function markMerged(srcId: string, keepId: string): Promise<void> {
+    await q(`set role patient_merge_writer`);
+    await q(`update public.patients set merged_into_id = $1, merged_at = now() where id = $2`, [keepId, srcId]);
+    await q(`reset role`);
+  }
+
   function describeError(err: unknown): string {
     if (err instanceof Error) {
       const code = (err as Error & { code?: string }).code;
@@ -768,7 +778,7 @@ async function main() {
 
       const aId = await patient("Zzproofa", "Alpha");
       const bId = await patient("Zzproofb", "Beta");
-      await q(`update public.patients set merged_into_id = $1 where id = $2`, [bId, aId]);
+      await markMerged(aId, bId);
       await visit(bId, "2026-06-10", 300);
       await sheetLine("2026-06-10", "zzproofb|beta", aId, 250);
 
@@ -837,7 +847,7 @@ async function main() {
       const mId = await patient("Zzproofm", "Mike");
       await facts(sId, "2026-06-10", "new");
       await facts(mId, "2026-06-05", "repeat");
-      await q(`update public.patients set merged_into_id = $1 where id = $2`, [sId, mId]);
+      await markMerged(mId, sId);
 
       let after = await summary();
       let d = delta(before, after);
@@ -869,7 +879,7 @@ async function main() {
       const a1Id = await patient("Zzproofa1", "AppNative1", { createdAt: "2026-06-01T02:00:00Z" });
       const i1Id = await patient("Zzproofi1", "Imported1", { imported: true });
       await facts(i1Id, "2026-06-10", "new");
-      await q(`update public.patients set merged_into_id = $1 where id = $2`, [i1Id, a1Id]);
+      await markMerged(a1Id, i1Id);
       const after1 = await seriesRows(JUNE.from, JUNE.to, "day", "new");
       assert(bucketTotal(after1, "2026-06-01") === b0601, `(i) expected no change on 2026-06-01, got ${bucketTotal(after1, "2026-06-01")} vs baseline ${b0601}`);
       assert(bucketTotal(after1, "2026-06-10") === b0610 + 1, `(i) expected +1 on 2026-06-10, got ${bucketTotal(after1, "2026-06-10")} vs baseline ${b0610}`);
@@ -888,7 +898,7 @@ async function main() {
       const i2Id = await patient("Zzproofi2", "Imported2", { imported: true });
       const i3Id = await patient("Zzproofi3", "Imported3", { imported: true });
       await facts(i2Id, null, null);
-      await q(`update public.patients set merged_into_id = $1 where id = $2`, [i3Id, i2Id]);
+      await markMerged(i2Id, i3Id);
       const afterIII = await summary();
       const dIII = delta(beforeIII, afterIII);
       assert(dIII.undated_registrations === 1, `(iii) expected undated_registrations delta 1, got ${dIII.undated_registrations}`);
@@ -1099,7 +1109,7 @@ async function main() {
       // Replay check 5's merge (served + new confirmed with a same-day overlap).
       const aId = await patient("Zzproofsa", "Alpha16");
       const bId = await patient("Zzproofsb", "Beta16");
-      await q(`update public.patients set merged_into_id = $1 where id = $2`, [bId, aId]);
+      await markMerged(aId, bId);
       await visit(bId, "2026-06-10", 300);
       await sheetLine("2026-06-10", "zzproofsb|beta16", aId, 250);
 
@@ -1156,7 +1166,7 @@ async function main() {
       // only the LATEST by sheet_row must win.
       const xId = await patient("Zzproofrefx", "XRay");
       const yId = await patient("Zzproofrefy", "YRay");
-      await q(`update public.patients set merged_into_id = $1 where id = $2`, [xId, yId]);
+      await markMerged(yId, xId);
       await visit(xId, "2026-06-16");
       await customerRow("zzproofrefy|earlier", { patientId: yId, referredBy: "Dr. Earlyref", sheetRow: 1 });
       await customerRow("zzproofrefy|later", { patientId: yId, referredBy: "Dr. Latestref", sheetRow: 5 });
@@ -1483,7 +1493,7 @@ async function main() {
       const before = await summary();
       const bId = await patient("Zzproofp3b", "Survivor", { createdAt: "2026-06-05T02:00:00Z" });
       const aId = await patient("Zzproofp3a", "Duplicate", { createdAt: "2026-06-05T02:00:00Z" });
-      await q(`update public.patients set merged_into_id = $1 where id = $2`, [bId, aId]);
+      await markMerged(aId, bId);
       await sheetLine("2026-06-12", "zzproofp3a|duplicate", null, 0);
       const after = await summary();
       const d = delta(before, after);
@@ -1503,7 +1513,7 @@ async function main() {
       await visit(ok, "2026-06-07");
       const x = await patient("Zzproofm2x", "Xa", {});
       const y = await patient("Zzproofm2y", "Ya", {});
-      await q(`update public.patients set merged_into_id = $1 where id = $2`, [x, y]);
+      await markMerged(y, x);
       await visit(x, "2026-06-08");
       await customerRow("zzproofm2y|old", { patientId: y, referredBy: "Dr. M2 Early", sheetRow: 1 });
       await customerRow("zzproofm2y|new", { patientId: y, referredBy: "Dr. M2 Late", sheetRow: 9 });
