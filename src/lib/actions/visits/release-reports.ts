@@ -239,7 +239,7 @@ export async function releaseVisitSelection(args: {
   auditMeta: Record<string, Json>;
   /**
    * A server-minted id for a call that offers Undo (visit page Release
-   * selected): stamped as bulk_batch_id on EVERY released row's audit row —
+   * selected, the Queue's bulk Release): stamped as bulk_batch_id on EVERY released row's audit row —
    * report-mates pulled in included — and on the patient notice's audit row.
    */
   bulkBatchId?: string;
