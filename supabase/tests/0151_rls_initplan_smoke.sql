@@ -84,6 +84,11 @@ begin
       -- revokes anon/authenticated: "Staging: no policy"), and no admin page
       -- shows it, so any policy here would only widen access.
       'sheet_mirror_staging',
+      -- 0210: the release-notice outbox and its OFF-by-default switch. Only the
+      -- service-role client and the service_role-only claim/finish/retry
+      -- functions touch them; a policy would only widen access.
+      'release_notices',
+      'release_notice_settings',
       -- 0213: Patient Sources owner-email send claims. Only the service-role cron
       -- (via _ps_digest_claim) reads or writes it; no admin page shows it, so a
       -- policy would only widen access. anon/authenticated hold nothing (third assertion).

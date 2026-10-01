@@ -220,7 +220,7 @@ Origin: PR2 spec §7 follow-ups + Phase 5 scope additions (2026-10-01).
   - It returns the same table shape: `identity_kind, identity, patient_id, drm_id, display_name, first_date, total_count`.
   - The body holds the 0189 rules moved verbatim, reading `unnest(p_ids)` / `unnest(p_enc)` in place of `_patient_sources_identities()` / `_patient_sources_encounters()`.
   - It keeps the name lookups (`sheet_encounter_lines` then `sheet_customer_rows` fallback, survivor join) exactly as written.
-  - `security definer`, `search_path = ''`, `revoke all … from public, anon, authenticated, service_role`, matching 0206's `_ps_sec_*`.
+  - `security invoker` (matching 0206's `_ps_sec_*`; closed to every runtime role, so only the security-definer wrapper calls it), `search_path = ''`, `revoke all … from public, anon, authenticated, service_role`, matching 0206's `_ps_sec_*`.
 - **`public.patient_sources_people(...)` itself.**
   - Kept **identical**: signature, return type, volatility, security, search_path, gate (admin-only check + error), argument validation, paging (limit/offset, `total_count`) and ACL.
   - Its body becomes gate → validation → `return query select * from public._ps_sec_people(public._ps_identity_list(), public._ps_encounter_list(), …)`.

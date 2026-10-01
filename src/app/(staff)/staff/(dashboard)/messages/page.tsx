@@ -25,10 +25,15 @@ import {
   CONTACT_MESSAGE_STATUS_LABEL,
   contactFormLocationLabel,
   contactMessageStatusLabel,
+  isContactMessageStatus,
 } from "@/lib/contact-messages/labels";
 import { attributionCampaignLabel } from "@/lib/appointments/source";
 import type { Attribution } from "@/lib/analytics/attribution";
 import { messagePreview } from "@/lib/contact-messages/preview";
+import { SelectionProvider } from "@/components/staff/row-selection/selection-context";
+import { RowSelectCheckbox } from "@/components/staff/row-selection/row-select-checkbox";
+import { SelectAllCheckbox } from "@/components/staff/row-selection/select-all-checkbox";
+import { MessagesBulkBar, type MessageRowInfo } from "./messages-bulk-bar";
 
 export const metadata = {
   title: ROUTE_NAME["/staff/messages"],
@@ -159,6 +164,17 @@ export default async function MessagesPage({ searchParams }: SearchProps) {
   const totalPages = pageCount(total, size);
   const isFiltered = query.length > 0 || corporateOnly;
 
+  // Bulk selection (spec 2026-09-25 §7): one row per message, kinds = its
+  // status (a refresh that changes the status prunes the row from the
+  // selection). Any change to what the list shows or its order drops the
+  // selection — SelectionProvider watches this key.
+  const selectionResetKey = [status, corporateOnly ? "corporate" : "", query, sort.key, sort.dir, String(page), String(size)].join("|");
+  const selectableRows = rows.filter((r) => isContactMessageStatus(r.status));
+  const selectionEntries = selectableRows.map((r) => ({ rowKey: r.id, kinds: [r.status], weight: 1 }));
+  const rowsByKey: Record<string, MessageRowInfo> = Object.fromEntries(
+    selectableRows.map((r) => [r.id, { label: r.name, status: r.status as MessageRowInfo["status"] }]),
+  );
+
   // Every param this page's links round-trip, at its default omitted so page
   // 1 on the New tab with no filters stays the bare /staff/messages URL.
   const baseParams: Record<string, string | null> = {
@@ -253,10 +269,14 @@ export default async function MessagesPage({ searchParams }: SearchProps) {
         </Link>
       </div>
 
+      <SelectionProvider resetKey={selectionResetKey}>
       <Panel className="overflow-x-auto">
         <table className="w-full text-sm">
           <thead className="bg-[color:var(--color-brand-bg)] text-left text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
             <tr>
+              <th className="w-12 px-2 py-3">
+                <SelectAllCheckbox entries={selectionEntries} label="Select all messages on this page" />
+              </th>
               <SortableTh
                 label="Received"
                 href={sortHref("created_at")}
@@ -275,7 +295,7 @@ export default async function MessagesPage({ searchParams }: SearchProps) {
             {rows.length === 0 ? (
               <tr>
                 <td
-                  colSpan={8}
+                  colSpan={9}
                   className="px-4 py-8 text-center text-sm text-[color:var(--color-brand-text-soft)]"
                 >
                   {isFiltered ? "No messages match your search." : EMPTY_LABEL[status]}
@@ -284,6 +304,15 @@ export default async function MessagesPage({ searchParams }: SearchProps) {
             ) : (
               rows.map((r) => (
                 <tr key={r.id} className="align-top hover:bg-[color:var(--color-brand-bg)]">
+                  <td className="px-2 py-2 align-middle">
+                    {isContactMessageStatus(r.status) ? (
+                      <RowSelectCheckbox
+                        rowKey={r.id}
+                        kinds={[r.status]}
+                        label={`message from ${r.name}`}
+                      />
+                    ) : null}
+                  </td>
                   <td className="px-4 py-3 whitespace-nowrap text-xs text-[color:var(--color-brand-text-soft)]">
                     <Link href={`${BASE_PATH}/${r.id}`} className="hover:underline">
                       {manilaDateTime(r.created_at)}
@@ -355,6 +384,8 @@ export default async function MessagesPage({ searchParams }: SearchProps) {
         }))}
         noun="message"
       />
+      <MessagesBulkBar rowsByKey={rowsByKey} />
+      </SelectionProvider>
     </div>
   );
 }

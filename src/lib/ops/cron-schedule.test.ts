@@ -22,8 +22,13 @@ describe("describeCronSchedule", () => {
     expect(describeCronSchedule("0 20 * * 7")).toBe("Every Monday at 4:00 AM");
   });
 
+  it("reads an every-N-minutes schedule (the pg_cron release-notice sweeper)", () => {
+    expect(describeCronSchedule("*/5 * * * *")).toBe("Every 5 minutes");
+    expect(describeCronSchedule("*/1 * * * *")).toBe("Every 1 minute");
+  });
+
   it("does not guess at a shape it cannot read", () => {
-    for (const schedule of ["*/15 * * * *", "0 9 29 * *", "0 9 1 * 1", "0 9 1 1 *", "0 9 0 * *", "0 9 * * 1-5", "0 9 * *", "0 24 * * *", "60 9 * * *", "0 9 * * 8"]) {
+    for (const schedule of ["*/0 * * * *", "*/60 * * * *", "*/5 * * 1 *", "0 9 29 * *", "0 9 1 * 1", "0 9 1 1 *", "0 9 0 * *", "0 9 * * 1-5", "0 9 * *", "0 24 * * *", "60 9 * * *", "0 9 * * 8"]) {
       expect(describeCronSchedule(schedule)).toBe(`Custom schedule (${schedule}, UTC)`);
     }
   });
@@ -39,7 +44,7 @@ describe("describeCronSchedule", () => {
 
   it("reads every registered schedule without falling back", () => {
     for (const cron of CRON_HEARTBEATS) {
-      expect(describeCronSchedule(cron.schedule), cron.key).toMatch(/^(Every \w+|On the \d{1,2}(st|nd|rd|th) of every month) at \d{1,2}:\d{2} [AP]M$/);
+      expect(describeCronSchedule(cron.schedule), cron.key).toMatch(/^(Every (\w+ at \d{1,2}:\d{2} [AP]M|\d+ minutes?)|On the \d{1,2}(st|nd|rd|th) of every month at \d{1,2}:\d{2} [AP]M)$/);
     }
   });
 });

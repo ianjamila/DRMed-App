@@ -5,9 +5,10 @@
  * carry a weekly run onto the next weekday ("0 23 * * 1" is Tuesday morning
  * in Manila, not Monday).
  *
- * Only the three shapes the clinic uses are read: daily ("M H * * *"), weekly
- * on one weekday ("M H * * D") and monthly on one day, 1-28 ("M H D * *").
- * Anything else says so rather than guessing.
+ * Only the shapes the clinic uses are read: daily ("M H * * *"), weekly on one
+ * weekday ("M H * * D"), monthly on one day, 1-28 ("M H D * *"), and "every N
+ * minutes" ("*\/N * * * *", the pg_cron release-notice sweeper). Anything else
+ * says so rather than guessing.
  */
 
 const MANILA_OFFSET_MINUTES = 8 * 60;
@@ -35,6 +36,12 @@ function clockTime(minutesOfDay: number): string {
 
 export function describeCronSchedule(schedule: string): string {
   const fallback = `Custom schedule (${schedule}, UTC)`;
+  const every = /^\*\/(\d{1,2})\s+\*\s+\*\s+\*\s+\*$/.exec(schedule.trim());
+  if (every) {
+    const n = Number(every[1]);
+    if (n >= 1 && n <= 59) return `Every ${n} minute${n === 1 ? "" : "s"}`;
+    return fallback;
+  }
   const fields = schedule.trim().split(/\s+/);
   if (fields.length !== 5) return fallback;
   const [min, hour, dayOfMonth, month, dayOfWeek] = fields;

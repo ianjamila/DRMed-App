@@ -4876,6 +4876,107 @@ export type Database = {
         }
         Relationships: []
       }
+      release_notice_settings: {
+        Row: {
+          enabled: boolean
+          id: boolean
+          updated_at: string
+          updated_by: string | null
+        }
+        Insert: {
+          enabled?: boolean
+          id?: boolean
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Update: {
+          enabled?: boolean
+          id?: boolean
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Relationships: []
+      }
+      release_notices: {
+        Row: {
+          attempts: number
+          audited_at: string | null
+          bulk_batch_id: string | null
+          created_at: string
+          email_provider_id: string | null
+          email_state: string
+          id: string
+          last_error: string | null
+          lease_expires_at: string | null
+          lease_token: string | null
+          next_attempt_at: string
+          release_medium: string | null
+          released_at: string
+          resolved_at: string | null
+          sent_at: string | null
+          skip_reason: string | null
+          sms_provider_id: string | null
+          sms_state: string
+          status: string
+          test_request_ids: string[]
+          visit_id: string
+        }
+        Insert: {
+          attempts?: number
+          audited_at?: string | null
+          bulk_batch_id?: string | null
+          created_at?: string
+          email_provider_id?: string | null
+          email_state?: string
+          id?: string
+          last_error?: string | null
+          lease_expires_at?: string | null
+          lease_token?: string | null
+          next_attempt_at?: string
+          release_medium?: string | null
+          released_at: string
+          resolved_at?: string | null
+          sent_at?: string | null
+          skip_reason?: string | null
+          sms_provider_id?: string | null
+          sms_state?: string
+          status?: string
+          test_request_ids: string[]
+          visit_id: string
+        }
+        Update: {
+          attempts?: number
+          audited_at?: string | null
+          bulk_batch_id?: string | null
+          created_at?: string
+          email_provider_id?: string | null
+          email_state?: string
+          id?: string
+          last_error?: string | null
+          lease_expires_at?: string | null
+          lease_token?: string | null
+          next_attempt_at?: string
+          release_medium?: string | null
+          released_at?: string
+          resolved_at?: string | null
+          sent_at?: string | null
+          skip_reason?: string | null
+          sms_provider_id?: string | null
+          sms_state?: string
+          status?: string
+          test_request_ids?: string[]
+          visit_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "release_notices_visit_id_fkey"
+            columns: ["visit_id"]
+            isOneToOne: false
+            referencedRelation: "visits"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       report_group_service_params: {
         Row: {
           created_at: string
@@ -7401,6 +7502,27 @@ export type Database = {
           sheet_php: number
         }[]
       }
+      _ps_sec_people: {
+        Args: {
+          p_channel: string
+          p_enc: unknown[][]
+          p_from: string
+          p_ids: unknown[][]
+          p_limit: number
+          p_mode: string
+          p_offset: number
+          p_to: string
+        }
+        Returns: {
+          display_name: string
+          drm_id: string
+          first_date: string
+          identity: string
+          identity_kind: string
+          patient_id: string
+          total_count: number
+        }[]
+      }
       _ps_sec_referrers: {
         Args: {
           p_from: string
@@ -7618,6 +7740,38 @@ export type Database = {
         Args: { p_test_request_ids: string[] }
         Returns: number
       }
+      claim_release_notice: {
+        Args: { p_id?: string; p_limit?: number }
+        Returns: {
+          attempts: number
+          audited_at: string | null
+          bulk_batch_id: string | null
+          created_at: string
+          email_provider_id: string | null
+          email_state: string
+          id: string
+          last_error: string | null
+          lease_expires_at: string | null
+          lease_token: string | null
+          next_attempt_at: string
+          release_medium: string | null
+          released_at: string
+          resolved_at: string | null
+          sent_at: string | null
+          skip_reason: string | null
+          sms_provider_id: string | null
+          sms_state: string
+          status: string
+          test_request_ids: string[]
+          visit_id: string
+        }[]
+        SetofOptions: {
+          from: "*"
+          to: "release_notices"
+          isOneToOne: false
+          isSetofReturn: true
+        }
+      }
       claim_statement_email: {
         Args: {
           p_recipient: string
@@ -7678,6 +7832,48 @@ export type Database = {
       eod_unclosed_days: {
         Args: { p_from: string; p_shift_id: string; p_to: string }
         Returns: string[]
+      }
+      finish_release_notice: {
+        Args: {
+          p_email_provider_id?: string
+          p_email_state?: string
+          p_error?: string
+          p_final_status: string
+          p_id: string
+          p_lease_token: string
+          p_skip_reason?: string
+          p_sms_provider_id?: string
+          p_sms_state?: string
+        }
+        Returns: {
+          attempts: number
+          audited_at: string | null
+          bulk_batch_id: string | null
+          created_at: string
+          email_provider_id: string | null
+          email_state: string
+          id: string
+          last_error: string | null
+          lease_expires_at: string | null
+          lease_token: string | null
+          next_attempt_at: string
+          release_medium: string | null
+          released_at: string
+          resolved_at: string | null
+          sent_at: string | null
+          skip_reason: string | null
+          sms_provider_id: string | null
+          sms_state: string
+          status: string
+          test_request_ids: string[]
+          visit_id: string
+        }[]
+        SetofOptions: {
+          from: "*"
+          to: "release_notices"
+          isOneToOne: false
+          isSetofReturn: true
+        }
       }
       generate_drm_id: { Args: Record<PropertyKey, never>; Returns: string }
       generate_visit_number: {
@@ -7754,6 +7950,7 @@ export type Database = {
         Args: { p_for_delete?: boolean; p_id: string; p_kind: string }
         Returns: string[]
       }
+      mark_release_notice_audited: { Args: { p_id: string }; Returns: boolean }
       merge_patients_guarded: {
         Args: {
           p_actor: string
@@ -7784,10 +7981,6 @@ export type Database = {
         }[]
       }
       patient_delete_blockers: { Args: { p_patient_id: string }; Returns: Json }
-      patient_has_live_v2_merge: {
-        Args: { p_patient_id: string }
-        Returns: boolean
-      }
       patient_kept_counts: {
         Args: { p_patient_ids: string[] }
         Returns: {
@@ -7940,6 +8133,14 @@ export type Database = {
           ip: unknown
           user_agent: string
         }[]
+      }
+      release_notices_enabled: {
+        Args: Record<PropertyKey, never>
+        Returns: boolean
+      }
+      release_notice_sweep_tick: {
+        Args: Record<PropertyKey, never>
+        Returns: number
       }
       release_report_locks: {
         Args: { p_deleted_message: string; p_ids: string[]; p_visit_id: string }
@@ -8159,6 +8360,7 @@ export type Database = {
           viewed_count: number
         }[]
       }
+      retry_release_notice: { Args: { p_id: string }; Returns: boolean }
       send_out_monthly_margin: {
         Args: { p_end?: string; p_start?: string }
         Returns: {

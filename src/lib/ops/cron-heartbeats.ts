@@ -120,7 +120,37 @@ export const CRON_HEARTBEATS = [
     maxAge: 32 * 24 * 60 * 60 * 1000,
     activeFrom: "2026-11-02",
   },
+  {
+    key: "release-notices",
+    label: "Result notice sender",
+    description: "Sends and retries the patients' result-ready messages that did not go out the first time, and records how each one ended. Runs every 5 minutes once it is switched on.",
+    path: "/api/cron/release-notices",
+    schedule: "*/5 * * * *",
+    actions: ["system.release_notices.sweep.completed"],
+    maxAge: 6 * 60 * 60 * 1000,
+    // Bootstrap guard (see cron-watchdog.yml): the expected merge day of the PR
+    // that added this route. The job does nothing until the owner sets the two
+    // Vault secrets AND switches release_notice_settings.enabled on, so move
+    // this date to the day after that switch-on if the watchdog goes red first.
+    activeFrom: "2026-10-02",
+    // Scheduled by a Supabase pg_cron job (0212), NOT by vercel.json.
+    scheduler: "pg_cron",
+    // Watched ONLY while the strict flag is on and was switched on more than
+    // NOTICE_WATCH_GRACE_MINUTES ago; while it is off nothing is ever STALE.
+    watchWhen: "release-notices-enabled",
+    // Sentry check-in margin (minutes): the default 60 is far too loose for a 5-minute
+    // schedule. pg_cron + pg_net + a cold function can drift a few minutes.
+    checkinMargin: 10,
+  },
 ] as const;
+
+/** Minutes the release-notice flag must have been on before its sweeper is watched. */
+export const NOTICE_WATCH_GRACE_MINUTES = 15;
+
+/** The watchdog's `release-notices-enabled` gate (cron-watchdog.yml), mirrored for Cron Health. */
+export function isNoticeSweepWatched(enabled: boolean, updatedAt: string | null, now: number): boolean {
+  return enabled && updatedAt !== null && now - Date.parse(updatedAt) > NOTICE_WATCH_GRACE_MINUTES * 60_000;
+}
 
 export type CronKey = (typeof CRON_HEARTBEATS)[number]["key"];
 export type CronStatus = "healthy" | "pending" | "stale";
@@ -131,7 +161,9 @@ export function deriveCronStatus(
   now: number,
   maxAge: number,
   activeFrom: string,
+  watched = true,
 ): CronStatus {
+  if (!watched) return "pending";
   if (lastSeen === null) {
     return now < Date.parse(`${activeFrom}T00:00:00Z`) ? "pending" : "stale";
   }

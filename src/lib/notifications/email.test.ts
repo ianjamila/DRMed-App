@@ -2,67 +2,74 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("server-only", () => ({}));
 
+import { PROVIDER_TIMEOUT_MS } from "./channel-status";
 import { sendEmail } from "./email";
 
-const INPUT = { to: "owner@example.com", subject: "S", text: "T" };
+const fetchMock = vi.fn();
 
 beforeEach(() => {
+  vi.stubGlobal("fetch", fetchMock);
   vi.stubEnv("NOTIFICATIONS_LIVE", "true");
   vi.stubEnv("RESEND_API_KEY", "re_test_key");
-  vi.stubEnv("RESEND_FROM_EMAIL", "DRMed <noreply@drmed.ph>");
+  vi.stubEnv("RESEND_FROM_EMAIL", "DRMed <noreply@example.test>");
+  fetchMock.mockReset();
+  fetchMock.mockResolvedValue(new Response(JSON.stringify({ id: "em_1" }), { status: 200 }));
 });
 afterEach(() => {
   vi.unstubAllEnvs();
   vi.unstubAllGlobals();
 });
 
-function stubFetch(impl: () => Promise<Response>) {
-  const fetchMock = vi.fn(impl);
-  vi.stubGlobal("fetch", fetchMock);
-  return fetchMock;
-}
-const headersOf = (f: ReturnType<typeof vi.fn>) => (f.mock.calls[0]![1] as { headers: Record<string, string> }).headers;
-
-describe("sendEmail", () => {
-  it("returns the Resend id on a 2xx", async () => {
-    stubFetch(async () => new Response(JSON.stringify({ id: "em_1" }), { status: 200 }));
-    expect(await sendEmail(INPUT)).toEqual({ ok: true, id: "em_1" });
+describe("sendEmail Idempotency-Key", () => {
+  it("sends Idempotency-Key when given one", async () => {
+    const r = await sendEmail({ to: "a@example.com", subject: "s", text: "t", idempotencyKey: "result-notice:n1:email" });
+    expect(r).toEqual({ ok: true, id: "em_1" });
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url).toBe("https://api.resend.com/emails");
+    expect(init.headers).toMatchObject({ Authorization: "Bearer re_test_key", "Idempotency-Key": "result-notice:n1:email" });
   });
 
-  it("sends an Idempotency-Key header only when one is given", async () => {
-    const f1 = stubFetch(async () => new Response(JSON.stringify({ id: "em_1" }), { status: 200 }));
-    await sendEmail({ ...INPUT, idempotencyKey: "patient_sources_weekly:2026-09-28:owner@example.com:1" });
-    expect(headersOf(f1)["Idempotency-Key"]).toBe("patient_sources_weekly:2026-09-28:owner@example.com:1");
-
-    const f2 = stubFetch(async () => new Response(JSON.stringify({ id: "em_2" }), { status: 200 }));
-    await sendEmail(INPUT);
-    expect(headersOf(f2)["Idempotency-Key"]).toBeUndefined();
+  it("sends no Idempotency-Key header when none is given (every other sender is unchanged)", async () => {
+    await sendEmail({ to: "a@example.com", subject: "s", text: "t" });
+    expect(fetchMock.mock.calls[0][1].headers).not.toHaveProperty("Idempotency-Key");
   });
+});
+
+describe("provider timeout", () => {
+  it("bounds the Resend call with a 15 s abort signal and reports a timeout as an error (ambiguous, never 'sent')", async () => {
+    fetchMock.mockRejectedValue(new DOMException("The operation timed out.", "TimeoutError"));
+    const r = await sendEmail({ to: "a@example.com", subject: "s", text: "t" });
+    expect(r).toMatchObject({ ok: false, kind: "error" });
+    const init = fetchMock.mock.calls[0][1];
+    expect(init.signal).toBeInstanceOf(AbortSignal);
+    expect(PROVIDER_TIMEOUT_MS).toBe(15_000);
+  });
+});
+
+describe("sendEmail — definite vs uncertain failures (Patient Sources digest, at most once)", () => {
+  const INPUT = { to: "owner@example.com", subject: "S", text: "T" };
 
   it("marks a non-2xx answer as a DEFINITE failure (Resend read the request and refused it)", async () => {
-    stubFetch(async () => new Response("invalid", { status: 422 }));
+    fetchMock.mockResolvedValue(new Response("invalid", { status: 422 }));
     const r = await sendEmail(INPUT);
     expect(r).toMatchObject({ ok: false, kind: "error", definite: true });
     expect((r as { error: string }).error).toContain("422");
   });
 
-  it("marks a thrown fetch as NOT definite (the request may have reached Resend)", async () => {
-    stubFetch(async () => {
-      throw new Error("socket hang up");
-    });
+  it("marks a thrown fetch (incl. a timeout) as NOT definite (the request may have reached Resend)", async () => {
+    fetchMock.mockRejectedValue(new Error("socket hang up"));
     expect(await sendEmail(INPUT)).toMatchObject({ ok: false, kind: "error", definite: false, error: "socket hang up" });
   });
 
   it("marks a 2xx with an unreadable body as NOT definite (the mail was probably accepted)", async () => {
-    stubFetch(async () => new Response("<html>not json</html>", { status: 200 }));
+    fetchMock.mockResolvedValue(new Response("<html>not json</html>", { status: 200 }));
     expect(await sendEmail(INPUT)).toMatchObject({ ok: false, kind: "error", definite: false });
   });
 
   it("skips (and never calls fetch) when this environment is not live", async () => {
     vi.stubEnv("NOTIFICATIONS_LIVE", "");
-    const f = stubFetch(async () => new Response("{}", { status: 200 }));
     const r = await sendEmail(INPUT);
     expect(r).toMatchObject({ ok: false, kind: "skipped" });
-    expect(f).not.toHaveBeenCalled();
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });

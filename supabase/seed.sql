@@ -204,3 +204,8 @@ revoke all on sequence public.sheet_mirror_staging_seq_seq from public, anon, au
 revoke all on public.patient_sources_digest_sends from anon, authenticated;
 -- seed.sql grants ALL to service_role above; 0213 keeps it to select/insert/update (a claim row is never deleted).
 revoke delete, truncate, references, trigger on public.patient_sources_digest_sends from service_role;
+-- 0210: the release-notice outbox and its switch are service_role-only (RLS on,
+-- no policy); only the service-role client and the claim/finish/retry functions
+-- touch them, so anon/authenticated hold nothing.
+revoke all on public.release_notices          from public, anon, authenticated;
+revoke all on public.release_notice_settings  from public, anon, authenticated;

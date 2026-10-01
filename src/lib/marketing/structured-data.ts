@@ -1,4 +1,5 @@
 import { SITE, CONTACT, SOCIAL, GEO, HOURS, AREAS_SERVED } from "./site";
+import { openingHoursStrings } from "./nap";
 import type { FaqItem } from "./faq";
 
 const CLINIC_ID = `${SITE.url}/#clinic`;
@@ -67,13 +68,20 @@ function clinicNode(opts: ClinicLdOptions = {}): SchemaObject {
         availableLanguage: ["en", "fil"],
       },
     ],
-    openingHours: "Mo-Sa 08:00-17:00",
+    openingHours: openingHoursStrings(),
     openingHoursSpecification: [
       {
         "@type": "OpeningHoursSpecification",
         dayOfWeek: [...HOURS.days],
         opens: HOURS.opens,
         closes: HOURS.closes,
+      },
+      // Sunday: walk-in lab tests only (still "open" for schema purposes).
+      {
+        "@type": "OpeningHoursSpecification",
+        dayOfWeek: HOURS.sunday.day,
+        opens: HOURS.sunday.opens,
+        closes: HOURS.sunday.closes,
       },
     ],
     medicalSpecialty: ["Diagnostic", "ClinicalLaboratory", "Radiology"],

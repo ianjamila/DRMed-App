@@ -20,7 +20,7 @@ const LOOKBACK_MS = 24 * 60 * 60 * 1000;
 export async function loadOwnBatchRows(opts: {
   actorId: string;
   batchId: string;
-  resourceType: "appointment" | "test_request" | "historic_hmo_claim";
+  resourceType: "appointment" | "test_request" | "historic_hmo_claim" | "contact_message";
   nowMs: number;
 }): Promise<
   | { ok: true; rows: AuditRowForUndo[]; alreadyUndone: boolean; changedSince: Set<string> }
