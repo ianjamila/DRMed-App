@@ -260,6 +260,7 @@ async function settle<T>(p: Promise<QueryResult>, pick: (r: QueryResult) => T): 
   }
 }
 
+// concurrency-proof: release_visit_results, release_report_locks
 // releaseVisitSelection -> rpc("release_visit_results")
 function release(a: Actor, visit: string, ids: readonly string[]): Promise<Out<ReleaseJson>> {
   return settle(
@@ -268,6 +269,7 @@ function release(a: Actor, visit: string, ids: readonly string[]): Promise<Out<R
   );
 }
 
+// concurrency-proof: undo_visit_release
 // undo release -> rpc("undo_visit_release")
 // `expected` = the batch Undo map (id -> released_at of the release it made).
 // 0205: a reason is REQUIRED (5th positional arg). `expected` may carry a JSON
@@ -314,6 +316,7 @@ function voidPayment(a: Actor, paymentId: string): Promise<Out<number>> {
   );
 }
 
+// concurrency-proof: correct_payment (scenario D3: an Edit that lowers the amount vs a release)
 // The Edit-payment action's RPC (payments/[id]/edit/actions.ts), service role.
 function editPayment(a: Actor, paymentId: string, visit: string, from: number, to: number): Promise<Out<string>> {
   return settle(

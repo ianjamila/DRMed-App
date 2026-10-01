@@ -202,6 +202,7 @@ async function settle(p: Promise<QueryResult>, count: (r: QueryResult) => number
   }
 }
 
+// concurrency-proof: claim_panel_members
 // claimPanelMembers → rpc("claim_panel_members")
 function claim(a: Actor, ids: readonly string[]): Promise<Outcome> {
   return settle(
@@ -210,6 +211,7 @@ function claim(a: Actor, ids: readonly string[]): Promise<Outcome> {
   );
 }
 
+// concurrency-proof: unclaim_panel_members
 // unclaimPanelMembers → rpc("unclaim_panel_members")
 function unclaim(a: Actor, ids: readonly string[], holders: readonly string[]): Promise<Outcome> {
   return settle(

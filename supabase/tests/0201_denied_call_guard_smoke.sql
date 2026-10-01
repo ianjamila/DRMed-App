@@ -27,7 +27,8 @@
 --      table path and no path at all pass the guard.
 --   5. The schema is chosen the way PostgREST chooses it: Content-Profile on a
 --      POST, Accept-Profile on a GET/HEAD — the OTHER header is ignored, so a
---      GET carrying Content-Profile: graphql_public still means public.
+--      GET carrying Content-Profile: graphql_public still means public. Since
+--      0207 public is always checked too (see 0207_request_guard_smoke.sql).
 --   5b. request.path is raw: an encoded name (zz%5Fguard...) and any other
 --      non-identifier name is refused, not looked up.
 --   6. As service_role, the service_role-only function passes.
@@ -92,11 +93,17 @@ begin
   perform public.api_request_guard();
   perform set_config('request.path', '', true);
   perform public.api_request_guard();
-  -- 5: a POST's Content-Profile is honoured — graphql_public has no such function
+  -- 5: since 0207 the guard always checks public too (request.headers keeps
+  -- only the LAST of a repeated profile header, PostgREST uses the FIRST), so
+  -- a POST naming graphql_public is refused as well — PostgREST would 404 it.
   perform set_config('request.path', '/rpc/zz_guard_probe_denied', true);
   perform set_config('request.headers', '{"content-profile":"graphql_public"}', true);
-  perform public.api_request_guard();
-  -- ...but a GET ignores Content-Profile (PostgREST runs it in public): refused
+  begin
+    perform public.api_request_guard();
+    raise exception 'FAIL 5: a POST naming graphql_public skipped the public check (0207)';
+  exception when insufficient_privilege then null;
+  end;
+  -- ...and a GET ignores Content-Profile (PostgREST runs it in public): refused
   perform set_config('request.method', 'GET', true);
   begin
     perform public.api_request_guard();

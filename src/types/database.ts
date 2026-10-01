@@ -2291,13 +2291,6 @@ export type Database = {
             referencedColumns: ["id"]
           },
           {
-            foreignKeyName: "gift_codes_redeemed_payment_id_fkey"
-            columns: ["redeemed_payment_id"]
-            isOneToOne: false
-            referencedRelation: "v_historical_payments"
-            referencedColumns: ["id"]
-          },
-          {
             foreignKeyName: "gift_codes_redeemed_visit_id_fkey"
             columns: ["redeemed_visit_id"]
             isOneToOne: false
@@ -2745,13 +2738,6 @@ export type Database = {
             columns: ["payment_id"]
             isOneToOne: false
             referencedRelation: "payments"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "hmo_payment_allocations_payment_id_fkey"
-            columns: ["payment_id"]
-            isOneToOne: false
-            referencedRelation: "v_historical_payments"
             referencedColumns: ["id"]
           },
           {
@@ -3373,35 +3359,50 @@ export type Database = {
       }
       patient_merges: {
         Row: {
+          context: Json | null
+          fill_snapshot: Json | null
           filled_from_source: string[]
           id: string
           keep_id: string
           merged_at: string
           merged_by: string | null
           moved: NonNullable<Json>
+          rechained: string[]
+          snapshot_version: number | null
           source_id: string
+          undo_report: Json | null
           undone_at: string | null
           undone_by: string | null
         }
         Insert: {
+          context?: Json | null
+          fill_snapshot?: Json | null
           filled_from_source?: string[]
           id?: string
           keep_id: string
           merged_at?: string
           merged_by?: string | null
           moved?: NonNullable<Json>
+          rechained?: string[]
+          snapshot_version?: number | null
           source_id: string
+          undo_report?: Json | null
           undone_at?: string | null
           undone_by?: string | null
         }
         Update: {
+          context?: Json | null
+          fill_snapshot?: Json | null
           filled_from_source?: string[]
           id?: string
           keep_id?: string
           merged_at?: string
           merged_by?: string | null
           moved?: NonNullable<Json>
+          rechained?: string[]
+          snapshot_version?: number | null
           source_id?: string
+          undo_report?: Json | null
           undone_at?: string | null
           undone_by?: string | null
         }
@@ -3727,13 +3728,6 @@ export type Database = {
             columns: ["corrects_payment_id"]
             isOneToOne: false
             referencedRelation: "payments"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "payments_corrects_payment_id_fkey"
-            columns: ["corrects_payment_id"]
-            isOneToOne: false
-            referencedRelation: "v_historical_payments"
             referencedColumns: ["id"]
           },
           {
@@ -6954,66 +6948,6 @@ export type Database = {
         }
         Relationships: []
       }
-      v_historical_payments: {
-        Row: {
-          amount_php: number | null
-          created_at: string | null
-          id: string | null
-          method: string | null
-          notes: string | null
-          received_at: string | null
-          received_by: string | null
-          reference_number: string | null
-          visit_id: string | null
-          void_reason: string | null
-          voided_at: string | null
-          voided_by: string | null
-        }
-        Insert: {
-          amount_php?: number | null
-          created_at?: string | null
-          id?: string | null
-          method?: string | null
-          notes?: string | null
-          received_at?: string | null
-          received_by?: string | null
-          reference_number?: string | null
-          visit_id?: string | null
-          void_reason?: string | null
-          voided_at?: string | null
-          voided_by?: string | null
-        }
-        Update: {
-          amount_php?: number | null
-          created_at?: string | null
-          id?: string | null
-          method?: string | null
-          notes?: string | null
-          received_at?: string | null
-          received_by?: string | null
-          reference_number?: string | null
-          visit_id?: string | null
-          void_reason?: string | null
-          voided_at?: string | null
-          voided_by?: string | null
-        }
-        Relationships: [
-          {
-            foreignKeyName: "payments_visit_id_fkey"
-            columns: ["visit_id"]
-            isOneToOne: false
-            referencedRelation: "visits"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "payments_voided_by_fkey"
-            columns: ["voided_by"]
-            isOneToOne: false
-            referencedRelation: "staff_profiles"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
       v_hmo_ar_aging: {
         Row: {
           bucket: string | null
@@ -7774,6 +7708,15 @@ export type Database = {
         Args: { p_for_delete?: boolean; p_id: string; p_kind: string }
         Returns: string[]
       }
+      merge_patients_guarded: {
+        Args: {
+          p_actor: string
+          p_context?: Json
+          p_keep: string
+          p_source: string
+        }
+        Returns: Json
+      }
       next_pf_disbursement_batch_number: {
         Args: { p_year: number }
         Returns: number
@@ -7795,6 +7738,10 @@ export type Database = {
         }[]
       }
       patient_delete_blockers: { Args: { p_patient_id: string }; Returns: Json }
+      patient_has_live_v2_merge: {
+        Args: { p_patient_id: string }
+        Returns: boolean
+      }
       patient_kept_counts: {
         Args: { p_patient_ids: string[] }
         Returns: {
@@ -7917,6 +7864,10 @@ export type Database = {
         Args: { p_item_id: string }
         Returns: undefined
       }
+      recompute_patient_consent_cache: {
+        Args: { p_patient_id: string }
+        Returns: undefined
+      }
       record_hmo_settlement: {
         Args: {
           p_actor: string
@@ -7934,6 +7885,14 @@ export type Database = {
         Returns: {
           actor_id: string
           actor_role: string
+        }[]
+      }
+      release_audit_context: {
+        Args: { p_allowed: string[]; p_audit: Json }
+        Returns: {
+          extras: Json
+          ip: unknown
+          user_agent: string
         }[]
       }
       release_report_locks: {
@@ -8147,6 +8106,13 @@ export type Database = {
         Args: { p_result_id: string; p_values: Json }
         Returns: undefined
       }
+      result_view_counts: {
+        Args: { p_test_request_ids: string[] }
+        Returns: {
+          test_request_id: string
+          viewed_count: number
+        }[]
+      }
       send_out_monthly_margin: {
         Args: { p_end?: string; p_start?: string }
         Returns: {
@@ -8278,6 +8244,10 @@ export type Database = {
       unclaim_panel_members: {
         Args: { p_holders: string[]; p_test_request_ids: string[] }
         Returns: number
+      }
+      undo_patient_merge_guarded: {
+        Args: { p_actor: string; p_context?: Json; p_merge_id: string }
+        Returns: Json
       }
       undo_visit_release: {
         Args: {

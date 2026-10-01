@@ -76,15 +76,39 @@ export interface RacedResultLink {
   report_group_id: string | null;
 }
 
-export type RacedDraftOutcome = "continue" | "combined_report" | "refuse";
+export type RacedDraftOutcome = "continue" | "combined_report" | "refuse" | "retry";
 
-/** `memberCount` = how many tests the winner's result is linked to. */
+/** Shown when the membership count could not be read — never guess "single test". */
+export const MEMBERSHIP_READ_ERROR =
+  "Couldn't check whether this test is part of a combined report. Please try again.";
+
+/**
+ * Is a result shared by several tests? `hasReportGroup` = the result or its
+ * service carries a report_group_id; `memberCount` = how many tests the result
+ * is linked to, or null when that read failed. A single-test write proceeds
+ * only on a VERIFIED count of exactly one: the downstream RPCs replace the
+ * result's whole value set, so guessing "single" on a failed read could save
+ * one test's values over a shared report.
+ */
+export function sharedReportVerdict(
+  hasReportGroup: boolean,
+  memberCount: number | null,
+): "shared" | "single" | "unknown" {
+  if (hasReportGroup) return "shared";
+  if (memberCount === null) return "unknown";
+  if (memberCount > 1) return "shared";
+  return memberCount === 1 ? "single" : "unknown";
+}
+
+/** `memberCount` = how many tests the winner's result is linked to (null = the read failed). */
 export function racedStructuredDraftOutcome(
   link: RacedResultLink | null | undefined,
-  memberCount: number,
+  memberCount: number | null,
 ): RacedDraftOutcome {
   if (link == null) return "refuse";
-  if (link.report_group_id !== null || memberCount > 1) return "combined_report";
+  const verdict = sharedReportVerdict(link.report_group_id !== null, memberCount);
+  if (verdict === "shared") return "combined_report";
+  if (verdict === "unknown") return "retry";
   if (link.generation_kind === "structured" && link.finalised_at === null) return "continue";
   return "refuse";
 }

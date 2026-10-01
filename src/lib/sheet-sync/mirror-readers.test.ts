@@ -10,6 +10,7 @@ const ALLOWED = [
   "src/types/database.ts",
   "scripts/sheet-sync", // the CLI runner and the local db proof
   "scripts/patient-sources-db-proof.ts", // Patient Sources local proof (seeds mirror rows)
+  "src/lib/patients/patient-fk-inventory.test.ts", // names the mirror tables only in a NOT_MOVED comment (their patient_id FK is deliberately not moved by a merge); never reads them
 ];
 function walk(dir: string): string[] {
   return readdirSync(dir).flatMap((n) => {

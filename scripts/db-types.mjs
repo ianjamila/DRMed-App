@@ -11,8 +11,9 @@
 //     Prettier (no semicolons — the style the file has always had), so the diff
 //     after a migration shows the schema change, not whitespace.
 //   - A function installed in `public` by an extension (dblink, left behind by
-//     supabase/tests/0183_waiver_race_smoke.sql before it moved to the
-//     `extensions` schema) is not part of the app schema; the run refuses and
+//     the old dblink race smoke (supabase/tests/0183_waiver_race_smoke.sql,
+//     since replaced by scripts/waiver-concurrency-proof.ts) before it moved to
+//     the `extensions` schema) is not part of the app schema; the run refuses and
 //     says how to move it rather than committing it into the types.
 //
 // Usage: node scripts/db-types.mjs            (local stack)
@@ -22,26 +23,19 @@ import { spawnSync } from "node:child_process";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import * as prettier from "prettier";
-import { refuseGeneratedTypes } from "./lib/db-types-check.mjs";
+import { refuseGeneratedTypes, typesSourceArgs } from "./lib/db-types-check.mjs";
 
 const OUT = join(process.cwd(), "src", "types", "database.ts");
-const dbUrlAt = process.argv.indexOf("--db-url");
-const source = dbUrlAt > -1 ? ["--db-url", process.argv[dbUrlAt + 1] ?? ""] : ["--local"];
-if (dbUrlAt > -1 && !process.argv[dbUrlAt + 1]) {
-  console.error("db-types: --db-url needs a value");
-  process.exit(1);
-}
-
 // --workdir <dir>: generate from ANOTHER local stack (e.g. an isolated one started
 // from a copy of supabase/), so the shared stack's unmerged objects stay out.
-const workdirAt = process.argv.indexOf("--workdir");
-const workdir = workdirAt > -1 ? ["--workdir", process.argv[workdirAt + 1] ?? ""] : [];
-if (workdirAt > -1 && !process.argv[workdirAt + 1]) {
-  console.error("db-types: --workdir needs a value");
+// Unknown options are refused before anything runs (see typesSourceArgs).
+const source = typesSourceArgs(process.argv.slice(2));
+if (source.error) {
+  console.error(`db-types: ${source.error} — src/types/database.ts left unchanged`);
   process.exit(1);
 }
 
-const gen = spawnSync("supabase", ["gen", "types", "typescript", ...source, ...workdir], {
+const gen = spawnSync("supabase", ["gen", "types", "typescript", ...source.args], {
   encoding: "utf8",
   maxBuffer: 64 * 1024 * 1024,
   stdio: ["ignore", "pipe", "inherit"],

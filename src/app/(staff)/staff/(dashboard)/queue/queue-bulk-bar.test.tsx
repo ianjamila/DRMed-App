@@ -11,6 +11,8 @@ vi.mock("./actions", () => ({
 // EVERY bulk Claim / Unclaim / Delete goes through these three, panel or not:
 // they mint the one batch id that shows Undo. The real module pulls in
 // server-only code that throws outside a Server Component, so they are mocked.
+// The bar also imports the visit page sample-delete action (server-only chain).
+vi.mock("../visits/[id]/actions", () => ({ deleteSampleVisitsFromQueueAction: vi.fn() }));
 vi.mock("./panel-actions", () => ({
   claimQueueSelectionAction: vi.fn(),
   unclaimQueueSelectionAction: vi.fn(),

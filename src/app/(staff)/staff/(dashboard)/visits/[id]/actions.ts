@@ -32,7 +32,8 @@ import {
   type VisitReleaseOutcome,
 } from "@/lib/actions/visits/release-reports";
 import { RELEASE_REFUSAL } from "@/lib/queue/release-eligibility";
-import type { SkippedRow } from "@/lib/queue/bulk-queue";
+import type { BulkSampleDeleteResult, SkippedRow } from "@/lib/queue/bulk-queue";
+import { mapWithConcurrency } from "@/lib/async/map-with-concurrency";
 import {
   hasOpenHmoClaim,
   visitDeletability,
@@ -768,7 +769,7 @@ export async function deleteSampleVisitAction(
 ): Promise<BulkSelectionResult> {
   const session = await requireActiveStaff();
   if (session.role !== "admin") {
-    return { ok: false, error: "Only an admin can delete a sample visit." };
+    return { ok: false, error: SAMPLE_DELETE_ADMIN_ONLY };
   }
   const parsed = QueueDeleteReasonSchema.safeParse({ reason });
   if (!parsed.success) {
@@ -777,18 +778,44 @@ export async function deleteSampleVisitAction(
       error: parsed.error.issues[0]?.message ?? "Reason is required.",
     };
   }
-  const trimmedReason = parsed.data.reason;
+  return deleteSampleVisitCore(session, visitId, parsed.data.reason, "visit_page");
+}
 
+const SAMPLE_DELETE_ADMIN_ONLY = "Only an admin can delete a sample visit.";
+const NOT_A_SAMPLE_VISIT =
+  "Not a sample visit — mark the visit as a sample first, or delete it from the visit page.";
+
+type SampleDeleteSource = "visit_page" | "queue" | "queue_bulk";
+
+// The body of deleteSampleVisitAction, shared with the Queue's row and bulk
+// "Delete sample visit" actions (below). The callers own the role + reason
+// checks; this re-reads the visit and re-proves every guard. The Queue
+// sources additionally require visits.is_sample — they have no "this was a
+// sample" tick to lean on, so a real visit must never be reachable from a
+// checkbox. The visit page keeps its tick-based flow (an admin may delete a
+// real visit whose only blocker is a released result).
+async function deleteSampleVisitCore(
+  session: Awaited<ReturnType<typeof requireActiveStaff>>,
+  visitId: string,
+  trimmedReason: string,
+  source: SampleDeleteSource,
+): Promise<BulkSelectionResult> {
   const supabase = await createClient();
   const { data: visit, error: visitErr } = await supabase
     .from("visits")
     .select(
-      "id, payment_status, deleted_at, test_requests ( id, status, is_package_header, deleted_at, hmo_claim_items ( batch_voided ) )",
+      "id, payment_status, deleted_at, is_sample, test_requests ( id, status, is_package_header, deleted_at, hmo_claim_items ( batch_voided ) )",
     )
     .eq("id", visitId)
     .maybeSingle();
   if (visitErr) return { ok: false, error: translatePgError(visitErr) };
   if (!visit) return { ok: false, error: "Visit not found." };
+  if (source !== "visit_page" && visit.is_sample !== true) {
+    return { ok: false, error: NOT_A_SAMPLE_VISIT };
+  }
+  // 0167: no delete of any kind on an inactive patient's visit.
+  const active = await assertVisitPatientActive(createAdminClient(), visitId);
+  if (!active.ok) return { ok: false, error: active.error };
 
   const lines = visit.test_requests ?? [];
   const liveLines = lines.filter((t) => t.deleted_at === null);
@@ -821,7 +848,11 @@ export async function deleteSampleVisitAction(
       visitId,
       releasedIds,
       `Sample visit deleted: ${trimmedReason}`,
-      { bulk: true, sample_visit_delete: true },
+      {
+        bulk: true,
+        sample_visit_delete: true,
+        ...(source === "visit_page" ? {} : { source }),
+      },
     );
     if (!undo.ok) {
       revalidateReleaseSurfaces(visitId);
@@ -833,6 +864,7 @@ export async function deleteSampleVisitAction(
   const deleted = await deleteVisitAction(
     visitId,
     `Sample visit: ${trimmedReason}`.slice(0, 500),
+    source === "visit_page" ? undefined : source,
   );
   if (!deleted.ok) {
     revalidateReleaseSurfaces(visitId);
@@ -849,6 +881,75 @@ export async function deleteSampleVisitAction(
   // report pages, even when nothing had been released.
   revalidateReleaseSurfaces(visitId);
   return { ok: true, count: unreleased };
+}
+
+// Queue row action: "Delete sample visit…" on a sample visit's card. Admin
+// only (the EFFECTIVE role — View as is folded in by requireActiveStaff) and
+// only for a visit flagged is_sample; everything else is the shared core.
+export async function deleteSampleVisitFromQueueAction(
+  visitId: string,
+  reason: string,
+): Promise<BulkSelectionResult> {
+  const session = await requireActiveStaff();
+  if (session.role !== "admin") {
+    return { ok: false, error: SAMPLE_DELETE_ADMIN_ONLY };
+  }
+  const parsed = QueueDeleteReasonSchema.safeParse({ reason });
+  if (!parsed.success) {
+    return { ok: false, error: parsed.error.issues[0]?.message ?? "Reason is required." };
+  }
+  return deleteSampleVisitCore(session, visitId, parsed.data.reason, "queue");
+}
+
+// Queue bulk bar: the same per-visit core over the DISTINCT visits of the
+// selection, a few at a time. Whole-call refusals (role, reason, input) come
+// back as { ok: false }; otherwise every visit lands in exactly one of
+// deletedVisitIds / skipped, with the core's own reason.
+const SAMPLE_DELETE_CONCURRENCY = 3;
+
+export async function deleteSampleVisitsFromQueueAction(
+  visitIds: string[],
+  reason: string,
+): Promise<BulkSampleDeleteResult> {
+  const session = await requireActiveStaff();
+  if (session.role !== "admin") {
+    return { ok: false, error: SAMPLE_DELETE_ADMIN_ONLY };
+  }
+  const parsed = QueueDeleteReasonSchema.safeParse({ reason });
+  if (!parsed.success) {
+    return { ok: false, error: parsed.error.issues[0]?.message ?? "Reason is required." };
+  }
+  if (!Array.isArray(visitIds) || visitIds.some((id) => typeof id !== "string" || id === "")) {
+    return { ok: false, error: "Invalid selection." };
+  }
+  const unique = [...new Set(visitIds)];
+  if (unique.length === 0) return { ok: false, error: "Nothing selected." };
+  if (unique.length > MAX_BULK_SELECTION) {
+    return { ok: false, error: `Select at most ${MAX_BULK_SELECTION} visits at a time.` };
+  }
+  const outcomes = await mapWithConcurrency(unique, SAMPLE_DELETE_CONCURRENCY, async (visitId) => {
+    try {
+      return { visitId, result: await deleteSampleVisitCore(session, visitId, parsed.data.reason, "queue_bulk") };
+    } catch (e) {
+      await reportError({ scope: "queue/delete-sample-visits", error: e, metadata: { visit_id: visitId } });
+      return {
+        visitId,
+        result: { ok: false as const, error: "Something went wrong — open the visit and check it." },
+      };
+    }
+  });
+  const deletedVisitIds: string[] = [];
+  const skipped: SkippedRow[] = [];
+  let unreleasedCount = 0;
+  for (const { visitId, result } of outcomes) {
+    if (result.ok) {
+      deletedVisitIds.push(visitId);
+      unreleasedCount += result.count;
+    } else {
+      skipped.push({ id: visitId, reason: result.error });
+    }
+  }
+  return { ok: true, deletedVisitIds, skipped, unreleasedCount };
 }
 
 // H3: admin-only escape hatch for visits that will never be cash-paid
