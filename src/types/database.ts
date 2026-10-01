@@ -7355,6 +7355,27 @@ export type Database = {
           sheet_php: number
         }[]
       }
+      _ps_sec_people: {
+        Args: {
+          p_channel: string
+          p_enc: unknown[][]
+          p_from: string
+          p_ids: unknown[][]
+          p_limit: number
+          p_mode: string
+          p_offset: number
+          p_to: string
+        }
+        Returns: {
+          display_name: string
+          drm_id: string
+          first_date: string
+          identity: string
+          identity_kind: string
+          patient_id: string
+          total_count: number
+        }[]
+      }
       _ps_sec_referrers: {
         Args: {
           p_from: string
