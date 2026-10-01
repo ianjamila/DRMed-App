@@ -11,7 +11,7 @@ vi.mock("next/navigation", () => ({
 vi.mock("../../../actions", () => ({ undoBulkQueueAction: vi.fn() }));
 
 import { undoBulkQueueAction } from "../../../actions";
-import { UNDO_EXPIRED } from "@/lib/ui/bulk-undo";
+import { UNDO_ALREADY, UNDO_EXPIRED } from "@/lib/ui/bulk-undo";
 import { ClaimUndoNotice } from "./claim-undo-notice";
 
 const BATCH = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
@@ -88,6 +88,44 @@ describe("ClaimUndoNotice", () => {
     await userEvent.click(undoBtn()!);
     await waitFor(() => expect(screen.getByText(UNDO_EXPIRED)).toBeTruthy());
     expect(undoBtn()).toBeNull();
+  });
+
+  it("an already-undone batch shows the error and hides Undo", async () => {
+    vi.mocked(undoBulkQueueAction).mockResolvedValue({ ok: false, error: UNDO_ALREADY });
+    renderNotice();
+    await userEvent.click(undoBtn()!);
+    await waitFor(() => expect(screen.getByText(UNDO_ALREADY)).toBeTruthy());
+    expect(undoBtn()).toBeNull();
+  });
+
+  it("a second click while the first Undo is pending calls the action once", async () => {
+    let finish!: (r: Awaited<ReturnType<typeof undoBulkQueueAction>>) => void;
+    vi.mocked(undoBulkQueueAction).mockReturnValue(
+      new Promise((resolve) => {
+        finish = resolve;
+      }),
+    );
+    renderNotice();
+    const button = undoBtn()!;
+    await userEvent.click(button);
+    await userEvent.click(button);
+    expect(undoBulkQueueAction).toHaveBeenCalledTimes(1);
+    finish({ ok: true, restoredIds: [KEY], restoredTestCount: 1, notRestored: [] });
+    await waitFor(() => expect(undoBtn()).toBeNull());
+  });
+
+  it("uses the fallback text when nothing was restored and no reason came back", async () => {
+    vi.mocked(undoBulkQueueAction).mockResolvedValue({
+      ok: true,
+      restoredIds: [],
+      restoredTestCount: 0,
+      notRestored: [],
+    });
+    renderNotice();
+    await userEvent.click(undoBtn()!);
+    await waitFor(() => expect(screen.getByText("Not undone — it changed since.")).toBeTruthy());
+    expect(undoBtn()).toBeNull();
+    expect(router.refresh).not.toHaveBeenCalled();
   });
 
   it("any other error keeps Undo so the operator can retry", async () => {

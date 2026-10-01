@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { claimTestAction } from "./actions";
 import { claimPanelAction } from "./panel-actions";
+import { claimReportHref } from "@/lib/queue/claim-undo-link";
 
 // One test, or a whole consolidated chemistry panel — the panel is named by
 // (visit, report group) and its members are resolved on the server, because
@@ -44,10 +45,7 @@ export function ClaimButton({ testRequestId, panel, navigateOnClaim }: Props) {
           if (navigateOnClaim) {
             // The panel claim's Undo batch rides along to the report page.
             router.push(
-              panel
-                ? `/staff/queue/consolidated/${panel.visitId}/${panel.groupId}` +
-                    (batchId ? `?claimed=${encodeURIComponent(batchId)}&at=${Date.now()}` : "")
-                : `/staff/queue/${testRequestId}`,
+              panel ? claimReportHref(panel, batchId, Date.now()) : `/staff/queue/${testRequestId}`,
             );
           }
         })
