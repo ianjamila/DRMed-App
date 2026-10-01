@@ -36,7 +36,7 @@
 //   R3 restore vs a visit insert (the shared-lock writer), both orders
 //   R4 free race restore x2              R5 free race restore vs delete
 //   B1 payment delete then void          B2 void then payment delete
-//   B3 delete vs delete                  (each: exactly ONE reversal journal entry)
+//   B3 delete vs delete    B4 delete vs a direct journal-entry writer (no reversal of a reversed entry)
 //
 // CONTROL ROUNDS (--control) prove the proof can fail. Each mutant removes ONE guard and
 // the named scenarios must FAIL against it:
@@ -45,13 +45,12 @@
 //   MF view_as_end_for target without FOR UPDATE (F1 F4 F5)
 //   MR restore_patient without the lifecycle advisory lock (R1 R2 R3)
 //   MS bridge_payment_delete without `status = 'posted'`     (B2)
-//   ML bridge_payment_delete without the journal-entry FOR UPDATE: expected to SURVIVE.
-//      The payment row is already locked (heap_lock_tuple in ExecBRDeleteTriggers, and
-//      the UPDATE's own row lock for a void) before the function body runs, and every
-//      writer of that journal entry reaches it through the payment row, so the
-//      FOR UPDATE is redundant for this function. B1-B3 assert the waiter queued on the
-//      PAYMENT tuple (never on journal_entries) which is the evidence; ML passing is
-//      reported as such and is NOT a failure.
+//   ML bridge_payment_delete without the journal-entry FOR UPDATE (B4 must fail; B1-B3 still pass)
+//      Writers that reach the entry THROUGH the payment row (delete, void) are already serialised by the payment
+//      row lock, taken before the trigger body runs - B1-B3 assert the waiter queued on the payments tuple, and
+//      they keep passing without the journal lock. B2 is the discriminating scenario for the posted re-check
+//      (MS); B1/B3 check serialisation. The journal-entry lock matters only against a writer that updates the
+//      entry directly, which is what B4 does: it holds the entry, the delete waits on journal_entries and re-checks.
 // view_as_* and restore_patient mutants are copies in a throwaway schema (vrp_ctl_<hex>),
 // never public. A trigger function cannot live in another schema, so MS/ML swap
 // public.bridge_payment_delete for the same body whose mutation is conditional on
@@ -98,6 +97,8 @@ const FN = { transition: "public", expire: "public", endFor: "public", restore: 
 let monitor: Client;
 const open: Client[] = [];
 let seq = 0;
+/** Set by the SIGINT/SIGTERM handler: no new scenario, mutant or swap may start once cleanup is under way. */
+let aborting = false;
 
 class Fail extends Error {}
 function expect(cond: boolean, msg: string): void {
@@ -308,10 +309,12 @@ const expire = (a: Actor, who: string) =>
   call(a, `select ${FN.expire}.view_as_expire($1::uuid, $2::inet, $3::text) as r`, [who, "203.0.113.7", "vrp-proof"]);
 const endFor = (a: Actor, who: string, target: string) =>
   call(a, `select ${FN.endFor}.view_as_end_for($1::uuid, $2::uuid, $3::inet, $4::text) as r`, [who, target, "203.0.113.7", "vrp-proof"]);
+// lifecycle.ts passes { ip, user_agent }.
+const APP_CTX = JSON.stringify({ ip: "203.0.113.7", user_agent: "vrp-proof" });
 const restore = (a: Actor, patient: string, admin: string) =>
-  call(a, `select ${FN.restore}.restore_patient($1::uuid, $2::uuid, '{}'::jsonb) as r`, [patient, admin]);
+  call(a, `select ${FN.restore}.restore_patient($1::uuid, $2::uuid, $3::jsonb) as r`, [patient, admin, APP_CTX]);
 const del = (a: Actor, patient: string, admin: string) =>
-  call(a, `select public.delete_patient($1::uuid, 'test_record', '', $2::uuid, '{}'::jsonb) as r`, [patient, admin]);
+  call(a, `select public.delete_patient($1::uuid, 'test_record', '', $2::uuid, $3::jsonb) as r`, [patient, admin, APP_CTX]);
 const insertVisit = (a: Actor, patient: string) =>
   call(a, `insert into public.visits (patient_id, payment_status, total_php, paid_php) values ($1, 'unpaid', 0, 0)`, [patient]);
 // payments/[id]/void/actions.ts, verbatim WHERE guards.
@@ -340,6 +343,8 @@ async function forced(opts: {
   kind: Kind;
   why: string;
   patientId?: string;
+  /** Relation whose tuple the waiter must hold the queue lock of. */
+  rel?: string;
   during?: (a: Actor, b: Actor) => Promise<void>;
 }): Promise<{ o1: Out; o2: Out }> {
   const [a, b] = [await actor("first"), await actor("second")];
@@ -348,6 +353,10 @@ async function forced(opts: {
   await begin(b);
   const p2 = andEnd(b, opts.second(b));
   await mustWait(b, opts.kind, opts.why, opts.patientId);
+  if (opts.rel) {
+    const rels = await tupleRelations(b.pid);
+    expect(rels.includes(opts.rel), `waiter queued on ${JSON.stringify(rels)}, not ${opts.rel}`);
+  }
   if (opts.during) await opts.during(a, b);
   const o1 = await end(a, r1);
   const o2 = await p2;
@@ -368,6 +377,7 @@ const scenarios: Record<string, Scenario> = {
       first: (a) => transition(a, adm, "reception"),
       second: (b) => transition(b, adm, "medtech"),
       kind: "row",
+      rel: "staff_profiles",
       why: "the second transition queues on the admin's staff_profiles row",
     });
     expectOk(o1, "first");
@@ -383,6 +393,7 @@ const scenarios: Record<string, Scenario> = {
       first: (a) => transition(a, adm, "reception"),
       second: (b) => transition(b, adm, null),
       kind: "row",
+      rel: "staff_profiles",
       why: "the stop queues behind the start",
     });
     expectOk(o1, "first");
@@ -398,6 +409,7 @@ const scenarios: Record<string, Scenario> = {
       first: (a) => transition(a, adm, null),
       second: (b) => transition(b, adm, null),
       kind: "row",
+      rel: "staff_profiles",
       why: "the second stop queues behind the first",
     });
     expectOk(o1, "first");
@@ -451,6 +463,7 @@ const scenarios: Record<string, Scenario> = {
       first: (a) => transition(a, adm, "medtech"),
       second: (b) => expire(b, adm),
       kind: "row",
+      rel: "staff_profiles",
       why: "the expiry queues on the row the transition locked",
     });
     expectOk(o1, "transition");
@@ -467,6 +480,7 @@ const scenarios: Record<string, Scenario> = {
       first: (a) => expire(a, adm),
       second: (b) => transition(b, adm, "medtech"),
       kind: "row",
+      rel: "staff_profiles",
       why: "the transition queues behind the expiry",
     });
     eq("expire did the work", val(o1, "r"), true);
@@ -482,6 +496,7 @@ const scenarios: Record<string, Scenario> = {
       first: (a) => transition(a, adm, null),
       second: (b) => expire(b, adm),
       kind: "row",
+      rel: "staff_profiles",
       why: "the expiry queues behind the stop",
     });
     expectOk(o1, "stop");
@@ -497,6 +512,7 @@ const scenarios: Record<string, Scenario> = {
       first: (a) => expire(a, adm),
       second: (b) => expire(b, adm),
       kind: "row",
+      rel: "staff_profiles",
       why: "the second expiry queues behind the first",
     });
     eq("winner", val(o1, "r"), true);
@@ -513,6 +529,7 @@ const scenarios: Record<string, Scenario> = {
       first: (a) => transition(a, t, null),
       second: (b) => endFor(b, x, t),
       kind: "row",
+      rel: "staff_profiles",
       why: "end-for queues on the target's row",
     });
     expectOk(o1, "target stop");
@@ -527,6 +544,7 @@ const scenarios: Record<string, Scenario> = {
       first: (a) => endFor(a, x, t),
       second: (b) => transition(b, t, null),
       kind: "row",
+      rel: "staff_profiles",
       why: "the target's stop queues behind end-for",
     });
     eq("ended", val(o1, "r"), true);
@@ -542,6 +560,7 @@ const scenarios: Record<string, Scenario> = {
       first: (a) => endFor(a, x, t),
       second: (b) => transition(b, t, "medtech"),
       kind: "row",
+      rel: "staff_profiles",
       why: "the target's start queues behind end-for",
     });
     eq("ended", val(o1, "r"), true);
@@ -557,6 +576,7 @@ const scenarios: Record<string, Scenario> = {
       first: (a) => expire(a, t1),
       second: (b) => endFor(b, x, t1),
       kind: "row",
+      rel: "staff_profiles",
       why: "end-for queues behind the expiry",
     });
     eq("expiry did the work", val(a1.o1, "r"), true);
@@ -568,6 +588,7 @@ const scenarios: Record<string, Scenario> = {
       first: (a) => endFor(a, x, t2),
       second: (b) => expire(b, t2),
       kind: "row",
+      rel: "staff_profiles",
       why: "the expiry queues behind end-for's target lock",
     });
     eq("end-for left a stale view alone", val(b1.o1, "r"), false);
@@ -582,6 +603,7 @@ const scenarios: Record<string, Scenario> = {
       first: (a) => endFor(a, x1, t),
       second: (b) => endFor(b, x2, t),
       kind: "row",
+      rel: "staff_profiles",
       why: "the second end-for queues behind the first",
     });
     eq("winner", val(o1, "r"), true);
@@ -772,6 +794,29 @@ const scenarios: Record<string, Scenario> = {
     eq("delete removed the voided row", o2.ok ? o2.rowCount : -1, 1);
     await assertOneReversal(pay.id, "void then delete");
   },
+  // B4 - a direct journal-entry writer (what reverseJournalEntryBySource-style code does) holds the payment's JE
+  //      while the payment is deleted: the trigger's FOR UPDATE makes it wait for the writer's commit and re-check
+  //      status = 'posted', so it adds NO reversal. Without that lock it reads the stale 'posted' row and reverses an
+  //      already-reversed entry.
+  async B4() {
+    const adm = await mkAdmin("b4");
+    const pay = await mkPayment(adm);
+    const [a, b] = [await actor("je-writer"), await actor("deleter")];
+    await a.c.query("begin"); // plain postgres: a direct ledger writer, not the payment path
+    const r1 = await call(a, `update public.journal_entries set status = 'reversed' where source_kind = 'payment' and source_id = $1 and status = 'posted'`, [pay.id]);
+    expectOk(r1, "je writer");
+    eq("je writer touched one entry", r1.ok ? r1.rowCount : -1, 1);
+    await begin(b);
+    const p2 = andEnd(b, deletePayment(b, pay.id));
+    await mustWait(b, "row", "the trigger queues on the journal entry the writer holds");
+    const rels = await tupleRelations(b.pid); // asserted after the outcome, so a mutant dies on the duplicate reversal
+    expectOk(await end(a, r1), "je writer end");
+    const o2 = await p2;
+    expectOk(o2, "delete");
+    const rev = await monitor.query("select count(*)::int as n from public.journal_entries where source_kind = 'reversal' and reverses in (select id from public.journal_entries where source_kind = 'payment' and source_id = $1)", [pay.id]);
+    eq("no second reversal of an entry the writer already reversed", rev.rows[0]!.n, 0);
+    expect(rels.includes("journal_entries"), `deleter queued on ${JSON.stringify(rels)}, not journal_entries`);
+  },
   // B3 - two deletes: the second matches nothing; one reversal.
   async B3() {
     const adm = await mkAdmin("b3");
@@ -823,6 +868,7 @@ async function assertOneReversal(paymentId: string, label: string): Promise<void
 async function runAll(): Promise<Record<string, string | null>> {
   const result: Record<string, string | null> = {};
   for (const [name, fn] of Object.entries(scenarios)) {
+    if (aborting) break;
     try {
       await fn();
       result[name] = null;
@@ -847,8 +893,8 @@ type Mutant = {
   from: string;
   to: string;
   mustFail: string[];
-  /** Survives by design: scenarios must all still PASS. */
-  equivalent?: boolean;
+  /** Scenarios that must still PASS against the mutant (they check the shared behaviour, not the dropped guard). */
+  mustPass?: string[];
   trigger?: boolean;
 };
 const NO_LOCK = (block: string) => ({ from: block, to: block.replace("\n   for update;", ";") });
@@ -897,13 +943,13 @@ const MUTANTS: Mutant[] = [
   },
   {
     id: "ML",
-    note: "bridge_payment_delete without the journal-entry FOR UPDATE (for this run's payments) - EXPECTED TO SURVIVE: the payment row lock already serialises",
+    note: "bridge_payment_delete without the journal-entry FOR UPDATE (for this run's payments)",
     fn: "public.bridge_payment_delete()",
     trigger: true,
-    equivalent: true,
     from: "", // built specially below
     to: "",
-    mustFail: [],
+    mustFail: ["B4"],
+    mustPass: ["B1", "B2", "B3"],
   },
 ];
 
@@ -932,6 +978,7 @@ async function makeSchemaMutant(schema: string, m: Mutant): Promise<void> {
 
 /** Swap public.bridge_payment_delete for a variant that deviates only for payments.notes = TAG. */
 async function swapBridge(m: Mutant): Promise<void> {
+  if (aborting) throw new Error("aborting: not swapping bridge_payment_delete");
   const def = await liveDef(m.fn);
   if (def.includes(MUTANT_MARK)) throw new Error("public.bridge_payment_delete is already a mutant (a crashed run?) - restore it first");
   writeFileSync(BRIDGE_BACKUP, def);
@@ -957,6 +1004,16 @@ async function swapBridge(m: Mutant): Promise<void> {
   if (!mutated.includes(MUTANT_MARK)) throw new Error("could not mark the mutant");
   await monitor.query(mutated);
 }
+/** The statement from the latest migration that defines bridge_payment_delete (0141). */
+function bridgeFromMigration(): string {
+  const sql = readFileSync(join(process.cwd(), "supabase/migrations/0141_manila_posting_dates_remainder.sql"), "utf8");
+  const start = sql.indexOf("create or replace function public.bridge_payment_delete()");
+  if (start < 0) throw new Error("0141 no longer defines bridge_payment_delete");
+  const bodyStart = sql.indexOf("$function$", start);
+  const end = sql.indexOf("$function$", bodyStart + 10);
+  if (bodyStart < 0 || end < 0) throw new Error("could not extract bridge_payment_delete from 0141");
+  return sql.slice(start, end + "$function$".length);
+}
 async function restoreBridge(): Promise<void> {
   const live = await liveDef("public.bridge_payment_delete()").catch(() => "");
   if (!live.includes(MUTANT_MARK)) {
@@ -964,8 +1021,10 @@ async function restoreBridge(): Promise<void> {
     return;
   }
   if (!existsSync(BRIDGE_BACKUP)) {
-    console.error(`public.bridge_payment_delete is a vrp mutant but ${BRIDGE_BACKUP} is gone - re-run migration 0141's definition`);
-    process.exitCode = 1;
+    // Backup gone (cleaned tmp dir): fall back to the live definition in migration 0141.
+    await monitor.query(bridgeFromMigration());
+    if ((await liveDef("public.bridge_payment_delete()")).includes(MUTANT_MARK)) throw new Error("fallback restore of bridge_payment_delete failed");
+    console.error("bridge_payment_delete restored from migration 0141 (backup file was missing)");
     return;
   }
   const original = readFileSync(BRIDGE_BACKUP, "utf8");
@@ -1044,9 +1103,9 @@ async function main(): Promise<void> {
     process.exit(2);
   }
   let exit = 0;
-  let cleaning: Promise<void> | null = null;
+  let cleanupP: Promise<void> | null = null;
   const cleanup = (): Promise<void> => {
-    cleaning ??= (async () => {
+    cleanupP ??= (async () => {
       await closeAll();
       await restoreBridge().catch((e) => {
         console.error(`FAIL: ${(e as Error).message}`);
@@ -1059,10 +1118,13 @@ async function main(): Promise<void> {
         exit = 1;
       }
     })();
-    return cleaning;
+    return cleanupP;
   };
   for (const sig of ["SIGINT", "SIGTERM"] as const) {
-    process.once(sig, () => void cleanup().finally(() => process.exit(sig === "SIGINT" ? 130 : 143)));
+    process.once(sig, () => {
+      aborting = true;
+      void cleanup().finally(() => process.exit(sig === "SIGINT" ? 130 : 143));
+    });
   }
   try {
     // A crashed earlier run may have left a mutant trigger function or tagged rows.
@@ -1077,6 +1139,7 @@ async function main(): Promise<void> {
 
     if (CONTROL) {
       for (const m of MUTANTS) {
+        if (aborting) break;
         console.log(`Control ${m.id}: ${m.note}`);
         let schema: string | null = null;
         try {
@@ -1086,25 +1149,21 @@ async function main(): Promise<void> {
             await makeSchemaMutant(schema, m);
             FN[m.slot!] = schema;
           }
-          const only = new Set(m.equivalent ? ["B1", "B2", "B3"] : m.mustFail);
+          const only = new Set([...m.mustFail, ...(m.mustPass ?? [])]);
           const saved = { ...scenarios };
           for (const k of Object.keys(scenarios)) if (!only.has(k)) delete scenarios[k];
           const res = await runAll();
           Object.assign(scenarios, saved);
-          if (m.equivalent) {
-            const broke = Object.entries(res).filter(([, e]) => e !== null);
-            if (broke.length === 0) console.log(`  control ${m.id}: survives, as expected - B1-B3 all PASS without the journal-entry lock (it is redundant here)`);
-            else {
-              console.log(`  CONTROL ${m.id}: UNEXPECTED - ${broke.map(([k]) => k).join(", ")} failed without the journal-entry lock, so it is NOT redundant`);
-              exit = 1;
-            }
-          } else {
-            const survived = m.mustFail.filter((s) => res[s] === null);
-            if (survived.length > 0) {
-              console.log(`  CONTROL FAIL ${m.id}: scenarios ${survived.join(", ")} still passed against the mutant - the proof cannot catch this bug`);
-              exit = 1;
-            } else console.log(`  control ${m.id} ok: ${m.mustFail.join(", ")} all failed against the mutant`);
-          }
+          if (aborting) break;
+          const survived = m.mustFail.filter((x) => res[x] === null);
+          const broke = (m.mustPass ?? []).filter((x) => res[x] !== null);
+          if (survived.length > 0) {
+            console.log(`  CONTROL FAIL ${m.id}: scenarios ${survived.join(", ")} still passed against the mutant - the proof cannot catch this bug`);
+            exit = 1;
+          } else if (broke.length > 0) {
+            console.log(`  CONTROL FAIL ${m.id}: ${broke.join(", ")} should pass against this mutant but failed`);
+            exit = 1;
+          } else console.log(`  control ${m.id} ok: ${m.mustFail.join(", ")} failed against the mutant${m.mustPass ? `; ${m.mustPass.join(", ")} still pass (they check the payment-row serialisation, which the dropped lock does not provide)` : ""}`);
         } finally {
           FN.transition = FN.expire = FN.endFor = FN.restore = "public";
           if (m.trigger) await restoreBridge();
