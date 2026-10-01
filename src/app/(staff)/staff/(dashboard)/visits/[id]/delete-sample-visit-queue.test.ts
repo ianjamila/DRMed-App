@@ -153,6 +153,8 @@ describe("an inactive patient's visit (0167)", () => {
     ["visit_page", () => deleteSampleVisitAction("v1", "demo")],
     ["queue", () => deleteSampleVisitFromQueueAction("v1", "demo")],
   ])("%s source is refused: nothing un-released, nothing deleted", async (_s, run) => {
+    // Nothing released: the undo path (which re-checks the patient itself) is never reached, so only the core guard can refuse.
+    fx.visits = { v1: visit("v1", {}, ["requested"]) };
     fx.patientActive = false;
     const res = await run();
     expect(res).toEqual({ ok: false, error: "This patient record is inactive." });
@@ -161,6 +163,7 @@ describe("an inactive patient's visit (0167)", () => {
   });
 
   it("bulk reports it as a skipped visit", async () => {
+    fx.visits = { v1: visit("v1", {}, ["requested"]) };
     fx.patientActive = false;
     const res = await deleteSampleVisitsFromQueueAction(["v1"], "demo");
     expect(res).toMatchObject({ ok: true, deletedVisitIds: [], skipped: [{ id: "v1", reason: "This patient record is inactive." }] });
