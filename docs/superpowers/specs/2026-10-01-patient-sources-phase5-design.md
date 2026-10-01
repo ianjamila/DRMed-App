@@ -94,11 +94,13 @@ Origin: PR2 spec §7 follow-ups + Phase 5 scope additions (2026-10-01).
 ### 4.1 Migration (claimed at build)
 1. **Alert keys.** Re-create `staff_alert_settings_key_check` with the **full literal list**: the newest list (0192's seven at time of writing; re-grep) plus `patient_sources_weekly` and `patient_sources_monthly`. Seed both rows as 0186 does. `staff-alerts.test.ts` pins the registry to the *last* CHECK across sorted migrations.
 2. **Send-claim table `public.patient_sources_digest_sends`:**
-   - Columns: `alert_key text`, `period_from date`, `period_to date`, `recipient text` (lower-cased), `status text check (status in ('sending','sent','failed'))`, `attempts int not null default 1`, `provider_id text`, `last_error text`, `updated_at timestamptz not null default now()`.
+   - Columns: `alert_key text`, `period_from date`, `period_to date`, `recipient text` (lower-cased), `status text check (status in ('sending','sent','failed','unknown'))`, `attempts int not null default 1`, `provider_id text`, `last_error text`, `updated_at timestamptz not null default now()`.
    - `primary key (alert_key, period_from, recipient)`.
    - RLS enabled with no policies. `revoke all … from public, anon, authenticated`; `grant select, insert, update on … to service_role`. Server code only.
 3. **Grant.** `grant select on public.ad_spend_daily to service_role`. Prod has it from Supabase default privileges; a fresh replay gets it only via seed.sql, so the isolated-stack proof would otherwise differ from prod.
 4. **Post-checks in the migration** (0206-style DO block): the CHECK contains every key, both seed rows exist, the claim table has no anon/authenticated grants, and RLS is on.
+5. **Seed parity.** `supabase/seed.sql` line ~39 grants all table privileges back to anon/authenticated on a fresh reset. Add a named `revoke all on public.patient_sources_digest_sends from anon, authenticated;` beside the existing re-revokes (seed lines ~58-71), and keep `seed-grant-parity.test.ts` green. The proof checks the ACL **after** `db reset` (migrations + seed), not only in the migration's own post-checks.
+6. **RLS smoke.** Add `patient_sources_digest_sends` to the no-policy allowlist in `supabase/tests/0151_rls_initplan_smoke.sql` (service-role-only table, by design).
 
 ### 4.2 Registry entries (`STAFF_ALERT_KEYS` / `STAFF_ALERTS`)
 - **Weekly**
@@ -118,16 +120,35 @@ Origin: PR2 spec §7 follow-ups + Phase 5 scope additions (2026-10-01).
   - `/api/cron/patient-sources-weekly`: `0 23 * * 0` UTC = **Monday 07:00 Manila**, before the 8am opening.
   - `/api/cron/patient-sources-monthly`: `0 0 1 * *` UTC = **1st 08:00 Manila**. "Last day 23:00 UTC" is not expressible as a cron.
 - **Model.** `dedup-digest/route.ts`: `Bearer CRON_SECRET`, `withCronMonitor`, `createAdminClient()`, `resolveStaffAlertRecipients` + `alertSkipReason`.
-- **Per-recipient send, idempotent:**
-  1. **Claim.** `insert … values (key, from, to, recipient, 'sending') on conflict (alert_key, period_from, recipient) do update set status='sending', attempts = attempts+1, updated_at = now() where patient_sources_digest_sends.status = 'failed' or (patient_sources_digest_sends.status = 'sending' and patient_sources_digest_sends.updated_at < now() - interval '15 minutes') returning recipient`. No row returned → already sent or in flight → count as `skipped` for this run.
-     - This is one atomic statement via a tiny closed SQL function `_ps_digest_claim(...)`, granted to service_role only, or a PostgREST upsert if it can express the WHERE. Decide at plan time; the function is the default.
-  2. **Send** with `sendEmail({ …, idempotencyKey: `${key}:${from}:${recipient}` })`.
-     - `sendEmail` gains an optional `idempotencyKey`, sent as Resend's `Idempotency-Key` header.
-     - A crash after Resend accepted the email but before it was recorded is then de-duplicated by Resend on retry, within Resend's window.
-  3. **Record.** `sent` with `provider_id`, or `failed` with `last_error`. A `skipped` result from `sendEmail` (non-production) → mark the row `failed` with the reason, so a production re-run is not blocked. A record-write error is logged and calls `markFailed()`, never thrown after a send.
-- **Audit (sentAction).** `system.patient_sources_{weekly|monthly}.sent` with `{ period_from, period_to, recipients, sent, failed, skipped, recipients_error? }`, the dedup-digest shape plus the period, so the Email Alerts "Last sent" line reads correctly. It is written on every run that resolved recipients.
-- **Heartbeat.** `.completed` is written on **every non-throwing path**: disabled/skip reason, zero recipients, all-already-sent, `too_early`, and success. Any `failed > 0` → `markFailed()`.
-- **Retry.** Recipients that failed are retried by re-triggering the cron (manual Vercel "Run" or `curl` with CRON_SECRET). Sent recipients are never re-sent. Documented in the guide's admin notes.
+- **Delivery rule: at most once, automatically.** A duplicate owner digest is a nuisance, and a missed one is visible on the watchdog. So when delivery is uncertain, the design **never re-sends automatically**; it flags the row instead.
+- **Statuses:**
+  - `sending` (claimed);
+  - `sent` (Resend 2xx with an id);
+  - `failed` (**definite**: Resend answered non-2xx, or `sendEmail` returned `skipped`);
+  - `unknown` (the request may have reached Resend: `fetch` threw, the response was unreadable, or a `sending` row went stale).
+  - `sendEmail`'s result gains a discriminator: `kind: "error"` with `definite: boolean`. True only when an HTTP response with a non-2xx status was read.
+- **Per-recipient send:**
+  1. **Claim.** One atomic statement in a tiny closed SQL function `_ps_digest_claim(key, from, to, recipient)`, granted to service_role only:
+     - `insert … 'sending' on conflict do update set status='sending', attempts=attempts+1, updated_at=now() where status='failed' returning recipient`;
+     - a stale `sending` row (older than 15 min) is first flipped to `unknown` by the same function and **not** claimed.
+     - No row returned → already sent, in flight or unknown → not sent this run.
+  2. **Send** with `sendEmail({ …, idempotencyKey: `${key}:${from}:${recipient}` })`. `sendEmail` gains an optional `idempotencyKey`, sent as Resend's `Idempotency-Key` header. It is defence in depth for a retry inside Resend's window; correctness does not depend on it.
+  3. **Record.** `sent` + `provider_id`, `failed` + `last_error` (definite), or `unknown` + `last_error`. A record-write error is logged and calls `markFailed()`, never thrown after a send; the row stays `sending` and becomes `unknown` when stale.
+- **Re-sending an `unknown` row.** Only an explicit operator action does it: the retry below with `&include_unknown=1`, after checking the Resend dashboard. Nothing does it automatically.
+- **Retry of an earlier period.** The cron route accepts `?period_from=YYYY-MM-DD` (CRON_SECRET only).
+  - It must be a valid period start: a Monday for weekly, the 1st for monthly.
+  - It must be a **completed** period no older than 62 days.
+  - It re-resolves recipients through the current alert settings, so someone switched off since is not emailed, then claims normally.
+  - Without the parameter, the route targets the latest completed period.
+  - A retry rebuilds the figures and the stamp, so the stamp stays honest about when the numbers were read. The original payload is not persisted.
+  - Documented in the guide's admin notes with the exact `curl`.
+- **Audit (sentAction).** `system.patient_sources_{weekly|monthly}.sent` with `{ period_from, period_to, recipients, sent, failed, unknown, already_sent, skipped?: string, recipients_error? }`.
+  - The `recipients`/`sent`/`failed` numbers match the dedup-digest shape. `skipped` stays a **string reason** only, as `normaliseAlertSentMetadata` expects.
+  - When nothing was sent because everyone already had it, `skipped` = "already sent to everyone for this period", so the Email Alerts line reads "sent to 0 of N (already sent to everyone for this period)" rather than looking like a failure.
+  - Test it through `normaliseAlertSentMetadata` and the client's wording.
+  - Written on every run that resolved recipients.
+- **Heartbeat.** `.completed` is written on **every non-throwing path**: disabled/skip reason, zero recipients, all-already-sent, `too_early`, and success. `failed > 0` or `unknown > 0` → `markFailed()`, so the watchdog surfaces it.
+- **Spend read under concurrent import.** Take `count: "exact", head: true` over the range before and after paging. If they differ, re-read once; if they still differ, fail the digest. Nothing is sent, the monitor fails, and an operator re-triggers.
 - **Four cron edits each** (recon):
   - `vercel.json`
   - `CRON_HEARTBEATS`: weekly maxAge 8×24h; monthly `interval '32 days'`, which the watchdog regex accepts.
@@ -160,11 +181,11 @@ Origin: PR2 spec §7 follow-ups + Phase 5 scope additions (2026-10-01).
 ### 4.5 Content: pure `renderPatientSourcesDigest(data, { appUrl, period })` → `{ subject, html, text }`
 `src/lib/marketing/patient-sources-digest.ts`; HTML via `renderEmailShell` + existing `email*` helpers; every dynamic string goes through `escapeHtml`. Labels come from `bucketLabel("week"|"month", cur.from)` / `manilaDate`, never hand-built.
 1. **Subject:** `Patient sources, {period label}: {N} new ({▲|▼|=} {Δ})`. Without a comparison: `…: {N} new`.
-2. **Data health** (only when it applies): the page's own `sheetBanner(summary)` text verbatim. It covers app-only (no sheet rows), partial/failed last run, and paused, so no invented failure dates. A null summary field → no line.
+2. **Data health** (only when it applies): the page's own `sheetBanner(summary)` condition and text. Its "dates below" wording is satisfied by listing `summary.sheet_last_dates` ("Latest service date in the sheet", per tab, via `manilaDate`) directly under it, the same list the page shows. It covers app-only, partial/failed last run, and paused. No invented failure dates; a null summary field → no line.
 3. **Headline:** New `formatNewCounts`, Served, Returning (first recorded), each with ▲/▼/= and the absolute change, or "no comparison".
 4. **Biggest mover:** the `biggestMover` line, or "No channel moved by more than 2."
 5. **Sunday observation** when non-null.
-6. **Day row (weekly only):** Mon … Sat, "Sun (half day)": new per day; served per day as a second row.
+6. **Day row (weekly only):** Mon … Sat, "Sun (half day)": new per day; served per day as a second row labelled "served that day". Daily served counts are not summed into a total: the period served total always comes from `summary` (a repeat attendee counts once).
 7. **New by channel:** channel · this · previous · change. Every channel non-zero in either period, so falls to zero stay visible, in channel-table order.
 8. **Revenue by channel:** confirmed ₱, plus an unconfirmed column only if any are non-zero; total vs previous total.
 9. **Top 5 referrers:** doctor · new (confirmed + unconfirmed), or "No referring doctor recorded this {week|month}."
@@ -246,7 +267,10 @@ Origin: PR2 spec §7 follow-ups + Phase 5 scope additions (2026-10-01).
   - a skip reason → no send + `.completed`;
   - all recipients already claimed → no send;
   - two concurrent invocations (claim returns one winner) → each recipient emailed once;
-  - partial failure → `failed` rows retried on re-run, `sent` rows not;
+  - partial failure → definite `failed` rows retried on re-run, `sent` rows not;
+  - `fetch` throws / unreadable response / stale `sending` → `unknown`, never re-sent automatically; re-sent only with `include_unknown=1`;
+  - `?period_from=` retry: valid Monday/1st only, completed, ≤ 62 days, recipients re-resolved; a week/month rollover between the failure and the retry still targets the old period;
+  - spend count changes during paging → one re-read, then fail;
   - non-production `skipped` → row `failed`, not blocking;
   - report failure → no send + failed monitor;
   - idempotency key passed to `sendEmail`;
@@ -254,7 +278,7 @@ Origin: PR2 spec §7 follow-ups + Phase 5 scope additions (2026-10-01).
 - **Preview action:** non-admin refused; sends only to the caller; a `skipped` reason is surfaced; no claim/`.sent` written.
 - **Module guard:** the digest module never names the never-call RPCs.
 - **Card:** render tests for the empty / no-spend / spend / error states; `show()` hides it; tile mapping equivalence.
-- **DB:** 5b migration proof (CHECK + seeds + existing keys intact, claim-table ACL/RLS, the claim function's concurrency on two sessions) and the 5c equivalence proof, both on the isolated stack.
+- **DB:** 5b migration proof (CHECK + seeds + existing keys intact, claim-table ACL/RLS checked **after `db reset` with seed**, 0151 smoke green, the claim function's concurrency on two sessions, stale `sending` → `unknown`) and the 5c equivalence proof, both on the isolated stack.
 - **Browser smoke** (Playwright, authed local :4000 or cookie injection): the Patient Sources stamp, the dashboard card, and the Email Alerts preview button (the non-production reason is shown).
 
 ## 7. Out of scope / follow-ups
