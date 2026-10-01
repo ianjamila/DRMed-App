@@ -29,7 +29,6 @@ import {
   BAR,
   OUTCOME,
   VISIT_BAR,
-  OUTCOME,
   barText,
   headerBox,
   newPageFromState,
