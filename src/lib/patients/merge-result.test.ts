@@ -74,10 +74,17 @@ describe("undoReportLines", () => {
   const base: UndoReport = {
     mergeId: "m1", keepId: K, sourceId: S, keptDrmId: "DRM-0001", sourceDrmId: "DRM-0002",
     resumedInterruptedUndo: false, movedBack: { ...ZERO, visits: 2 }, leftOnKeep: EMPTY_LEFT,
-    keptFields: [], revertedFields: ["email"], rechainedBack: 0, rechainedNotRestored: [],
+    keptFields: [], revertedFields: [], rechainedBack: 0, rechainedNotRestored: [],
   };
   it("plain undo", () => {
     expect(undoReportLines(base)).toEqual(["Moved back to DRM-0002: 2 visits."]);
+  });
+  it("names the copied-in details it removed, beside the edited ones it kept", () => {
+    expect(undoReportLines({ ...base, revertedFields: ["email", "address"], keptFields: ["phone"] })).toEqual([
+      "Moved back to DRM-0002: 2 visits.",
+      "Removed from DRM-0001 the details the merge had copied in: email and address.",
+      "Kept on DRM-0001 because they were edited after the merge: phone.",
+    ]);
   });
   it("kept fields, rows left on keep, chain", () => {
     expect(

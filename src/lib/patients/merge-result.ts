@@ -120,6 +120,9 @@ export function fieldList(fields: string[]): string {
 export function undoReportLines(r: UndoReport): string[] {
   const lines = [`Moved back to ${r.sourceDrmId}: ${movedSummary(r.movedBack)}.`];
   if (r.resumedInterruptedUndo) lines.push("This finished an earlier undo that had stopped part-way.");
+  if (r.revertedFields.length > 0) {
+    lines.push(`Removed from ${r.keptDrmId} the details the merge had copied in: ${fieldList(r.revertedFields)}.`);
+  }
   if (r.keptFields.length > 0) {
     lines.push(
       r.resumedInterruptedUndo

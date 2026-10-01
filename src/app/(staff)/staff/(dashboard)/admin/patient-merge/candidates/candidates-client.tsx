@@ -1,5 +1,5 @@
 "use client";
-import { useActionState } from "react";
+import { startTransition, useActionState, useState } from "react";
 import type { CandidatePair } from "@/lib/patients/find-duplicates";
 import type { DupSignal } from "@/lib/patients/duplicates";
 import { mergeCandidateAction, undoMergeAction, type MergeResult, type UndoResult, type RecentMerge } from "../actions";
@@ -47,18 +47,32 @@ function MergeButton({ pair }: { pair: CandidatePair }) {
   );
 }
 
-function UndoButton({ merge }: { merge: RecentMerge }) {
-  const [state, action, pending] = useActionState<UndoResult | null, FormData>(undoMergeAction, null);
-  if (state?.ok) {
-    return (
-      <div className="text-xs text-green-700" role="status">
-        <p className="font-semibold">Undone ✓</p>
-        <ul className="mt-1 list-disc pl-4">
-          {state.lines.map((l) => <li key={l}>{l}</li>)}
-        </ul>
-      </div>
-    );
-  }
+export type UndoneMerge = { id: string; label: string; lines: string[] };
+
+// The undo action revalidates this page, which drops the undone row from
+// "Recently merged" — so the report is handed up and shown from here.
+export function JustUndone({ items }: { items: UndoneMerge[] }) {
+  return (
+    <ul className="mb-2 space-y-2">
+      {items.map((u) => (
+        <li key={u.id} className="rounded-md bg-green-50 p-2 text-xs text-green-800" role="status">
+          <p className="font-semibold">{u.label} — Undone ✓</p>
+          <ul className="mt-1 list-disc pl-4">
+            {u.lines.map((l) => <li key={l}>{l}</li>)}
+          </ul>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+export function UndoButton({ merge, onUndone }: { merge: RecentMerge; onUndone: (lines: string[]) => void }) {
+  const [state, action, pending] = useActionState<UndoResult | null, FormData>(async (prev, fd) => {
+    const r = await undoMergeAction(prev, fd);
+    // Re-enter the transition so the report commits with the refreshed list.
+    if (r.ok) startTransition(() => onUndone(r.lines));
+    return r;
+  }, null);
   const label = merge.interrupted ? "Finish undo" : "Undo";
   return (
     <form
@@ -86,6 +100,9 @@ function Person({ p }: { p: CandidatePair["a"] }) {
 }
 
 export function CandidatesClient({ pairs, recent }: { pairs: CandidatePair[]; recent: RecentMerge[] }) {
+  const [undone, setUndone] = useState<UndoneMerge[]>([]);
+  const undoneIds = new Set(undone.map((u) => u.id));
+  const listed = recent.filter((m) => !undoneIds.has(m.id));
   return (
     <div className="space-y-6">
       {pairs.length === 0 ? (
@@ -114,11 +131,12 @@ export function CandidatesClient({ pairs, recent }: { pairs: CandidatePair[]; re
         </ul>
       )}
 
-      {recent.length > 0 && (
+      {(listed.length > 0 || undone.length > 0) && (
         <div className="rounded-lg border p-4">
           <h2 className="mb-2 text-sm font-bold">Recently merged (undo within 30 days)</h2>
+          {undone.length > 0 && <JustUndone items={undone} />}
           <ul className="divide-y">
-            {recent.map((m) => (
+            {listed.map((m) => (
               <li key={m.id} className="flex items-start justify-between gap-4 py-2 text-sm">
                 <div>
                   <span>
@@ -133,7 +151,17 @@ export function CandidatesClient({ pairs, recent }: { pairs: CandidatePair[]; re
                     <p className="text-xs text-slate-500">{m.blocked_reason}</p>
                   )}
                 </div>
-                {m.undoable && <UndoButton merge={m} />}
+                {m.undoable && (
+                  <UndoButton
+                    merge={m}
+                    onUndone={(lines) =>
+                      setUndone((prev) => [
+                        ...prev,
+                        { id: m.id, label: `${m.source_drm_id ?? "—"} → ${m.keep_drm_id ?? "—"}`, lines },
+                      ])
+                    }
+                  />
+                )}
               </li>
             ))}
           </ul>
