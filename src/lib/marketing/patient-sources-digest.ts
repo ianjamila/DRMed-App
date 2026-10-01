@@ -3,22 +3,17 @@
  * retry validation, the saved-spend roll-up, and (Task 7) the renderer. Every COUNT
  * comes from the report; nothing here re-derives one. No `server-only`: unit-testable.
  */
-import { daysBetweenISO, isISODate, isoDateParts, isoWeekday, lastOfMonthISO, shiftISODate } from "@/lib/dates/manila";
+import {
+  daysBetweenISO, isISODate, isoDateParts, isoWeekday, lastOfMonthISO, manilaDate, shiftISODate,
+} from "@/lib/dates/manila";
+import { emailButton, emailDetailBox, emailFinePrint, emailParagraph, escapeHtml, renderEmailShell } from "@/lib/notifications/branded-email";
+import { formatPhp } from "./format";
 import { PATIENT_SOURCES_MIN_DATE } from "./period";
 import {
-  comparisonPeriod,
-  lastCompletedMonth,
-  lastCompletedWeek,
-  previousMonth,
-  previousWeek,
-  type Period,
-  type ReferrerRow,
-  type RevenueRow,
-  type SeriesRow,
-  type SpendTotalRow,
-  type SummaryRow,
+  asOfLabel, biggestMover, bucketLabel, channelDeltas, channelLabel, channelTable, comparisonPeriod, costPerNewPatient,
+  formatNewCounts, lastCompletedMonth, lastCompletedWeek, previousMonth, previousWeek, sheetBanner, sheetDatesText,
+  sundayObservation, type Period, type ReferrerRow, type RevenueRow, type SeriesRow, type SpendTotalRow, type SummaryRow,
 } from "./patient-sources";
-
 export type DigestKind = "week" | "month";
 export type DigestAlertKey = "patient_sources_weekly" | "patient_sources_monthly";
 export const DIGEST_ALERT_KEY: Record<DigestKind, DigestAlertKey> = {
@@ -111,4 +106,241 @@ export function aggregateSpend(rows: readonly RawSpendRow[]): SpendTotalRow[] {
 /** Spend rows inside a period (cost per new patient must never see the other period's spend). */
 export function spendIn(spend: readonly SpendTotalRow[], p: Period): SpendTotalRow[] {
   return spend.filter((s) => s.spend_date >= p.from && s.spend_date <= p.to);
+}
+// ---------------------------------------------------------------------------
+// Renderer — one list of blocks, rendered to html (inline styles) AND plain text
+// ---------------------------------------------------------------------------
+
+interface Block {
+  html: string;
+  text: string;
+}
+
+const NAVY = "#263F91";
+const SOFT = "#6b7280";
+const INK = "#1a2537";
+const RULE = "#e5eaf2";
+const DAY_LABELS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun (half day)"] as const;
+
+const n = (x: number) => x.toLocaleString("en-PH");
+const newTotal = (s: SummaryRow) => s.new_confirmed + s.new_unconfirmed;
+const servedTotal = (s: SummaryRow) => s.served_confirmed + s.served_unconfirmed;
+const signed = (x: number) => (x > 0 ? `+${n(x)}` : x < 0 ? `-${n(Math.abs(x))}` : "0");
+
+function deltaText(now: number, before: number | null): string {
+  if (before === null) return "no comparison";
+  const change = now - before;
+  return change === 0 ? "= no change" : `${change > 0 ? "▲" : "▼"} ${n(Math.abs(change))}`;
+}
+function moneyDelta(now: number, before: number): string {
+  const change = now - before;
+  return change === 0 ? "= no change" : `${change > 0 ? "▲" : "▼"} ${formatPhp(Math.abs(change))}`;
+}
+
+const heading = (title: string): Block => ({
+  html: `<h3 style="margin:24px 0 6px;font-size:16px;color:${NAVY};">${escapeHtml(title)}</h3>`,
+  text: `\n${title}`,
+});
+const para = (t: string): Block => ({ html: emailParagraph(escapeHtml(t)), text: t });
+const fine = (t: string): Block => ({ html: emailFinePrint(escapeHtml(t)), text: t });
+const detail = (rows: Array<{ label: string; value: string }>): Block => ({
+  html: emailDetailBox(rows),
+  text: rows.map((r) => `${r.label}: ${r.value}`).join("\n"),
+});
+
+function table(head: readonly string[], rows: readonly (readonly string[])[]): Block {
+  const cell = (v: string, i: number, tag: "th" | "td") =>
+    `<${tag} align="${i === 0 ? "left" : "right"}" style="padding:6px 8px;font-size:13px;border-bottom:1px solid ${RULE};${
+      tag === "th" ? `color:${SOFT};font-weight:600;` : ""
+    }">${escapeHtml(v)}</${tag}>`;
+  const html =
+    `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:8px 0 14px;color:${INK};border-collapse:collapse;">` +
+    `<tr>${head.map((h, i) => cell(h, i, "th")).join("")}</tr>` +
+    rows.map((r) => `<tr>${r.map((v, i) => cell(v, i, "td")).join("")}</tr>`).join("") +
+    `</table>`;
+  return { html, text: [head, ...rows].map((r) => r.join(" | ")).join("\n") };
+}
+
+const sumDay = (rows: readonly SeriesRow[], day: string) =>
+  rows.filter((r) => r.bucket_start === day).reduce((s, r) => s + Number(r.confirmed) + Number(r.unconfirmed), 0);
+
+function revenueBlocks(cur: DigestPeriodData, prev: DigestPeriodData | null, unit: DigestKind): Block[] {
+  const total = (rows: readonly RevenueRow[]) => rows.reduce((s, r) => s + Number(r.confirmed_php) + Number(r.unconfirmed_php), 0);
+  const curTotal = total(cur.revenue);
+  const prevTotal = prev ? total(prev.revenue) : null;
+  if (curTotal === 0 && (prevTotal === null || prevTotal === 0)) return [];
+  const out: Block[] = [heading("Revenue by channel")];
+  const rows = cur.revenue
+    .map((r) => ({ r, sum: Number(r.confirmed_php) + Number(r.unconfirmed_php) }))
+    .filter((x) => x.sum > 0)
+    .sort((a, b) => b.sum - a.sum || channelLabel(a.r.channel).localeCompare(channelLabel(b.r.channel)));
+  const hasUnconfirmed = cur.revenue.some((r) => Number(r.unconfirmed_php) > 0);
+  if (rows.length === 0) out.push(para(`No revenue by channel was recorded this ${unit}.`));
+  else {
+    out.push(
+      table(
+        hasUnconfirmed ? ["Channel", "Confirmed", "Unconfirmed"] : ["Channel", "Confirmed"],
+        rows.map(({ r }) =>
+          hasUnconfirmed
+            ? [channelLabel(r.channel), formatPhp(Number(r.confirmed_php)), formatPhp(Number(r.unconfirmed_php))]
+            : [channelLabel(r.channel), formatPhp(Number(r.confirmed_php))],
+        ),
+      ),
+    );
+  }
+  out.push(
+    para(
+      `Total${hasUnconfirmed ? " (confirmed + unconfirmed)" : ""} ${formatPhp(curTotal)}` +
+        (prevTotal === null ? " (no comparison)." : `, before ${formatPhp(prevTotal)} (${moneyDelta(curTotal, prevTotal)}).`),
+    ),
+  );
+  return out;
+}
+
+function costBlocks(data: DigestData): Block[] {
+  const unit = data.kind;
+  const cur = costPerNewPatient(spendIn(data.spend, data.cur.period), data.cur.newByDay).filter((r) => r.days > 0);
+  const out: Block[] = [heading("Cost per new patient")];
+  if (cur.length === 0) {
+    out.push(para(`No ad spend saved for this ${unit}.`));
+    if (!data.spendEverSaved) out.push(fine("Ad spend is saved from Ad Performance → Save them to clinic records."));
+    return out;
+  }
+  const before = data.prev
+    ? new Map(costPerNewPatient(spendIn(data.spend, data.prev.period), data.prev.newByDay).map((r) => [r.platform, r]))
+    : null;
+  const cost = (r: { days: number; costPerNewPhp: number | null }) =>
+    r.days === 0 ? "no spend saved" : r.costPerNewPhp === null ? "no new patients" : formatPhp(r.costPerNewPhp);
+  out.push(
+    table(
+      data.prev ? ["Platform", "Spend", "New on spend days", "Cost per new", "Before"] : ["Platform", "Spend", "New on spend days", "Cost per new"],
+      cur.map((r) => {
+        const row = [r.label, formatPhp(r.spendPhp), n(r.newConfirmed + r.newUnconfirmed), cost(r)];
+        if (data.prev) row.push(before!.get(r.platform) ? cost(before!.get(r.platform)!) : "no spend saved");
+        return row;
+      }),
+    ),
+  );
+  return out;
+}
+
+/** "Patient sources, Wk of 28 Sep: 12 new (▲ 4)" — the change is left out when there is no comparison. */
+export function digestSubject(data: DigestData): string {
+  const label = bucketLabel(data.kind, data.cur.period.from);
+  const now = newTotal(data.cur.summary);
+  if (!data.prev) return `Patient sources, ${label}: ${n(now)} new`;
+  const change = now - newTotal(data.prev.summary);
+  return `Patient sources, ${label}: ${n(now)} new (${change > 0 ? "▲" : change < 0 ? "▼" : "="} ${n(Math.abs(change))})`;
+}
+
+export function renderPatientSourcesDigest(
+  data: DigestData,
+  opts: { appUrl: string },
+): { subject: string; html: string; text: string } {
+  const unit = data.kind;
+  const { cur, prev } = data;
+  const subject = digestSubject(data);
+  const blocks: Block[] = [];
+
+  blocks.push(
+    para(
+      `${manilaDate(cur.period.from)} to ${manilaDate(cur.period.to)}` +
+        (prev ? `, compared with ${manilaDate(prev.period.from)} to ${manilaDate(prev.period.to)}.` : ". No comparison is available for this period."),
+    ),
+  );
+
+  // Data health: the page's own banner condition and wording, the sheet dates under it.
+  const banner = sheetBanner(cur.summary);
+  if (banner) {
+    blocks.push(para(banner));
+    const dates = sheetDatesText(cur.summary).trim();
+    if (dates) blocks.push(fine(dates));
+  }
+
+  // Headline.
+  const newNow = newTotal(cur.summary);
+  const newBefore = prev ? newTotal(prev.summary) : null;
+  const newValue =
+    newNow === 0 && (newBefore === null || newBefore === 0)
+      ? `No new patients recorded this ${unit}`
+      : `${n(newNow)} (${formatNewCounts(cur.summary.new_confirmed, cur.summary.new_unconfirmed)}) · ${deltaText(newNow, newBefore)}`;
+  blocks.push(
+    detail([
+      { label: "New patients", value: newValue },
+      { label: "Served", value: `${n(servedTotal(cur.summary))} · ${deltaText(servedTotal(cur.summary), prev ? servedTotal(prev.summary) : null)}` },
+      {
+        label: "Returning (first recorded)",
+        value: `${n(cur.summary.returning_first_recorded)} · ${deltaText(cur.summary.returning_first_recorded, prev ? prev.summary.returning_first_recorded : null)}`,
+      },
+    ]),
+  );
+
+  if (prev) {
+    const mover = biggestMover(channelDeltas(cur.newByDay, prev.newByDay));
+    blocks.push(
+      para(
+        mover
+          ? `Biggest mover: ${mover.label} ${mover.change > 0 ? "▲" : "▼"} ${n(Math.abs(mover.change))} (${n(mover.now)} now, ${n(mover.before)} before${
+              mover.pct === null ? "" : `, ${mover.pct > 0 ? "+" : "-"}${Math.round(Math.abs(mover.pct) * 100)}%`
+            }).`
+          : "No channel moved by more than 2.",
+      ),
+    );
+  }
+  const sunday = sundayObservation(cur.servedByDay, prev ? prev.servedByDay : null, unit);
+  if (sunday) blocks.push(para(sunday));
+
+  // Weekly day row. Daily served counts are never summed into a total.
+  if (data.kind === "week") {
+    const days = Array.from({ length: 7 }, (_, i) => shiftISODate(cur.period.from, i));
+    const newRow = days.map((d) => sumDay(cur.newByDay, d));
+    const servedRow = days.map((d) => sumDay(cur.servedByDay, d));
+    if ([...newRow, ...servedRow].some((v) => v > 0)) {
+      blocks.push(heading("By day"));
+      blocks.push(table(["", ...DAY_LABELS], [["New", ...newRow.map(n)], ["Served that day", ...servedRow.map(n)]]));
+      blocks.push(fine("Daily served counts are not added up: the served total above counts a repeat visitor once."));
+    }
+  }
+
+  // New by channel — every channel non-zero in either period, in channel-table order.
+  const channels = channelTable(cur.newByDay, prev ? prev.newByDay : null).filter((r) => r.total > 0 || (r.previousTotal ?? 0) > 0);
+  if (channels.length > 0) {
+    blocks.push(heading("New patients by channel"));
+    blocks.push(
+      table(
+        prev ? ["Channel", `This ${unit}`, "Before", "Change"] : ["Channel", `This ${unit}`],
+        channels.map((r) =>
+          prev ? [r.label, n(r.total), n(r.previousTotal ?? 0), signed(r.change ?? 0)] : [r.label, n(r.total)],
+        ),
+      ),
+    );
+  }
+
+  blocks.push(...revenueBlocks(cur, prev, unit));
+
+  // Top 5 referrers.
+  blocks.push(heading("Top referring doctors"));
+  const refs = cur.referrers
+    .map((r) => ({ label: r.doctor_label, n: r.new_confirmed + r.new_unconfirmed }))
+    .filter((r) => r.n > 0)
+    .sort((a, b) => b.n - a.n || a.label.localeCompare(b.label))
+    .slice(0, 5);
+  blocks.push(refs.length > 0 ? table(["Doctor", "New"], refs.map((r) => [r.label, n(r.n)])) : para(`No referring doctor recorded this ${unit}.`));
+
+  blocks.push(...costBlocks(data));
+
+  // Footer: stamp, button, fine print.
+  const url =
+    `${opts.appUrl.replace(/\/$/, "")}/staff/marketing/patients` +
+    `?from=${cur.period.from}&to=${cur.period.to}&grain=day&mode=new`;
+  blocks.push(fine(asOfLabel(data.readAt)));
+  blocks.push({ html: emailButton("Open Patient Sources", url), text: `Open Patient Sources: ${url}` });
+  blocks.push(fine("Confirmed counts are patient records. Unconfirmed counts are names in the reception sheet not yet matched to a patient record."));
+  blocks.push(fine("You get this as an admin; change it in Admin Tools › Email Alerts."));
+
+  return {
+    subject,
+    html: renderEmailShell({ heading: `Patient sources: ${bucketLabel(unit, cur.period.from)}`, contentHtml: blocks.map((b) => b.html).join("") }),
+    text: [subject, ...blocks.map((b) => b.text)].join("\n\n"),
+  };
 }
