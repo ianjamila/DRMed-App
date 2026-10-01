@@ -86,7 +86,7 @@ const FAQ: readonly FaqItem[] = [
   {
     question: "Walk-in or appointment?",
     answer:
-      "Both work. Reserve a slot online in two minutes, or just walk in for packages and most lab tests — Monday to Saturday, 8:00 AM to 5:00 PM. Booking ahead keeps your wait short.",
+      "Both work. Reserve a slot online in two minutes, or just walk in for packages and most lab tests — Monday to Saturday, 8:00 AM to 5:00 PM (Sundays 8:00 AM to 12 noon, lab tests only). Booking ahead keeps your wait short.",
   },
 ];
 
@@ -166,7 +166,7 @@ export default async function ResultsTomorrowPage() {
 
       <PromoClosingCta
         title="Deadline coming up?"
-        body="Book in 2 minutes or message us on Messenger — Mon–Sat, 8am–5pm. Congressional Ave, Quezon City."
+        body="Book in 2 minutes or message us on Messenger — Mon–Sat 8am–5pm, Sundays 8am–12nn for lab tests. Congressional Ave, Quezon City."
         primaryLabel="Book Appointment"
       />
     </>

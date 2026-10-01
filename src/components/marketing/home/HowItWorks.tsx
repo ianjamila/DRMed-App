@@ -15,7 +15,7 @@ const STEPS: Step[] = [
     n: "01",
     icon: CalendarCheck,
     title: "Book or walk in",
-    body: "Reserve a slot online in two minutes — or just walk in for packages and most lab tests, Monday to Saturday.",
+    body: "Reserve a slot online in two minutes — or just walk in for packages and most lab tests, Monday to Saturday — and Sunday mornings for lab tests.",
   },
   {
     n: "02",

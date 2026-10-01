@@ -92,6 +92,27 @@ describe("Release selected -> outcome + Undo", () => {
     expect(screen.getByRole("button", { name: "↶ Undo" })).toBeTruthy();
   });
 
+  it("says the patient's message will retry automatically (and does not claim they were notified)", async () => {
+    const user = userEvent.setup();
+    vi.mocked(releaseSelectedAction).mockResolvedValue({
+      ok: true,
+      count: 1,
+      alsoReleasedCount: 0,
+      skipped: [],
+      warnings: [],
+      batchId: "batch-r",
+      notifiedCount: 0,
+      noticeRetrying: true,
+    });
+    render(<Harness />);
+
+    await user.click(screen.getByRole("checkbox", { name: "Select CBC" }));
+    await user.click(screen.getByRole("button", { name: /Release selected/ }));
+
+    expect(await screen.findByText(/has not gone out yet — it will retry automatically/)).toBeTruthy();
+    expect(screen.queryByText(/already notified that results are ready/)).toBeNull();
+  });
+
   it("shows the restored message and hides Undo once the undo succeeds", async () => {
     const user = userEvent.setup();
     vi.mocked(releaseSelectedAction).mockResolvedValue({
@@ -287,8 +308,20 @@ describe("BulkActionBar release (#261 whole reports)", () => {
   it("shows a release that released nothing through the page-level notice, keeping the selection", async () => {
     vi.mocked(releaseSelectedAction).mockResolvedValue({ ok: false, error: REPORT_REFUSAL.notFinished(2) });
     render(bar(["a"], ["a", "b", "c"]));
+    // The notice used to commit outside the transition, so for one frame the
+    // refusal sat beside a button still reading "Releasing…" — under
+    // full-suite load the button query below could land in that gap (flake).
+    const screens: string[] = [];
+    const observer = new MutationObserver(() => {
+      const text = document.body.textContent ?? "";
+      if (!text.includes(REPORT_REFUSAL.notFinished(2))) return;
+      screens.push(text.includes("Releasing…") ? "refusal / Releasing…" : "refusal / idle");
+    });
+    observer.observe(document.body, { subtree: true, childList: true, characterData: true });
     fireEvent.click(screen.getByRole("button", { name: /Release selected/ }));
     expect(await screen.findByText(REPORT_REFUSAL.notFinished(2))).toBeTruthy();
+    observer.disconnect();
+    expect(screens).not.toContain("refusal / Releasing…");
     expect(screen.getByRole("button", { name: /Release selected \(1\)/ })).toBeTruthy();
     expect(screen.queryByRole("button", { name: "↶ Undo" })).toBeNull();
     expect(alert).not.toHaveBeenCalled();

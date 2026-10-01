@@ -26,14 +26,17 @@
 // named FAIL, then revert and re-apply before moving to the next letter (they
 // touch different functions/lines so do not need separate rounds):
 //
+//   NOTE: PS_STACK_IMAGE is enforced ONLY by the 5c denial-probe check; every other check ignores it.
 //   PSQL=/opt/homebrew/opt/libpq/bin/psql
+//   PS_STACK_IMAGE=17.6.1.167   (required by the 5c denial probes; .106/.111 segfault on a refused call)
 //   DB=postgresql://postgres:postgres@127.0.0.1:54322/postgres
 //   MIG=supabase/migrations/0189_patient_sources.sql
 //   MIG_LIVE — where each body lives NOW (a control that edits a superseded
 //   body proves nothing): identity core + encounters + revenue lines =
 //   0193_sync_review_gaps.sql; the five report RPCs + their rules =
 //   0206_patient_sources_report.sql (_ps_sec_* helpers and wrappers);
-//   patient_sources_people = 0189. Letters A, B, C, E, F, G, L edit the core
+//   patient_sources_people = 0209_patient_sources_people.sql (wrapper + _ps_sec_people; 0189's body is
+//   frozen in scripts/fixtures/patient-sources-people-pre-0209.sql). Letters A, B, C, E, F, G, L edit the core
 //   -> edit 0193 (psql -f 0193 is safe: create-or-replace + its own
 //   post-conditions). Letter D edits the summary WRAPPER gate -> 0206 (and
 //   drop summary from 0206's post-condition arrays for that round).
@@ -158,6 +161,15 @@
 //      Confirmed 2026-09-30: FAIL 0206: every wrapper returns exactly the
 //      pre-0206 rows — wrappers differ from the pre-0206 bodies: (the proof
 //      prints only the first line; the per-call diffs follow it in the message)
+//   Q (0209). _ps_sec_people: `and (p_channel is null or i.channel = p_channel)` -> `and true` (both
+//      occurrences) in the migration, psql -f it. Confirmed 2026-10-01: FAIL 5c: patient_sources_people
+//      returns exactly the pre-0209 rows, in order, with the same total_count — people differ from the
+//      pre-0209 body (58 of 174 cases) (the controls baseline also fails, as it copies the live helper).
+//   R (0209). wrapper: `case when p_mode = 'served' then …` -> `'never'`. Confirmed 2026-10-01: FAIL 5c:
+//      the seeded world reaches every people path (served rows missing) and FAIL 5c: … returns exactly the
+//      pre-0209 rows … (45 of 174 cases).
+//   C1–C7 (in script, no file edit): seven copies of the helper in schema ps_ctl, each with one edit,
+//      each compared through the same grid; the check fails if ANY escapes ("5c controls").
 //   0206 re-apply needs the objects dropped first:
 //     psql $DB -c "drop function if exists public.patient_sources_report(date,date,text,text,date,date);
 //                  drop type if exists public._ps_identity, public._ps_encounter, public._ps_revenue_line cascade;"
@@ -232,8 +244,11 @@ async function main() {
   // right after the one statement.
   async function markMerged(srcId: string, keepId: string): Promise<void> {
     await q(`set role patient_merge_writer`);
-    await q(`update public.patients set merged_into_id = $1, merged_at = now() where id = $2`, [keepId, srcId]);
-    await q(`reset role`);
+    try {
+      await q(`update public.patients set merged_into_id = $1, merged_at = now() where id = $2`, [keepId, srcId]);
+    } finally {
+      await q(`reset role`);
+    }
   }
 
   function describeError(err: unknown): string {
@@ -586,7 +601,7 @@ async function main() {
     const surv = await patient("WorldMerge", "Sam", { source: "walk_in", createdAt: "2026-06-02T10:00:00+08:00" });
     const dup = await patient("WorldMerge", "Samuel", { source: "online_facebook", createdAt: "2026-06-04T10:00:00+08:00" });
     await visit(dup, "2026-06-06", 250);
-    await q(`update public.patients set merged_into_id = $1 where id = $2`, [surv, dup]);
+    await markMerged(dup, surv);
     // Deleted patient: must drop out everywhere.
     const del = await patient("WorldDeleted", "Dee", { source: "walk_in", createdAt: "2026-06-08T10:00:00+08:00" });
     await visit(del, "2026-06-08", 999);
@@ -639,6 +654,123 @@ async function main() {
     return calls;
   }
 
+  // ---- 5c: patient_sources_people over the shared arrays (0209) ---------
+  const PEOPLE_SIG = "public.patient_sources_people(date,date,text,text,integer,integer)";
+  const PEOPLE_HELPER = "public._ps_sec_people(public._ps_identity[],public._ps_encounter[],date,date,text,text,integer,integer)";
+  const P_MIN = { from: "2023-12-01", to: "2023-12-05" }; // starts on PATIENT_SOURCES_MIN_DATE
+  const P_ONE = { from: "2026-06-03", to: "2026-06-03" }; // a single day with seeded activity
+  const P_NONE = { from: "2024-03-01", to: "2024-03-05" }; // nothing seeded
+  const PEOPLE_PERIODS = [P_ONE, P_MIN, P_NONE, P_EARLY, P_JUNE, P_LONG];
+  const PEOPLE_MODES = ["new", "returning", "served"] as const;
+  const PEOPLE_CHANNELS: (string | null)[] = [null, "", "walk_in", "WALK_IN", "online_facebook", "online_google", "not_recorded", "no_such_channel"];
+  type PeopleArgs = [string | null, string | null, string | null, string | null, number | null, number | null];
+  const PAGING: [number | null, number | null][] = [[50, 0], [3, 0], [3, 3], [3, 1000000], [1, 0], [1, 1], [null, null], [0, 0], [-5, -5], [100000, 0], [null, 2]];
+
+  /** The seeded world plus every people-specific path: earliest-LINE name, earliest-CUSTOMER-ROW fallback, descending-insert multi-date served patient. */
+  async function seedPeopleExtras() {
+    const lia = loose("PeopleLine", "Lia");
+    await sheetLine("2026-06-24", lia, null, 50);
+    await sheetLine("2026-06-13", lia, null, 50);
+    await q(`update public.sheet_encounter_lines set name_raw = 'Lia Peopleline (later line)' where loose_key = $1 and service_date = '2026-06-24'`, [lia]);
+    await q(`update public.sheet_encounter_lines set name_raw = 'Lia Peopleline (earliest line)' where loose_key = $1 and service_date = '2026-06-13'`, [lia]);
+    const cora = loose("PeopleCust", "Cora");
+    await customerRow(cora, { registeredOn: "2026-06-12", source: "walk_in", sheetRow: 1 });
+    await customerRow(cora, { registeredOn: "2026-06-14", sheetRow: 2 });
+    await q(`update public.sheet_customer_rows set full_name_raw = 'Cora Peoplecust (row 1)' where loose_key = $1 and sheet_row = 1`, [cora]);
+    await q(`update public.sheet_customer_rows set full_name_raw = 'Cora Peoplecust (row 2)' where loose_key = $1 and sheet_row = 2`, [cora]);
+    // Visits inserted in DESCENDING date order: "first row" != min(service_date).
+    const desc = await patient("PeopleDesc", "Dan", { source: "online_google", createdAt: "2026-06-01T09:00:00+08:00" });
+    await visit(desc, "2026-06-25", 120);
+    await visit(desc, "2026-06-05", 130);
+    return { lia, cora, desc };
+  }
+
+  function peopleCases(): { tag: string; args: PeopleArgs }[] {
+    const out: { tag: string; args: PeopleArgs }[] = [];
+    for (const p of PEOPLE_PERIODS) for (const m of PEOPLE_MODES) for (const c of PEOPLE_CHANNELS) {
+      out.push({ tag: `${m} ${p.from}..${p.to} channel=${c} 50/0`, args: [p.from, p.to, m, c, 50, 0] });
+    }
+    for (const p of [P_JUNE, P_LONG]) for (const m of PEOPLE_MODES) for (const [l, o] of PAGING) {
+      out.push({ tag: `${m} ${p.from}..${p.to} page limit=${l} offset=${o}`, args: [p.from, p.to, m, null, l, o] });
+    }
+    return out;
+  }
+  /** Cases the seeded world guarantees non-empty (so equality there is never vacuous). */
+  const peopleMustBeNonEmpty = (a: PeopleArgs) => {
+    const [from, , mode, channel, , offset] = a;
+    if (!(from === P_JUNE.from || from === P_LONG.from) || (offset ?? 0) !== 0) return false;
+    if (mode === "returning") return channel === null || channel === "online_google";
+    // '' and case variants match nothing (parity only, not a non-empty guarantee).
+    return channel !== "no_such_channel" && channel !== "" && channel !== "WALK_IN";
+  };
+  const PEOPLE_Q = (fn: string) =>
+    `select to_jsonb(t) as j from (select * from ${fn}($1::date,$2::date,$3::text,$4::text,$5::int,$6::int)) t`;
+  /** Rows IN THE ORDER RETURNED (order and total_count are part of the contract). */
+  async function peopleJson(fn: string, args: PeopleArgs): Promise<string[]> {
+    return (await q<{ j: unknown }>(PEOPLE_Q(fn), args)).rows.map((x) => JSON.stringify(x.j));
+  }
+  async function peopleOld(): Promise<Map<string, string[]>> {
+    await q(fs.readFileSync(path.join(__dirname, "fixtures/patient-sources-people-pre-0209.sql"), "utf8"));
+    await asAdmin();
+    const m = new Map<string, string[]>();
+    for (const c of peopleCases()) {
+      const rows = await peopleJson("ps_old.patient_sources_people", c.args);
+      if (peopleMustBeNonEmpty(c.args)) assert(rows.length > 0, `${c.tag}: empty on the OLD side — equality would be vacuous`);
+      m.set(c.tag, rows);
+    }
+    await setRole("postgres", null);
+    return m;
+  }
+  async function peopleDiffs(newFn: string, role: "admin" | "postgres", old: Map<string, string[]>) {
+    const diffs: string[] = [];
+    let nonEmpty = 0;
+    let nullNames = 0;
+    if (role === "admin") await asAdmin(); else await setRole("postgres", null);
+    for (const c of peopleCases()) {
+      const a = await peopleJson(newFn, c.args);
+      const b = old.get(c.tag)!;
+      if (a.length) nonEmpty += 1;
+      nullNames += b.filter((r) => JSON.parse(r).display_name === null).length;
+      if (JSON.stringify(a) !== JSON.stringify(b)) diffs.push(`${c.tag}: new=${JSON.stringify(a).slice(0, 240)} old=${JSON.stringify(b).slice(0, 240)}`);
+    }
+    await setRole("postgres", null);
+    return { diffs, nonEmpty, nullNames };
+  }
+  async function peopleErr(fn: string, args: PeopleArgs): Promise<{ code: string; message: string } | null> {
+    await q("savepoint sp_people_err");
+    let out: { code: string; message: string } | null = null;
+    try {
+      await q(`select * from ${fn}($1::date,$2::date,$3::text,$4::text,$5::int,$6::int)`, args);
+    } catch (e) {
+      const x = e as Error & { code?: string };
+      out = { code: x.code ?? "?", message: x.message };
+    }
+    await q("rollback to savepoint sp_people_err");
+    return out;
+  }
+  /** Copy the live helper into ps_ctl with string edits (throws if an edit's text is missing) + a gate-free shim with the public signature. */
+  async function peopleMutant(label: string, edits: [string, string][]) {
+    const def = (await q<{ d: string }>(`select pg_get_functiondef('${PEOPLE_HELPER}'::regprocedure) as d`)).rows[0].d;
+    let body = def.replace("FUNCTION public._ps_sec_people(", "FUNCTION ps_ctl._ps_sec_people(");
+    for (const [from, to] of edits) {
+      if (!body.includes(from)) throw new Error(`control ${label}: text not found in the live helper: ${from}`);
+      body = body.split(from).join(to);
+    }
+    await q(`create schema if not exists ps_ctl`);
+    await q(body);
+    await q(`create or replace function ps_ctl.people(p_from date, p_to date, p_mode text, p_channel text, p_limit int, p_offset int)
+             returns table (identity_kind text, identity text, patient_id uuid, drm_id text, display_name text, first_date date, total_count bigint)
+             language sql stable as $$
+               select * from ps_ctl._ps_sec_people(public._ps_identity_list(), public._ps_encounter_list(), p_from, p_to, p_mode, p_channel, p_limit, p_offset)
+             $$`);
+  }
+
+  // generate_visit_number() is lpad(nextval(seq), 4): past 9999 it TRUNCATES and collides. Sequences are not
+  // rolled back, and the 5c scale check inserts 3,000 visits per run, so re-seed the sequence when no visit
+  // exists (a fresh/proof-only local DB). Never touches a DB that holds visits.
+  if (Number((await db.query<{ n: string }>("select count(*)::text as n from public.visits")).rows[0].n) === 0) {
+    await db.query("select setval('public.visit_number_seq', 1, false)");
+  }
   await q("begin");
   try {
     fx = await setupFixtures();
@@ -2247,6 +2379,217 @@ async function main() {
         ["public.patient_sources_report(date,date,text,text,date,date)"]);
       const x = rep.rows[0];
       assert(!x.a && x.u && x.s && x.sd && x.gate, `patient_sources_report ACL/definer/gate wrong: ${JSON.stringify(x)}`);
+    }));
+    // ---- 5c: patient_sources_people over the shared arrays (0209) --------
+    await check("5c: denial probes run on a stack whose image survives refused calls", async () => {
+      const img = process.env.PS_STACK_IMAGE ?? "";
+      assert(/^\d+\.\d+\.\d+\.\d+$/.test(img), `PS_STACK_IMAGE must be set to the stack's Postgres image tag (e.g. 17.6.1.167), got "${img}"`);
+      assert(!/\.(106|111)$/.test(img), `image ${img} segfaults on a refused function call; run the proof on a newer image`);
+      const v = (await q<{ v: string }>(`select current_setting('server_version') as v`)).rows[0].v;
+      console.log(`   5c image=${img} server_version=${v}`);
+    });
+
+    await check("5c: the seeded world reaches every people path (non-vacuous)", () => scoped(async () => {
+      const w = await seedWorld();
+      const x = await seedPeopleExtras();
+      await asAdmin();
+      const news = await peopleRows(P_JUNE.from, P_JUNE.to, "new", null, 1000, 0);
+      const byIdentity = (rows: typeof news, id: string) => rows.find((r) => r.identity === id);
+      assert(news.some((r) => r.identity_kind === "confirmed"), "no confirmed row in June/new");
+      assert(news.some((r) => r.identity_kind === "unconfirmed"), "no unconfirmed row in June/new");
+      assert(news.length >= 8, `June/new needs >= 8 rows for a middle page, got ${news.length}`);
+      const lia = byIdentity(news, `name:${x.lia}`);
+      assert(lia?.display_name === "Lia Peopleline (earliest line)", `earliest sheet LINE name wins: ${JSON.stringify(lia)}`);
+      const cora = byIdentity(news, `name:${x.cora}`);
+      assert(cora?.display_name === "Cora Peoplecust (row 1)", `customer-ROWS fallback (lowest sheet_row) name: ${JSON.stringify(cora)}`);
+      assert(cora?.drm_id === null && cora?.patient_id === null, `unconfirmed rows carry no patient: ${JSON.stringify(cora)}`);
+      const una = news.find((r) => r.identity_kind === "unconfirmed" && r.display_name === loose("WorldSheet", "Una"));
+      assert(una, "an unconfirmed identity with BOTH a line and a customer row resolves via the line");
+      const merged = news.find((r) => r.patient_id === w.surv);
+      assert(merged && merged.drm_id && /WorldMerge/.test(merged.display_name ?? ""), `survivor join (drm_id + concatenated name): ${JSON.stringify(merged)}`);
+      const ret = await peopleRows(P_JUNE.from, P_JUNE.to, "returning", null, 1000, 0);
+      assert(ret.some((r) => r.patient_id === w.imp), `returning list must hold the imported repeat patient: ${JSON.stringify(ret)}`);
+      const served = await peopleRows(P_JUNE.from, P_JUNE.to, "served", null, 1000, 0);
+      const survServed = served.find((r) => r.patient_id === w.surv);
+      assert(survServed?.first_date === "2026-06-06", `the duplicate's visit serves the survivor on 2026-06-06: ${JSON.stringify(survServed)}`);
+      assert(!served.some((r) => r.patient_id === w.dup), "the merged duplicate is never listed");
+      const desc = served.find((r) => r.patient_id === x.desc);
+      assert(desc?.first_date === "2026-06-05", `served first_date is min(service_date), not the first row: ${JSON.stringify(desc)}`);
+      await setRole("postgres", null);
+      const multi = Number((await q<{ n: string }>(
+        `select count(*)::text as n from (select identity from public._patient_sources_encounters()
+           where service_date between '2026-06-01' and '2026-06-30' group by identity having count(distinct service_date) > 1) t`)).rows[0].n);
+      assert(multi > 0, "served needs identities with several dates in the period");
+      const chans = (await q<{ channel: string }>(`select distinct channel from public._patient_sources_identities() where basis in ('encounter','registration')`)).rows.map((r) => r.channel);
+      for (const c of ["walk_in", "online_facebook", "online_google", "not_recorded"]) assert(chans.includes(c), `channel ${c} not seeded: ${chans.join(",")}`);
+      await asAdmin();
+      for (const [mode, ch] of [["new", "not_recorded"], ["served", "not_recorded"], ["new", "walk_in"], ["served", "online_facebook"]] as const) {
+        const r = await peopleRows(P_JUNE.from, P_JUNE.to, mode, ch, 1000, 0);
+        assert(r.length > 0, `${mode}/${ch} must be non-empty`);
+      }
+      assert((await peopleRows(P_JUNE.from, P_JUNE.to, "new", null, 3, 3)).length === 3, "a middle page of 3 must exist");
+      assert((await peopleRows(P_JUNE.from, P_JUNE.to, "new", null, 3, 1000000)).length === 0, "past the end is empty");
+    }));
+
+    await check("5c: patient_sources_people returns exactly the pre-0209 rows, in order, with the same total_count", () => scoped(async () => {
+      await seedWorld();
+      await seedPeopleExtras();
+      const old = await peopleOld();
+      const { diffs, nonEmpty, nullNames } = await peopleDiffs("public.patient_sources_people", "admin", old);
+      assert(diffs.length === 0, `people differ from the pre-0209 body (${diffs.length} of ${old.size} cases):\n${diffs.slice(0, 8).join("\n")}`);
+      assert(nonEmpty >= 60, `only ${nonEmpty} non-empty comparisons — the grid is too thin`);
+      assert(nullNames === 0, `unexpected NULL display_name rows: ${nullNames} (unreachable by construction; see plan decision 3)`);
+      console.log(`   5c grid: ${old.size} cases, ${nonEmpty} non-empty, all identical`);
+    }));
+
+    await check("5c: invalid inputs fail with the same SQLSTATE and message as before, in the same order", () => scoped(async () => {
+      await seedWorld();
+      await seedPeopleExtras();
+      await peopleOld();
+      await asAdmin();
+      const BAD: [string, PeopleArgs][] = [
+        ["bad mode", [P_JUNE.from, P_JUNE.to, "everyone", null, 50, 0]],
+        ["null mode", [P_JUNE.from, P_JUNE.to, null, null, 50, 0]],
+        ["empty mode", [P_JUNE.from, P_JUNE.to, "", null, 50, 0]],
+        ["reversed period", ["2026-06-30", "2026-06-01", "new", null, 50, 0]],
+        ["before the minimum date", ["2023-11-30", "2023-12-31", "new", null, 50, 0]],
+        ["over 400 days", ["2025-01-01", "2026-06-30", "new", null, 50, 0]],
+        ["null from", [null, P_JUNE.to, "new", null, 50, 0]],
+        ["null to", [P_JUNE.from, null, "new", null, 50, 0]],
+        ["bad mode AND bad period: the period error comes first", ["2026-06-30", "2026-06-01", "everyone", null, 50, 0]],
+      ];
+      for (const [label, args] of BAD) {
+        const a = await peopleErr("public.patient_sources_people", args);
+        const b = await peopleErr("ps_old.patient_sources_people", args);
+        assert(a && b, `${label}: expected an error on both sides, got new=${JSON.stringify(a)} old=${JSON.stringify(b)}`);
+        assert(a.code === b.code && a.message === b.message, `${label}: new=${JSON.stringify(a)} old=${JSON.stringify(b)}`);
+      }
+      const unknown = await peopleErr("public.patient_sources_people", [P_JUNE.from, P_JUNE.to, "everyone", null, 50, 0]);
+      assert(unknown?.code === "22023" && unknown.message === "Unknown list everyone", `message text: ${JSON.stringify(unknown)}`);
+    }));
+
+    await check("5c: gate parity — every non-admin principal is refused exactly as before; View-as unchanged", () => scoped(async () => {
+      await seedWorld();
+      await seedPeopleExtras();
+      await peopleOld();
+      const args: PeopleArgs = [P_JUNE.from, P_JUNE.to, "new", null, 50, 0];
+      const principals: [string, () => Promise<void>][] = [
+        ["anon", () => setRole("anon", null)],
+        ["portal patient", () => setRole("anon", { role: "anon", patient_id: fx.patientPId })],
+        ["reception", () => setRole("authenticated", { sub: fx.receptionId, role: "authenticated" })],
+        ["inactive admin", () => setRole("authenticated", { sub: fx.inactiveAdminId, role: "authenticated" })],
+        ["no JWT claims at all", () => setRole("authenticated", null)],
+        ["authenticated with a service_role app_metadata", () => setRole("authenticated", { sub: fx.receptionId, role: "authenticated", app_metadata: { role: "service_role" } })],
+        ["service_role (EXECUTE kept, body refuses)", () => setRole("service_role", { role: "service_role" })],
+      ];
+      for (const [label, set] of principals) {
+        await set();
+        const a = await peopleErr("public.patient_sources_people", args);
+        const b = await peopleErr("ps_old.patient_sources_people", args);
+        assert(a && b && a.code === "42501", `${label}: expected 42501 on both, got new=${JSON.stringify(a)} old=${JSON.stringify(b)}`);
+        assert(a.code === b.code && a.message === b.message, `${label}: new=${JSON.stringify(a)} old=${JSON.stringify(b)}`);
+      }
+      await setRole("postgres", null);
+      await q(`update public.staff_profiles set view_as_role = 'reception', view_as_until = now() + interval '1 hour' where id = $1`, [fx.adminId]);
+      try {
+        await asAdmin();
+        const a = await peopleErr("public.patient_sources_people", args);
+        const b = await peopleErr("ps_old.patient_sources_people", args);
+        assert(a && b && a.code === "42501" && a.message === b.message, `admin viewing as reception: new=${JSON.stringify(a)} old=${JSON.stringify(b)}`);
+      } finally {
+        await setRole("postgres", null);
+        await q(`update public.staff_profiles set view_as_role = null, view_as_until = null where id = $1`, [fx.adminId]);
+      }
+      await asAdmin();
+      await expectOk("admin", () => q(`select * from public.patient_sources_people($1::date,$2::date,'new',null,50,0)`, [P_JUNE.from, P_JUNE.to]));
+    }));
+
+    await check("5c: ACL, signature, result type and settings are byte-equal to the frozen function; the helper is closed", () => scoped(async () => {
+      await seedWorld();
+      await seedPeopleExtras();
+      await peopleOld();
+      const live = (await q<Record<string, string>>(
+        `select pg_get_userbyid(p.proowner) as owner, coalesce(p.proacl::text, '') as proacl,
+                pg_get_function_identity_arguments(p.oid) as identity_args, pg_get_function_result(p.oid) as result,
+                p.prosecdef::text as secdef, p.provolatile::text as volatility, coalesce(p.proconfig::text, '') as config,
+                l.lanname as lang, p.proparallel::text as parallel, p.procost::text as cost, p.prorows::text as prorows
+           from pg_proc p join pg_language l on l.oid = p.prolang where p.oid = $1::regprocedure`, [PEOPLE_SIG])).rows[0];
+      const frozen = (await q<Record<string, string>>(`select * from ps_old.frozen_people_meta`)).rows[0];
+      for (const k of Object.keys(frozen)) assert(live[k] === frozen[k], `patient_sources_people ${k} changed: now=${JSON.stringify(live[k])} was=${JSON.stringify(frozen[k])}`);
+      assert(live.proacl.includes("service_role=X/") && live.proacl.includes("authenticated=X/") && !live.proacl.includes("anon="), `ACL shape: ${live.proacl}`);
+      const wrapper = (await q<{ d: string }>(`select pg_get_functiondef($1::regprocedure) as d`, [PEOPLE_SIG])).rows[0].d;
+      assert(wrapper.includes("_ps_sec_people") && wrapper.includes("_ps_identity_list()"), "wrapper must call the shared-array helper");
+      assert(!wrapper.includes("service_role"), "wrapper must stay admin-only inside the body (no service_role literal)");
+      const h = (await q<{ a: boolean; u: boolean; s: boolean; sd: boolean; d: string }>(
+        `select has_function_privilege('anon', $1, 'execute') as a, has_function_privilege('authenticated', $1, 'execute') as u,
+                has_function_privilege('service_role', $1, 'execute') as s, (select p.prosecdef from pg_proc p where p.oid = $1::regprocedure) as sd,
+                pg_get_functiondef($1::regprocedure) as d`, [PEOPLE_HELPER])).rows[0];
+      assert(!h.a && !h.u && !h.s, `_ps_sec_people must be closed to anon/authenticated/service_role: ${JSON.stringify({ a: h.a, u: h.u, s: h.s })}`);
+      assert(!h.sd, "_ps_sec_people must not be SECURITY DEFINER (0206 pattern)");
+      const cfg = (await q<{ c: string }>(`select coalesce(proconfig::text, '') as c from pg_proc where oid = $1::regprocedure`, [PEOPLE_HELPER])).rows[0].c;
+      assert(cfg.includes("plan_cache_mode=force_custom_plan"), `_ps_sec_people must pin plan_cache_mode=force_custom_plan (generic plan after 5 calls is ~5x slower): ${cfg}`);
+      assert(!h.d.includes("service_role"), "_ps_sec_people must not contain a service_role literal");
+      assert(h.d.includes("unnest(p_ids)") && h.d.includes("unnest(p_enc) e"), "_ps_sec_people must read the arrays");
+      assert(!h.d.includes("_patient_sources_identities") && !h.d.includes("_patient_sources_encounters"), "_ps_sec_people must not call the core directly");
+    }));
+
+    await check("5c controls: seven mutants of the helper are each caught by the same grid", () => scoped(async () => {
+      await seedWorld();
+      await seedPeopleExtras();
+      const old = await peopleOld();
+      // The unmutated shim must pass — otherwise a "caught" mutant could be the shim's fault.
+      await peopleMutant("baseline", []);
+      const base = await peopleDiffs("ps_ctl.people", "postgres", old);
+      assert(base.diffs.length === 0, `control baseline (unmutated copy) must equal the old body: ${base.diffs.slice(0, 3).join("\n")}`);
+      const mutants: [string, [string, string][]][] = [
+        ["C1 drop the channel filter", [["and (p_channel is null or i.channel = p_channel)", "and true"]]],
+        ["C2 off-by-one on first_date", [["and i.first_date between p_from and p_to", "and i.first_date > p_from and i.first_date <= p_to"]]],
+        ["C3 wrong total_count", [["count(*) over ()", "count(*) over (partition by k.confirmed)"]]],
+        ["C4 drop the survivor LEFT join", [["left join public.patients p on p.id = k.survivor_id", "join public.patients p on p.id = k.survivor_id"]]],
+        ["C5 first row instead of min(service_date) in served", [["min(e.service_date)", "(array_agg(e.service_date))[1]"]]],
+        ["C6 drop the customer-rows name fallback", [["where c.patient_id is null and c.loose_key = k.loose_key", "where false and c.loose_key = k.loose_key"]]],
+        ["C7 max instead of min(service_date) in served", [["min(e.service_date)", "max(e.service_date)"]]],
+      ];
+      const escaped: string[] = [];
+      for (const [label, edits] of mutants) {
+        await peopleMutant(label, edits);
+        const r = await peopleDiffs("ps_ctl.people", "postgres", old);
+        console.log(`   5c ${label}: ${r.diffs.length} differing cases`);
+        if (r.diffs.length === 0) escaped.push(label);
+      }
+      assert(escaped.length === 0, `these mutants were NOT caught (the proof is blind to them): ${escaped.join("; ")}`);
+    }));
+
+    await check("5c: timing — one page call, small world and a 3,000-patient scale world (no regression)", () => scoped(async () => {
+      await seedWorld();
+      await seedPeopleExtras();
+      await peopleOld();
+      await q(`insert into public.patients (first_name, last_name, birthdate, referral_source, created_at)
+               select 'Scale' || g, 'Perf' || g, date '1990-01-01', (array['walk_in','online_facebook','online_google',null])[1 + g % 4],
+                      timestamptz '2026-06-01 09:00+08' + (g % 28) * interval '1 day'
+                 from generate_series(1, 3000) g`);
+      await q(`insert into public.visits (patient_id, visit_date)
+               select p.id, (p.created_at at time zone 'Asia/Manila')::date from public.patients p where p.last_name like 'Perf%'`);
+      // Fresh statistics for the seeded world (inside the transaction), so timings do not depend on autovacuum.
+      await q(`analyze public.patients, public.visits, public.test_requests, public.sheet_encounter_lines, public.sheet_customer_rows, public.sheet_patient_links, public.sheet_sync_runs, public.sheet_sync_settings`);
+      await asAdmin();
+      const time = async (fn: string, mode: string) => {
+        const runs: number[] = [];
+        // plpgsql flips to a generic plan after 5 calls on a connection: burn those first so the timed runs would show it.
+        for (let i = 0; i < 6; i++) await q(`select count(*) from ${fn}($1::date,$2::date,$3::text,null,50,0)`, [P_JUNE.from, P_JUNE.to, mode]);
+        for (let i = 0; i < 5; i++) {
+          const t0 = performance.now();
+          await q(`select count(*) from ${fn}($1::date,$2::date,$3::text,null,50,0)`, [P_JUNE.from, P_JUNE.to, mode]);
+          runs.push(performance.now() - t0);
+        }
+        return runs.sort((a, b) => a - b)[2];
+      };
+      for (const mode of ["new", "served"]) {
+        const oldMs = await time("ps_old.patient_sources_people", mode);
+        const newMs = await time("public.patient_sources_people", mode);
+        console.log(`   5c timing ${mode} (3,000-patient world): old=${oldMs.toFixed(0)}ms new=${newMs.toFixed(0)}ms`);
+        assert(newMs <= oldMs * 1.5 + 200, `${mode}: new ${newMs.toFixed(0)}ms vs old ${oldMs.toFixed(0)}ms — a planner regression (nested loop over unnest?)`);
+      }
     }));
   } finally {
     // Never persisted. This proof never writes anything real.

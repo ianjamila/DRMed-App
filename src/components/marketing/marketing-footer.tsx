@@ -75,7 +75,11 @@ export function MarketingFooter() {
               {CONTACT.email}
             </a>
           </p>
-          <p className="mt-3 text-sm text-white/70">{CONTACT.hours}</p>
+          <p className="mt-3 text-sm text-white/70">
+            {CONTACT.hours}
+            <br />
+            {CONTACT.hoursSunday}
+          </p>
         </div>
 
         {/* Site links */}

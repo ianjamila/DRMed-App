@@ -297,6 +297,11 @@ const SURFACES: Record<string, Surface> = {
     why: "Sends 'Your DRMed lab result is ready' with a portal link. There is no document behind a consultation, so it must never fire for one — it did, via undo → re-release.",
   },
 
+  "lib/notifications/release-notice-sender.ts": {
+    meaning: "lab",
+    why: "The outbox (0210) twin of notify-released*.ts: re-reads the released lines at send time and sends 'your lab result is ready'. A consultation has no document behind it, so doctor lines are dropped by kind (isDoctorKind) and a doctor-only notice finishes skipped.",
+  },
+
   // --- Public ---------------------------------------------------------------
   "app/display/page.tsx": {
     meaning: "all",
@@ -650,6 +655,14 @@ const LIFECYCLES: Record<string, LifecycleSurface> = {
   "lib/notifications/notify-released-bulk.ts": {
     lifecycle: "live",
     why: "The consolidated version of the same message, for a package or bulk release.",
+  },
+  "lib/notifications/release-notice-sender.ts": {
+    lifecycle: "live",
+    why: "The outbox (0210) sender: re-checks at send time that the lines are still released AND neither the line nor its visit is soft-deleted (both filters, visits!inner); a deleted line or visit cancels the notice.",
+  },
+  "lib/notifications/release-notice-audit.ts": {
+    lifecycle: "any",
+    why: "The audit trail of a notice, written even when its visit was deleted afterwards (that is often WHY it was cancelled): it only reads visits.patient_id to attribute the audit row, never to present or notify.",
   },
   "app/(patient)/portal/(authenticated)/page.tsx": {
     lifecycle: "live",

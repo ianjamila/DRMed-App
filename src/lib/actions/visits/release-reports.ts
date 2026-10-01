@@ -10,7 +10,10 @@ import { withLifecycleRetry } from "@/lib/patients/lifecycle-retry";
 import { translatePgError } from "@/lib/accounting/pg-errors";
 import { notifyResultReleased } from "@/lib/notifications/notify-released";
 import { notifyResultsReleasedBulk } from "@/lib/notifications/notify-released-bulk";
-import type { ReleaseNoticeOutcome } from "@/lib/notifications/release-notice-outcome";
+import { noticeRetrying, type ReleaseNoticeOutcome } from "@/lib/notifications/release-notice-outcome";
+import { sendReleaseNotice } from "@/lib/notifications/release-notice-sender";
+import type { ReleaseNoticeRow } from "@/lib/notifications/release-notice-types";
+import { createAdminClient } from "@/lib/supabase/admin";
 import { scheduleReleaseStaffAlert } from "@/lib/notifications/release-staff-alert";
 import { reportError } from "@/lib/observability/report-error";
 import { ipAndAgent } from "@/lib/server/action-helpers";
@@ -64,7 +67,9 @@ interface RpcRefused {
 const isObj = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
 const isStrOrNull = (v: unknown): v is string | null => v === null || typeof v === "string";
 
-function parseReleaseResult(data: unknown): { released: RpcReleased[]; refused: RpcRefused[] } | null {
+function parseReleaseResult(
+  data: unknown,
+): { released: RpcReleased[]; refused: RpcRefused[]; noticeId: string | null } | null {
   if (!isObj(data) || !Array.isArray(data.released) || !Array.isArray(data.refused)) return null;
   const released = data.released;
   const refused = data.refused;
@@ -75,7 +80,11 @@ function parseReleaseResult(data: unknown): { released: RpcReleased[]; refused: 
     (r) => isObj(r) && typeof r.id === "string" && typeof r.code === "string" && isStrOrNull(r.report_id) && typeof r.count === "number",
   );
   if (!releasedOk || !refusedOk) return null;
-  return { released: released as RpcReleased[], refused: refused as RpcRefused[] };
+  // 0210 outbox: release_visit_results (PR 3) returns the id of the release_notices
+  // row it enqueued in the same transaction. Optional and untrusted: anything but a
+  // non-empty string means "no outbox notice", and the legacy send runs unchanged.
+  const noticeId = typeof data.notice_id === "string" && data.notice_id !== "" ? data.notice_id : null;
+  return { released: released as RpcReleased[], refused: refused as RpcRefused[], noticeId };
 }
 
 function refusalReason(r: RpcRefused): string {
@@ -95,6 +104,39 @@ export async function releaseAuditArg(metadata: Record<string, Json>): Promise<J
   return { metadata, ip, user_agent: ua };
 }
 
+/**
+ * The outbox fast path (0210/0212): lease the notice this release just enqueued
+ * and send it inline. Used only when release_notices_enabled() is true AND the
+ * release returned a notice_id. Anything that stops the inline send (the lease
+ * is held elsewhere, the claim fails) leaves the row pending, which the 5-minute
+ * sweeper picks up — so the operator is told it "will retry automatically".
+ */
+async function notifyViaOutbox(noticeId: string, visitId: string): Promise<ReleaseNoticeOutcome> {
+  const admin = createAdminClient();
+  const { data, error } = await admin.rpc("claim_release_notice", { p_id: noticeId, p_limit: 1 });
+  if (error) {
+    await reportError({
+      scope: "notify/release-notice:claim",
+      error: new Error(error.message),
+      metadata: { visit_id: visitId, notice_id: noticeId },
+    });
+    return noticeRetrying();
+  }
+  const claimed = (data ?? [])[0] as ReleaseNoticeRow | undefined;
+  if (!claimed) return noticeRetrying();
+  return (await sendReleaseNotice(claimed)).outcome;
+}
+
+/** Strict: only an explicit true counts; a failed read is OFF (legacy path). */
+async function outboxEnabled(): Promise<boolean> {
+  try {
+    const { data, error } = await createAdminClient().rpc("release_notices_enabled");
+    return !error && data === true;
+  } catch {
+    return false;
+  }
+}
+
 /** The patient "result ready" notice for rows a caller decided to announce. Never throws. */
 export async function notifyReleased(
   visitId: string,
@@ -103,9 +145,14 @@ export async function notifyReleased(
   // The release call's bulk_batch_id, stamped on the notice's own audit row
   // so the batch's Undo does not read it as a later, unrelated change.
   bulkBatchId?: string,
+  // The release_notices row release_visit_results enqueued (0210). With it AND the
+  // strict flag on, the outbox sends (durable retry, 24 h dedup); without either,
+  // the legacy one-shot sender below runs exactly as before.
+  noticeId?: string | null,
 ): Promise<ReleaseNoticeOutcome | null> {
   if (rows.length === 0) return null;
   try {
+    if (noticeId && (await outboxEnabled())) return await notifyViaOutbox(noticeId, visitId);
     if (rows.length === 1) {
       return await notifyResultReleased({ testRequestId: rows[0].id, visitId, releaseMedium: medium, bulkBatchId });
     } else {
@@ -203,7 +250,7 @@ export async function releaseVisitSelection(args: {
     return finish([], [], []);
   }
 
-  const { released, refused } = result;
+  const { released, refused, noticeId } = result;
   for (const r of refused) skip([r.id], refusalReason(r));
   const releasedRows: ReleasedRow[] = released.map((r) => ({ id: r.id, name: r.name }));
   const releasedSet = new Set(releasedRows.map((r) => r.id));
@@ -222,7 +269,7 @@ export async function releaseVisitSelection(args: {
   const alsoReleasedIds = released.filter((r) => !r.selected).map((r) => r.id);
   let notice: ReleaseNoticeOutcome | null = null;
   if (releasedRows.length > 0) {
-    notice = await notifyReleased(visitId, releasedRows, medium, bulkBatchId);
+    notice = await notifyReleased(visitId, releasedRows, medium, bulkBatchId, noticeId);
     scheduleReleaseStaffAlert(visitId, releasedRows.length);
   }
   return finish(changedIds, alsoReleasedIds, releasedRows, notice);

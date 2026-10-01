@@ -3,7 +3,8 @@ import { PlainTh } from "@/components/staff/sortable-th";
 import { requireAdminStaff } from "@/lib/auth/require-admin";
 import { createClient } from "@/lib/supabase/server";
 import { manilaDateTime } from "@/lib/dates/manila";
-import { CRON_HEARTBEATS, deriveCronStatus } from "@/lib/ops/cron-heartbeats";
+import { createAdminClient } from "@/lib/supabase/admin";
+import { CRON_HEARTBEATS, deriveCronStatus, isNoticeSweepWatched } from "@/lib/ops/cron-heartbeats";
 import { describeCronSchedule } from "@/lib/ops/cron-schedule";
 import { ROUTE_NAME } from "@/lib/staff/route-names";
 import { skipReasonLabel, skipSenderLabel } from "@/lib/notifications/skip-labels";
@@ -40,6 +41,14 @@ export default async function CronHealthPage() {
   }));
   const checkedAt = new Date();
   const now = checkedAt.getTime();
+  // release_notice_settings is service_role-only; this page is already admin-gated.
+  // A failed read counts as OFF (the strict-flag rule), so the sweeper reads as not watched.
+  const { data: noticeFlag } = await createAdminClient()
+    .from("release_notice_settings")
+    .select("enabled, updated_at")
+    .eq("id", true)
+    .maybeSingle();
+  const noticeWatched = isNoticeSweepWatched(noticeFlag?.enabled === true, noticeFlag?.updated_at ?? null, now);
 
   // Function is SECURITY INVOKER: audit_log's RLS (admin-only SELECT) decides
   // who sees anything, so this must run through the signed-in admin's
@@ -83,7 +92,7 @@ export default async function CronHealthPage() {
           </thead>
           <tbody className="divide-y divide-[color:var(--color-brand-bg-mid)]">
             {rows.map(({ cron, lastSeen, failed }) => {
-              const status = failed ? "unavailable" : deriveCronStatus(lastSeen, now, cron.maxAge, cron.activeFrom);
+              const status = failed ? "unavailable" : deriveCronStatus(lastSeen, now, cron.maxAge, cron.activeFrom, "watchWhen" in cron ? noticeWatched : true);
               return (
                 <tr key={cron.key} className="hover:bg-[color:var(--color-brand-bg)]">
                   <td className="px-4 py-3">
@@ -94,7 +103,7 @@ export default async function CronHealthPage() {
                   <td className="px-4 py-3">
                     <span className={`rounded-md px-2 py-0.5 text-xs font-semibold uppercase ${STATUS_STYLE[status]}`}>{status}</span>
                   </td>
-                  <td className="px-4 py-3 whitespace-nowrap">{failed ? "Unavailable" : lastSeen ? manilaDateTime(lastSeen) : "No recorded run"}</td>
+                  <td className="px-4 py-3 whitespace-nowrap">{failed ? "Unavailable" : lastSeen ? manilaDateTime(lastSeen) : "watchWhen" in cron && !noticeWatched ? "Not watched while switched off" : "No recorded run"}</td>
                   <td className="px-4 py-3 whitespace-nowrap">{!failed && lastSeen ? `${((now - Date.parse(lastSeen)) / 3_600_000).toFixed(1)} hours` : "—"}</td>
                   <td className="px-4 py-3 whitespace-nowrap">{cron.maxAge / 3_600_000} hours</td>
                   <td className="px-4 py-3 whitespace-nowrap">{manilaDateTime(`${cron.activeFrom}T00:00:00Z`)}</td>

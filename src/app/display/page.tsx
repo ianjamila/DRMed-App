@@ -227,7 +227,7 @@ export default async function DisplayPage() {
               <span className="font-bold text-[color:var(--color-brand-cyan)]">
                 Hours:
               </span>{" "}
-              {CONTACT.hours}
+              {CONTACT.hours}; {CONTACT.hoursSunday}
             </li>
             <li>
               <span className="font-bold text-[color:var(--color-brand-cyan)]">
