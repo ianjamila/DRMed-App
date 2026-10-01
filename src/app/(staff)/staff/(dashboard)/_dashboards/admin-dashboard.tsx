@@ -25,8 +25,8 @@ import { loadHiddenCardIds } from "@/lib/dashboards/card-prefs";
 import { loadCandidatePairsWithStatus } from "@/lib/patients/find-duplicates";
 import { fetchOutdatedCopies } from "@/lib/results/copy-followups.server";
 import { cappedCountLabel } from "@/lib/results/copy-followups";
-import { loadNewPatientsToday } from "@/lib/marketing/patient-sources.server";
-import { formatNewToday, type ReportResult, type SeriesRow } from "@/lib/marketing/patient-sources";
+import { loadNewPatientsToday, loadPatientSourcesTrend, type PatientSourcesTrend } from "@/lib/marketing/patient-sources.server";
+import { formatNewToday, todayRows, type ReportResult, type SeriesRow } from "@/lib/marketing/patient-sources";
 import {
   fetchAllRows,
   REPORT_EXPORT_MAX_ROWS,
@@ -44,6 +44,7 @@ import { DashboardHeader } from "./_components/dashboard-header";
 import { EodReminderBanner } from "./_components/eod-reminder-banner";
 import { SectionHeading } from "./_components/section-heading";
 import { StatCard } from "./_components/stat-card";
+import { PatientSourcesTrendCard } from "./_components/patient-sources-trend-card";
 import { QuickLinks } from "./_components/quick-links";
 import { ActivityStrip, type ActivityItem } from "./_components/activity-strip";
 import { formatPeso, relativeAge } from "./_components/format";
@@ -164,6 +165,7 @@ async function loadAdminStats(show: (id: string) => boolean) {
     newMessagesCount,
     resultFollowups,
     newToday,
+    trend,
   ] = await Promise.all([
     // The audit wanted all three of these cut as "throughput decoration".
     // The owner deferred Visits today and Queue to a LATER re-review, so
@@ -508,8 +510,13 @@ async function loadAdminStats(show: (id: string) => boolean) {
     show("admin.result_followups")
       ? fetchOutdatedCopies(supabase, false)
       : Promise.resolve({ ok: true as const, rows: [], capped: false }),
-    show("admin.new_patients_today")
+    // With the trend card on, the tile reads today out of the trend's one
+    // report call instead (below), so only call the single-day loader without it.
+    show("admin.new_patients_today") && !show("admin.patient_sources_trend")
       ? loadNewPatientsToday(supabase, today)
+      : Promise.resolve(null),
+    show("admin.patient_sources_trend")
+      ? loadPatientSourcesTrend(supabase, today)
       : Promise.resolve(null),
   ]);
 
@@ -766,7 +773,12 @@ async function loadAdminStats(show: (id: string) => boolean) {
     resultFollowupsCount: resultFollowups.ok ? resultFollowups.rows.length : 0,
     resultFollowupsCapped: resultFollowups.ok && resultFollowups.capped,
     resultFollowupsError: !resultFollowups.ok,
-    newToday: newToday as ReportResult<SeriesRow[]> | null,
+    // Identical by construction: the trend's new_by_day and the single-day
+    // loader both come from _ps_sec_series(day, new).
+    newToday: (trend
+      ? (trend.ok ? { ok: true as const, data: todayRows(trend.data.newByDay, today) } : trend)
+      : newToday) as ReportResult<SeriesRow[]> | null,
+    trend: trend as ReportResult<PatientSourcesTrend> | null,
     currentFiscalYear,
     today,
     monthStart,
@@ -894,7 +906,8 @@ export async function AdminDashboard({
   const showPayrollRunsCard =
     show("admin.payroll_runs") && (stats.payrollRunsError || stats.payrollRunsInProgress > 0);
   const showPeople =
-    show("admin.active_employees") || showPayrollRunsCard || show("admin.new_patients_today");
+    show("admin.active_employees") || showPayrollRunsCard || show("admin.new_patients_today") ||
+    show("admin.patient_sources_trend");
 
   // A refused or failed report call comes back as `{ ok: false }`, never a
   // thrown error, so this tile degrades to "Couldn't load" like any other
@@ -1189,6 +1202,9 @@ export async function AdminDashboard({
                 href={`/staff/marketing/patients?from=${stats.today}&to=${stats.today}`}
                 error={newTodayError}
               />
+            )}
+            {show("admin.patient_sources_trend") && stats.trend && (
+              <PatientSourcesTrendCard trend={stats.trend} />
             )}
           </div>
         </SectionHeading>
