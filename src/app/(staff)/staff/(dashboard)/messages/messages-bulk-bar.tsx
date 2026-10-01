@@ -62,22 +62,27 @@ export function MessagesBulkBar({ rowsByKey }: { rowsByKey: Record<string, Messa
         router.refresh();
         return;
       }
-      setOutcome({
-        message: formatBulkOutcome({
-          verb: button.verb,
-          tail: button.tail || undefined,
-          noun: NOUN,
-          sent: keys.length,
-          changed: result.changedIds.length,
-          notChanged: result.skipped.map((s) => ({ label: labelOf[s.id] ?? "A message", reason: s.reason })),
-        }),
-        edits: selectionEdits,
-        undo:
-          result.batchId && result.changedIds.length > 0
-            ? { batchId: result.batchId, doneAt: Date.now(), labelOf }
-            : null,
+      const undo: OutcomeUndo | null =
+        result.batchId && result.changedIds.length > 0
+          ? { batchId: result.batchId, doneAt: Date.now(), labelOf }
+          : null;
+      // Post-await updates go back inside the transition (React 19 keeps only
+      // pre-await updates in it) — same as the appointments bar.
+      start(() => {
+        setOutcome({
+          message: formatBulkOutcome({
+            verb: button.verb,
+            tail: button.tail || undefined,
+            noun: NOUN,
+            sent: keys.length,
+            changed: result.changedIds.length,
+            notChanged: result.skipped.map((s) => ({ label: labelOf[s.id] ?? "A message", reason: s.reason })),
+          }),
+          edits: selectionEdits,
+          undo,
+        });
+        clearKeys(keys);
       });
-      clearKeys(keys);
       router.refresh();
     });
   }
@@ -89,16 +94,20 @@ export function MessagesBulkBar({ rowsByKey }: { rowsByKey: Record<string, Messa
       const r = await undoMessageStatusManyAction({ batchId: u.batchId });
       if (!r.ok) {
         const gone = r.error === UNDO_EXPIRED || r.error === UNDO_ALREADY;
-        setOutcome({ message: `${r.error}\n\n${previousMessage}`, edits: selectionEdits, undo: gone ? null : u });
+        startUndo(() => {
+          setOutcome({ message: `${r.error}\n\n${previousMessage}`, edits: selectionEdits, undo: gone ? null : u });
+        });
         return;
       }
-      setOutcome({
-        message: undoOutcomeMessage(NOUN, {
-          restored: r.restoredIds.length,
-          notRestored: r.notRestored.map((n) => ({ label: u.labelOf[n.id] ?? "A message", reason: n.reason })),
-        }),
-        edits: selectionEdits,
-        undo: null,
+      startUndo(() => {
+        setOutcome({
+          message: undoOutcomeMessage(NOUN, {
+            restored: r.restoredIds.length,
+            notRestored: r.notRestored.map((n) => ({ label: u.labelOf[n.id] ?? "A message", reason: n.reason })),
+          }),
+          edits: selectionEdits,
+          undo: null,
+        });
       });
       router.refresh();
     });
