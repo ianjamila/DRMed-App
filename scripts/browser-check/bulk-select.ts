@@ -24,6 +24,7 @@ import type { Page } from "playwright-core";
 import {
   APP_BASE,
   BAR,
+  OUTCOME,
   VISIT_BAR,
   barText,
   headerBox,
@@ -469,8 +470,11 @@ async function sectionPanels(c: CheckContext, med: Page): Promise<void> {
 // Panel Undo (PR #254's panel row + this branch's Undo): each panel bulk action
 // leaves a batch id, and ↶ Undo (10 minutes, own actions only) puts the whole
 // panel back — claim → un-claimed via unclaim_panel_members; unclaim → each
-// member reclaimed to its OWN holder with its original started_at; delete →
-// restored. Every check reads the members and their bulk_undo audit rows back.
+// member reclaimed to its OWN holder with its original started_at
+// (reclaim_panel_members, 0200); delete → restored (restore_panel_members,
+// 0200) — all of the panel or none of it. Every check reads the members and
+// their bulk_undo audit rows back. PU4–PU7 cover the 0200 happy and refused
+// paths; PC1–PC3 cover the report-page Undo for a panel row's own Claim.
 // ---------------------------------------------------------------------------
 async function sectionPanelUndo(c: CheckContext, med: Page, admin: Page): Promise<void> {
   await check(c, "PU1 panel Claim -> Undo puts every member back to requested and unassigned", async () => {
@@ -568,6 +572,310 @@ async function sectionPanelUndo(c: CheckContext, med: Page, admin: Page): Promis
       undoRows >= 3;
     return { ok, detail: { batchId, hadUndo, afterDelete, afterUndo, undoRows } };
   });
+
+  // -------------------------------------------------------------------------
+  // PU4–PU7 (0200): the panel's Undo is ONE statement — every member or none.
+  // PU4/PU6 are the happy paths; PU5/PU7 change ONE member behind the page's
+  // back (a direct DB write leaves no audit row, so the app's own "changed
+  // since" read cannot see it) and prove nothing was half-put-back.
+  //
+  // A refused panel Undo is reported against the PANEL ("Chemistry (3 tests)
+  // — <patient>: <reason>"). Which reason depends on who notices first: the
+  // app re-reads the members just before calling the function and refuses
+  // with its own words; the function (P0082) refuses with the words below
+  // only when the change lands AFTER that read — a window a browser check
+  // cannot hit on purpose. Either is a correct refusal, so both are accepted;
+  // the DB assertions are what prove all-or-nothing.
+  // -------------------------------------------------------------------------
+  const RECLAIM_REFUSED =
+    /someone claimed it since, or it changed|Someone claimed or changed part of this report since — nothing was put back\./;
+  const RESTORE_REFUSED =
+    /part of this panel was already restored or changed|Part of this report was already restored or changed — nothing was restored\./;
+
+  /** The medtech holds the 9105 panel, each member with its own start time (as PU2 sets it up). */
+  const medtechHoldsPanel = async (medUser: string) => {
+    await c.sql(
+      `update test_requests tr set status = 'in_progress', assigned_to = $1,
+              started_at = date_trunc('second', now()) - (x.n || ' minutes')::interval
+       from (select tr2.id, row_number() over (order by s.code) * 7 as n
+             from test_requests tr2 join visits v on v.id = tr2.visit_id join services s on s.id = tr2.service_id
+             where v.visit_number = '9105' and s.code = any($2)) x
+       where tr.id = x.id`,
+      [medUser, PANEL_CODES],
+    );
+    return panelRows(c, "9105");
+  };
+  /** Admin ticks the 9105 panel and confirms Unclaim; returns the batch id of that Unclaim. */
+  const adminUnclaimsPanel = async () => {
+    await goto(admin, `${APP_BASE}/staff/queue?visit=9105`);
+    await panelBox(admin, "Echo").check();
+    await admin.locator(BAR).locator("button", { hasText: /^Unclaim \(/ }).first().click();
+    await sleep(300);
+    await admin.locator('button:has-text("Confirm unclaim")').click();
+    await sleep(900);
+    return latestBatchId(c, "test_request.unclaimed");
+  };
+  /** Admin ticks the unpaid 9107 panel and confirms Delete with a reason; returns that Delete's batch id. */
+  const adminDeletesPanel = async () => {
+    await goto(admin, `${APP_BASE}/staff/queue?visit=9107`);
+    await panelBox(admin, "Golf").check();
+    await admin.locator(BAR).locator("button", { hasText: /^Delete \(/ }).first().click();
+    await sleep(300);
+    await admin.locator('textarea[aria-label="Reason for deleting"]').fill("bulk panel delete");
+    await admin.locator('button:has-text("Confirm delete")').click();
+    await sleep(900);
+    return latestBatchId(c, "test_request.deleted");
+  };
+
+  await reseed(c);
+  await check(c, "PU4 admin Unclaim of the medtech's panel -> Undo: every member back in_progress under the medtech at its ORIGINAL start, one bulk_undo reassigned row each", async () => {
+    const medUser = await userId(c, MED.email);
+    const before = await medtechHoldsPanel(medUser);
+    const batchId = await adminUnclaimsPanel();
+    const afterUnclaim = await panelRows(c, "9105");
+    const hadUndo = await clickUndo(admin);
+    const afterUndo = await panelRows(c, "9105");
+    const audit = batchId
+      ? await auditPerMember(
+          c,
+          afterUndo.map((r) => r.id as string),
+          "test_request.reassigned",
+          batchId,
+          `and metadata->>'to' = '${medUser}' and metadata->>'via' = 'bulk_undo'`,
+        )
+      : null;
+    const total = batchId ? await undoRowCount(c, batchId) : 0;
+    const ok =
+      !!batchId &&
+      before.length === 3 &&
+      new Set(before.map((r) => r.started)).size === 3 &&
+      afterUnclaim.every((r) => r.status === "requested" && r.assigned_to === null) &&
+      hadUndo &&
+      afterUndo.length === 3 &&
+      afterUndo.every((r, i) => r.status === "in_progress" && r.assigned_to === medUser && r.started === before[i].started) &&
+      audit?.everyMemberOnce === true &&
+      total === 3; // exactly one bulk_undo row per member — no extra, no missing
+    return { ok, detail: { batchId, hadUndo, before, afterUnclaim, afterUndo, audit, total } };
+  });
+
+  await reseed(c);
+  await check(c, "PU5 admin Unclaim -> Undo after ONE member was claimed by another medtech: the panel is named and NOTHING is half-reclaimed", async () => {
+    const medUser = await userId(c, MED.email);
+    await medtechHoldsPanel(medUser);
+    const batchId = await adminUnclaimsPanel();
+    const afterUnclaim = await panelRows(c, "9105");
+    // Behind the page's back, as another medtech (else the admin) — no audit row.
+    const [other] = await c.sql(
+      `select id from staff_profiles
+       where is_active and deleted_at is null and id <> $1 and role in ('medtech', 'admin')
+       order by (role = 'medtech') desc, id limit 1`,
+      [medUser],
+    );
+    const m1 = afterUnclaim[0]!;
+    await c.sql(
+      "update test_requests set status = 'in_progress', assigned_to = $1, started_at = now() where id = $2",
+      [other.id, m1.id],
+    );
+    const hadUndo = await clickUndo(admin);
+    const text = await outcomeText(admin);
+    const afterUndo = await panelRows(c, "9105");
+    const undone = batchId ? await undoRowCount(c, batchId) : -1;
+    const ok =
+      !!batchId &&
+      afterUnclaim.length === 3 &&
+      afterUnclaim.every((r) => r.status === "requested" && r.assigned_to === null) &&
+      hadUndo &&
+      !!text &&
+      text.includes("Nothing was undone.") &&
+      text.includes("Not undone (1):") &&
+      text.includes("Chemistry (3 tests)") &&
+      RECLAIM_REFUSED.test(text) &&
+      afterUndo.length === 3 &&
+      afterUndo.find((r) => r.id === m1.id)?.status === "in_progress" &&
+      afterUndo.find((r) => r.id === m1.id)?.assigned_to === other.id &&
+      afterUndo.filter((r) => r.id !== m1.id).length === 2 &&
+      afterUndo
+        .filter((r) => r.id !== m1.id)
+        .every((r) => r.status === "requested" && r.assigned_to === null && r.started === null) &&
+      undone === 0;
+    return { ok, detail: { batchId, hadUndo, text, afterUnclaim, afterUndo, undone } };
+  });
+
+  await reseed(c);
+  await check(c, "PU6 admin Delete of a panel -> Undo: every member live again, one bulk_undo restored row each", async () => {
+    const batchId = await adminDeletesPanel();
+    const afterDelete = await panelRows(c, "9107");
+    const hadUndo = await clickUndo(admin);
+    const afterUndo = await panelRows(c, "9107");
+    const audit = batchId
+      ? await auditPerMember(
+          c,
+          afterUndo.map((r) => r.id as string),
+          "test_request.restored",
+          batchId,
+        )
+      : null;
+    const ok =
+      !!batchId &&
+      afterDelete.length === 3 &&
+      afterDelete.every((r) => r.deleted_at !== null) &&
+      hadUndo &&
+      afterUndo.length === 3 &&
+      afterUndo.every((r) => r.deleted_at === null) &&
+      audit?.everyMemberOnce === true;
+    return { ok, detail: { batchId, hadUndo, afterDelete, afterUndo, audit } };
+  });
+
+  await reseed(c);
+  await check(c, "PU7 admin Delete -> Undo after ONE member was restored in the DB: the panel is named and the other two stay deleted at their original time", async () => {
+    const batchId = await adminDeletesPanel();
+    const afterDelete = await panelRows(c, "9107");
+    const m1 = afterDelete[0]!;
+    // Behind the page's back — no audit row.
+    await c.sql(
+      "update test_requests set deleted_at = null, deleted_by = null, delete_reason = null where id = $1",
+      [m1.id],
+    );
+    const hadUndo = await clickUndo(admin);
+    const text = await outcomeText(admin);
+    const afterUndo = await panelRows(c, "9107");
+    const undone = batchId ? await undoRowCount(c, batchId) : -1;
+    const stamp = (v: unknown) => (v === null ? null : new Date(v as string | Date).getTime());
+    const others = afterUndo.filter((r) => r.id !== m1.id);
+    const ok =
+      !!batchId &&
+      afterDelete.length === 3 &&
+      afterDelete.every((r) => r.deleted_at !== null) &&
+      hadUndo &&
+      !!text &&
+      text.includes("Nothing was undone.") &&
+      text.includes("Not undone (1):") &&
+      text.includes("Chemistry (3 tests)") &&
+      RESTORE_REFUSED.test(text) &&
+      afterUndo.length === 3 &&
+      afterUndo.find((r) => r.id === m1.id)?.deleted_at === null &&
+      others.length === 2 &&
+      others.every((r) => stamp(r.deleted_at) === stamp(afterDelete.find((d) => d.id === r.id)?.deleted_at)) &&
+      undone === 0;
+    return { ok, detail: { batchId, hadUndo, text, afterDelete, afterUndo, undone } };
+  });
+
+  // -------------------------------------------------------------------------
+  // PC1–PC3: the queue row's own panel Claim opens the report page with a
+  // 10-minute ↶ Undo for that claim (?claimed=<batch>&at=<ms> — see
+  // src/lib/queue/claim-undo-link.ts and claim-undo-notice.tsx). One state
+  // chain: PC1 claims and lands there; PC2 undoes from that notice; PC3 claims
+  // again and has the claim move on before Undo.
+  // -------------------------------------------------------------------------
+  const claimRowButton = () =>
+    med
+      .locator("tbody tr")
+      .filter({ has: panelBox(med, "Echo") })
+      .locator("button", { hasText: /^Claim$/ });
+  let groupName = "";
+  let claimedBatch: string | null = null;
+
+  await reseed(c);
+  await check(c, "PC1 medtech clicks the panel row's Claim -> report page with ?claimed=&at= and 'You claimed <report>.' + ↶ Undo", async () => {
+    const [g] = await c.sql("select name from report_groups where code = 'CHEMISTRY'");
+    groupName = String(g?.name ?? "");
+    const medUser = await userId(c, MED.email);
+    await goto(med, `${APP_BASE}/staff/queue?visit=9105`);
+    const claimBtn = claimRowButton();
+    const claimButtons = await claimBtn.count();
+    if (claimButtons === 1) await claimBtn.click();
+    await med.waitForURL(/\/staff\/queue\/consolidated\/[^/]+\/[^/?]+\?claimed=/, { timeout: 20_000 });
+    await waitForCount(med.locator(OUTCOME));
+    const url = new URL(med.url());
+    claimedBatch = url.searchParams.get("claimed");
+    const at = url.searchParams.get("at");
+    const text = await outcomeText(med);
+    const undoButtons = await med.locator('button:has-text("↶ Undo")').count();
+    const rows = await panelRows(c, "9105");
+    const auditedBatch = await latestBatchId(c, "test_request.claimed");
+    const ok =
+      claimButtons === 1 &&
+      groupName !== "" &&
+      url.pathname.startsWith("/staff/queue/consolidated/") &&
+      /^[0-9a-f-]{36}$/i.test(claimedBatch ?? "") &&
+      /^\d+$/.test(at ?? "") &&
+      claimedBatch === auditedBatch && // the link carries the batch the claim really minted
+      !!text &&
+      text.startsWith(`You claimed ${groupName}.`) &&
+      undoButtons === 1 &&
+      rows.length === 3 &&
+      rows.every((r) => r.status === "in_progress" && r.assigned_to === medUser);
+    return { ok, detail: { url: med.url(), groupName, text, undoButtons, auditedBatch, rows } };
+  });
+
+  await check(c, "PC2 ↶ Undo on the report page -> 'Undone — <report> is back in the queue, unclaimed.' and the queue offers the panel's Claim again", async () => {
+    const hadUndo = await clickUndo(med);
+    const text = await outcomeText(med);
+    const afterUndo = await panelRows(c, "9105");
+    const audit = claimedBatch
+      ? await auditPerMember(
+          c,
+          afterUndo.map((r) => r.id as string),
+          "test_request.unclaimed",
+          claimedBatch,
+        )
+      : null;
+    await goto(med, `${APP_BASE}/staff/queue?visit=9105`);
+    const claimOffered = (await claimRowButton().count()) === 1;
+    const ok =
+      !!claimedBatch &&
+      hadUndo &&
+      !!text &&
+      text.startsWith(`Undone — ${groupName} is back in the queue, unclaimed.`) &&
+      afterUndo.length === 3 &&
+      afterUndo.every((r) => r.status === "requested" && r.assigned_to === null && r.started === null) &&
+      audit?.everyMemberOnce === true &&
+      claimOffered;
+    return { ok, detail: { claimedBatch, hadUndo, text, afterUndo, audit, claimOffered } };
+  });
+
+  await check(c, "PC3 claim again, then ONE member is handed to someone else in the DB -> ↶ Undo says 'Not undone — …' and changes no member", async () => {
+    const medUser = await userId(c, MED.email);
+    await goto(med, `${APP_BASE}/staff/queue?visit=9105`);
+    const claimBtn = claimRowButton();
+    const claimButtons = await claimBtn.count();
+    if (claimButtons === 1) await claimBtn.click();
+    await med.waitForURL(/\/staff\/queue\/consolidated\/[^/]+\/[^/?]+\?claimed=/, { timeout: 20_000 });
+    await waitForCount(med.locator(OUTCOME));
+    const batchId = new URL(med.url()).searchParams.get("claimed");
+    const afterClaim = await panelRows(c, "9105");
+    const [other] = await c.sql(
+      `select id from staff_profiles
+       where is_active and deleted_at is null and id <> $1 and role in ('medtech', 'admin')
+       order by (role = 'medtech') desc, id limit 1`,
+      [medUser],
+    );
+    const m1 = afterClaim[0]!;
+    // Behind the page's back — reassign ONE member; no audit row.
+    await c.sql("update test_requests set assigned_to = $1 where id = $2", [other.id, m1.id]);
+    const before = await panelRows(c, "9105");
+    const hadUndo = await clickUndo(med);
+    const text = await outcomeText(med);
+    const afterUndo = await panelRows(c, "9105");
+    const undone = batchId ? await undoRowCount(c, batchId) : -1;
+    const unchanged = afterUndo.every((r, i) => {
+      const b = before[i]!;
+      return r.id === b.id && r.status === b.status && r.assigned_to === b.assigned_to && r.started === b.started;
+    });
+    const ok =
+      claimButtons === 1 &&
+      !!batchId &&
+      afterClaim.length === 3 &&
+      afterClaim.every((r) => r.status === "in_progress" && r.assigned_to === medUser) &&
+      hadUndo &&
+      !!text &&
+      text.startsWith("Not undone — ") &&
+      !text.includes("is back in the queue") &&
+      before.find((r) => r.id === m1.id)?.assigned_to === other.id &&
+      unchanged &&
+      undone === 0;
+    return { ok, detail: { batchId, hadUndo, text, before, afterUndo, undone } };
+  });
 }
 
 // State U6/A2 read across checks in the same section — see the doc comments
@@ -644,7 +952,7 @@ async function sectionUndo(
       const undoBtn = med.locator('button:has-text("↶ Undo")').first();
       hadUndo = (await waitForCount(undoBtn)) > 0;
       if (hadUndo) await undoBtn.click();
-      await sleep(900);
+      await waitForUndoToFinish(med);
     } finally {
       // Flip back before the queue sections resume, which need medtech —
       // even if the block above threw.
@@ -685,7 +993,7 @@ async function sectionUndo(
     const hadUndoBeforeClick = (await waitForCount(undoBtn)) > 0;
     u6UndoSeenBefore = hadUndoBeforeClick;
     if (hadUndoBeforeClick) await undoBtn.click();
-    await sleep(900);
+    await waitForUndoToFinish(med);
     const afterUndo = await c.sql("select status, assigned_to from test_requests where visit_id = $1", [v.id]);
     if (batchId) {
       allBatchIds.push(batchId);
@@ -727,7 +1035,7 @@ async function sectionUndo(
     const undoBtn = admin.locator('button:has-text("↶ Undo")').first();
     const hasUndo = (await waitForCount(undoBtn)) > 0;
     if (hasUndo) await undoBtn.click();
-    await sleep(900);
+    await waitForUndoToFinish(admin);
     const rows = await c.sql(
       `select tr.status, tr.assigned_to from test_requests tr
        join services s on s.id = tr.service_id
@@ -768,7 +1076,7 @@ async function sectionUndo(
     const undoBtn = admin.locator('button:has-text("↶ Undo")').first();
     const hasUndo = (await waitForCount(undoBtn)) > 0;
     if (hasUndo) await undoBtn.click();
-    await sleep(900);
+    await waitForUndoToFinish(admin);
     const rows = await c.sql(
       `select tr.deleted_at from test_requests tr
        join services s on s.id = tr.service_id
@@ -806,7 +1114,7 @@ async function sectionUndo(
     );
     const undoBtn = med.locator('button:has-text("↶ Undo")').first();
     await undoBtn.click();
-    await sleep(900);
+    await waitForUndoToFinish(med);
     const text = await outcomeText(med);
     const rows = await c.sql(
       `select tr.status from test_requests tr
@@ -929,7 +1237,7 @@ async function sectionVisitRelease(c: CheckContext, admin: Page): Promise<void> 
       const undoBtn = admin.locator('button:has-text("↶ Undo")').first();
       const hadUndo = (await waitForCount(undoBtn)) > 0;
       if (hadUndo) await undoBtn.click();
-      await sleep(900);
+      await waitForUndoToFinish(admin);
 
       const afterUndo = await c.sql(
         `select tr.status from test_requests tr join services s on s.id = tr.service_id
@@ -1003,14 +1311,31 @@ async function runHistoricAction(
   return outcomeText(page);
 }
 
+/**
+ * Undo is a server action + router.refresh(). Wait until it has FINISHED:
+ * neither "↶ Undo" nor "Undoing…" is on the page (a refused Undo that keeps
+ * its button for a retry just runs out the clock). A fixed sleep, or waiting
+ * only for "↶ Undo" to go (it turns into "Undoing…" on click), read the DB
+ * before the Undo ran whenever the machine was busy, so a different Undo
+ * check failed on each run (U3/U4, PU1–PU3, H2–H4 in turn).
+ */
+async function waitForUndoToFinish(page: Page): Promise<void> {
+  const undoBtn = page.locator('button:has-text("↶ Undo")');
+  const pending = page.locator('button:has-text("Undoing")');
+  const start = Date.now();
+  while (((await undoBtn.count()) > 0 || (await pending.count()) > 0) && Date.now() - start < 45_000) {
+    await sleep(250);
+  }
+  await sleep(500);
+}
+
 async function clickUndo(page: Page): Promise<boolean> {
   const undoBtn = page.locator('button:has-text("↶ Undo")').first();
   const had = (await waitForCount(undoBtn)) > 0;
-  if (had) await undoBtn.click();
-  // Undo is a server action + router.refresh(); wait for the button to go.
-  const start = Date.now();
-  while (had && (await undoBtn.count()) > 0 && Date.now() - start < 10_000) await sleep(200);
-  await sleep(500);
+  if (had) {
+    await undoBtn.click();
+    await waitForUndoToFinish(page);
+  }
   return had;
 }
 
