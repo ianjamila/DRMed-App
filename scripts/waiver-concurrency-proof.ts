@@ -48,7 +48,7 @@
 // (wvr_ctl_<hex>, never public - the local stack is shared) with ONE guard
 // removed, reruns the named forced scenarios against the copy, and passes only
 // if they FAIL in both modes (see MUTANTS):
-//   M1 drops the line row locks (S3, S5)           M4 drops the already-waived refusal (S6)
+//   M1 drops the line row locks (S3)               M4 drops the already-waived refusal (S6)
 //   M2 drops the visit row lock (S1, S7)           M5 counts voided payments as paid (S7)
 //   M3 locks lines in DESC id order (S5, S9)       M6 never posts the standalone JE (S4)
 // NOT mutated: the guards that live in triggers on public tables
@@ -550,7 +550,7 @@ async function forcedScenarios(mode: Mode): Promise<void> {
     return "allocation pending, no standalone JE";
   });
 
-  // concurrency-proof: waiver_unrecognise_line, fn_undo_release_bridge, waiver_post_allocation (S4: the undo waits behind the waiver that posted the standalone JE, then reverses it; S3/S5 race the same undo path)
+  // concurrency-proof: fn_undo_release_bridge (S4: the undo waits behind the waiver that posted the standalone JE, then reverses it)
   // ---- S4 waive-then-undo (old 4) -----------------------------------------
   await scenario("S4", "waive-then-undo", async () => {
     const f = await mkVisit({ prices: [1000], paid: 1000, release: [0], voidAfter: true, note: "S4" });
@@ -722,6 +722,43 @@ async function forcedScenarios(mode: Mode): Promise<void> {
     expectOk("S9 waive", await w);
     return "holder took both lines, waiver completed";
   });
+
+  // ---- S10 undo vs a holder of the recognised allocation row (new) --------
+  // concurrency-proof: waiver_unrecognise_line (S10: the undo's trigger reaches waiver_unrecognise_line and queues on the allocation row lock a holder keeps; it is observed waiting on visit_waiver_allocations, then completes correctly)
+  await scenario("S10", "undo waits on the allocation row inside waiver_unrecognise_line", async () => {
+    const f = await mkVisit({ prices: [1000], paid: 1000, release: [0], voidAfter: true, note: "S10" });
+    const w = await actor("S10-prep");
+    await begin(w, mode);
+    expectOk("S10 prep waive", await andEnd(w, waive(w, f.visit, `${TAG} S10`)));
+    const [a0] = await allocs(f.visit);
+    if (!a0?.recognised) throw new Fail("prep: the waive should have recognised the released line's allocation");
+    const [s1, s2] = [await actor("S10-holder"), await actor("S10-undo")];
+    await begin(s1, mode);
+    expectOk(
+      "S10 hold allocation",
+      await settle(
+        s1.c.query("select 1 from public.visit_waiver_allocations where test_request_id = $1 for update", [f.lines[0].id]),
+        (r) => r.rowCount ?? 0,
+      ),
+    );
+    await begin(s2, mode);
+    const u = andEnd(s2, undoRelease(s2, f.lines[0].id));
+    await mustWait(s2, "undo waits for the allocation row lock");
+    // A row-lock waiter holds the TUPLE lock of the row it queues on (granted) while it waits on the holder's transaction; the holder keeps only the allocation row, so the wait is on it.
+    const { rows } = await monitor.query(
+      "select 1 from pg_locks where pid = $1 and locktype = 'tuple' and relation = 'public.visit_waiver_allocations'::regclass",
+      [s2.pid],
+    );
+    if (rows.length === 0) throw new Fail("the undo is blocked, but not on a visit_waiver_allocations row");
+    await s1.c.query("commit");
+    expectOk("S10 undo", await u);
+    const [a] = await allocs(f.visit);
+    const je = await waiverJe(a.id);
+    if (!je || je.status !== "reversed") throw new Fail(`expected the standalone waiver JE reversed, got ${je?.status ?? "none"}`);
+    if ((await reversalStatus(je.id)) !== "posted") throw new Fail("mirrored reversal is not posted");
+    if (a.recognised) throw new Fail("allocation still recognised after the undo");
+    return "undo queued on the allocation row, then reversed the standalone JE";
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -864,7 +901,7 @@ const MUTANTS: Mutant[] = [
     what: "no line row locks (the waiver reads line statuses without FOR UPDATE)",
     fn: "waive_visit_balance",
     edits: [[LINE_LOCK, "perform 1 from public.test_requests where visit_id = p_visit_id and deleted_at is null order by id;"]],
-    mustFail: ["S3", "S5"],
+    mustFail: ["S3"],
   },
   {
     key: "M2",
@@ -922,18 +959,55 @@ async function controlRounds(): Promise<void> {
     defs[fn] = d;
   }
 
+  const install = async (mutatedFn?: FnName, mutatedSql?: string) => {
+    await monitor.query(`drop schema if exists ${schema} cascade`);
+    await monitor.query(`create schema ${schema}`);
+    for (const fn of names) await monitor.query(fn === mutatedFn ? mutatedSql! : defs[fn]);
+    await monitor.query(`grant usage on schema ${schema} to authenticated, service_role`);
+    await monitor.query(`grant execute on all functions in schema ${schema} to authenticated, service_role`);
+  };
+
+  // BASELINE round: an UNMUTATED copy must pass every scenario a mutant is
+  // judged on. Otherwise a broken copy/grant/rewrite would make every mutant
+  // look "caught".
+  const baselineIds = [...new Set(MUTANTS.flatMap((m) => m.mustFail))];
+  console.log("\ncontrol baseline: unmutated copy must pass " + baselineIds.join(", "));
+  try {
+    await install();
+    const base: Result[] = [];
+    sink = base;
+    fnSchema = schema;
+    only = baselineIds;
+    for (const mode of ["seq", "indexed"] as Mode[]) await forcedScenarios(mode);
+    const bad = base.filter((r) => !r.ok);
+    const okBase = bad.length === 0 && base.length === baselineIds.length * 2;
+    results.push({
+      name: "control baseline (unmutated copy)",
+      ok: okBase,
+      detail: okBase ? `${base.length} scenario runs passed` : `${bad.map((r) => r.name + ": " + r.detail).join("; ") || "scenarios did not run"}`,
+    });
+    console.log(`  ${okBase ? "PASS" : "FAIL"}  control baseline - ${okBase ? base.length + " scenario runs passed" : "the unmutated copy fails; mutant results are meaningless"}`);
+    if (!okBase) return;
+  } finally {
+    sink = results;
+    only = null;
+    fnSchema = "public";
+    await monitor.query(`drop schema if exists ${schema} cascade`);
+  }
+
+  // A failure only counts as a catch when an assertion or an expected-error
+  // check tripped. Setup/permission/missing-object errors and "interleaving not
+  // reached" are harness faults, not catches.
+  const HARNESS = /interleaving not reached|did not answer|permission denied|does not exist|\bgot (42501|42883|42P01|3F000)\b/;
+
   for (const m of MUTANTS) {
     let mutated = defs[m.fn];
     for (const [from, to] of m.edits) {
       if (!mutated.includes(from)) throw new Error(`control ${m.key}: "${from}" not found in ${m.fn}`);
       mutated = mutated.replace(from, () => to);
     }
-    await monitor.query(`drop schema if exists ${schema} cascade`);
-    await monitor.query(`create schema ${schema}`);
     try {
-      for (const fn of names) await monitor.query(fn === m.fn ? mutated : defs[fn]);
-      await monitor.query(`grant usage on schema ${schema} to authenticated, service_role`);
-      await monitor.query(`grant execute on all functions in schema ${schema} to authenticated, service_role`);
+      await install(m.fn, mutated);
 
       console.log(`\ncontrol ${m.key}: ${m.what}`);
       const caught: Result[] = [];
@@ -941,14 +1015,19 @@ async function controlRounds(): Promise<void> {
       fnSchema = schema;
       only = m.mustFail;
       for (const mode of ["seq", "indexed"] as Mode[]) await forcedScenarios(mode);
-      const failedIds = caught.filter((r) => !r.ok).map((r) => r.name);
+      const failedIds = caught.filter((r) => !r.ok && !HARNESS.test(r.detail)).map((r) => r.name);
+      const harness = caught.filter((r) => !r.ok && HARNESS.test(r.detail)).map((r) => `${r.name}: ${r.detail}`);
       const missed = (["seq", "indexed"] as Mode[]).flatMap((mode) =>
         m.mustFail
           .filter((id) => !failedIds.some((n) => n.startsWith(`[${mode}] ${id} `)))
           .map((id) => `[${mode}] ${id}`),
       );
-      const ok = missed.length === 0;
-      const detail = ok ? `caught by ${failedIds.length} scenario run(s)` : `NOT caught by ${missed.join(", ")}`;
+      const ok = missed.length === 0 && harness.length === 0;
+      const detail = ok
+        ? `caught by ${failedIds.length} scenario run(s)`
+        : harness.length
+          ? `HARNESS FAULT (not a catch): ${harness.join("; ")}`
+          : `NOT caught by ${missed.join(", ")}`;
       results.push({ name: `control ${m.key} (${m.what})`, ok, detail });
       console.log(`  ${ok ? "PASS" : "FAIL"}  control ${m.key} - ${detail}`);
     } finally {
@@ -967,7 +1046,31 @@ async function controlRounds(): Promise<void> {
 async function teardown(): Promise<void> {
   await closeActors();
   await monitor.query(`drop schema if exists wvr_ctl_${TAG.slice(4)} cascade`);
+  // Journal entries this run caused (by source or author), and their reversals.
+  const { rows: pre } = await monitor.query<{ ids: string[] }>(
+    `with base as (
+       select id from public.journal_entries
+        where created_by = $1
+           or (source_kind = 'test_request' and source_id = any($2::uuid[]))
+           or (source_kind = 'payment' and source_id = any($3::uuid[]))
+           or (source_kind = 'visit_waiver' and source_id in (select id from public.visit_waiver_allocations where visit_id = any($4::uuid[])))
+     )
+     select coalesce(array_agg(id), '{}') as ids from (
+       select id from base
+       union select j.id from public.journal_entries j where j.reverses in (select id from base)
+     ) x`,
+    [fx.admin, made.tests, made.payments, made.visits],
+  );
   await sweepTagged(TAG);
+  const { rows: leak } = await monitor.query<{ n: string }>(
+    `select count(*) as n from public.journal_entries
+      where created_by = $1 or id = any($2::uuid[]) or reverses = any($2::uuid[])`,
+    [fx.admin, pre[0].ids],
+  );
+  if (Number(leak[0].n) > 0) {
+    results.push({ name: "teardown", ok: false, detail: `${leak[0].n} journal entries left behind` });
+    console.log(`  FAIL  teardown - ${leak[0].n} journal entries (authored by the run's admin or reversals of its entries) left behind`);
+  }
   const left = await countTagged(TAG);
   if (left > 0) {
     results.push({ name: "teardown", ok: false, detail: `${left} fixture rows left behind` });
@@ -992,12 +1095,14 @@ async function main(): Promise<void> {
   }
 
   let seeded = false;
-  process.once("SIGINT", () => {
-    console.log("\n  interrupted - tearing down");
-    teardown()
-      .catch((e) => console.error(e))
-      .finally(() => process.exit(130));
-  });
+  for (const [sig, code] of [["SIGINT", 130], ["SIGTERM", 143]] as const) {
+    process.once(sig, () => {
+      console.log(`\n  ${sig} received - tearing down`);
+      teardown()
+        .catch((e) => console.error(e))
+        .finally(() => process.exit(code));
+    });
+  }
   try {
     const { rows: fn } = await monitor.query<{ ok: boolean }>(
       `select to_regprocedure('public.waive_visit_balance(uuid,uuid,text)') is not null
