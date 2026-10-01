@@ -2,8 +2,10 @@ import { describe, expect, it } from "vitest";
 import {
   NOT_RECORDED, bucketLabel, capRows, channelLabel, comparisonPeriod, channelTable, newPatientsTile, chartData, classifyReportError,
   costPerNewPatient, parsePatientSourcesReport, formatNewToday, parseGrain, parseMode, previousPeriod, seriesCsvRows, sheetBanner,
+  asOfLabel, lastCompletedWeek, previousWeek, lastCompletedMonth, previousMonth, trendWeeks, trendCardData,
   type SeriesRow, type SummaryRow,
 } from "./patient-sources";
+import { manilaDateTime } from "@/lib/dates/manila";
 
 const row = (bucket_start: string, channel: string, confirmed: number, unconfirmed = 0): SeriesRow =>
   ({ bucket_start, channel, confirmed, unconfirmed });
@@ -212,5 +214,37 @@ describe("capRows", () => {
   });
   it("cuts at the ceiling and says so", () => {
     expect(capRows([1, 2, 3, 4], 3)).toEqual({ rows: [1, 2, 3], truncated: true });
+  });
+});
+
+describe("asOfLabel", () => {
+  it("uses the house date-time format", () => {
+    // 2026-10-01 01:14 UTC = 9:14 AM Manila
+    expect(asOfLabel(new Date("2026-10-01T01:14:00Z"))).toBe(`Numbers as of ${manilaDateTime(new Date("2026-10-01T01:14:00Z"))}`);
+    expect(asOfLabel(new Date("2026-10-01T01:14:00Z"))).toMatch(/^Numbers as of .*9:14 AM$/);
+  });
+});
+
+describe("periods", () => {
+  it("lastCompletedWeek is the Mon–Sun before the week containing today", () => {
+    expect(lastCompletedWeek("2026-10-05")).toEqual({ from: "2026-09-28", to: "2026-10-04" }); // Monday
+    expect(lastCompletedWeek("2026-10-04")).toEqual({ from: "2026-09-21", to: "2026-09-27" }); // Sunday
+    expect(lastCompletedWeek("2026-10-01")).toEqual({ from: "2026-09-21", to: "2026-09-27" }); // Thursday
+    expect(lastCompletedWeek("2027-01-01")).toEqual({ from: "2026-12-21", to: "2026-12-27" }); // year boundary
+  });
+  it("previousWeek is the Mon–Sun before a week", () => {
+    expect(previousWeek({ from: "2026-09-28", to: "2026-10-04" })).toEqual({ from: "2026-09-21", to: "2026-09-27" });
+  });
+  it("lastCompletedMonth / previousMonth are calendar months (leap-safe)", () => {
+    expect(lastCompletedMonth("2026-10-01")).toEqual({ from: "2026-09-01", to: "2026-09-30" });
+    expect(lastCompletedMonth("2024-03-15")).toEqual({ from: "2024-02-01", to: "2024-02-29" });
+    expect(lastCompletedMonth("2027-01-01")).toEqual({ from: "2026-12-01", to: "2026-12-31" });
+    expect(previousMonth({ from: "2026-09-01", to: "2026-09-30" })).toEqual({ from: "2026-08-01", to: "2026-08-31" });
+  });
+  it("trendWeeks returns n completed weeks, oldest first, ending last Sunday", () => {
+    const w = trendWeeks("2026-10-01", 8);
+    expect(w).toHaveLength(8);
+    expect(w[7]).toEqual({ from: "2026-09-21", to: "2026-09-27" });
+    expect(w[0]).toEqual({ from: "2026-08-03", to: "2026-08-09" });
   });
 });

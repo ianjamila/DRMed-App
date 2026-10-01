@@ -6,7 +6,7 @@
  */
 import { REFERRAL_NOT_RECORDED_LABEL, referralSourceLabel } from "@/lib/patients/referral-sources";
 import { humaniseCode } from "@/lib/format/humanise-code";
-import { daysBetweenISO, isoDateParts, shiftISODate } from "@/lib/dates/manila";
+import { daysBetweenISO, isoDateParts, isoWeekday, manilaDateTime, shiftISODate } from "@/lib/dates/manila";
 
 export const NOT_RECORDED = "not_recorded";
 export type Mode = "new" | "served";
@@ -172,6 +172,41 @@ export function bucketLabel(grain: Grain, iso: string): string {
   if (grain === "month") return `${MONTHS[month - 1]} ${year}`;
   const d = `${day} ${MONTHS[month - 1]}`;
   return grain === "week" ? `Wk of ${d}` : d;
+}
+
+/** The one stamp every Patient Sources surface shows: when its numbers were read. */
+export function asOfLabel(at: Date): string {
+  return `Numbers as of ${manilaDateTime(at)}`;
+}
+
+export interface Period { from: string; to: string }
+
+/** The Mon–Sun week before the week that contains `todayISO` (Manila calendar dates). */
+export function lastCompletedWeek(todayISO: string): Period {
+  const sinceMonday = (isoWeekday(todayISO) + 6) % 7;
+  const thisMonday = shiftISODate(todayISO, -sinceMonday);
+  return { from: shiftISODate(thisMonday, -7), to: shiftISODate(thisMonday, -1) };
+}
+/** The Mon–Sun week before `p` (p.from is a Monday). */
+export function previousWeek(p: Period): Period {
+  return lastCompletedWeek(p.from);
+}
+/** The calendar month before the month that contains `todayISO`. */
+export function lastCompletedMonth(todayISO: string): Period {
+  const { year, month } = isoDateParts(todayISO);
+  const firstThis = `${year}-${String(month).padStart(2, "0")}-01`;
+  const to = shiftISODate(firstThis, -1);
+  return { from: `${to.slice(0, 8)}01`, to };
+}
+/** The calendar month before `p` (p.from is the 1st). */
+export function previousMonth(p: Period): Period {
+  return lastCompletedMonth(p.from);
+}
+/** `n` completed Mon–Sun weeks ending last Sunday, oldest first. */
+export function trendWeeks(todayISO: string, n: number): Period[] {
+  const out: Period[] = [lastCompletedWeek(todayISO)];
+  while (out.length < n) out.unshift(previousWeek(out[0]));
+  return out;
 }
 
 /** The comparison period, or null when it would start before Patient Sources' first date (the database refuses that). */
