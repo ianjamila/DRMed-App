@@ -6,6 +6,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const router = vi.hoisted(() => ({ replace: vi.fn(), refresh: vi.fn() }));
 vi.mock("next/navigation", () => ({ useRouter: () => router }));
 vi.mock("./actions", () => ({ releaseTestsAction: vi.fn(), undoBulkQueueAction: vi.fn() }));
+// The bar also imports the visit page sample-delete action (server-only chain).
+vi.mock("../visits/[id]/actions", () => ({ deleteSampleVisitsFromQueueAction: vi.fn() }));
 vi.mock("./panel-actions", () => ({
   claimQueueSelectionAction: vi.fn(),
   unclaimQueueSelectionAction: vi.fn(),
