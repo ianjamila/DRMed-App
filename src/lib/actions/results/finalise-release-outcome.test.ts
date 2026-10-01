@@ -11,6 +11,7 @@ const out = (o: Partial<VisitReleaseOutcome>): VisitReleaseOutcome => ({
   skipped: [],
   warnings: [],
   announced: [],
+  notice: null,
   ...o,
 });
 const skipAll = (reason: string) => ids.map((id) => ({ id, reason }));

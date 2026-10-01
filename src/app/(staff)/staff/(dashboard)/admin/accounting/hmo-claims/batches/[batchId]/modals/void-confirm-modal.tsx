@@ -52,7 +52,9 @@ function VoidConfirmModalInner({
       setErr(null);
       const res = await onConfirm(reason.trim());
       if (!res.ok) {
-        setErr(res.error);
+        startTransition(() => {
+          setErr(res.error);
+        });
         return;
       }
       onClose();

@@ -34,11 +34,15 @@ export function DownloadButton({ testRequestId, resultId }: Props) {
             } else if (testRequestId) {
               downloadResult = await getPatientResultDownloadUrl(testRequestId);
             } else {
-              setError("No result identifier provided.");
+              start(() => {
+                setError("No result identifier provided.");
+              });
               return;
             }
             if (!downloadResult.ok) {
-              setError(downloadResult.error);
+              start(() => {
+                setError(downloadResult.error);
+              });
               return;
             }
             window.open(downloadResult.url, "_blank", "noopener,noreferrer");

@@ -131,7 +131,9 @@ export function MarkHistoricBilledModal({
         date_submitted: date,
         billed_by_staff_id: staffId,
       });
-      if (!res.ok) { setErr(res.error); return; }
+      if (!res.ok) { startTransition(() => {
+  setErr(res.error);
+}); return; }
       onSuccess?.({ updated: res.data?.updated ?? 0, batchId: res.data?.batchId ?? "" });
       router.refresh();
       onClose();
@@ -216,7 +218,9 @@ export function MarkHistoricPaidModal({
         or_number: orNumber.trim() || null,
         paid_recorded_by_staff_id: staffId,
       });
-      if (!res.ok) { setErr(res.error); return; }
+      if (!res.ok) { startTransition(() => {
+  setErr(res.error);
+}); return; }
       onSuccess?.({ updated: res.data?.updated ?? 0, batchId: res.data?.batchId ?? "" });
       router.refresh();
       onClose();
@@ -339,7 +343,9 @@ export function WriteOffHistoricModal({
         wrote_off_by_staff_id: staffId,
         write_off_date: date,
       });
-      if (!res.ok) { setErr(res.error); return; }
+      if (!res.ok) { startTransition(() => {
+  setErr(res.error);
+}); return; }
       onSuccess?.({ updated: res.data?.updated ?? 0, batchId: res.data?.batchId ?? "" });
       router.refresh();
       onClose();

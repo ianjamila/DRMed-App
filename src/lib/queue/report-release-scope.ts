@@ -29,3 +29,38 @@ export function reportReleaseBlock(
   );
   return unfinished.length > 0 ? REPORT_REFUSAL.notFinished(unfinished.length) : null;
 }
+
+/**
+ * What a chemistry panel's Release sends when the panel's members belong to
+ * more than one combined report. Each report is judged on its own: a finished
+ * report releases even while a sibling report on the same panel still waits
+ * (release_visit_results, 0198, refuses only the unfinished report). Members
+ * with no report are plain rows and always go. Display-only preflight; pure.
+ *
+ * `readyIds` are the ready members to send (members' original order).
+ * `reportBlock` is the first blocked report's wording, set only when nothing
+ * is sendable and some report was the reason.
+ */
+export function panelReleaseScope(
+  members: ReadonlyArray<{ id: string; status: string; resultId: string | null }>,
+): { readyIds: string[]; reportBlock: string | null } {
+  const byReport = new Map<string, Array<{ status: string; deleted: boolean }>>();
+  for (const m of members) {
+    if (m.resultId === null) continue;
+    const list = byReport.get(m.resultId) ?? [];
+    list.push({ status: m.status, deleted: false });
+    byReport.set(m.resultId, list);
+  }
+  const blocked = new Set<string>();
+  let firstBlock: string | null = null;
+  for (const [resultId, reportMembers] of byReport) {
+    const block = reportReleaseBlock(reportMembers);
+    if (block === null) continue;
+    blocked.add(resultId);
+    firstBlock ??= block;
+  }
+  const readyIds = members
+    .filter((m) => m.status === "ready_for_release" && (m.resultId === null || !blocked.has(m.resultId)))
+    .map((m) => m.id);
+  return { readyIds, reportBlock: readyIds.length === 0 ? firstBlock : null };
+}

@@ -357,10 +357,14 @@ function OverviewTab({ employee }: { employee: EmployeeDetail }) {
         regularization_date: regularizationDate || null,
       });
       if (!updateResult.ok) {
-        setError(updateResult.error);
+        startTransition(() => {
+          setError(updateResult.error);
+        });
         return;
       }
-      setSaved(true);
+      startTransition(() => {
+        setSaved(true);
+      });
       router.refresh();
     });
   };
@@ -376,10 +380,14 @@ function OverviewTab({ employee }: { employee: EmployeeDetail }) {
     startTransition(async () => {
       const result = await deactivateEmployeeAction(employee.id);
       if (!result.ok) {
-        setError(result.error);
+        startTransition(() => {
+          setError(result.error);
+        });
         return;
       }
-      setSaved(true);
+      startTransition(() => {
+        setSaved(true);
+      });
       router.refresh();
     });
   };
@@ -554,14 +562,18 @@ function AllowancesTab({
         effective_from: effectiveFrom,
       });
       if (!result.ok) {
-        setError(result.error);
+        startTransition(() => {
+          setError(result.error);
+        });
         return;
       }
-      setName("");
-      setAmount("");
-      setIsTaxable(true);
-      setEffectiveFrom(todayManila());
-      setShowAdd(false);
+      startTransition(() => {
+        setName("");
+        setAmount("");
+        setIsTaxable(true);
+        setEffectiveFrom(todayManila());
+        setShowAdd(false);
+      });
       router.refresh();
     });
   };
@@ -576,7 +588,9 @@ function AllowancesTab({
     startTransition(async () => {
       const result = await endAllowanceAction(a.id, today);
       if (!result.ok) {
-        setRowError(result.error);
+        startTransition(() => {
+          setRowError(result.error);
+        });
         return;
       }
       router.refresh();
@@ -792,13 +806,17 @@ function LoansTab({
         notes: reason.trim() || null,
       });
       if (!result.ok) {
-        setError(result.error);
+        startTransition(() => {
+          setError(result.error);
+        });
         return;
       }
-      setPrincipal("");
-      setAmort("");
-      setReason("");
-      setShowAdd(false);
+      startTransition(() => {
+        setPrincipal("");
+        setAmort("");
+        setReason("");
+        setShowAdd(false);
+      });
       router.refresh();
     });
   };
@@ -808,7 +826,9 @@ function LoansTab({
     startTransition(async () => {
       const result = await approveLoanAction({ loan_id: loan.id });
       if (!result.ok) {
-        setRowError(result.error);
+        startTransition(() => {
+          setRowError(result.error);
+        });
         return;
       }
       router.refresh();
@@ -1065,7 +1085,9 @@ function DisbursementDialog({
         start_period_id: periodId,
       });
       if (!result.ok) {
-        setError(result.error);
+        startTransition(() => {
+          setError(result.error);
+        });
         return;
       }
       onDone();
@@ -1132,7 +1154,7 @@ function ReasonDialog({
     }
     startTransition(async () => {
       const errMsg = await onSubmit(text.trim());
-      if (errMsg) setError(errMsg);
+      if (errMsg) startTransition(() => setError(errMsg));
     });
   };
 
@@ -1441,7 +1463,9 @@ function LeaveGrantDialog({
         reason: reason.trim(),
       });
       if (!result.ok) {
-        setError(result.error);
+        startTransition(() => {
+          setError(result.error);
+        });
         return;
       }
       onClose();
@@ -1542,7 +1566,9 @@ function LeaveUsageDialog({
         reason: reason.trim() || null,
       });
       if (!result.ok) {
-        setError(result.error);
+        startTransition(() => {
+          setError(result.error);
+        });
         return;
       }
       onClose();
@@ -1635,7 +1661,9 @@ function LeaveCashDialog({
         reason: reason.trim() || null,
       });
       if (!result.ok) {
-        setError(result.error);
+        startTransition(() => {
+          setError(result.error);
+        });
         return;
       }
       onClose();

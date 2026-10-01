@@ -83,7 +83,9 @@ export function PeriodsClient({
       setCreatingRunFor(periodId);
       startCreateRunTransition(async () => {
         const result = await createRunAction({ period_id: periodId });
-        setCreatingRunFor(null);
+        startCreateRunTransition(() => {
+          setCreatingRunFor(null);
+        });
         if (!result.ok) {
           window.alert(result.error);
           return;
@@ -106,7 +108,9 @@ export function PeriodsClient({
       setClosingId(periodId);
       startCloseTransition(async () => {
         const result = await closePeriodAction(periodId);
-        setClosingId(null);
+        startCloseTransition(() => {
+          setClosingId(null);
+        });
         if (!result.ok) {
           window.alert(result.error);
           return;
@@ -408,7 +412,9 @@ function CreatePeriodDialog({
         pay_date: payDate,
       });
       if (!result.ok) {
-        setError(result.error);
+        startTransition(() => {
+          setError(result.error);
+        });
         return;
       }
       onCreated();

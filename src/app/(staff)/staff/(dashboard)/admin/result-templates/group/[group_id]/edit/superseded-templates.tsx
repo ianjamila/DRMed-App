@@ -36,9 +36,13 @@ export function SupersededTemplates(props: {
         templateId,
         groupId: props.groupId,
       });
-      setBusyId(null);
+      start(() => {
+        setBusyId(null);
+      });
       if (!res.ok) {
-        setError(res.error);
+        start(() => {
+          setError(res.error);
+        });
         return;
       }
       router.refresh();

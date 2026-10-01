@@ -80,8 +80,10 @@ export function VendorFormClient(props: Props) {
         const targetId = mode === "create" ? r.data.id : props.vendorId;
         router.push(`/staff/admin/accounting/ap/vendors/${targetId}`);
       } else {
-        setError(r.error);
-        setFieldError(r.field ?? null);
+        startTransition(() => {
+          setError(r.error);
+          setFieldError(r.field ?? null);
+        });
       }
     });
   }

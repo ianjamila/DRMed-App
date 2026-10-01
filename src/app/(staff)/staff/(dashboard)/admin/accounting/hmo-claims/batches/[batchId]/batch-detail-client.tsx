@@ -784,7 +784,7 @@ function ItemRowActions({
     startTransition(async () => {
       setErr(null);
       const res = await removeItemFromBatchAction({ item_id: item.id });
-      if (!res.ok) setErr(res.error);
+      if (!res.ok) startTransition(() => setErr(res.error));
     });
   }
 

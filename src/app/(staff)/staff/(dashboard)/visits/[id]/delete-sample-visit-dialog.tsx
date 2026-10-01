@@ -42,7 +42,9 @@ export function DeleteSampleVisitDialog({
       setErr(null);
       const result = await deleteSampleVisitAction(visitId, reason.trim());
       if (!result.ok) {
-        setErr(result.error);
+        startTransition(() => {
+          setErr(result.error);
+        });
         return;
       }
       reset();

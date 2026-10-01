@@ -66,12 +66,16 @@ export function VoidPaymentDialog({
       setErr(null);
       const result = await voidPaymentAction(paymentId, { category, reason: reason.trim() });
       if (!result.ok) {
-        setErr(result.error);
+        startTransition(() => {
+          setErr(result.error);
+        });
         return;
       }
-      setOpen(false);
-      setCategory("");
-      setReason("");
+      startTransition(() => {
+        setOpen(false);
+        setCategory("");
+        setReason("");
+      });
     });
   }
 

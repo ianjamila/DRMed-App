@@ -57,11 +57,15 @@ export function LikelyNoShowBar({ bookings }: Props) {
     start(async () => {
       const result = await markLikelyNoShowsAction(batch);
       if (!result.ok) {
-        setError(result.error);
+        start(() => {
+          setError(result.error);
+        });
         router.refresh();
         return;
       }
-      setDone({ kind: "marked", bookings: result.data.marked });
+      start(() => {
+        setDone({ kind: "marked", bookings: result.data.marked });
+      });
       router.refresh();
     });
   }
@@ -71,11 +75,15 @@ export function LikelyNoShowBar({ bookings }: Props) {
     start(async () => {
       const result = await undoLikelyNoShowsAction(marked);
       if (!result.ok) {
-        setError(result.error);
+        start(() => {
+          setError(result.error);
+        });
         router.refresh();
         return;
       }
-      setDone({ kind: "undone", count: result.data.marked.length, heldBack: result.data.heldBack ?? 0 });
+      start(() => {
+        setDone({ kind: "undone", count: result.data.marked.length, heldBack: result.data.heldBack ?? 0 });
+      });
       router.refresh();
     });
   }

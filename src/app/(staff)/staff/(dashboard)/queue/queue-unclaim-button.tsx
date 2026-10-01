@@ -36,11 +36,15 @@ export function QueueUnclaimButton({
         reason: reason.trim() || undefined,
       });
       if (!result.ok) {
-        setErr(result.error);
+        startTransition(() => {
+          setErr(result.error);
+        });
         return;
       }
-      setConfirmOpen(false);
-      setReason("");
+      startTransition(() => {
+        setConfirmOpen(false);
+        setReason("");
+      });
       router.refresh();
     });
   }

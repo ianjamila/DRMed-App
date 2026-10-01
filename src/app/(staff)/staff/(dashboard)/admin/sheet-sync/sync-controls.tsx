@@ -44,17 +44,23 @@ export function SyncSwitch({
       try {
         const res = await setSheetSyncPausedAction({ paused: nextPaused, reason: reasonToSend });
         if (!res.ok) {
-          setErr(res.error);
+          startTransition(() => {
+            setErr(res.error);
+          });
           return;
         }
-        setPaused(nextPaused);
-        setConfirming(false);
-        setReason("");
+        startTransition(() => {
+          setPaused(nextPaused);
+          setConfirming(false);
+          setReason("");
+        });
       } catch (e) {
         // A rejected fetch (timeout, offline) would otherwise bubble to the
         // nearest error boundary instead of showing inline here.
         console.error("sheet sync pause toggle failed", e);
-        setErr("Could not reach the server. Check your connection and try again.");
+        startTransition(() => {
+          setErr("Could not reach the server. Check your connection and try again.");
+        });
       }
     });
   }
@@ -212,14 +218,23 @@ export function SyncNow({
       try {
         const res = await runSheetSyncNowAction({ dryRun });
         if (!res.ok) {
-          setErr(res.error);
+          startTransition(() => {
+            setErr(res.error);
+          });
           return;
         }
-        setResult(res.data);
-        if (res.data.error) setErr(res.data.error);
+        startTransition(() => {
+          setResult(res.data);
+        });
+        if (res.data.error) {
+          const message = res.data.error;
+          startTransition(() => setErr(message));
+        }
       } catch (e) {
         console.error("sheet sync run failed", e);
-        setErr("Could not reach the server. Check your connection and try again.");
+        startTransition(() => {
+          setErr("Could not reach the server. Check your connection and try again.");
+        });
       }
     });
   }
@@ -296,14 +311,20 @@ export function UndoRunButton({ runId, runLabel }: { runId: string; runLabel: st
       try {
         const res = await revertRunAction({ runId });
         if (!res.ok) {
-          setErr(res.error);
+          startTransition(() => {
+            setErr(res.error);
+          });
           return;
         }
-        setDone(revertSummaryLine(res.data));
-        setOpen(false);
+        startTransition(() => {
+          setDone(revertSummaryLine(res.data));
+          setOpen(false);
+        });
       } catch (e) {
         console.error("sheet sync undo failed", e);
-        setErr("Could not reach the server. Check your connection and try again.");
+        startTransition(() => {
+          setErr("Could not reach the server. Check your connection and try again.");
+        });
       }
     });
   }
@@ -386,14 +407,20 @@ export function ReleaseUndoButton({ undoRunId, runLabel }: { undoRunId: string; 
       try {
         const res = await releaseUndoAction({ undoRunId });
         if (!res.ok) {
-          setErr(res.error);
+          startTransition(() => {
+            setErr(res.error);
+          });
           return;
         }
-        setDone(releaseSummaryLine(res.data));
-        setOpen(false);
+        startTransition(() => {
+          setDone(releaseSummaryLine(res.data));
+          setOpen(false);
+        });
       } catch (e) {
         console.error("sheet sync release failed", e);
-        setErr("Could not reach the server. Check your connection and try again.");
+        startTransition(() => {
+          setErr("Could not reach the server. Check your connection and try again.");
+        });
       }
     });
   }

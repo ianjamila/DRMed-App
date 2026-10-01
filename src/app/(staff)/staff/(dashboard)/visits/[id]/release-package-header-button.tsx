@@ -45,7 +45,7 @@ export function ReleasePackageHeaderButton({
           start(async () => {
             setErr(null);
             const result = await releasePackageHeaderAction(headerId, visitId);
-            if (!result.ok) setErr(result.error);
+            if (!result.ok) start(() => setErr(result.error));
           })
         }
       >

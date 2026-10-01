@@ -121,7 +121,9 @@ export function ManualJeForm({
     startTransition(async () => {
       const result = await createJournalEntryAction(payload);
       if (!result.ok) {
-        setError(result.error);
+        startTransition(() => {
+          setError(result.error);
+        });
         return;
       }
       router.push(`/staff/admin/accounting/journal/${result.id}`);
