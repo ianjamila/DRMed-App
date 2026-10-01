@@ -17,6 +17,8 @@ const fx = vi.hoisted(() => ({
 // and the sender is a recording stub — the legacy notifiers above stay the default.
 const outbox = vi.hoisted(() => ({
   enabled: true as unknown,
+  /** Successive answers for release_notices_enabled (consumed first), for a flag flipped mid-flight. */
+  enabledSeq: [] as unknown[],
   enabledError: null as null | { message: string },
   claimData: [{ id: "n1", lease_token: "lease-1", status: "sending" }] as unknown[],
   claimError: null as null | { message: string },
@@ -30,7 +32,7 @@ vi.mock("@/lib/supabase/admin", () => ({
   createAdminClient: () => ({
     rpc: async (name: string, args: unknown) => {
       outbox.rpcs.push({ name, args });
-      if (name === "release_notices_enabled") return { data: outbox.enabled, error: outbox.enabledError };
+      if (name === "release_notices_enabled") return { data: outbox.enabledSeq.length ? outbox.enabledSeq.shift() : outbox.enabled, error: outbox.enabledError };
       if (name === "claim_release_notice") return { data: outbox.claimData, error: outbox.claimError };
       if (name === "cancel_release_notice") return { data: outbox.cancelData, error: outbox.cancelError };
       throw new Error("unexpected rpc " + name);
@@ -104,6 +106,7 @@ beforeEach(() => {
   fx.notifyThrows = false;
   fx.notice = { status: "sent", channels: ["email"], reason: null };
   outbox.enabled = true;
+  outbox.enabledSeq = [];
   outbox.enabledError = null;
   outbox.claimData = [{ id: "n1", lease_token: "lease-1", status: "sending" }];
   outbox.claimError = null;
@@ -543,6 +546,17 @@ describe("outbox fast path", () => {
     expect(o.notice).toEqual({ status: "retrying", channels: [], reason: "will retry automatically" });
     expect(outbox.sent).toHaveLength(0);
     expect(fx.notified).toHaveLength(0);
+  });
+
+  it("a claim that returns nothing because the flag flipped OFF since the read: re-read, cancel, THEN the legacy send", async () => {
+    outbox.claimData = [];
+    outbox.enabledSeq = [true, false]; // ON at the first read, OFF at the re-read after the empty claim
+    const flagReads = () => outbox.rpcs.filter((r) => r.name === "release_notices_enabled").length;
+    const o = await run([{ id: "a" }], [], ["a"], withNotice("n1")).out;
+    expect(flagReads()).toBe(2);
+    expect(adminRpcs()).toEqual(["release_notices_enabled", "claim_release_notice", "release_notices_enabled", "cancel_release_notice"]);
+    expect(fx.notified).toHaveLength(1);
+    expect(o.notice?.status).toBe("sent");
   });
 
   it("a claim that errors is reported and also reads as retrying (the sweeper owns the row)", async () => {

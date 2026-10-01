@@ -94,3 +94,5 @@ PR 3 shipped as 0214 (`release_notice_enqueue`): enqueue + `notice_id`, undo can
 
 Then: set the Vault secrets, flip the flag on prod after verifying. Rollback = flip the flag off (never delete
 the row).
+
+Rollback caveat: flipping the flag OFF leaves any `pending` / `retry` notices waiting (claim returns nothing and the sweeper is dormant) until it is turned back ON. Before switching off for good, cancel them (`cancel_release_notice`) or legacy-send them. The fast path already does this for its own just-enqueued row: a claim that finds nothing re-reads the flag and, if it is now OFF, cancels the row and sends through the legacy path.

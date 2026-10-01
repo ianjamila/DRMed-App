@@ -4,7 +4,7 @@
 -- DB proof for migration 0214 (release_visit_results enqueues the release notice,
 -- undo_visit_release cancels it, cancel_release_notice is the fenced cancel).
 -- Sequential only — the races are in scripts/report-release-concurrency-proof.ts
--- (N1-N4, control mutants M14-M16). Runs inside BEGIN/ROLLBACK and leaves no state
+-- (N0, N1, N2, N3a, N3b, N5, N6, control mutants M14-M18). Runs inside BEGIN/ROLLBACK and leaves no state
 -- (the flag flips roll back with it). Self-contained fixtures.
 --
 -- A whole smoke is ONE transaction, so every call shares one now(): visits are

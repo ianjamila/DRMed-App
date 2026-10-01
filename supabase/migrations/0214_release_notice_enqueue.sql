@@ -34,7 +34,7 @@
 -- Claimers (claim_release_notice, FOR UPDATE SKIP LOCKED) take only notices rows
 -- and never wait, so they cannot sit in a wait cycle with release / undo; the
 -- undo's UPDATE waits for a claimer at most while that claimer's short
--- transaction ends. Proof: scripts/report-release-concurrency-proof.ts (N1-N4).
+-- transaction ends. Proof: scripts/report-release-concurrency-proof.ts (N0, N1, N2, N3a, N3b, N5, N6; control mutants M14-M18).
 -- No P-codes: nothing new is raised.
 -- =============================================================================
 

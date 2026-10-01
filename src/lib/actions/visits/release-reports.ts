@@ -111,7 +111,7 @@ export async function releaseAuditArg(metadata: Record<string, Json>): Promise<J
  * is held elsewhere, the claim fails) leaves the row pending, which the 5-minute
  * sweeper picks up — so the operator is told it "will retry automatically".
  */
-async function notifyViaOutbox(noticeId: string, visitId: string): Promise<ReleaseNoticeOutcome> {
+async function notifyViaOutbox(noticeId: string, visitId: string): Promise<ReleaseNoticeOutcome | "legacy"> {
   const admin = createAdminClient();
   const { data, error } = await admin.rpc("claim_release_notice", { p_id: noticeId, p_limit: 1 });
   if (error) {
@@ -123,7 +123,16 @@ async function notifyViaOutbox(noticeId: string, visitId: string): Promise<Relea
     return noticeRetrying();
   }
   const claimed = (data ?? [])[0] as ReleaseNoticeRow | undefined;
-  if (!claimed) return noticeRetrying();
+  if (!claimed) {
+    // claim_release_notice returns nothing while the flag is OFF. If it was flipped OFF between
+    // our flag read and the claim, the row would sit behind a dormant sweeper: take the
+    // flag-off path (cancel, then the legacy send) instead of stranding the patient.
+    if (!(await outboxEnabled())) {
+      const cancelled = await cancelEnqueuedNotice(noticeId, visitId);
+      return cancelled === "legacy" ? "legacy" : cancelled;
+    }
+    return noticeRetrying();
+  }
   return (await sendReleaseNotice(claimed)).outcome;
 }
 
@@ -181,9 +190,13 @@ export async function notifyReleased(
   if (rows.length === 0) return null;
   try {
     if (noticeId) {
-      if (await outboxEnabled()) return await notifyViaOutbox(noticeId, visitId);
+      if (await outboxEnabled()) {
+        const viaOutbox = await notifyViaOutbox(noticeId, visitId);
+        if (viaOutbox !== "legacy") return viaOutbox;
+      } else {
       const cancelled = await cancelEnqueuedNotice(noticeId, visitId);
       if (cancelled !== "legacy") return cancelled;
+      }
     }
     if (rows.length === 1) {
       return await notifyResultReleased({ testRequestId: rows[0].id, visitId, releaseMedium: medium, bulkBatchId });
