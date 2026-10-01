@@ -187,6 +187,7 @@ async function assertDeletable(s: Client, patientId: string) {
     throw new Error(`fixture is not deletable — adjust it, blockers: ${JSON.stringify(blockers)}`);
   }
 }
+// concurrency-proof: delete_patient
 const del = (c: Client, patientId: string) =>
   c.query(`select public.delete_patient($1, 'test_record', '', $2, '{}'::jsonb)`, [patientId, ADMIN]);
 const tomorrowIso = () => new Date(Date.now() + 36 * 3600_000).toISOString();
@@ -290,6 +291,7 @@ async function main() {
       await b.query("commit");
       expectEq("delete outcome", await d, "P0059");
     });
+    // concurrency-proof: appointments_insert_slot_guarded
 
     await race("delete first → booking RPC refused", async (a, b, s2) => {
       const p = await mkPatient(s2, "DA");
@@ -385,6 +387,7 @@ async function main() {
       expectEq("edit outcome", await w, "P0058");
     });
 
+    // concurrency-proof: resolve_patient_guarded
     await race("resolver blocked behind a delete re-reads (P0072), retry gets a fresh record", async (a, b, s2) => {
       const p = await mkPatient(s2, "RB");
       const fields = JSON.stringify({ first_name: "Race", last_name: p.last, birthdate: "1990-01-01", email: p.email });
@@ -499,6 +502,7 @@ async function main() {
           [bat, await mkLine(s2, v, "released", 100)])).rows[0].id as string;
       return { bat, va, vb, ia: await item(va), ib: await item(vb) };
     }
+    // concurrency-proof: record_hmo_settlement
     const settle = (c: Client, bat: string, item: string) =>
       c.query(`select public.record_hmo_settlement($1, $2, 100, now(), $3::jsonb)`,
         [ADMIN, bat, JSON.stringify([{ item_id: item, amount_php: 100 }])]);
@@ -673,6 +677,7 @@ async function main() {
       await a.query("begin");
       await del(a, pd.id);
       await a.query(`update public.appointments set status = 'cancelled' where id = $1`, [apC]);
+      // concurrency-proof: reschedule_closure_appointments
       const w = b.query(`select public.reschedule_closure_appointments($1, $2, false, null) as r`, [day, ADMIN]);
       expectEq("reschedule waited", await stillWaiting(w.then(() => undefined)), true);
       expectEq("…on the deleted patient's lifecycle lock", await waitingOn(s2, b), "lifecycle");
@@ -736,6 +741,7 @@ async function main() {
       }
     });
 
+    // concurrency-proof: result_edit_commit
     // (b) result_edit_commit's v_replay_first path: session 1 (here, the
     // pre-check) sees a COMMITTED amendment for attempt X. Before session 2's
     // own re-check runs, the amendment vanishes — its test is unlinked and
@@ -781,6 +787,7 @@ async function main() {
       expectEq("the call ends P0066 once it finds the attempt gone", await call, "P0066");
     });
 
+    // concurrency-proof: lifecycle_lock, lifecycle_lock_and_assert
     // (c) Sorted lock acquisition (proves the sort in lifecycle_lock): two
     // sessions call lifecycle_lock_and_assert on the SAME two patients in
     // OPPOSITE array order, both EXCLUSIVE so they genuinely contend. Without

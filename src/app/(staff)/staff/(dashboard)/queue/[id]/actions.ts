@@ -46,6 +46,8 @@ import {
   callResultCreateLinked,
   racedStructuredDraftOutcome,
   createLinkedResult,
+  sharedReportVerdict,
+  MEMBERSHIP_READ_ERROR,
 } from "@/lib/actions/results/create-linked";
 import { translatePgError } from "@/lib/accounting/pg-errors";
 import { resolveCorrectedNotifyOutcome, type CorrectedNotifyOutcome } from "@/lib/notifications/notify-corrected";
@@ -229,6 +231,7 @@ async function prepareStructured(
 
   let resultId = existing?.id ?? null;
   let isNewResult = false;
+  let existingShape: "shared" | "single" | "unknown" = "single";
 
   if (!resultId) {
     // 0184: the draft row and its link in one transaction (was two calls —
@@ -254,17 +257,26 @@ async function prepareStructured(
       const members = r ? await resultMemberCount(admin, r.id) : 0;
       const outcome = racedStructuredDraftOutcome(r, members);
       if (outcome === "combined_report") return { ok: false, error: COMBINED_REPORT_ENTRY_ERROR };
+      if (outcome === "retry") return { ok: false, error: MEMBERSHIP_READ_ERROR };
       if (outcome !== "continue") return { ok: false, error: created.error };
       resultId = r!.id;
     } else {
       return { ok: false, error: created.error };
     }
-  } else if (existing?.report_group_id || (existing && (await resultMemberCount(admin, existing.id)) > 1)) {
+  } else if (
+    existing &&
+    (existingShape = existing.report_group_id
+      ? "shared"
+      : sharedReportVerdict(false, await resultMemberCount(admin, existing.id))) !== "single"
+  ) {
     // Already part of a combined report (a consolidated draft someone started
     // for the whole panel — report_group_id set, or linked to more than one
     // test, the same rule as the race branch above): values go in there,
-    // never over it from here.
-    return { ok: false, error: COMBINED_REPORT_ENTRY_ERROR };
+    // never over it from here. A failed membership read is not "one test".
+    return {
+      ok: false,
+      error: existingShape === "unknown" ? MEMBERSHIP_READ_ERROR : COMBINED_REPORT_ENTRY_ERROR,
+    };
   } else if (existing?.generation_kind !== "structured") {
     return {
       ok: false,
@@ -897,22 +909,24 @@ const SHARED_REPORT_AMEND_ERROR =
 const COMBINED_REPORT_ENTRY_ERROR =
   "This test is part of a combined report (such as Chemistry). Enter its values on the combined report.";
 
-async function resultMemberCount(admin: ReturnType<typeof createAdminClient>, resultId: string): Promise<number> {
-  const { count } = await admin
+// How many tests a result is linked to, or null when the read failed — the
+// caller must refuse on null (sharedReportVerdict), never read it as one test.
+async function resultMemberCount(admin: ReturnType<typeof createAdminClient>, resultId: string): Promise<number | null> {
+  const { count, error } = await admin
     .from("result_test_requests")
     .select("test_request_id", { count: "exact", head: true })
     .eq("result_id", resultId);
-  return count ?? 0;
+  return error ? null : count;
 }
 
-async function isSharedReport(
+async function sharedReportOf(
   admin: ReturnType<typeof createAdminClient>,
   resultId: string,
   serviceReportGroupId: string | null,
   resultReportGroupId: string | null,
-): Promise<boolean> {
-  if (serviceReportGroupId || resultReportGroupId) return true;
-  return (await resultMemberCount(admin, resultId)) > 1;
+): Promise<"shared" | "single" | "unknown"> {
+  if (serviceReportGroupId || resultReportGroupId) return "shared";
+  return sharedReportVerdict(false, await resultMemberCount(admin, resultId));
 }
 
 // The form carries the amendment_count it was opened on; result_edit_commit
@@ -993,16 +1007,14 @@ export async function amendResultAction(
     if (!isSectionAllowed(sectionsForRole(session.role), gateSvc?.section ?? null)) {
       return { ok: false, error: SECTION_DENIED_ERROR };
     }
-    if (
-      await isSharedReport(
-        admin,
-        result.id,
-        gateSvc?.report_group_id ?? null,
-        result.report_group_id,
-      )
-    ) {
-      return { ok: false, error: SHARED_REPORT_AMEND_ERROR };
-    }
+    const shared = await sharedReportOf(
+      admin,
+      result.id,
+      gateSvc?.report_group_id ?? null,
+      result.report_group_id,
+    );
+    if (shared === "unknown") return { ok: false, error: MEMBERSHIP_READ_ERROR };
+    if (shared === "shared") return { ok: false, error: SHARED_REPORT_AMEND_ERROR };
   }
   const visit = Array.isArray(testRow.visits) ? testRow.visits[0] : testRow.visits;
   if (!visit) return { ok: false, error: "Visit not found." };
@@ -1187,9 +1199,9 @@ export async function amendStructuredResultAction(
   if (!isSectionAllowed(sectionsForRole(session.role), svc.section)) {
     return { ok: false, error: SECTION_DENIED_ERROR };
   }
-  if (await isSharedReport(admin, result.id, svc.report_group_id, result.report_group_id)) {
-    return { ok: false, error: SHARED_REPORT_AMEND_ERROR };
-  }
+  const shared = await sharedReportOf(admin, result.id, svc.report_group_id, result.report_group_id);
+  if (shared === "unknown") return { ok: false, error: MEMBERSHIP_READ_ERROR };
+  if (shared === "shared") return { ok: false, error: SHARED_REPORT_AMEND_ERROR };
 
   // 0167: no amendment on an inactive record — restore it first.
   const active = await assertPatientActive(admin, visit.patient_id);

@@ -1962,6 +1962,7 @@ async function main() {
       const [x, y] = items.rows.map((r) => r.id);
       await setRole("service_role", null);
 
+      // concurrency-proof: sheet_review_resolve (check 28: resolve vs a live run's lease)
       const real = await acquire("manual", false);
       await expectPgError("resolve while a real run is live", "P0062", () =>
         q(`select public.sheet_review_resolve($1::uuid, null, 'dismiss', null)`, [x]),

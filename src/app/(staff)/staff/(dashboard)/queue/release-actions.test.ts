@@ -52,8 +52,8 @@ const u = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, "0")}
 const [A, B, C, D, E] = [u(1), u(2), u(3), u(4), u(5)];
 const BAD_INPUT = "Could not read the selection — refresh the queue and try again.";
 
-function setup(rows: FakeTestRow[], links: FakeLink[] = []) {
-  const fake = makeFakeReleaseDb({ rows, links });
+function setup(rows: FakeTestRow[], links: FakeLink[] = [], staff?: Record<string, string>) {
+  const fake = makeFakeReleaseDb({ rows, links, staff });
   fx.db = fake.client;
   return fake;
 }
@@ -358,13 +358,39 @@ describe("releaseTestsAction — concurrency", () => {
     expect(fake.rows.every((r) => r.status === "released")).toBe(true);
   });
 
-  it("a selected test released by someone else just before the write is skipped as raced", async () => {
+  it("a selected test released by someone else just before the write is skipped, naming who and when", async () => {
+    const fake = setup([{ id: A }, { id: B }], [], { maria: "Maria Santos" });
+    fake.hooks.beforeRpc = () => {
+      const row = fake.rows.find((r) => r.id === B)!;
+      row.status = "released";
+      row.releasedBy = "maria";
+      row.releasedAt = "2026-09-30T06:14:00+00:00";
+    };
+    const res = await releaseTestsAction({ testRequestIds: [A, B], medium: "email" });
+    expect(res).toMatchObject({ ok: true, changedIds: [A], skipped: [{ id: B, reason: expect.stringMatching(/^Already released by Maria S\. on .+ at 2:14 PM\.$/) }] });
+    expect(fx.notifyOne).toHaveLength(1);
+  });
+
+  it("raced on a row that is no longer released keeps RACED_REASON", async () => {
     const fake = setup([{ id: A }, { id: B }]);
     fake.hooks.beforeRpc = () => {
-      fake.rows.find((r) => r.id === B)!.status = "released";
+      fake.rows.find((r) => r.id === B)!.status = "in_progress";
     };
     const res = await releaseTestsAction({ testRequestIds: [A, B], medium: "email" });
     expect(res).toMatchObject({ ok: true, changedIds: [A], skipped: [{ id: B, reason: RACED_REASON }] });
-    expect(fx.notifyOne).toHaveLength(1);
+  });
+
+  it("a stale click on a line already released (caught by the pre-read) names who and when", async () => {
+    setup([{ id: A, status: "released", releasedBy: "u1", releasedAt: "2026-09-30T06:14:00+00:00" }]);
+    const res = await releaseTestsAction({ testRequestIds: [A], medium: "email" });
+    expect(res).toMatchObject({ ok: true, changedIds: [], skipped: [{ id: A, reason: expect.stringMatching(/^You already released this on .+ at 2:14 PM\.$/) }] });
+  });
+
+  it("a stale click on a released line whose lookup fails keeps the not-ready wording", async () => {
+    const fake = setup([{ id: A, status: "released", releasedBy: "maria", releasedAt: "2026-09-30T06:14:00+00:00" }]);
+    let reads = 0;
+    fake.hooks.beforeRead = () => { if (++reads === 2) fake.failNext("test_requests", "read"); };
+    const res = await releaseTestsAction({ testRequestIds: [A], medium: "email" });
+    expect(res).toMatchObject({ ok: true, skipped: [{ id: A, reason: RELEASE_REFUSAL.notReady }] });
   });
 });

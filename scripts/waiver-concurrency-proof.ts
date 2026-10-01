@@ -494,6 +494,7 @@ async function scenario(id: string, name: string, body: () => Promise<string | v
 async function forcedScenarios(mode: Mode): Promise<void> {
   curMode = mode;
 
+  // concurrency-proof: waive_visit_balance (S1: waiver queues behind a payment on the visit lock and reads paid_php after it commits)
   // ---- S1 payment-then-waive (old 1) --------------------------------------
   await scenario("S1", "payment-then-waive", async () => {
     const f = await mkVisit({ prices: [1000], note: "S1" });
@@ -512,6 +513,7 @@ async function forcedScenarios(mode: Mode): Promise<void> {
     return "waived 600 after the payment committed";
   });
 
+  // concurrency-proof: guard_payment_on_waived_visit (S2 payment insert and S8 void each wait on the visit lock, then are refused P0070)
   // ---- S2 waive-then-payment (old 2) --------------------------------------
   await scenario("S2", "waive-then-payment", async () => {
     const f = await mkVisit({ prices: [1000], note: "S2" });
@@ -548,6 +550,7 @@ async function forcedScenarios(mode: Mode): Promise<void> {
     return "allocation pending, no standalone JE";
   });
 
+  // concurrency-proof: waiver_unrecognise_line, fn_undo_release_bridge, waiver_post_allocation (S4: the undo waits behind the waiver that posted the standalone JE, then reverses it; S3/S5 race the same undo path)
   // ---- S4 waive-then-undo (old 4) -----------------------------------------
   await scenario("S4", "waive-then-undo", async () => {
     const f = await mkVisit({ prices: [1000], paid: 1000, release: [0], voidAfter: true, note: "S4" });
