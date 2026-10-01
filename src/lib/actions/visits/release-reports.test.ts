@@ -228,6 +228,56 @@ describe("releaseVisitSelection", () => {
     expect(o.skipped).toEqual([{ id: "b", reason: RACED_REASON }]);
   });
 
+  describe("a raced release names who and when", () => {
+    const sess = (id: string) => ({ user_id: id, role: "medtech" }) as never;
+    const raced = (rows: FakeTestRow[], caller: string, staff: Record<string, string> = { maria: "Maria Santos" }) => {
+      const fake = makeFakeReleaseDb({ rows, staff });
+      const out = releaseVisitSelection({
+        supabase: fake.client, session: sess(caller), visitId: "v1", selectedIds: rows.map((r) => r.id),
+        medium: "email", auditMeta: { source: "queue" },
+      });
+      return { fake, out };
+    };
+    const stamp = "2026-09-30T06:14:00+00:00"; // Sep 30, 2:14 PM Manila (a past date, so it always carries the date)
+
+    it("another staff member released it (RPC refuses not_ready)", async () => {
+      const { out } = raced([{ id: "a", status: "released", releasedBy: "maria", releasedAt: stamp }], "u1");
+      const o = await out;
+      expect(o.skipped).toEqual([{ id: "a", reason: expect.stringMatching(/^Already released by Maria S\. on .+ at 2:14 PM\.$/) }]);
+      expect(o.changedIds).toEqual([]);
+    });
+
+    it("the caller released it themselves (a double-click or second tab)", async () => {
+      const { out } = raced([{ id: "a", status: "released", releasedBy: "u1", releasedAt: stamp }], "u1");
+      expect((await out).skipped).toEqual([{ id: "a", reason: expect.stringMatching(/^You already released this on .+ at 2:14 PM\.$/) }]);
+    });
+
+    it("an id the result lists nowhere gets the same naming", async () => {
+      const { fake, out } = raced([{ id: "a", status: "released", releasedBy: "maria", releasedAt: stamp }], "u1");
+      fake.overrideNextRpc("release_visit_results", { released: [], refused: [] });
+      expect((await out).skipped[0].reason).toMatch(/^Already released by Maria S\./);
+    });
+
+    it("a row that is not released now keeps RACED_REASON", async () => {
+      const { fake, out } = raced([{ id: "a", status: "in_progress" }], "u1");
+      fake.overrideNextRpc("release_visit_results", { released: [], refused: [refusal("a", "not_ready")] });
+      expect((await out).skipped).toEqual([{ id: "a", reason: RACED_REASON }]);
+    });
+
+    it("a failed lookup falls back to RACED_REASON and the call still resolves", async () => {
+      const { fake, out } = raced([{ id: "a", status: "released", releasedBy: "maria", releasedAt: stamp }], "u1");
+      fake.failNext("test_requests", "read");
+      const o = await out;
+      expect(o.skipped).toEqual([{ id: "a", reason: RACED_REASON }]);
+    });
+
+    it("a lookup does not run when nothing raced", async () => {
+      const { fake, out } = raced([{ id: "a" }], "u1");
+      await out;
+      expect(fake.calls).toHaveLength(0);
+    });
+  });
+
   it("a refused report and a plain row in one call: only the plain row is announced", async () => {
     const { fake, out } = run(
       [{ id: "a" }, { id: "b", status: "result_uploaded" }, { id: "c" }],
