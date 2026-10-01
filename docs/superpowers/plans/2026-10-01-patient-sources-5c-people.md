@@ -4,13 +4,13 @@
 
 **Goal:** Rebuild `public.patient_sources_people(p_from date, p_to date, p_mode text, p_channel text, p_limit int, p_offset int)` as a thin wrapper over a new closed helper `public._ps_sec_people(...)` that reads the shared arrays from 0206 (`_ps_identity_list()`, `_ps_encounter_list()`), exactly as 0206 rebuilt the other five report RPCs, with byte-identical behaviour (signature, return type, volatility, SECURITY DEFINER, `search_path`, admin-only gate, validation order, paging, ACL; `service_role` keeps EXECUTE).
 
-**Architecture:** One new migration `<N>_patient_sources_people.sql`: (1) `_ps_sec_people(p_ids _ps_identity[], p_enc _ps_encounter[], p_from, p_to, p_mode, p_channel, p_limit, p_offset)` holding the 0189 body verbatim except `unnest(p_ids)` / `unnest(p_enc)` replace the two core calls; (2) `create or replace` of the public wrapper (gate, mirror-mode assert, period check, mode check, then `return query select * from _ps_sec_people(...)`); (3) revoke on the helper; (4) a post-condition DO block. Proof = the existing `scripts/patient-sources-db-proof.ts` harness plus a frozen copy of the 0189 body under schema `ps_old` (fixture) compared row-for-row over a grid on the seeded world, with seven in-script mutant controls that must be caught.
+**Architecture:** One new migration `0209_patient_sources_people.sql`: (1) `_ps_sec_people(p_ids _ps_identity[], p_enc _ps_encounter[], p_from, p_to, p_mode, p_channel, p_limit, p_offset)` holding the 0189 body verbatim except `unnest(p_ids)` / `unnest(p_enc)` replace the two core calls; (2) `create or replace` of the public wrapper (gate, mirror-mode assert, period check, mode check, then `return query select * from _ps_sec_people(...)`); (3) revoke on the helper; (4) a post-condition DO block. Proof = the existing `scripts/patient-sources-db-proof.ts` harness plus a frozen copy of the 0189 body under schema `ps_old` (fixture) compared row-for-row over a grid on the seeded world, with seven in-script mutant controls that must be caught.
 
 **Tech Stack:** Postgres 17 / plpgsql, Supabase CLI (repo-pinned 2.118 via `npx supabase`) on an ISOLATED local stack (ports 563xx), `tsx` + `pg` proof script, vitest, Next.js 16 (no app code change).
 
 **Spec:** `docs/superpowers/specs/2026-10-01-patient-sources-phase5-design.md` §0, §1, §5 (copied into this branch so the PR carries it).
 
-**Placeholder rule:** `<N>` is the ONLY placeholder. It is the migration number claimed in Task 0 Step 2 (four digits, e.g. `0209`). Every `<N>` in this plan, in file names, SQL comments, TS code and commit messages, is replaced with that number as soon as it is claimed (`grep -rn "<N>" docs/superpowers/plans/2026-10-01-patient-sources-5c-people.md` should be empty of live uses before commit of Task 1 — do the replacement in the plan copy you execute from, and in every file you create).
+**Placeholder rule:** `0209` is the ONLY placeholder. It is the migration number claimed in Task 0 Step 2 (four digits, e.g. `0209`). Every `0209` in this plan, in file names, SQL comments, TS code and commit messages, is replaced with that number as soon as it is claimed (`grep -rn "0209" docs/superpowers/plans/2026-10-01-patient-sources-5c-people.md` should be empty of live uses before commit of Task 1 — do the replacement in the plan copy you execute from, and in every file you create).
 
 ---
 
@@ -34,13 +34,13 @@
 |---|---|---|
 | `docs/superpowers/specs/2026-10-01-patient-sources-phase5-design.md` | add (already copied) | approved spec, carried by the PR |
 | `docs/superpowers/plans/2026-10-01-patient-sources-5c-people.md` | add | this plan |
-| `supabase/migrations/<N>_patient_sources_people.sql` | create | `_ps_sec_people` helper, wrapper, revoke, post-conditions |
-| `scripts/fixtures/patient-sources-people-pre-<N>.sql` | create | the 0189 `patient_sources_people` body frozen under schema `ps_old` + `ps_old.frozen_people_meta` (ACL, identity args, result type, volatility, config of the live function) |
+| `supabase/migrations/0209_patient_sources_people.sql` | create | `_ps_sec_people` helper, wrapper, revoke, post-conditions |
+| `scripts/fixtures/patient-sources-people-pre-0209.sql` | create | the 0189 `patient_sources_people` body frozen under schema `ps_old` + `ps_old.frozen_people_meta` (ACL, identity args, result type, volatility, config of the live function) |
 | `scripts/patient-sources-db-proof.ts` | modify | people seed extras, non-vacuous category check, ordered equivalence grid (3 modes), invalid-input parity, gate parity, ACL/definition equality, closed helper, seven mutant controls, timing, image guard; header notes |
 | `src/lib/sheet-sync/mirror-readers.test.ts` | modify | allowlist the new migration by name |
 | `src/types/database.ts` | regenerate | gains ONE new entry, `_ps_sec_people` (see Task 7) |
 | `CLAUDE.md` | modify | migration-ledger line (after the verified push) and guide version (at merge) |
-| `.claude/skills/drmed-migrations/SKILL.md` | modify | one ledger line for `<N>` |
+| `.claude/skills/drmed-migrations/SKILL.md` | modify | one ledger line for `0209` |
 | `docs/drmed-user-guide.html` | modify (version only) | version bump at merge time |
 
 No app code changes: `loadPeoplePage` / `loadAllPeople` (`src/lib/marketing/patient-sources.server.ts`) call the same RPC name with the same arguments. `src/lib/marketing/patient-sources-surfaces.test.ts` already lists `patient_sources_people`; unchanged.
@@ -68,7 +68,7 @@ Expected: branch `feat/patient-sources-5c-people`, `base-ok`. If `origin/main` h
 - [ ] **Step 2: Claim the migration number**
 
 Run: `npm run claim -- migration --note "5c patient_sources_people over shared arrays"`
-Expected: prints a claimed number such as `0209`. Write it down. From now on replace every `<N>` (in this plan copy and in every file below) with that number. Also run `npm run claim -- list | tail -5` and confirm the claim is listed under this worktree.
+Expected: prints a claimed number such as `0209`. Write it down. From now on replace every `0209` (in this plan copy and in every file below) with that number. Also run `npm run claim -- list | tail -5` and confirm the claim is listed under this worktree.
 
 - [ ] **Step 3: Install dependencies**
 
@@ -100,7 +100,7 @@ PSQL=/opt/homebrew/opt/libpq/bin/psql; DB=postgresql://postgres:postgres@127.0.0
 $PSQL $DB -At -c "select max(version) from supabase_migrations.schema_migrations; select version();"
 $PSQL $DB -At -c "select count(*) from pg_proc where proname in ('_ps_sec_people')"
 ```
-Expected: a head below `<N>`, `PostgreSQL 17.6`, and `0` (the helper does not exist yet).
+Expected: a head below `0209`, `PostgreSQL 17.6`, and `0` (the helper does not exist yet).
 
 - [ ] **Step 6: Baseline proof is green before any change**
 
@@ -112,7 +112,7 @@ Expected: `N/N checks passed.` and no `FAIL` line. Record N (the number of check
 ### Task 1: Freeze the 0189 `patient_sources_people` body as a fixture
 
 **Files:**
-- Create: `scripts/fixtures/patient-sources-people-pre-<N>.sql`
+- Create: `scripts/fixtures/patient-sources-people-pre-0209.sql`
 
 The fixture is generated from the stack at the pre-migration head, so it is exactly what is live on prod today (0189's body; no later migration redefines it — verified by `git grep -n "create or replace function public.patient_sources_people" supabase/migrations` returning only 0189).
 
@@ -124,15 +124,15 @@ Expected: exactly one hit, `0189_patient_sources.sql`.
 - [ ] **Step 2: Generate the fixture**
 
 ```bash
-F=scripts/fixtures/patient-sources-people-pre-<N>.sql
+F=scripts/fixtures/patient-sources-people-pre-0209.sql
 SIG="public.patient_sources_people(date,date,text,text,integer,integer)"
 {
-  echo "-- patient_sources_people exactly as it was on main before <N> (0189's body, generated with"
-  echo "-- pg_get_functiondef from a stack at the pre-<N> head), re-homed in schema ps_old, plus the"
+  echo "-- patient_sources_people exactly as it was on main before 0209 (0189's body, generated with"
+  echo "-- pg_get_functiondef from a stack at the pre-0209 head), re-homed in schema ps_old, plus the"
   echo "-- live function's ACL / signature / volatility facts in ps_old.frozen_people_meta."
   echo "-- scripts/patient-sources-db-proof.ts loads this INSIDE its rolled-back transaction and proves"
-  echo "-- the <N> wrapper returns identical rows. Never applied anywhere. It is also the ROLLBACK body:"
-  echo "-- a forward migration that restores this function (ACL unchanged) undoes <N>."
+  echo "-- the 0209 wrapper returns identical rows. Never applied anywhere. It is also the ROLLBACK body:"
+  echo "-- a forward migration that restores this function (ACL unchanged) undoes 0209."
   echo "create schema if not exists ps_old;"
   echo "grant usage on schema ps_old to anon, authenticated, service_role;"
   $PSQL $DB -At -c "select replace(pg_get_functiondef(p.oid), 'FUNCTION public.patient_sources_people(', 'FUNCTION ps_old.patient_sources_people(') || ';' from pg_proc p where p.oid = '$SIG'::regprocedure"
@@ -161,25 +161,25 @@ Expected: one metadata row (ACL like `{postgres=X/postgres,authenticated=X/postg
 - [ ] **Step 4: Commit**
 
 ```bash
-git add docs/superpowers/specs/2026-10-01-patient-sources-phase5-design.md docs/superpowers/plans/2026-10-01-patient-sources-5c-people.md scripts/fixtures/patient-sources-people-pre-<N>.sql
-git commit -m "test(patient-sources): freeze the pre-<N> patient_sources_people body for the 5c equivalence proof
+git add docs/superpowers/specs/2026-10-01-patient-sources-phase5-design.md docs/superpowers/plans/2026-10-01-patient-sources-5c-people.md scripts/fixtures/patient-sources-people-pre-0209.sql
+git commit -m "test(patient-sources): freeze the pre-0209 patient_sources_people body for the 5c equivalence proof
 
 Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>"
 ```
 
 ---
 
-### Task 2: The migration `<N>_patient_sources_people.sql`
+### Task 2: The migration `0209_patient_sources_people.sql`
 
 **Files:**
-- Create: `supabase/migrations/<N>_patient_sources_people.sql`
+- Create: `supabase/migrations/0209_patient_sources_people.sql`
 
 The helper's body is the 0189 body (`supabase/migrations/0189_patient_sources.sql`, lines ~656–696) moved verbatim, with exactly two substitutions: `public._patient_sources_identities()` becomes `unnest(p_ids)` and `public._patient_sources_encounters() e` becomes `unnest(p_enc) e`. Do not reformat, re-alias or reorder anything else (the proof's mutants string-match these exact lines).
 
 - [ ] **Step 1: Write the migration**
 
 ```sql
--- <N>_patient_sources_people.sql
+-- 0209_patient_sources_people.sql
 --
 -- Patient Sources Phase 5c: patient_sources_people (0189) rebuilt on the shared
 -- arrays 0206 introduced. The people list used to build the identity core
@@ -196,8 +196,8 @@ The helper's body is the 0189 body (`supabase/migrations/0189_patient_sources.sq
 -- Additive create-or-replace with an identical signature: the live app keeps
 -- working whether this lands before or after the deploy. ACLs on the wrapper are
 -- deliberately NOT restated (create or replace keeps them; the proof asserts the
--- proacl is byte-equal to the pre-<N> value). service_role keeps EXECUTE.
--- Rollback: a forward migration restoring scripts/fixtures/patient-sources-people-pre-<N>.sql
+-- proacl is byte-equal to the pre-0209 value). service_role keeps EXECUTE.
+-- Rollback: a forward migration restoring scripts/fixtures/patient-sources-people-pre-0209.sql
 -- (ps_old -> public), ACLs unchanged.
 
 -- 1. The section helper (no gate: the wrapper gates and validates).
@@ -317,20 +317,20 @@ begin
   -- Helper: closed, invoker, no service_role literal, reads the arrays.
   if has_function_privilege('anon', f, 'execute') or has_function_privilege('authenticated', f, 'execute')
      or has_function_privilege('service_role', f, 'execute') then
-    raise exception '<N>: internal % is executable by a runtime role', f;
+    raise exception '0209: internal % is executable by a runtime role', f;
   end if;
   if (select p.prosecdef from pg_proc p where p.oid = f::regprocedure) then
-    raise exception '<N>: % must not be SECURITY DEFINER', f;
+    raise exception '0209: % must not be SECURITY DEFINER', f;
   end if;
   v_def := pg_get_functiondef(f::regprocedure);
   if v_def like '%service_role%' then
-    raise exception '<N>: % must not mention service_role', f;
+    raise exception '0209: % must not mention service_role', f;
   end if;
   if v_def not like '%unnest(p_ids)%' or v_def not like '%unnest(p_enc) e%' then
-    raise exception '<N>: % does not read the shared arrays', f;
+    raise exception '0209: % does not read the shared arrays', f;
   end if;
   if v_def like '%_patient_sources_identities%' or v_def like '%_patient_sources_encounters%' then
-    raise exception '<N>: % still calls the identity core directly', f;
+    raise exception '0209: % still calls the identity core directly', f;
   end if;
 
   -- Wrapper: same shape as before, ACL unchanged, still admin-only.
@@ -340,39 +340,39 @@ begin
     into v_wrapper
     from pg_proc p where p.oid = w::regprocedure;
   if not v_wrapper.prosecdef then
-    raise exception '<N>: % lost SECURITY DEFINER', w;
+    raise exception '0209: % lost SECURITY DEFINER', w;
   end if;
   if v_wrapper.provolatile <> 's' then
-    raise exception '<N>: % is no longer STABLE', w;
+    raise exception '0209: % is no longer STABLE', w;
   end if;
   if v_wrapper.proconfig is distinct from array['search_path=""'] then
-    raise exception '<N>: % lost its empty search_path', w;
+    raise exception '0209: % lost its empty search_path', w;
   end if;
   if not v_wrapper.proretset then
-    raise exception '<N>: % no longer returns a set', w;
+    raise exception '0209: % no longer returns a set', w;
   end if;
   if v_wrapper.args <> 'p_from date, p_to date, p_mode text, p_channel text, p_limit integer, p_offset integer' then
-    raise exception '<N>: % identity arguments changed: %', w, v_wrapper.args;
+    raise exception '0209: % identity arguments changed: %', w, v_wrapper.args;
   end if;
   if v_wrapper.result <> 'TABLE(identity_kind text, identity text, patient_id uuid, drm_id text, display_name text, first_date date, total_count bigint)' then
-    raise exception '<N>: % result type changed: %', w, v_wrapper.result;
+    raise exception '0209: % result type changed: %', w, v_wrapper.result;
   end if;
   if has_function_privilege('anon', w, 'execute') then
-    raise exception '<N>: % is executable by anon', w;
+    raise exception '0209: % is executable by anon', w;
   end if;
   if not has_function_privilege('authenticated', w, 'execute') then
-    raise exception '<N>: % is not executable by authenticated', w;
+    raise exception '0209: % is not executable by authenticated', w;
   end if;
   -- service_role EXECUTE is deliberate (see header); the BODY stays admin-only.
   if not has_function_privilege('service_role', w, 'execute') then
-    raise exception '<N>: % lost service_role EXECUTE (a refused call segfaults prod image .111)', w;
+    raise exception '0209: % lost service_role EXECUTE (a refused call segfaults prod image .111)', w;
   end if;
   v_def := pg_get_functiondef(w::regprocedure);
   if v_def like '%service_role%' then
-    raise exception '<N>: % must stay admin-only', w;
+    raise exception '0209: % must stay admin-only', w;
   end if;
   if v_def not like '%_ps_sec_people%' or v_def not like '%_ps_identity_list()%' then
-    raise exception '<N>: % does not call the shared-array helper', w;
+    raise exception '0209: % does not call the shared-array helper', w;
   end if;
 end;
 $$;
@@ -385,17 +385,17 @@ node -e '
 const fs=require("fs");
 const grab=(f,startRe)=>{const s=fs.readFileSync(f,"utf8");const i=s.search(startRe);const j=s.indexOf("  limit greatest(1, least(coalesce(p_limit, 50), 1000))",i);return s.slice(s.indexOf("select case when k.confirmed",i),j+120);};
 const a=grab("supabase/migrations/0189_patient_sources.sql",/create or replace function public\.patient_sources_people/);
-const b=grab("supabase/migrations/<N>_patient_sources_people.sql",/create or replace function public\._ps_sec_people/);
+const b=grab("supabase/migrations/0209_patient_sources_people.sql",/create or replace function public\._ps_sec_people/);
 console.log(a===b?"final select identical":"FINAL SELECT DIFFERS");'
-diff <(sed -n '/^  picked as (/,/^  )$/p' supabase/migrations/0189_patient_sources.sql | sed -n '1,22p') <(sed -n '/^  picked as (/,/^  )$/p' supabase/migrations/<N>_patient_sources_people.sql | sed -n '1,22p')
+diff <(sed -n '/^  picked as (/,/^  )$/p' supabase/migrations/0189_patient_sources.sql | sed -n '1,22p') <(sed -n '/^  picked as (/,/^  )$/p' supabase/migrations/0209_patient_sources_people.sql | sed -n '1,22p')
 ```
 Expected: `final select identical`; the diff shows ONLY the line `from public._patient_sources_encounters() e` → `from unnest(p_enc) e` (and nothing else inside `picked`). Anything else differing means the helper was edited beyond the two allowed substitutions: fix it.
 
 - [ ] **Step 3: Commit**
 
 ```bash
-git add supabase/migrations/<N>_patient_sources_people.sql
-git commit -m "feat(patient-sources): patient_sources_people over the shared arrays (<N>)
+git add supabase/migrations/0209_patient_sources_people.sql
+git commit -m "feat(patient-sources): patient_sources_people over the shared arrays (0209)
 
 Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>"
 ```
@@ -408,30 +408,30 @@ Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>"
 
 - [ ] **Step 1: Apply to the running isolated stack**
 
-Run: `$PSQL $DB -v ON_ERROR_STOP=1 -f supabase/migrations/<N>_patient_sources_people.sql > $SP/apply.log 2>&1; echo exit=$?; tail -3 $SP/apply.log`
+Run: `$PSQL $DB -v ON_ERROR_STOP=1 -f supabase/migrations/0209_patient_sources_people.sql > $SP/apply.log 2>&1; echo exit=$?; tail -3 $SP/apply.log`
 Expected: `exit=0`; output ends with `DO` (the post-conditions passed). Re-run once more: expected `exit=0` again (create-or-replace is idempotent; the DO block re-verifies).
 
 - [ ] **Step 2: Prove the post-conditions can abort (quick negative)**
 
 ```bash
-$PSQL $DB -v ON_ERROR_STOP=1 -c "begin; revoke execute on function public.patient_sources_people(date,date,text,text,int,int) from service_role;" -f supabase/migrations/<N>_patient_sources_people.sql -c "rollback;" 2>&1 | grep -E "ERROR|lost service_role" | head -2
+$PSQL $DB -v ON_ERROR_STOP=1 -c "begin; revoke execute on function public.patient_sources_people(date,date,text,text,int,int) from service_role;" -f supabase/migrations/0209_patient_sources_people.sql -c "rollback;" 2>&1 | grep -E "ERROR|lost service_role" | head -2
 ```
-Expected: an `ERROR:  <N>: public.patient_sources_people(...) lost service_role EXECUTE ...` line (the migration refuses to finish when service_role EXECUTE is missing). The transaction is rolled back; nothing persists. (Note: this probe revokes then calls nothing, so it cannot trigger the refused-call crash.)
+Expected: an `ERROR:  0209: public.patient_sources_people(...) lost service_role EXECUTE ...` line (the migration refuses to finish when service_role EXECUTE is missing). The transaction is rolled back; nothing persists. (Note: this probe revokes then calls nothing, so it cannot trigger the refused-call crash.)
 
 - [ ] **Step 3: Fresh replay on an empty database**
 
-Bring the stack down and up with the full history (this branch's migrations including `<N>`):
+Bring the stack down and up with the full history (this branch's migrations including `0209`):
 ```bash
 npx supabase db reset --workdir $SP > $SP/reset.log 2>&1; echo exit=$?; tail -3 $SP/reset.log
 $PSQL $DB -At -c "select max(version) from supabase_migrations.schema_migrations; select pg_get_functiondef('public._ps_sec_people(public._ps_identity[],public._ps_encounter[],date,date,text,text,integer,integer)'::regprocedure) like '%unnest(p_ids)%'"
 ```
-Expected: `exit=0`; head = `<N>`; `t`. (`db reset` here targets ONLY the isolated stack via `--workdir $SP`; never run it without that flag.)
+Expected: `exit=0`; head = `0209`; `t`. (`db reset` here targets ONLY the isolated stack via `--workdir $SP`; never run it without that flag.)
 
 - [ ] **Step 4: Confirm the wrapper ACL is unchanged against the frozen value**
 
 ```bash
 $PSQL $DB -At -c "select coalesce(proacl::text,'') from pg_proc where oid='public.patient_sources_people(date,date,text,text,integer,integer)'::regprocedure"
-grep -c "" /dev/null; $PSQL $DB -v ON_ERROR_STOP=1 -At -c "begin;" -f scripts/fixtures/patient-sources-people-pre-<N>.sql -c "select proacl from ps_old.frozen_people_meta; rollback;" | tail -2
+grep -c "" /dev/null; $PSQL $DB -v ON_ERROR_STOP=1 -At -c "begin;" -f scripts/fixtures/patient-sources-people-pre-0209.sql -c "select proacl from ps_old.frozen_people_meta; rollback;" | tail -2
 ```
 Expected: the two ACL strings are byte-identical. (Task 4's proof asserts the same programmatically.)
 
@@ -447,7 +447,7 @@ All new code goes (a) next to `gridCalls(...)` just before the line `await q("be
 - [ ] **Step 1: Add constants and helpers (before `await q("begin");`)**
 
 ```ts
-  // ---- 5c: patient_sources_people over the shared arrays (<N>) ---------
+  // ---- 5c: patient_sources_people over the shared arrays (0209) ---------
   const PEOPLE_SIG = "public.patient_sources_people(date,date,text,text,integer,integer)";
   const PEOPLE_HELPER = "public._ps_sec_people(public._ps_identity[],public._ps_encounter[],date,date,text,text,integer,integer)";
   const P_MIN = { from: "2023-12-01", to: "2023-12-05" }; // starts on PATIENT_SOURCES_MIN_DATE
@@ -502,7 +502,7 @@ All new code goes (a) next to `gridCalls(...)` just before the line `await q("be
     return (await q<{ j: unknown }>(PEOPLE_Q(fn), args)).rows.map((x) => JSON.stringify(x.j));
   }
   async function peopleOld(): Promise<Map<string, string[]>> {
-    await q(fs.readFileSync(path.join(__dirname, "fixtures/patient-sources-people-pre-<N>.sql"), "utf8"));
+    await q(fs.readFileSync(path.join(__dirname, "fixtures/patient-sources-people-pre-0209.sql"), "utf8"));
     await asAdmin();
     const m = new Map<string, string[]>();
     for (const c of peopleCases()) {
@@ -561,7 +561,7 @@ All new code goes (a) next to `gridCalls(...)` just before the line `await q("be
 - [ ] **Step 2: Add the checks (after the last 0206 check, before `} finally {`)**
 
 ```ts
-    // ---- 5c: patient_sources_people over the shared arrays (<N>) --------
+    // ---- 5c: patient_sources_people over the shared arrays (0209) --------
     await check("5c: denial probes run on a stack whose image survives refused calls", async () => {
       const img = process.env.PS_STACK_IMAGE ?? "";
       assert(/^\d+\.\d+\.\d+\.\d+$/.test(img), `PS_STACK_IMAGE must be set to the stack's Postgres image tag (e.g. 17.6.1.167), got "${img}"`);
@@ -612,12 +612,12 @@ All new code goes (a) next to `gridCalls(...)` just before the line `await q("be
       assert((await peopleRows(P_JUNE.from, P_JUNE.to, "new", null, 3, 1000000)).length === 0, "past the end is empty");
     }));
 
-    await check("5c: patient_sources_people returns exactly the pre-<N> rows, in order, with the same total_count", () => scoped(async () => {
+    await check("5c: patient_sources_people returns exactly the pre-0209 rows, in order, with the same total_count", () => scoped(async () => {
       await seedWorld();
       await seedPeopleExtras();
       const old = await peopleOld();
       const { diffs, nonEmpty, nullNames } = await peopleDiffs("public.patient_sources_people", "admin", old);
-      assert(diffs.length === 0, `people differ from the pre-<N> body (${diffs.length} of ${old.size} cases):\n${diffs.slice(0, 8).join("\n")}`);
+      assert(diffs.length === 0, `people differ from the pre-0209 body (${diffs.length} of ${old.size} cases):\n${diffs.slice(0, 8).join("\n")}`);
       assert(nonEmpty >= 60, `only ${nonEmpty} non-empty comparisons — the grid is too thin`);
       assert(nullNames === 0, `unexpected NULL display_name rows: ${nullNames} (unreachable by construction; see plan decision 3)`);
       console.log(`   5c grid: ${old.size} cases, ${nonEmpty} non-empty, all identical`);
@@ -765,11 +765,11 @@ All new code goes (a) next to `gridCalls(...)` just before the line `await q("be
 - [ ] **Step 3: Update the header comment of the proof script**
 
 In the header block (around line 36) change the line `//   patient_sources_people = 0189. Letters A, B, C, E, F, G, L edit the core` to
-`//   patient_sources_people = <N>_patient_sources_people.sql (wrapper + _ps_sec_people; 0189's body is`
-`//   frozen in scripts/fixtures/patient-sources-people-pre-<N>.sql). Letters A, B, C, E, F, G, L edit the core`
+`//   patient_sources_people = 0209_patient_sources_people.sql (wrapper + _ps_sec_people; 0189's body is`
+`//   frozen in scripts/fixtures/patient-sources-people-pre-0209.sql). Letters A, B, C, E, F, G, L edit the core`
 and append, after the M–P notes and before `//   0206 re-apply needs the objects dropped first:`, the placeholder block (filled in Task 5):
 ```
-//   Q–R (<N>) — see Task 5 of docs/superpowers/plans/2026-10-01-patient-sources-5c-people.md; the in-script
+//   Q–R (0209) — see Task 5 of docs/superpowers/plans/2026-10-01-patient-sources-5c-people.md; the in-script
 //   mutants C1–C7 ("5c controls") run on every proof run and need no file edit.
 ```
 Also add to the run recipe near `PSQL=` the line `//   PS_STACK_IMAGE=17.6.1.167   (required by the 5c denial probes; .106/.111 segfault on a refused call)`.
@@ -803,43 +803,43 @@ Expected: no `FAIL`; `N+8/N+8 checks passed.` where N is the Task 0 baseline (ei
 - [ ] **Step 2: Prove the grid fails on the real function — file round Q (drop the channel filter in the migration)**
 
 ```bash
-cp supabase/migrations/<N>_patient_sources_people.sql $SP/mig.bak
+cp supabase/migrations/0209_patient_sources_people.sql $SP/mig.bak
 node -e '
-const fs=require("fs");const f="supabase/migrations/<N>_patient_sources_people.sql";let s=fs.readFileSync(f,"utf8");
+const fs=require("fs");const f="supabase/migrations/0209_patient_sources_people.sql";let s=fs.readFileSync(f,"utf8");
 const from="and (p_channel is null or i.channel = p_channel)";if(!s.includes(from))throw new Error("missing");
 fs.writeFileSync(f,s.split(from).join("and true"));'
-$PSQL $DB -v ON_ERROR_STOP=1 -f supabase/migrations/<N>_patient_sources_people.sql > $SP/q-apply.log 2>&1; echo apply=$?
+$PSQL $DB -v ON_ERROR_STOP=1 -f supabase/migrations/0209_patient_sources_people.sql > $SP/q-apply.log 2>&1; echo apply=$?
 SUPABASE_DB_URL=$DB PS_STACK_IMAGE=17.6.1.167 npm run -s patient-sources:db-proof > $SP/proof-Q.log 2>&1; grep -E "^FAIL" $SP/proof-Q.log | cut -c1-260
-cp $SP/mig.bak supabase/migrations/<N>_patient_sources_people.sql
-$PSQL $DB -v ON_ERROR_STOP=1 -f supabase/migrations/<N>_patient_sources_people.sql > /dev/null 2>&1; echo restored=$?
-git diff --quiet supabase/migrations/<N>_patient_sources_people.sql && echo file-clean
+cp $SP/mig.bak supabase/migrations/0209_patient_sources_people.sql
+$PSQL $DB -v ON_ERROR_STOP=1 -f supabase/migrations/0209_patient_sources_people.sql > /dev/null 2>&1; echo restored=$?
+git diff --quiet supabase/migrations/0209_patient_sources_people.sql && echo file-clean
 ```
-Expected: `apply=0`; `FAIL 5c: patient_sources_people returns exactly the pre-<N> rows, in order, with the same total_count — people differ from the pre-<N> body (…) : new … channel=walk_in …`; `restored=0`; `file-clean`. Copy the quoted FAIL fragment into the notes in Step 4.
+Expected: `apply=0`; `FAIL 5c: patient_sources_people returns exactly the pre-0209 rows, in order, with the same total_count — people differ from the pre-0209 body (…) : new … channel=walk_in …`; `restored=0`; `file-clean`. Copy the quoted FAIL fragment into the notes in Step 4.
 
 - [ ] **Step 3: File round R (wrapper passes an empty encounter array in served mode)**
 
 ```bash
 node -e '
-const fs=require("fs");const f="supabase/migrations/<N>_patient_sources_people.sql";let s=fs.readFileSync(f,"utf8");
+const fs=require("fs");const f="supabase/migrations/0209_patient_sources_people.sql";let s=fs.readFileSync(f,"utf8");
 const from="case when p_mode = \x27served\x27 then public._ps_encounter_list() else";if(!s.includes(from))throw new Error("missing");
 fs.writeFileSync(f,s.replace(from,"case when p_mode = \x27never\x27 then public._ps_encounter_list() else"));'
-$PSQL $DB -v ON_ERROR_STOP=1 -f supabase/migrations/<N>_patient_sources_people.sql > /dev/null 2>&1; echo apply=$?
+$PSQL $DB -v ON_ERROR_STOP=1 -f supabase/migrations/0209_patient_sources_people.sql > /dev/null 2>&1; echo apply=$?
 SUPABASE_DB_URL=$DB PS_STACK_IMAGE=17.6.1.167 npm run -s patient-sources:db-proof > $SP/proof-R.log 2>&1; grep -E "^FAIL" $SP/proof-R.log | cut -c1-260
-cp $SP/mig.bak supabase/migrations/<N>_patient_sources_people.sql
-$PSQL $DB -v ON_ERROR_STOP=1 -f supabase/migrations/<N>_patient_sources_people.sql > /dev/null 2>&1; echo restored=$?
-git diff --quiet supabase/migrations/<N>_patient_sources_people.sql && echo file-clean
+cp $SP/mig.bak supabase/migrations/0209_patient_sources_people.sql
+$PSQL $DB -v ON_ERROR_STOP=1 -f supabase/migrations/0209_patient_sources_people.sql > /dev/null 2>&1; echo restored=$?
+git diff --quiet supabase/migrations/0209_patient_sources_people.sql && echo file-clean
 ```
-Expected: `FAIL 5c: … returns exactly the pre-<N> rows … served …` (every served case returns nothing); `restored=0`; `file-clean`.
+Expected: `FAIL 5c: … returns exactly the pre-0209 rows … served …` (every served case returns nothing); `restored=0`; `file-clean`.
 
 - [ ] **Step 4: Record the confirmations in the proof header and re-run green**
 
 Replace the Q–R placeholder block added in Task 4 Step 3 with:
 ```
-//   Q (<N>). _ps_sec_people: `and (p_channel is null or i.channel = p_channel)` -> `and true` (both
+//   Q (0209). _ps_sec_people: `and (p_channel is null or i.channel = p_channel)` -> `and true` (both
 //      occurrences) in the migration, psql -f it. Confirmed <date>: FAIL 5c: patient_sources_people
-//      returns exactly the pre-<N> rows … — <quoted fragment from Step 2>.
-//   R (<N>). wrapper: `case when p_mode = 'served' then …` -> `'never'`. Confirmed <date>: FAIL 5c:
-//      patient_sources_people returns exactly the pre-<N> rows … — <quoted fragment from Step 3>.
+//      returns exactly the pre-0209 rows … — <quoted fragment from Step 2>.
+//   R (0209). wrapper: `case when p_mode = 'served' then …` -> `'never'`. Confirmed <date>: FAIL 5c:
+//      patient_sources_people returns exactly the pre-0209 rows … — <quoted fragment from Step 3>.
 //   C1–C7 (in script, no file edit): seven copies of the helper in schema ps_ctl, each with one edit,
 //      each compared through the same grid; the check fails if ANY escapes ("5c controls").
 ```
@@ -866,12 +866,12 @@ The migration names both mirror tables (`sheet_encounter_lines`, `sheet_customer
 - [ ] **Step 1: Confirm the test fails first**
 
 Run: `npx vitest run src/lib/sheet-sync/mirror-readers.test.ts 2>&1 | tail -15`
-Expected: FAIL — `offenders` contains `<N>_patient_sources_people.sql`.
+Expected: FAIL — `offenders` contains `0209_patient_sources_people.sql`.
 
 - [ ] **Step 2: Add the allowlist entry**
 
 In the third `it(...)` ("no migration other than …"): add a comment line after the 0206 note —
-`    // <N> moves patient_sources_people's rules (the unlinked-name lookups read both mirror tables)`
+`    // 0209 moves patient_sources_people's rules (the unlinked-name lookups read both mirror tables)`
 `    // verbatim into a closed helper behind the same admin-only gate.`
 — and after `const oneCall = …; expect(oneCall).toHaveLength(1);` add
 ```ts
@@ -894,7 +894,7 @@ Expected: pass. If any other scan fails on the new file (e.g. a "every SECURITY 
 
 ```bash
 git add src/lib/sheet-sync/mirror-readers.test.ts
-git commit -m "test(sheet-sync): allow the <N> people migration to name the mirror tables
+git commit -m "test(sheet-sync): allow the 0209 people migration to name the mirror tables
 
 Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>"
 ```
@@ -938,13 +938,13 @@ Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>"
 - [ ] **Step 1: Add one line to the skill's migration list**
 
 After the `0205_release_audit_in_rpc.sql …` line (grep `^0205` to find it) add a line in the same style:
-`<N>_patient_sources_people.sql ← feat/patient-sources-5c-people (Phase 5c). `patient_sources_people` re-created as a thin wrapper (same signature/gate/ACL; admin-only, service_role keeps EXECUTE — a refused call segfaults image .111, server code never calls it) over the new closed `_ps_sec_people(_ps_identity[], _ps_encounter[], …)` helper holding 0189's rules verbatim, reading the 0206 shared arrays. Proof: frozen 0189 body (`scripts/fixtures/patient-sources-people-pre-<N>.sql`, schema `ps_old`) compared row-for-row over a 192-case grid, seven in-script mutants, gate/ACL parity. Rollback = a forward migration restoring that fixture body.`
+`0209_patient_sources_people.sql ← feat/patient-sources-5c-people (Phase 5c). `patient_sources_people` re-created as a thin wrapper (same signature/gate/ACL; admin-only, service_role keeps EXECUTE — a refused call segfaults image .111, server code never calls it) over the new closed `_ps_sec_people(_ps_identity[], _ps_encounter[], …)` helper holding 0189's rules verbatim, reading the 0206 shared arrays. Proof: frozen 0189 body (`scripts/fixtures/patient-sources-people-pre-0209.sql`, schema `ps_old`) compared row-for-row over a 192-case grid, seven in-script mutants, gate/ACL parity. Rollback = a forward migration restoring that fixture body.`
 
 - [ ] **Step 2: Commit**
 
 ```bash
 git add .claude/skills/drmed-migrations/SKILL.md
-git commit -m "docs(skill): record <N> patient_sources_people in the migrations skill
+git commit -m "docs(skill): record 0209 patient_sources_people in the migrations skill
 
 Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>"
 ```
@@ -969,7 +969,7 @@ npm run -s typecheck > $SP/tc.log 2>&1; echo typecheck=$?
 npm run -s lint > $SP/lint.log 2>&1; echo lint=$?
 npm run build > $SP/build.log 2>&1; echo build=$?; tail -5 $SP/build.log
 ```
-Expected: `typecheck=0`, `lint=0`, `build=0`. (The Vercel preview build needs `<N>` applied to the linked project; that happens in Task 10 before merge.)
+Expected: `typecheck=0`, `lint=0`, `build=0`. (The Vercel preview build needs `0209` applied to the linked project; that happens in Task 10 before merge.)
 
 - [ ] **Step 3: One last proof run and a clean-tree check**
 
@@ -981,7 +981,7 @@ Expected: all-PASS; clean tree.
 ```bash
 export PATH="/opt/homebrew/bin:$PATH"
 git push -u origin feat/patient-sources-5c-people
-gh pr create --draft --title "feat(patient-sources): people list over the shared arrays (<N>)" --body "<summary for a non-developer, the proof numbers from Task 5 (grid size, mutants caught, timings), the rollback note, and: migration <N> must be applied to prod before merge (user-run db push). 
+gh pr create --draft --title "feat(patient-sources): people list over the shared arrays (0209)" --body "<summary for a non-developer, the proof numbers from Task 5 (grid size, mutants caught, timings), the rollback note, and: migration 0209 must be applied to prod before merge (user-run db push). 
 
 🤖 Generated with [Claude Code](https://claude.com/claude-code)>"
 ```
@@ -996,7 +996,7 @@ Expected: a PR URL. Do NOT `gh pr ready` within seconds of a push (the ready-for
 
 - [ ] **Step 1: Pre-flight against prod (read-only)**
 
-Run (MCP `list_migrations`, project `qhptbmafrosgibooelpp`): confirm the head and that `<N>` is not applied and no other session took it. Run `git fetch origin && git log --oneline origin/main -3`; if main moved, rebase and re-run Task 9 Step 1–2. Run `npm run claim -- list | grep <N>` — still ours.
+Run (MCP `list_migrations`, project `qhptbmafrosgibooelpp`): confirm the head and that `0209` is not applied and no other session took it. Run `git fetch origin && git log --oneline origin/main -3`; if main moved, rebase and re-run Task 9 Step 1–2. Run `npm run claim -- list | grep 0209` — still ours.
 
 - [ ] **Step 2: Capture the BEFORE facts on prod (read-only SQL via MCP `execute_sql`, no calls to the function)**
 
@@ -1016,12 +1016,12 @@ Copy the link files into the worktree (`supabase/.temp/{project-ref,linked-proje
 ! cd /Users/jamila/Claude/DRMed/.worktrees/ps-people && /opt/homebrew/bin/supabase db push --dry-run
 ! cd /Users/jamila/Claude/DRMed/.worktrees/ps-people && /opt/homebrew/bin/supabase db push
 ```
-Expected dry-run output: exactly ONE pending migration, `<N>_patient_sources_people.sql`. If it lists anything else, STOP and ask (another session's migration is unapplied; only then consider `--include-all` with the user's explicit OK). The user answers the push confirmation prompt. Never use MCP `apply_migration`.
+Expected dry-run output: exactly ONE pending migration, `0209_patient_sources_people.sql`. If it lists anything else, STOP and ask (another session's migration is unapplied; only then consider `--include-all` with the user's explicit OK). The user answers the push confirmation prompt. Never use MCP `apply_migration`.
 
 - [ ] **Step 4: Verify on prod by object (read-only SQL)**
 
 ```sql
-select max(version) from supabase_migrations.schema_migrations;                 -- expect '<N>'
+select max(version) from supabase_migrations.schema_migrations;                 -- expect '0209'
 select coalesce(proacl::text,'') as acl,                                        -- byte-equal to Step 2's
        pg_get_functiondef(oid) like '%_ps_sec_people%' as wrapper_calls_helper,  -- true
        pg_get_functiondef(oid) like '%service_role%' as wrapper_mentions_service_role, -- false
@@ -1045,15 +1045,15 @@ select * from public._ps_sec_people(public._ps_identity_list(), public._ps_encou
 explain (analyze, buffers, timing on)
 select count(*) from public._patient_sources_identities();
 ```
-(Run as the default `postgres` MCP role; the helper is closed to runtime roles but not to the owner.) Record execution time of the first (served, ~identity core + encounters + join) against the second (identity core alone, ~185 ms) in the PR. Expected: the helper is within about 1.5x the core cost (the old body cost = core + encounters + the same join). If the plan shows a Nested Loop joining `unnest(p_enc)` to `unnest(p_ids)` with tens of seconds of runtime, ROLL BACK: add a forward migration restoring `scripts/fixtures/patient-sources-people-pre-<N>.sql` (`ps_old` -> `public`) and stop; report to the user.
+(Run as the default `postgres` MCP role; the helper is closed to runtime roles but not to the owner.) Record execution time of the first (served, ~identity core + encounters + join) against the second (identity core alone, ~185 ms) in the PR. Expected: the helper is within about 1.5x the core cost (the old body cost = core + encounters + the same join). If the plan shows a Nested Loop joining `unnest(p_enc)` to `unnest(p_ids)` with tens of seconds of runtime, ROLL BACK: add a forward migration restoring `scripts/fixtures/patient-sources-people-pre-0209.sql` (`ps_old` -> `public`) and stop; report to the user.
 
 - [ ] **Step 6: Ledger line and guide version (at merge time)**
 
-After Step 4 passes, edit `CLAUDE.md`: change the start of the `Migration ledger:` paragraph (line ~30) from `Migration ledger: **prod head = 0208** (` to `Migration ledger: **prod head = <N>** (`patient_sources_people`, Patient Sources Phase 5c — `patient_sources_people` re-created as a thin wrapper over the closed `_ps_sec_people` helper reading the 0206 shared arrays; same signature/gate/ACL, service_role EXECUTE kept; pushed <date> by the user, verified by object, rollback = restore `scripts/fixtures/patient-sources-people-pre-<N>.sql`) over **0208** (`, leaving the rest of the line unchanged; if main has since moved the head, put `<N>` above whatever head is now there. Then bump the user-guide version at merge time: re-read the current version (`grep -n "v2\.[0-9]*" CLAUDE.md docs/drmed-user-guide.html | head -5`; it was v2.62, 1 Oct 2026 when this plan was written, another PR may have bumped it), increment the minor by one and set today's date in `docs/drmed-user-guide.html` and the `CLAUDE.md` guide line (no new guide content: nothing user-visible changed). Run `npm test 2>&1 | tail -4` (some tests pin the guide version string), then:
+After Step 4 passes, edit `CLAUDE.md`: change the start of the `Migration ledger:` paragraph (line ~30) from `Migration ledger: **prod head = 0208** (` to `Migration ledger: **prod head = 0209** (`patient_sources_people`, Patient Sources Phase 5c — `patient_sources_people` re-created as a thin wrapper over the closed `_ps_sec_people` helper reading the 0206 shared arrays; same signature/gate/ACL, service_role EXECUTE kept; pushed <date> by the user, verified by object, rollback = restore `scripts/fixtures/patient-sources-people-pre-0209.sql`) over **0208** (`, leaving the rest of the line unchanged; if main has since moved the head, put `0209` above whatever head is now there. Then bump the user-guide version at merge time: re-read the current version (`grep -n "v2\.[0-9]*" CLAUDE.md docs/drmed-user-guide.html | head -5`; it was v2.62, 1 Oct 2026 when this plan was written, another PR may have bumped it), increment the minor by one and set today's date in `docs/drmed-user-guide.html` and the `CLAUDE.md` guide line (no new guide content: nothing user-visible changed). Run `npm test 2>&1 | tail -4` (some tests pin the guide version string), then:
 
 ```bash
 git add CLAUDE.md docs/drmed-user-guide.html
-git commit -m "docs: ledger <N> patient_sources_people on prod; guide version bump
+git commit -m "docs: ledger 0209 patient_sources_people on prod; guide version bump
 
 Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>"
 git push
@@ -1061,7 +1061,7 @@ git push
 
 - [ ] **Step 7: Mark ready, merge, confirm the deploy**
 
-Wait for the push's CI run to start, then `gh pr ready`; when CI is green and the user says merge, merge with the repo's merge flow, then confirm the Vercel production deploy landed (merge is not deploy) and the People page still loads for all three modes. Update the project memory file (`drmed-sheet-sync.md`): 5c merged, `<N>` on prod, next = 5a/5b per the spec.
+Wait for the push's CI run to start, then `gh pr ready`; when CI is green and the user says merge, merge with the repo's merge flow, then confirm the Vercel production deploy landed (merge is not deploy) and the People page still loads for all three modes. Update the project memory file (`drmed-sheet-sync.md`): 5c merged, `0209` on prod, next = 5a/5b per the spec.
 
 - [ ] **Step 8: Tear down the isolated stack**
 
