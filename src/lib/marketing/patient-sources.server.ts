@@ -13,6 +13,7 @@ import {
   classifyReportError, parsePatientSourcesReport, type PatientSourcesReport,
   type Grain, type Mode, type OverlapRow, type PeopleRow, type ReferrerRow, type ReportResult,
   type RevenueRow, type SeriesRow, type SpendTotalRow, type SummaryRow, type AdSpendDbRow,
+  trendWeeks, type Period,
 } from "./patient-sources";
 
 type Db = SupabaseClient<Database>;
@@ -86,6 +87,41 @@ export function loadPatientSourcesSeries(supabase: Db, from: string, to: string,
 export async function loadNewPatientsToday(supabase: Db, todayISO: string): Promise<ReportResult<SeriesRow[]>> {
   const res = await loadPatientSourcesSeries(supabase, todayISO, todayISO, "day", "new");
   return res.ok ? { ok: true, data: res.data.rows } : res;
+}
+
+export interface PatientSourcesTrend {
+  weeks: Period[];
+  newByDay: SeriesRow[];
+  spend: { ok: true; rows: SpendTotalRow[] } | { ok: false };
+  /** ISO instant the report was read — the card's "as of" stamp. */
+  readAt: string;
+  todayISO: string;
+}
+
+/**
+ * The admin dashboard trend card (spec §3.2): ONE report call over the 8
+ * completed weeks through today (its `new_by_day` feeds the bars, "this week
+ * so far" and today's tile), plus saved ad spend over the 8 weeks. An admin
+ * session on the admin-only dashboard — never call this with the service key
+ * (ad_spend_daily_totals refuses it; a refused call crashes prod's image).
+ */
+export async function loadPatientSourcesTrend(supabase: Db, todayISO: string): Promise<ReportResult<PatientSourcesTrend>> {
+  const weeks = trendWeeks(todayISO, 8);
+  const [report, spend] = await Promise.all([
+    loadPatientSourcesReport(supabase, { from: weeks[0].from, to: todayISO, grain: "week", mode: "new", prev: null }),
+    loadAdSpendTotals(supabase, weeks[0].from, weeks[weeks.length - 1].to),
+  ]);
+  if (!report.ok) return report;
+  return {
+    ok: true,
+    data: {
+      weeks,
+      newByDay: report.data.new_by_day,
+      spend: spend.ok ? { ok: true, rows: spend.data.rows } : { ok: false },
+      readAt: new Date().toISOString(),
+      todayISO,
+    },
+  };
 }
 
 export async function loadPatientSourcesRevenue(supabase: Db, from: string, to: string): Promise<ReportResult<RevenueRow[]>> {

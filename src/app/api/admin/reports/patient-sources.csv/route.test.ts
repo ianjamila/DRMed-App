@@ -71,6 +71,12 @@ describe.each([
     }
   });
 
+  it("stamps the export with when the numbers were read, as a separate argument", async () => {
+    const res = await GET(req(name, "from=2026-08-01&to=2026-08-31"));
+    expect(res.status).toBe(200);
+    expect(csv.mock.calls[0]![0].asOf).toMatch(/^Numbers as of /);
+  });
+
   it("with no period given, exports this month (the default is not an error)", async () => {
     const res = await GET(req(name, ""));
     expect(res.status).toBe(200);
@@ -103,6 +109,7 @@ describe("patient-sources.csv reads one report", () => {
     expect(res.status).toBe(200);
     const sent = csv.mock.calls[0][0];
     expect(sent.truncated).toBe(true);
+    expect(sent.asOf).toMatch(/^Numbers as of /);
     expect(sent.rows).toEqual(seriesCsvRows({ from: "2026-08-01", to: "2026-08-31", mode: "new", grain: "day" }, summary, many.slice(0, REPORT_EXPORT_MAX_ROWS)));
   });
   it.each([["forbidden", 403], ["invalid", 500], ["error", 500]] as const)("answers %s with %i", async (kind, status) => {

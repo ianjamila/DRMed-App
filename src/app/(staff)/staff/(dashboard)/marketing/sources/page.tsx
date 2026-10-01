@@ -5,7 +5,7 @@ import { createClient } from "@/lib/supabase/server";
 import { fetchAllRows, REPORT_EXPORT_MAX_ROWS } from "@/lib/reports/paging";
 import { manilaRangeUtc, todayManilaISODate } from "@/lib/dates/manila";
 import { firstParam, PATIENT_SOURCES_MIN_DATE, resolvePeriod } from "@/lib/marketing/period";
-import { newPatientsTile } from "@/lib/marketing/patient-sources";
+import { asOfLabel, newPatientsTile } from "@/lib/marketing/patient-sources";
 import { loadPatientSourcesSummary } from "@/lib/marketing/patient-sources.server";
 import { StatCard } from "../../_dashboards/_components/stat-card";
 import { PeriodControls } from "../_components/period-controls";
@@ -72,6 +72,8 @@ export default async function BookingSourcesReportPage({ searchParams }: SearchP
     // Patient Sources refuses a start before Dec 2023: skip the call, the tile says so.
     period.from < PATIENT_SOURCES_MIN_DATE ? Promise.resolve(null) : loadPatientSourcesSummary(supabase, period.from, period.to),
   ]);
+  // When this page read its numbers (several loaders, not one snapshot).
+  const readAt = new Date();
   const newTile = newPatientsTile(summary);
 
   const bookings = summarizeBookings(apptRows);
@@ -99,6 +101,7 @@ export default async function BookingSourcesReportPage({ searchParams }: SearchP
         error={period.error}
         params={{ from: period.from, to: period.to }}
       />
+      <p className="mb-3 text-xs text-[color:var(--color-brand-text-soft)]">{asOfLabel(readAt)}</p>
 
       {apptTruncated || msgTruncated ? (
         <p
