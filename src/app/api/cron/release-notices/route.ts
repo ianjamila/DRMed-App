@@ -2,6 +2,7 @@ import { createHash, timingSafeEqual } from "node:crypto";
 import { withCronMonitor } from "@/lib/ops/cron-monitor";
 import { reportError } from "@/lib/observability/report-error";
 import { writeSweepHeartbeat } from "@/lib/notifications/release-notice-heartbeat";
+import { alertOnSweep } from "@/lib/notifications/release-notice-alerts.server";
 import { emptySweepSummary, readOutboxEnabled, runReleaseNoticeSweep } from "@/lib/notifications/release-notice-sweep";
 
 export const dynamic = "force-dynamic";
@@ -59,6 +60,10 @@ async function handle(request: Request) {
     // Run heartbeat: only while the flag is ON; always when the run did work or
     // failed, and otherwise (a quiet run) at most once an hour.
     if (summary.enabled === true) await writeSweepHeartbeat(summary);
+
+    // "Needs attention" signals (counts only, best effort, never throws): a run that
+    // abandoned a notice, or a backlog that is not draining. See release-notice-alerts.
+    await alertOnSweep(summary);
 
     if (summary.failures > 0) markFailed();
     return Response.json(summary);
