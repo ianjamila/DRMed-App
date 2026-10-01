@@ -160,8 +160,15 @@
 //      Confirmed 2026-09-30: FAIL 0206: every wrapper returns exactly the
 //      pre-0206 rows — wrappers differ from the pre-0206 bodies: (the proof
 //      prints only the first line; the per-call diffs follow it in the message)
-//   Q–R (0209) — see Task 5 of docs/superpowers/plans/2026-10-01-patient-sources-5c-people.md; the in-script
-//   mutants C1–C7 ("5c controls") run on every proof run and need no file edit.
+//   Q (0209). _ps_sec_people: `and (p_channel is null or i.channel = p_channel)` -> `and true` (both
+//      occurrences) in the migration, psql -f it. Confirmed 2026-10-01: FAIL 5c: patient_sources_people
+//      returns exactly the pre-0209 rows, in order, with the same total_count — people differ from the
+//      pre-0209 body (58 of 174 cases) (the controls baseline also fails, as it copies the live helper).
+//   R (0209). wrapper: `case when p_mode = 'served' then …` -> `'never'`. Confirmed 2026-10-01: FAIL 5c:
+//      the seeded world reaches every people path (served rows missing) and FAIL 5c: … returns exactly the
+//      pre-0209 rows … (45 of 174 cases).
+//   C1–C7 (in script, no file edit): seven copies of the helper in schema ps_ctl, each with one edit,
+//      each compared through the same grid; the check fails if ANY escapes ("5c controls").
 //   0206 re-apply needs the objects dropped first:
 //     psql $DB -c "drop function if exists public.patient_sources_report(date,date,text,text,date,date);
 //                  drop type if exists public._ps_identity, public._ps_encounter, public._ps_revenue_line cascade;"
@@ -753,6 +760,12 @@ async function main() {
              $$`);
   }
 
+  // generate_visit_number() is lpad(nextval(seq), 4): past 9999 it TRUNCATES and collides. Sequences are not
+  // rolled back, and the 5c scale check inserts 3,000 visits per run, so re-seed the sequence when no visit
+  // exists (a fresh/proof-only local DB). Never touches a DB that holds visits.
+  if (Number((await db.query<{ n: string }>("select count(*)::text as n from public.visits")).rows[0].n) === 0) {
+    await db.query("select setval('public.visit_number_seq', 1, false)");
+  }
   await q("begin");
   try {
     fx = await setupFixtures();
