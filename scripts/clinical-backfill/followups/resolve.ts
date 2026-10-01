@@ -24,33 +24,26 @@ import {
   requireTargetConfirmation,
 } from "../../lib/env-guard";
 import { adminClient, loadRows, mergeOne } from "../../patient-dedup/engine";
+import { parseDedupArgs } from "../../patient-dedup/lib/args";
 import type { PatientRow } from "../../patient-dedup/lib/types";
 import { matchKey } from "../lib/names";
 import { parseResolutions } from "./resolutions";
 
 // 0196: mergeOne() now calls merge_patients_guarded, which records every
 // merge against a named, ACTIVE admin (P0078) — so --commit needs --actor,
-// same as scripts/patient-dedup.
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+// parsed by the same rule as scripts/patient-dedup.
 
 interface Args { file: string; commit: boolean; actor: string | null; }
 function parseArgs(): Args {
   const argv = process.argv.slice(2);
   const file = argv.find((a) => a.startsWith("--file="))?.substring(7) ?? "";
   if (!file) { console.error("--file=<resolutions.csv> is required."); process.exit(2); }
-  const commit = argv.includes("--commit");
-  const eq = argv.find((a) => a.startsWith("--actor="));
-  const at = argv.indexOf("--actor");
-  const raw = eq !== undefined ? eq.slice("--actor=".length) : at >= 0 ? (argv[at + 1] ?? "") : null;
-  if (raw !== null && !UUID_RE.test(raw)) {
-    console.error("--actor must be an admin's staff id (a UUID, from Admin Tools › Staff).");
+  try {
+    return { file, ...parseDedupArgs(argv) };
+  } catch (e) {
+    console.error((e as Error).message);
     process.exit(2);
   }
-  if (commit && raw === null) {
-    console.error("--commit needs --actor=<admin staff id>: every merge is recorded against an active admin.");
-    process.exit(2);
-  }
-  return { file, commit, actor: raw };
 }
 
 async function main(): Promise<void> {
@@ -115,14 +108,21 @@ async function main(): Promise<void> {
   requireTargetConfirmation("clinical-backfill:resolve-merges");
 
   let merged = 0;
+  let skipped = 0;
   for (const p of plans) {
     for (const s of p.sources) {
-      await mergeOne(admin, p.target, s, "partner-resolution", args.actor!); // non-null: --commit requires --actor
-      merged++;
-      console.log(`  merged ${s.drm_id} -> ${p.target.drm_id}`);
+      // non-null: --commit requires --actor. "skipped" = the SQL refused the
+      // pair as already deleted/merged (P0058); nothing changed.
+      if ((await mergeOne(admin, p.target, s, "partner-resolution", args.actor!)) === "merged") {
+        merged++;
+        console.log(`  merged ${s.drm_id} -> ${p.target.drm_id}`);
+      } else {
+        skipped++;
+        console.log(`  skipped ${s.drm_id} -> ${p.target.drm_id} (already deleted or merged)`);
+      }
     }
   }
-  console.log(`\nMerge complete: ${merged} merged. Next: import held rows with --resolutions=${args.file}.`);
+  console.log(`\nMerge complete: ${merged} merged, ${skipped} skipped. Next: import held rows with --resolutions=${args.file}.`);
 }
 
 main().catch((e) => { console.error("FATAL:", e); process.exit(1); });
