@@ -42,8 +42,9 @@
 //   (nothing applied), A6 a revert-acquire x an in-flight chunk (chunk whole)
 //   V1 revert x staff edit (no lost update), V2 paged revert replay, V3 revert of
 //   a created patient x delete_patient, D2 revert x merge (lock order, no 40P01)
-//   KNOWN (reported, not asserted): A4 link x delete_patient (link written to a
-//   just-deleted patient), D1 apply chunk x merge (40P01 lock-order cycle).
+//   RV1 sheet_review_resolve x acquire (both orders)
+//   KNOWN (reported, not asserted; a KNOWN scenario that stops reproducing or breaks exits 1): A4 link x delete_patient (link written to a
+//   just-deleted patient), D1 apply chunk x merge (40P01 lock-order cycle), D3 resort [higher, lower] x merge (same cycle).
 //
 // FIXTURES are committed (two connections cannot see each other's uncommitted
 // rows), tagged SscProof<hex> / sscproof<hex>, reached through a throwaway admin
@@ -66,6 +67,8 @@
 import "./lib/load-env";
 import { requireLocalOrExplicitProd } from "./lib/env-guard";
 import { randomBytes, randomUUID } from "node:crypto";
+import { readFileSync, readdirSync } from "node:fs";
+import { join } from "node:path";
 import { Client } from "pg";
 
 requireLocalOrExplicitProd("sheet-sync:concurrency-proof", {
@@ -226,6 +229,15 @@ let SEQ = 0;
 let origPaused: boolean | null = null;
 let pausedChanged = false;
 
+const PAUSE_MARK = "sscproof-was-unpaused:";
+/** A SIGKILL'd run leaves the setting paused with a marker in pause_reason; the next startup sweep puts the original back. */
+async function restorePaused(): Promise<void> {
+  const s = (await q(`select pause_reason from public.sheet_sync_settings where id`))[0];
+  if (s && typeof s.pause_reason === "string" && s.pause_reason.startsWith(PAUSE_MARK)) {
+    const orig = s.pause_reason.slice(PAUSE_MARK.length);
+    await q(`update public.sheet_sync_settings set paused = false, pause_reason = $1 where id`, [orig === "" ? null : orig]);
+  }
+}
 async function setupAdmin(): Promise<void> {
   await q(
     `insert into auth.users (id, instance_id, aud, role, email, encrypted_password, email_confirmed_at, created_at, updated_at)
@@ -905,6 +917,73 @@ const scenarios: Scenario[] = [
   },
 ];
 
+const SCENARIOS_EXTRA: Scenario[] = [
+  // concurrency-proof: sheet_resort_apply (D3 - KNOWN: resort loops p_patient_ids in the CALLER's order with a per-row FOR UPDATE)
+  {
+    id: "D3",
+    known: true,
+    title: "KNOWN: resort [higher, lower] x merge of the same two patients - lock-order cycle (40P01)",
+    async run() {
+      const r = await newRun("resort");
+      const ps = [await mkPatient({ referral: "other" }), await mkPatient({ referral: "other" })].sort();
+      const [lo, hi] = ps as [string, string];
+      const [W, M] = [await newActor("resort"), await newActor("merge")];
+      await begin(W);
+      await begin(M);
+      // two calls in one transaction stand for one call whose id list is [hi, lo]: both hold their row locks to the end
+      const w1 = await run(W, resortSql(), [r.token, [hi], "other", "online_google"]);
+      expect(w1.ok && J(w1) === 1, `first half of the id list (higher patient): ${show(w1)}`);
+      const pm = run(M, mergeSql, [hi, lo, ADMIN]);
+      await isBlocked(M, "the merge holds the lower patient and waits for the higher one");
+      const pw = andEnd(W, run(W, resortSql(), [r.token, [lo], "other", "online_google"]));
+      const [ww, mm] = await Promise.all([pw, andEnd(M, pm)]);
+      console.log(`    evidence D3: resort -> ${show(ww)}; merge -> ${show(mm)}`);
+      return [ww, mm].some((o) => !o.ok && o.code === "40P01") ? "reproduced" : "not-reproduced";
+    },
+  },
+  // concurrency-proof: sheet_sync_acquire (RV1: an admin's sheet_review_resolve against the lease lock, both orders)
+  {
+    id: "RV1",
+    title: "review resolve x acquire: the resolve holds the lease lock so the acquire queues (then the upsert keeps the dismissal); an in-flight acquire makes the resolve refuse P0062 at once",
+    async run() {
+      await clearRuns();
+      const key = `${TAGL}-rv-${++SEQ}`;
+      const item = (await q(`insert into public.sheet_sync_review_items (tab, item_key, kind) values ('customers', $1, 'ambiguous_patient') returning id`, [key]))[0].id as string;
+      const [R, B] = [await newActor("resolve"), await newActor("acquire")];
+      await begin(R);
+      await begin(B);
+      const rr = await run(R, `select public.sheet_review_resolve($1::uuid, $2::uuid, 'dismiss', null) as j`, [item, ADMIN]);
+      expect(rr.ok, `resolve: ${show(rr)}`);
+      const pb = run(B, acquireSql(), ["resort", ADMIN, false]);
+      await waitsOn(B, R, { advisory: true }, "the acquire queues on the lease lock the resolve holds");
+      await commit(R);
+      const b = await andEnd(B, pb);
+      expect(b.ok && J(b).status === "running", `the acquire should win after the resolve, got ${show(b)}`);
+      const up = await q(
+        `select public.sheet_sync_upsert_review($1, 'customers', $2::jsonb, false) as j`,
+        [J(b).lease_token, JSON.stringify([{ kind: "ambiguous_patient", item_key: key, payload: {} }])],
+      );
+      expect(up[0].j.kept_dismissed === 1 && up[0].j.opened === 0, `the upsert must keep the dismissal, got ${JSON.stringify(up[0].j)}`);
+      expect((await countOf(`select count(*) n from public.sheet_sync_review_items where item_key = $1 and status = 'open'`, [key])) === 0, "no new open item");
+      // other order: an acquire in flight, then a resolve of another item
+      await clearRuns();
+      const key2 = `${TAGL}-rv-${++SEQ}`;
+      const item2 = (await q(`insert into public.sheet_sync_review_items (tab, item_key, kind) values ('customers', $1, 'ambiguous_patient') returning id`, [key2]))[0].id as string;
+      const [A2, R2] = [await newActor("acquire 2"), await newActor("resolve 2")];
+      await begin(A2);
+      await begin(R2);
+      const a2 = await run(A2, acquireSql(), ["resort", ADMIN, false]);
+      expect(a2.ok, `acquire: ${show(a2)}`);
+      const r2 = await answersAtOnce(R2, run(R2, `select public.sheet_review_resolve($1::uuid, $2::uuid, 'dismiss', null) as j`, [item2, ADMIN]), "the resolve uses a try-lock");
+      refused(r2, "P0062", "resolve during an acquire");
+      await endNow(R2, r2);
+      await commit(A2);
+      expect((await q(`select status from public.sheet_sync_review_items where id = $1`, [item2]))[0].status === "open", "the refused resolve changed nothing");
+    },
+  },
+];
+scenarios.push(...SCENARIOS_EXTRA);
+
 async function aliasFixture(withItem = true): Promise<{ key: string; patient: string; item: string | null }> {
   const key = `${TAGL}-src${++SEQ}`;
   const patient = await mkPatient({ referral: null });
@@ -1000,10 +1079,40 @@ async function buildMutant(schema: string, m: Mutant): Promise<Record<string, st
   return map;
 }
 
+// A stale local DB must not be proven instead of the repo: one marker fragment per function body must be in the
+// live definition AND in the newest migration that defines it.
+const MARKERS: Record<string, string> = {
+  _sheet_sync_fence: "A preview run cannot change data.",
+  sheet_sync_acquire: "lease expired (no heartbeat for 10 minutes)",
+  sheet_sync_upsert_review: "Review fix E",
+  sheet_sync_release_undo: "The sync already decides these rows again.",
+  sheet_resort_apply: "app.referral_origin",
+  sheet_alias_apply: "This review item was already handled.",
+  sheet_sync_apply_customer_ops: "skipped_existing",
+  sheet_sync_revert_run: "held_patient_id = null",
+};
+async function driftCheck(): Promise<void> {
+  const dir = join(process.cwd(), "supabase/migrations");
+  const files = readdirSync(dir).filter((x) => x.endsWith(".sql")).sort();
+  const texts = files.map((x) => ({ x, sql: readFileSync(join(dir, x), "utf8") }));
+  for (const [name, marker] of Object.entries(MARKERS)) {
+    const live = (await q(`select pg_get_functiondef(p.oid) as d from pg_proc p where p.pronamespace = 'public'::regnamespace and p.proname = $1`, [name]))[0]?.d as string | undefined;
+    const re = new RegExp(`function\\s+public\\.${name}\\s*\\(`, "i");
+    const latest = [...texts].reverse().find((m) => re.test(m.sql));
+    if (!live || !latest) throw new Error(`drift check: ${name} missing from the ${!live ? "database" : "migrations"}`);
+    const inLive = live.includes(marker);
+    const inRepo = latest.sql.includes(marker);
+    if (!inLive || !inRepo)
+      throw new Error(`drift check: ${name} marker «${marker}» is ${inLive ? "" : "missing from the live DB"}${!inLive && !inRepo ? " and " : ""}${inRepo ? "" : `missing from ${latest.x}`} - the local DB and the repo disagree`);
+  }
+}
+
 // ---------------------------------------------------------------------------
 // teardown
 // ---------------------------------------------------------------------------
+let captured: { runs: string[]; pats: string[]; imports: string[]; admins: string[] } = { runs: [], pats: [], imports: [], admins: [] };
 async function sweep(): Promise<void> {
+  await restorePaused();
   const ctl = await q(`select nspname from pg_namespace where nspname like 'sscproof_ctl_%'`);
   for (const s of ctl) await monitor.query(`drop schema ${s.nspname} cascade`);
   const admins: string[] = (await q(`select id from auth.users where email like 'sscproof%-admin@example.test'`)).map((r) => r.id);
@@ -1022,6 +1131,7 @@ async function sweep(): Promise<void> {
         [runs, pats],
       )
     ).map((r) => r.id);
+    captured = { runs, pats, imports, admins };
     const del = (sql: string, p: unknown[]) => monitor.query(sql, p);
     await del(`delete from public.sheet_sync_changes where run_id = any($1::uuid[]) or patient_id = any($2::uuid[])`, [runs, pats]);
     await del(`delete from public.sheet_patient_links where link_key like 'sscproof%' or patient_id = any($2::uuid[]) or run_id = any($1::uuid[])`, [runs, pats]);
@@ -1055,6 +1165,17 @@ async function leftovers(): Promise<string[]> {
   await chk("review items", `select count(*) n from public.sheet_sync_review_items where item_key like 'sscproof%'`);
   await chk("aliases", `select count(*) n from public.referral_source_aliases where raw_normalized like 'sscproof%'`);
   await chk("customer rows", `select count(*) n from public.sheet_customer_rows where source_key like 'sscproof%'`);
+  const c = captured;
+  const byIds = async (label: string, sql: string, ...p: unknown[][]) => {
+    const n = await countOf(sql, p.length ? p[0] : []);
+    if (n) out.push(`${label}: ${n}`);
+  };
+  await byIds("patient_merges", `select count(*) n from public.patient_merges where keep_id = any($1::uuid[]) or source_id = any($1::uuid[])`, [c.pats]);
+  await byIds("audit_log", `select count(*) n from public.audit_log where patient_id = any($1::uuid[]) or actor_id = any($2::uuid[])`, [c.pats, c.admins]);
+  await byIds("acquisition facts", `select count(*) n from public.patient_acquisition_facts where patient_id = any($1::uuid[])`, [c.pats]);
+  await byIds("sync changes", `select count(*) n from public.sheet_sync_changes where run_id = any($1::uuid[]) or patient_id = any($2::uuid[])`, [c.runs, c.pats]);
+  await byIds("legacy import runs", `select count(*) n from public.legacy_import_runs where id = any($1::uuid[])`, [c.imports]);
+  await byIds("sync runs (by id)", `select count(*) n from public.sheet_sync_runs where id = any($1::uuid[])`, [c.runs]);
   await chk("staff users", `select count(*) n from auth.users where email like 'sscproof%-admin@example.test'`);
   await chk("scratch schemas", `select count(*) n from pg_namespace where nspname like 'sscproof_ctl_%'`);
   return out;
@@ -1081,8 +1202,7 @@ function cleanup(): Promise<void> {
   cleanupP ??= (async () => {
     await closeActors();
     await sweep().catch((e) => console.error(`sweep failed: ${e instanceof Error ? e.message : e}`));
-    if (pausedChanged && origPaused !== null)
-      await monitor.query(`update public.sheet_sync_settings set paused = $1 where id`, [origPaused]).catch(() => undefined);
+    await restorePaused().catch(() => undefined);
   })();
   return cleanupP;
 }
@@ -1111,10 +1231,12 @@ async function main(): Promise<void> {
     );
     if (have[0].n !== 12) throw new Error(`prerequisites missing by object: found ${have[0].n} of 12 functions (0170/0193/0196/0204 and the lifecycle functions must be applied)`);
     expect((await countOf(`select count(*) n from information_schema.columns where table_name = 'sheet_patient_links' and column_name = 'held_patient_id'`)) === 1, "0193/0204 column held_patient_id is missing");
+    await driftCheck();
     await sweep();
     origPaused = (await q(`select paused from public.sheet_sync_settings where id`))[0].paused as boolean;
     if (!origPaused) {
-      await q(`update public.sheet_sync_settings set paused = true where id`);
+      const reason = (await q(`select pause_reason from public.sheet_sync_settings where id`))[0].pause_reason as string | null;
+      await q(`update public.sheet_sync_settings set paused = true, pause_reason = $1 where id`, [PAUSE_MARK + (reason ?? "")]);
       pausedChanged = true;
     }
     await setupAdmin();
@@ -1140,6 +1262,12 @@ async function main(): Promise<void> {
     const known = Object.values(real).filter((r) => r.status === "known").length;
     console.log(`${passed}/${asserted.length} scenarios passed; ${known} known issue(s) reproduced.`);
     if (passed !== asserted.length) exit = 1;
+    // a KNOWN scenario must keep reproducing: a vanished bug (FIXED) or a broken scenario (FAIL) forces action
+    const knownBad = Object.entries(real).filter(([id, r]) => scenarios.find((s) => s.id === id)?.known && r.status !== "known");
+    if (knownBad.length) {
+      console.log(`KNOWN scenario(s) no longer reproduce or broke: ${knownBad.map(([id, r]) => `${id} (${r.status})`).join(", ")} - promote or repair them`);
+      exit = 1;
+    }
 
     if (CONTROL && !aborting) {
       let caught = 0;
