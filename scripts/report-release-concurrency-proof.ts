@@ -76,9 +76,8 @@
 //              writer lets go it is a deadlock (40P01) - the bug 0211 fixes
 //              (claim / unclaim now pre-lock their rows ORDER BY id). The scenario
 //              OBSERVES which row the writer holds and demands the matching
-//              outcome: nothing held -> both finish serially. A reproduced
-//              deadlock would be a KNOWN_BUG (printed, not counted, unless
-//              --strict); none is expected now.
+//              outcome: nothing held -> both finish serially; a deadlock (or a
+//              writer that holds H while waiting) FAILS the run.
 //   D1  payment void holds -> release WAITS (visit FOR SHARE vs the recalc's
 //       FOR UPDATE) -> void commits -> release fails the payment gate (23514).
 //   D2  release holds -> void WAITS -> both commit: released, one release
@@ -147,7 +146,7 @@
 // DETAIL, so each is caught for the right reason. Round B0 is the BASELINE: the
 // unmutated copies of all six live functions must pass EVERY forced scenario, so a broken copy cannot make every mutant look caught.
 // Dev switches: RRC_ONLY=L1a,L2x-claim (just those forced scenarios),
-// RRC_CONTROL=B0,M9 (just those rounds), --strict (a KNOWN_BUG fails the run).
+// RRC_CONTROL=B0,M9 (just those rounds).
 // The control rounds do NOT cover the
 // guards that live in triggers on public tables (the payment gate, the consent
 // gate, the GL bridge's one-posted-entry unique index, fn_release_header_when_
@@ -449,12 +448,6 @@ function andEnd<T>(a: Actor, p: Promise<Out<T>>): Promise<Out<T>> {
 
 class Fail extends Error {}
 
-// A REAL defect the proof has reproduced and the owner has not yet decided to
-// fix (no migration is part of this proof). In the default run it is printed
-// loudly as KNOWN_BUG and does not fail the run; `--strict` makes it fail, and
-// a control round always treats it as a failure (the scenario caught something).
-class KnownBug extends Fail {}
-const STRICT = process.argv.includes("--strict");
 
 // Waiting on a ROW: an ungranted transactionid (queued behind the holder's
 // transaction) or tuple lock. A relation-level wait - another session's DDL on
@@ -946,7 +939,6 @@ interface Result {
   name: string;
   ok: boolean;
   detail: string;
-  known?: boolean; // a reproduced KNOWN_BUG: printed, not counted
 }
 const results: Result[] = [];
 let sink: Result[] = results;
@@ -965,15 +957,8 @@ async function scenario(name: string, id: string, body: () => Promise<string | v
     if (!quietPass) console.log(`  PASS  ${name}${note ? ` - ${note}` : ""}`);
   } catch (e) {
     const detail = e instanceof Error ? e.message : String(e);
-    // A KNOWN_BUG only stays out of the failures in the main run: a control
-    // round that sees one has caught the scenario's target.
-    if (e instanceof KnownBug && sink === results && !STRICT) {
-      sink.push({ name, ok: true, detail, known: true });
-      console.log(`  KNOWN_BUG  ${name} - ${detail}`);
-    } else {
-      sink.push({ name, ok: false, detail });
-      console.log(`  FAIL  ${name} - ${detail}`);
-    }
+    sink.push({ name, ok: false, detail });
+    console.log(`  FAIL  ${name} - ${detail}`);
   } finally {
     await closeActors();
   }
@@ -1573,8 +1558,8 @@ async function forcedScenarios(mode: Mode): Promise<void> {
   //              id order).
   // The scenario OBSERVES which row the claim holds while it waits, then demands
   // the matching outcome: claim already holds H -> the deadlock must happen
-  // (the 0211 bug: a KNOWN_BUG while claim locked in plan order); claim holds nothing -> both must
-  // finish serially with no error.
+  // (the bug 0211 fixed: claim locked in plan order); claim holds nothing -> both must
+  // finish serially with no error. A deadlock FAILS the run.
   const lockOrderRace = async (o: {
     contender: "release" | "undo";
     writer: "claim" | "unclaim";
@@ -1598,7 +1583,9 @@ async function forcedScenarios(mode: Mode): Promise<void> {
     const w1 = await mustBlockOn(c, lo, "L", g, `the ${o.contender} reaches the lower line first and queues behind the third writer`);
     const w = await actor("M2", fx.med2);
     await begin(w, mode, o.plan === "physical" ? PHYSICAL_PLAN : []);
-    const targets = [lo, hi];
+    // Array order H, L on purpose: a plan driven by the array (unclaim's unnest) is as
+    // order-violating as a physical one; only an id-ordered lock passes.
+    const targets = [hi, lo];
     const pw = andEnd(w, o.writer === "claim" ? claim(w, targets) : unclaim(w, targets, [fx.med2, fx.med2]));
     const w2 = await mustBlockOn(w, lo, "L", null, `the ${o.writer} queues on L behind the ${o.contender}`);
     const heldH = await rowLocked("test_requests", hi);
@@ -1612,7 +1599,7 @@ async function forcedScenarios(mode: Mode): Promise<void> {
     if (heldH) {
       if (deadlocks.length === 1 && [rc, rw].some((x) => x.ok)) {
         const victim = !rc.ok && rc.code === "40P01" ? o.contender : o.writer;
-        throw new KnownBug(
+        throw new Fail(
           `${o.writer} (${o.plan} plan, ${order}) vs ${o.contender} (id order) DEADLOCKED, victim = ${victim} (40P01): ` +
             `${o.contender} holds L and wants H, ${o.writer} holds H and wants L. ${w1}; ${w2}. ` +
             `0211 makes ${o.writer} lock its rows ORDER BY id before the UPDATE.`,
@@ -2419,16 +2406,8 @@ async function main(): Promise<void> {
     await monitor.end();
   }
 
-  const known = results.filter((r) => r.known);
-  const counted = results.filter((r) => !r.known);
-  const failed = counted.filter((r) => !r.ok);
-  console.log(`\n${counted.length - failed.length}/${counted.length} passed`);
-  if (known.length > 0) {
-    console.log(
-      `KNOWN_BUG: ${known.length} scenario(s) reproduced a real defect (not counted above; ${STRICT ? "--strict is on" : "re-run with --strict to fail on them"}):`,
-    );
-    for (const k of known) console.log(`  - ${k.name}`);
-  }
+  const failed = results.filter((r) => !r.ok);
+  console.log(`\n${results.length - failed.length}/${results.length} passed`);
   process.exit(failed.length ? 1 : 0);
 }
 
