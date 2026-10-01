@@ -29,9 +29,13 @@ export function LabRequestUploads({ rows }: { rows: UploadRow[] }) {
       setError(null);
       setPendingId(id);
       const r = await getPatientLabRequestFormUrl(id);
-      setPendingId(null);
+      start(() => {
+        setPendingId(null);
+      });
       if (!r.ok) {
-        setError(r.error);
+        start(() => {
+          setError(r.error);
+        });
         return;
       }
       window.open(r.url, "_blank", "noopener,noreferrer");
@@ -44,9 +48,13 @@ export function LabRequestUploads({ rows }: { rows: UploadRow[] }) {
       setError(null);
       setPendingId(id);
       const r = await deletePatientLabRequestUpload(id);
-      setPendingId(null);
+      start(() => {
+        setPendingId(null);
+      });
       if (!r.ok) {
-        setError(r.error);
+        start(() => {
+          setError(r.error);
+        });
         return;
       }
       router.refresh();

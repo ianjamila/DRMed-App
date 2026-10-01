@@ -29,6 +29,14 @@
 //   PSQL=/opt/homebrew/opt/libpq/bin/psql
 //   DB=postgresql://postgres:postgres@127.0.0.1:54322/postgres
 //   MIG=supabase/migrations/0189_patient_sources.sql
+//   MIG_LIVE — where each body lives NOW (a control that edits a superseded
+//   body proves nothing): identity core + encounters + revenue lines =
+//   0193_sync_review_gaps.sql; the five report RPCs + their rules =
+//   0206_patient_sources_report.sql (_ps_sec_* helpers and wrappers);
+//   patient_sources_people = 0189. Letters A, B, C, E, F, G, L edit the core
+//   -> edit 0193 (psql -f 0193 is safe: create-or-replace + its own
+//   post-conditions). Letter D edits the summary WRAPPER gate -> 0206 (and
+//   drop summary from 0206's post-condition arrays for that round).
 //
 //   A. _patient_sources_encounters, sheet branch: the ELSE clause of the
 //      `case when l.patient_id is null then 'name:' || l.loose_key` emits the
@@ -126,6 +134,33 @@
 //      New. Confirmed 2026-09-28:
 //        FAIL … — expected basis 'before_window' (not 'registration'), got
 //        {"first_date":"2026-06-15","basis":"registration", …}
+//   D (re-pointed to 0206, 2026-09-30). Confirmed: FAIL ACL matrix - functions
+//      — ACL reception/patient_sources_summary: expected error 42501, but the
+//      call succeeded (also fails the two 0199 service_role checks).
+//   M–P (0206, 2026-09-30), each confirmed with the FAIL line quoted:
+//   M. patient_sources_report: delete the 'overlaps' entry. Confirmed
+//      2026-09-30: FAIL 0206: report sections equal the single RPCs (with and
+//      without a previous period) — 2026-06-01..2026-06-30 day/new prev=set:
+//      sections are current,new_by_day,previous,referrers,revenue,series,summary
+//   N. patient_sources_report 'current': 'period', p_mode -> 'period', 'new'.
+//      Confirmed 2026-09-30: FAIL 0206: report sections equal the single RPCs
+//      … — 2026-06-01..2026-06-30 week/served prev=null current: report=[…
+//      "confirmed":4,"unconfirmed":0 …] rpc=[… "confirmed":4,"unconfirmed":1 …]
+//   O. patient_sources_report gate: drop the coalesce -> the migration's own
+//      post-condition aborts ("0206: public.patient_sources_report(...) does
+//      not carry the coalesced service_role gate"). Then also drop the report
+//      from that post-condition's gate array. Confirmed 2026-09-30: FAIL 0206:
+//      report gate matrix — no JWT claims at all: expected error 42501, but
+//      the call succeeded; and FAIL 0206: helpers and list builders are
+//      closed; row types match their producers — patient_sources_report
+//      ACL/definer/gate wrong: {"a":false,"u":true,"s":true,"sd":true,"gate":false}
+//   P. _ps_sec_series 'new' branch: `and not i.is_returning` -> `and true`.
+//      Confirmed 2026-09-30: FAIL 0206: every wrapper returns exactly the
+//      pre-0206 rows — wrappers differ from the pre-0206 bodies: (the proof
+//      prints only the first line; the per-call diffs follow it in the message)
+//   0206 re-apply needs the objects dropped first:
+//     psql $DB -c "drop function if exists public.patient_sources_report(date,date,text,text,date,date);
+//                  drop type if exists public._ps_identity, public._ps_encounter, public._ps_revenue_line cascade;"
 //
 //   for each letter: edit $MIG, then
 //     $PSQL $DB -v ON_ERROR_STOP=1 -f $MIG
@@ -189,6 +224,19 @@ async function main() {
     params: unknown[] = [],
   ): Promise<QueryResult<R>> {
     return db.query<R>(sql, params);
+  }
+
+  // 0196/0197: merge markers are written through the private merge writer,
+  // both columns together (0197 refuses anything else). Session-level SET ROLE
+  // (not SET LOCAL, which is a no-op outside a transaction block), undone
+  // right after the one statement.
+  async function markMerged(srcId: string, keepId: string): Promise<void> {
+    await q(`set role patient_merge_writer`);
+    try {
+      await q(`update public.patients set merged_into_id = $1, merged_at = now() where id = $2`, [keepId, srcId]);
+    } finally {
+      await q(`reset role`);
+    }
   }
 
   function describeError(err: unknown): string {
@@ -495,6 +543,105 @@ async function main() {
   }
 
   // ---------------------------------------------------------------------
+  // ---- 0206: a seeded world where every section is non-empty ----------
+  // Dates straddle the three comparison periods below. Built inside a
+  // scoped() check, so it never outlives that check.
+  const loose = (last: string, first: string) => looseKeyOf({ last, first, middle: null });
+  const P_EARLY = { from: "2023-12-01", to: "2024-01-31" };
+  const P_JUNE = { from: "2026-06-01", to: "2026-06-30" };
+  const P_LONG = { from: "2025-08-27", to: "2026-09-30" }; // exactly 400 days
+  const PERIODS = [P_EARLY, P_JUNE, P_LONG];
+
+  interface World { del: string; dup: string; surv: string; regOnly: string; old: string; imp: string; }
+  async function seedWorld(): Promise<World> {
+    const sources = ["walk_in", "online_facebook", "online_google", null] as const;
+    const days = ["2023-12-05", "2024-01-20", "2025-09-10", "2026-02-14", "2026-06-03", "2026-06-17", "2026-06-28", "2026-09-29"];
+    // App-native patients, one per (source, day), with a priced visit that day.
+    let n = 0;
+    const firstDayIds: string[] = [];
+    for (const source of sources) {
+      for (const d of days) {
+        n += 1;
+        const id = await patient(`World${n}`, `App${n}`, { source: source ?? undefined, createdAt: `${d}T09:00:00+08:00` });
+        await visit(id, d, 300 + n);
+        if (d === days[0]) firstDayIds.push(id);
+        if (n % 3 === 0) await visit(id, "2026-06-20", 150); // a repeat visit inside June
+        if (n % 4 === 0) await q(`update public.patients set referred_by_doctor = $1 where id = $2`, [`Dr. World ${n % 3}`, id]);
+      }
+    }
+    // An early referrer, so referrers is non-empty for P_EARLY too.
+    await q(`update public.patients set referred_by_doctor = 'Dr. Early' where id = $1`, [firstDayIds[0]]);
+    // Activity inside both previous windows used by the report-sections check.
+    const prevA = await patient("WorldPrevA", "Pia", { source: "walk_in", createdAt: "2026-05-15T09:00:00+08:00" });
+    await visit(prevA, "2026-05-15", 260);
+    await sheetLine("2026-05-20", loose("WorldPrevSheetA", "Pam"), null, 90);
+    const prevB = await patient("WorldPrevB", "Pio", { source: "online_facebook", createdAt: "2025-03-01T09:00:00+08:00" });
+    await visit(prevB, "2025-03-01", 270);
+    await sheetLine("2025-03-05", loose("WorldPrevSheetB", "Pat"), null, 95);
+    // Imported patient with a sheet registration + returning flag, linked sheet lines, and a same-day app visit (overlap).
+    const imp = await patient("WorldImported", "Ivy", { source: "online_google", imported: true });
+    await facts(imp, "2026-06-05", "repeat");
+    await customerRow(loose("WorldImported", "Ivy"), { patientId: imp, source: "online_google", registeredOn: "2026-06-05", referredBy: "Dr. Sheetworld" });
+    await visit(imp, "2026-06-10", 500);
+    await sheetLine("2026-06-10", loose("WorldImported", "Ivy"), imp, 700);
+    await sheetLine("2026-06-12", loose("WorldImported", "Ivy"), imp, 200);
+    // Merged pair: the duplicate's visit counts for the survivor.
+    const surv = await patient("WorldMerge", "Sam", { source: "walk_in", createdAt: "2026-06-02T10:00:00+08:00" });
+    const dup = await patient("WorldMerge", "Samuel", { source: "online_facebook", createdAt: "2026-06-04T10:00:00+08:00" });
+    await visit(dup, "2026-06-06", 250);
+    await markMerged(dup, surv);
+    // Deleted patient: must drop out everywhere.
+    const del = await patient("WorldDeleted", "Dee", { source: "walk_in", createdAt: "2026-06-08T10:00:00+08:00" });
+    await visit(del, "2026-06-08", 999);
+    await softDelete(del);
+    // Unlinked sheet names (unconfirmed), one with a single Customers row + referrer, one lines-only.
+    await customerRow(loose("WorldSheet", "Una"), { source: "online_facebook", registeredOn: "2026-06-09", referredBy: "Dr. World 1" });
+    await sheetLine("2026-06-15", loose("WorldSheet", "Una"), null, 400);
+    await sheetLine("2025-10-01", loose("WorldSheet", "Lina"), null, 120);
+    await sheetLine("2026-06-15", loose("WorldSheet", "Lina"), null, 80);
+    // Registration-only (no visit) and undated (no date at all) patients.
+    const regOnly = await patient("WorldRegOnly", "Rae", { imported: true });
+    await facts(regOnly, "2026-06-21", "new");
+    await patient("WorldUndated", "Uri", { imported: true });
+    // Pre-window visitor with a later registration: never New.
+    const old = await patient("WorldOld", "Ola", { source: "walk_in", createdAt: "2026-06-11T10:00:00+08:00" });
+    await visit(old, "2023-06-01", 100);
+    return { del, dup, surv, regOnly, old, imp };
+  }
+
+  /** Which labels the seed guarantees non-empty for a period (overlaps only exist from June on). */
+  const mustBeNonEmpty = (label: string, p: { from: string; to: string }) => !(label.startsWith("overlaps") && p === P_EARLY);
+
+  // Both sides go through node-pg's jsonb parsing (so numeric 1500.00 and 1500
+  // both become 1500) and are sorted AFTER that, in JS — sorting on jsonb text
+  // in SQL would order "1500.00" and "1500" differently.
+  const canon = (rows: unknown[]) => JSON.stringify(rows.map((x) => JSON.stringify(x)).sort());
+  /** Canonical, order-insensitive JSON of a set-returning call. */
+  async function rowsJson(sql: string, params: unknown[]): Promise<string> {
+    const r = await q<{ j: unknown }>(`select to_jsonb(t) as j from (${sql}) t`, params);
+    return canon(r.rows.map((x) => x.j));
+  }
+  /** Canonical JSON of a report section (already parsed jsonb). */
+  async function sortedJson(arr: unknown): Promise<string> {
+    return canon(Array.isArray(arr) ? arr : []);
+  }
+  /** Every (function, args) the page and CSV use, per period. `schema` is 'public' or 'ps_old'. */
+  function gridCalls(schema: "public" | "ps_old", p: { from: string; to: string }) {
+    const calls: { label: string; sql: string; params: unknown[] }[] = [
+      { label: "summary", sql: `select * from ${schema}.patient_sources_summary($1, $2)`, params: [p.from, p.to] },
+      { label: "revenue", sql: `select * from ${schema}.patient_sources_revenue($1, $2)`, params: [p.from, p.to] },
+      { label: "overlaps", sql: `select * from ${schema}.patient_sources_overlaps($1, $2)`, params: [p.from, p.to] },
+      { label: "referrers", sql: `select * from ${schema}.patient_sources_referrers($1, $2, 20)`, params: [p.from, p.to] },
+      { label: "referrers limit 1", sql: `select * from ${schema}.patient_sources_referrers($1, $2, 1)`, params: [p.from, p.to] },
+    ];
+    for (const grain of ["day", "week", "month", "period"]) {
+      for (const mode of ["new", "served"]) {
+        calls.push({ label: `series ${grain}/${mode}`, sql: `select * from ${schema}.patient_sources_series($1, $2, $3, $4)`, params: [p.from, p.to, grain, mode] });
+      }
+    }
+    return calls;
+  }
+
   await q("begin");
   try {
     fx = await setupFixtures();
@@ -507,11 +654,13 @@ async function main() {
         { name: "patient_sources_revenue", sql: `select public.patient_sources_revenue('2026-06-01'::date,'2026-06-30'::date)` },
         { name: "patient_sources_overlaps", sql: `select public.patient_sources_overlaps('2026-06-01'::date,'2026-06-30'::date)` },
         { name: "patient_sources_referrers", sql: `select public.patient_sources_referrers('2026-06-01'::date,'2026-06-30'::date,20::int)` },
+        { name: "patient_sources_report", sql: `select public.patient_sources_report('2026-06-01'::date,'2026-06-30'::date,'day'::text,'new'::text,null::date,null::date)` },
         { name: "patient_sources_people", sql: `select public.patient_sources_people('2026-06-01'::date,'2026-06-30'::date,'new'::text,null::text,50::int,0::int)` },
         { name: "ad_spend_import", sql: `select public.ad_spend_import(gen_random_uuid(), '[{"spend_date":"2026-06-01","platform":"meta","campaign_key":"c","ad_key":"a","campaign_label":"C","spend_php":1}]'::jsonb)` },
         { name: "ad_spend_delete", sql: `select public.ad_spend_delete('meta'::text,'2026-06-01'::date,'2026-06-01'::date)` },
         { name: "ad_spend_daily_totals", sql: `select public.ad_spend_daily_totals('2026-06-01'::date,'2026-06-30'::date)` },
         { name: "ad_spend_coverage", sql: `select public.ad_spend_coverage()` },
+        { name: "ad_spend_rows", sql: `select * from public.ad_spend_rows('2026-06-01'::date,'2026-06-30'::date)` },
       ];
       const principals: { label: string; role: DbRole; claims: Claims; expect: "denied" | "ok" }[] = [
         { label: "anon", role: "anon", claims: null, expect: "denied" },
@@ -632,7 +781,7 @@ async function main() {
 
       const aId = await patient("Zzproofa", "Alpha");
       const bId = await patient("Zzproofb", "Beta");
-      await q(`update public.patients set merged_into_id = $1 where id = $2`, [bId, aId]);
+      await markMerged(aId, bId);
       await visit(bId, "2026-06-10", 300);
       await sheetLine("2026-06-10", "zzproofb|beta", aId, 250);
 
@@ -701,7 +850,7 @@ async function main() {
       const mId = await patient("Zzproofm", "Mike");
       await facts(sId, "2026-06-10", "new");
       await facts(mId, "2026-06-05", "repeat");
-      await q(`update public.patients set merged_into_id = $1 where id = $2`, [sId, mId]);
+      await markMerged(mId, sId);
 
       let after = await summary();
       let d = delta(before, after);
@@ -733,7 +882,7 @@ async function main() {
       const a1Id = await patient("Zzproofa1", "AppNative1", { createdAt: "2026-06-01T02:00:00Z" });
       const i1Id = await patient("Zzproofi1", "Imported1", { imported: true });
       await facts(i1Id, "2026-06-10", "new");
-      await q(`update public.patients set merged_into_id = $1 where id = $2`, [i1Id, a1Id]);
+      await markMerged(a1Id, i1Id);
       const after1 = await seriesRows(JUNE.from, JUNE.to, "day", "new");
       assert(bucketTotal(after1, "2026-06-01") === b0601, `(i) expected no change on 2026-06-01, got ${bucketTotal(after1, "2026-06-01")} vs baseline ${b0601}`);
       assert(bucketTotal(after1, "2026-06-10") === b0610 + 1, `(i) expected +1 on 2026-06-10, got ${bucketTotal(after1, "2026-06-10")} vs baseline ${b0610}`);
@@ -752,7 +901,7 @@ async function main() {
       const i2Id = await patient("Zzproofi2", "Imported2", { imported: true });
       const i3Id = await patient("Zzproofi3", "Imported3", { imported: true });
       await facts(i2Id, null, null);
-      await q(`update public.patients set merged_into_id = $1 where id = $2`, [i3Id, i2Id]);
+      await markMerged(i2Id, i3Id);
       const afterIII = await summary();
       const dIII = delta(beforeIII, afterIII);
       assert(dIII.undated_registrations === 1, `(iii) expected undated_registrations delta 1, got ${dIII.undated_registrations}`);
@@ -963,7 +1112,7 @@ async function main() {
       // Replay check 5's merge (served + new confirmed with a same-day overlap).
       const aId = await patient("Zzproofsa", "Alpha16");
       const bId = await patient("Zzproofsb", "Beta16");
-      await q(`update public.patients set merged_into_id = $1 where id = $2`, [bId, aId]);
+      await markMerged(aId, bId);
       await visit(bId, "2026-06-10", 300);
       await sheetLine("2026-06-10", "zzproofsb|beta16", aId, 250);
 
@@ -1020,7 +1169,7 @@ async function main() {
       // only the LATEST by sheet_row must win.
       const xId = await patient("Zzproofrefx", "XRay");
       const yId = await patient("Zzproofrefy", "YRay");
-      await q(`update public.patients set merged_into_id = $1 where id = $2`, [xId, yId]);
+      await markMerged(yId, xId);
       await visit(xId, "2026-06-16");
       await customerRow("zzproofrefy|earlier", { patientId: yId, referredBy: "Dr. Earlyref", sheetRow: 1 });
       await customerRow("zzproofrefy|later", { patientId: yId, referredBy: "Dr. Latestref", sheetRow: 5 });
@@ -1347,7 +1496,7 @@ async function main() {
       const before = await summary();
       const bId = await patient("Zzproofp3b", "Survivor", { createdAt: "2026-06-05T02:00:00Z" });
       const aId = await patient("Zzproofp3a", "Duplicate", { createdAt: "2026-06-05T02:00:00Z" });
-      await q(`update public.patients set merged_into_id = $1 where id = $2`, [bId, aId]);
+      await markMerged(aId, bId);
       await sheetLine("2026-06-12", "zzproofp3a|duplicate", null, 0);
       const after = await summary();
       const d = delta(before, after);
@@ -1367,7 +1516,7 @@ async function main() {
       await visit(ok, "2026-06-07");
       const x = await patient("Zzproofm2x", "Xa", {});
       const y = await patient("Zzproofm2y", "Ya", {});
-      await q(`update public.patients set merged_into_id = $1 where id = $2`, [x, y]);
+      await markMerged(y, x);
       await visit(x, "2026-06-08");
       await customerRow("zzproofm2y|old", { patientId: y, referredBy: "Dr. M2 Early", sheetRow: 1 });
       await customerRow("zzproofm2y|new", { patientId: y, referredBy: "Dr. M2 Late", sheetRow: 9 });
@@ -1443,6 +1592,251 @@ async function main() {
       await setRole("postgres", null);
       const left = await q(`select 1 from public.ad_spend_daily where campaign_key in ('p5mix','p5ok')`);
       assert(left.rows.length === 0, `P5: a refused import must write nothing, found ${left.rows.length} rows`);
+    }));
+
+    // (0203) The import writes leads / platform bookings / ad label with the existing semantics.
+    await check("Ad spend (0203): import writes leads, bookings and ad label; blank stays NULL, 0 is kept; duplicates sum", () => scoped(async () => {
+      await setRole("postgres", null);
+      await setRole("authenticated", { sub: fx.adminId, role: "authenticated" });
+      const D = "2026-06-10";
+      const row = (ad: string, extra: Json) => ({ spend_date: D, platform: "meta", campaign_key: "l0203", ad_key: ad, campaign_label: "L0203", spend_php: 10, ...extra });
+      await expectOk("import with leads/bookings", () =>
+        q(`select public.ad_spend_import(gen_random_uuid(), $1::jsonb)`, [JSON.stringify([
+          row("ada", { ad_label: "Ad A", leads: 5, platform_bookings: 2, impressions: 100, clicks: 4 }),
+          row("ada", { ad_label: "Ad A", leads: 3, platform_bookings: 0, impressions: 50, clicks: 1 }),
+          row("adb", { ad_label: "Ad B", leads: null, platform_bookings: 0 }),
+          row("adc", {}),
+        ])]));
+      await setRole("postgres", null);
+      const got = await q<{ ad_key: string; ad_label: string | null; leads: number | null; platform_bookings: number | null; spend_php: string; impressions: number | null }>(
+        `select ad_key, ad_label, leads, platform_bookings, spend_php::text, impressions from public.ad_spend_daily where campaign_key = 'l0203' order by ad_key`);
+      const by = Object.fromEntries(got.rows.map((r) => [r.ad_key, r]));
+      assert(by.ada.leads === 8 && by.ada.platform_bookings === 2 && by.ada.ad_label === "Ad A" && Number(by.ada.spend_php) === 20 && by.ada.impressions === 150,
+        `ada: expected leads 8 (5+3), bookings 2 (2+0), label 'Ad A', spend 20, impr 150; got ${JSON.stringify(by.ada)}`);
+      assert(by.adb.leads === null, `adb: a blank leads must stay NULL (unknown), got ${by.adb.leads}`);
+      assert(by.adb.platform_bookings === 0, `adb: an explicit 0 bookings must be kept as 0, got ${by.adb.platform_bookings}`);
+      assert(by.adc.leads === null && by.adc.platform_bookings === null && by.adc.ad_label === null, `adc: absent fields must be NULL, got ${JSON.stringify(by.adc)}`);
+    }));
+
+    await check("Ad spend (0203): a same-kind partial upload updates only the ads it mentions and keeps siblings' leads/bookings/label", () => scoped(async () => {
+      await setRole("postgres", null);
+      await setRole("authenticated", { sub: fx.adminId, role: "authenticated" });
+      const D = "2026-06-11";
+      const row = (ad: string, extra: Json) => ({ spend_date: D, platform: "google", campaign_key: "p0203", ad_key: ad, campaign_label: "P0203", spend_php: 10, ...extra });
+      await expectOk("seed two ads", () =>
+        q(`select public.ad_spend_import(gen_random_uuid(), $1::jsonb)`, [JSON.stringify([
+          row("ada", { ad_label: "Ad A", leads: 5, platform_bookings: 2 }),
+          row("adb", { ad_label: "Ad B", leads: 7, platform_bookings: 3 }),
+        ])]));
+      const r = await expectOk("partial re-upload of ad A only", () =>
+        q<{ r: Json }>(`select public.ad_spend_import(gen_random_uuid(), $1::jsonb) as r`, [JSON.stringify([
+          row("ada", { ad_label: "Ad A v2", leads: 9, platform_bookings: null, spend_php: 25 }),
+        ])]));
+      assert(r.rows[0].r.replaced === 1 && r.rows[0].r.inserted === 0, `expected {inserted:0,replaced:1}, got ${JSON.stringify(r.rows[0].r)}`);
+      await setRole("postgres", null);
+      const got = await q<{ ad_key: string; ad_label: string | null; leads: number | null; platform_bookings: number | null; spend_php: string }>(
+        `select ad_key, ad_label, leads, platform_bookings, spend_php::text from public.ad_spend_daily where campaign_key = 'p0203' order by ad_key`);
+      assert(got.rows.length === 2, `both ads must still exist, got ${got.rows.length}`);
+      const [a, b] = got.rows;
+      assert(a.leads === 9 && a.platform_bookings === null && a.ad_label === "Ad A v2" && Number(a.spend_php) === 25,
+        `ad A must take the file's word (leads 9, bookings NULL, label 'Ad A v2', spend 25), got ${JSON.stringify(a)}`);
+      assert(b.leads === 7 && b.platform_bookings === 3 && b.ad_label === "Ad B" && Number(b.spend_php) === 10,
+        `sibling ad B must be untouched (leads 7, bookings 3, label 'Ad B', spend 10), got ${JSON.stringify(b)}`);
+    }));
+
+    // (0203) Column presence rule: a column ABSENT from the file (key missing from every row)
+    // keeps the saved value; PRESENT-but-blank (key with null) sets NULL; 0 stays 0.
+    const FIELDS = ["ad_label", "leads", "platform_bookings", "impressions", "clicks"] as const;
+    type SavedAd = { ad_key: string; ad_label: string | null; leads: number | null; platform_bookings: number | null; impressions: number | null; clicks: number | null; spend_php: string };
+    const readAds = async (campaign: string) => {
+      await setRole("postgres", null);
+      const got = await q<SavedAd>(
+        `select ad_key, ad_label, leads, platform_bookings, impressions, clicks, spend_php::text from public.ad_spend_daily where campaign_key = $1 order by ad_key`, [campaign]);
+      return Object.fromEntries(got.rows.map((r) => [r.ad_key, r])) as Record<string, SavedAd>;
+    };
+    const SEED = { ad_label: "Ad A", leads: 5, platform_bookings: 2, impressions: 100, clicks: 4 };
+
+    await check("Ad spend (0203): a file WITHOUT leads/bookings/label/impressions/clicks columns keeps the saved values", () => scoped(async () => {
+      await setRole("postgres", null);
+      await setRole("authenticated", { sub: fx.adminId, role: "authenticated" });
+      const row = (ad: string, extra: Json) => ({ spend_date: "2026-06-13", platform: "meta", campaign_key: "a0203", ad_key: ad, campaign_label: "A0203", spend_php: 10, ...extra });
+      await expectOk("seed", () =>
+        q(`select public.ad_spend_import(gen_random_uuid(), $1::jsonb)`, [JSON.stringify([row("ada", SEED), row("adb", { ...SEED, ad_label: "Ad B", leads: 7 })])]));
+      // Re-upload of ad A carrying only spend (no optional key at all) - plus a brand-new ad C.
+      const r = await expectOk("re-upload without the optional columns", () =>
+        q<{ r: Json }>(`select public.ad_spend_import(gen_random_uuid(), $1::jsonb) as r`, [JSON.stringify([row("ada", { spend_php: 25 }), row("adc", { spend_php: 3 })])]));
+      assert(r.rows[0].r.replaced === 1 && r.rows[0].r.inserted === 1, `expected {inserted:1,replaced:1}, got ${JSON.stringify(r.rows[0].r)}`);
+      const by = await readAds("a0203");
+      assert(Number(by.ada.spend_php) === 25, `ad A spend must take the file's 25, got ${by.ada.spend_php}`);
+      for (const k of FIELDS) assert(by.ada[k] === (SEED as Json)[k], `ad A ${k} must be KEPT (${(SEED as Json)[k]}), got ${by.ada[k]}`);
+      assert(by.adb.leads === 7 && by.adb.ad_label === "Ad B", `sibling ad B untouched, got ${JSON.stringify(by.adb)}`);
+      // A new row from such a file has nothing to keep: NULLs.
+      assert(FIELDS.every((k) => by.adc[k] === null), `new ad C carries only what the file said (NULLs), got ${JSON.stringify(by.adc)}`);
+      // Keys are per FIELD: a file with ONLY a leads column updates leads and keeps the other four.
+      await setRole("authenticated", { sub: fx.adminId, role: "authenticated" });
+      await expectOk("re-upload with only leads", () =>
+        q(`select public.ad_spend_import(gen_random_uuid(), $1::jsonb)`, [JSON.stringify([row("ada", { leads: 11 })])]));
+      const by2 = await readAds("a0203");
+      assert(by2.ada.leads === 11 && by2.ada.platform_bookings === 2 && by2.ada.ad_label === "Ad A" && by2.ada.impressions === 100 && by2.ada.clicks === 4,
+        `only leads changes, got ${JSON.stringify(by2.ada)}`);
+    }));
+
+    await check("Ad spend (0203): a column present but blank sets NULL, and 0 stays 0", () => scoped(async () => {
+      await setRole("postgres", null);
+      await setRole("authenticated", { sub: fx.adminId, role: "authenticated" });
+      const row = (ad: string, extra: Json) => ({ spend_date: "2026-06-14", platform: "google", campaign_key: "b0203", ad_key: ad, campaign_label: "B0203", spend_php: 10, ...extra });
+      await expectOk("seed", () =>
+        q(`select public.ad_spend_import(gen_random_uuid(), $1::jsonb)`, [JSON.stringify([row("ada", SEED), row("adb", { ...SEED, ad_label: "Ad B" })])]));
+      // Ad A: every column present, every cell blank -> all NULL. Ad B: leads/bookings present as 0, the rest absent from the file.
+      await expectOk("blank cells", () =>
+        q(`select public.ad_spend_import(gen_random_uuid(), $1::jsonb)`, [JSON.stringify([row("ada", { ad_label: null, leads: null, platform_bookings: null, impressions: null, clicks: null })])]));
+      const by = await readAds("b0203");
+      assert(FIELDS.every((k) => by.ada[k] === null), `present-but-blank must set NULL, got ${JSON.stringify(by.ada)}`);
+      assert(by.adb.leads === 5, `ad B was not in the file: untouched, got ${JSON.stringify(by.adb)}`);
+      await asAdmin();
+      await expectOk("zeros", () =>
+        q(`select public.ad_spend_import(gen_random_uuid(), $1::jsonb)`, [JSON.stringify([row("adb", { leads: 0, platform_bookings: 0, impressions: 0 })])]));
+      const by2 = await readAds("b0203");
+      assert(by2.adb.leads === 0 && by2.adb.platform_bookings === 0 && by2.adb.impressions === 0, `0 must stay 0 (not NULL), got ${JSON.stringify(by2.adb)}`);
+      assert(by2.adb.ad_label === "Ad B" && by2.adb.clicks === 4, `absent label/clicks kept next to the zeros, got ${JSON.stringify(by2.adb)}`);
+      // The zeros survive a later file that has no such columns.
+      await asAdmin();
+      await expectOk("later file without them", () =>
+        q(`select public.ad_spend_import(gen_random_uuid(), $1::jsonb)`, [JSON.stringify([row("adb", { spend_php: 30 })])]));
+      const by3 = await readAds("b0203");
+      assert(by3.adb.leads === 0 && by3.adb.platform_bookings === 0 && Number(by3.adb.spend_php) === 30, `0 kept across a later columnless file, got ${JSON.stringify(by3.adb)}`);
+    }));
+
+    await check("Ad spend (0203): the app deployed BEFORE 0203 (always sends impressions/clicks, never leads/bookings/label) behaves no worse", () => scoped(async () => {
+      await setRole("postgres", null);
+      await setRole("authenticated", { sub: fx.adminId, role: "authenticated" });
+      const row = (extra: Json) => ({ spend_date: "2026-06-17", platform: "meta", campaign_key: "o0203", ad_key: "ada", campaign_label: "O0203", spend_php: 10, ...extra });
+      await expectOk("seed", () => q(`select public.ad_spend_import(gen_random_uuid(), $1::jsonb)`, [JSON.stringify([row(SEED)])]));
+      // Old row shape: impressions/clicks keys present (null = its file had no such column), nothing else.
+      await expectOk("old-app upload", () =>
+        q(`select public.ad_spend_import(gen_random_uuid(), $1::jsonb, 0)`, [JSON.stringify([row({ spend_php: 25, impressions: null, clicks: null })])]));
+      const by = await readAds("o0203");
+      assert(Number(by.ada.spend_php) === 25, `spend follows the old upload, got ${by.ada.spend_php}`);
+      assert(by.ada.impressions === null && by.ada.clicks === null, `impressions/clicks behave as before (overwritten by the present keys), got ${JSON.stringify(by.ada)}`);
+      assert(by.ada.leads === 5 && by.ada.platform_bookings === 2 && by.ada.ad_label === "Ad A", `leads/bookings/label (which the old app cannot send) are kept, got ${JSON.stringify(by.ada)}`);
+    }));
+
+    // Controls for the two checks above: the 0203 import body is loaded under a temp name with the
+    // rule broken, inside this rolled-back savepoint (like the 0199 controls). Each MUST lose data.
+    const loadImport0203 = async (temp: string, rewrite: (field: string) => string) => {
+      const src = fs.readFileSync(path.resolve(process.cwd(), "supabase/migrations/0203_ad_spend_leads_bookings.sql"), "utf8");
+      const start = src.indexOf("create or replace function public.ad_spend_import(");
+      const end = src.indexOf("\n$$;\n", start) + 5;
+      assert(start > 0 && end > start, "could not extract the 0203 ad_spend_import");
+      let body = src.slice(start, end).replace("public.ad_spend_import(", `public.${temp}(`);
+      const flags: Record<string, string> = { impressions: "v_has_impressions", clicks: "v_has_clicks", ad_label: "v_has_ad_label", leads: "v_has_leads", platform_bookings: "v_has_bookings" };
+      for (const [field, flag] of Object.entries(flags)) {
+        const live = `case when ${flag} then excluded.${field} else a.${field} end`;
+        assert(body.includes(live), `the live 0203 body must carry the keep-if-absent case for ${field}`);
+        body = body.replace(live, rewrite(field));
+      }
+      await q(body);
+      await q(`grant execute on function public.${temp}(uuid, jsonb, int) to authenticated`);
+    };
+
+    await check("0203 control: the old overwrite upsert LOSES leads/bookings/label/impressions/clicks on a columnless file", () => scoped(async () => {
+      await setRole("postgres", null);
+      await loadImport0203("_ad_spend_import_overwrite", (field) => `excluded.${field}`);
+      await setRole("authenticated", { sub: fx.adminId, role: "authenticated" });
+      const row = (extra: Json) => ({ spend_date: "2026-06-15", platform: "meta", campaign_key: "c0203", ad_key: "ada", campaign_label: "C0203", spend_php: 10, ...extra });
+      await expectOk("control seed (live body)", () =>
+        q(`select public.ad_spend_import(gen_random_uuid(), $1::jsonb)`, [JSON.stringify([row(SEED)])]));
+      await expectOk("control re-upload (overwrite body)", () =>
+        q(`select public._ad_spend_import_overwrite(gen_random_uuid(), $1::jsonb)`, [JSON.stringify([row({ spend_php: 25 })])]));
+      const by = await readAds("c0203");
+      assert(FIELDS.every((k) => by.ada[k] === null), `control: the overwrite body must have lost all five saved values, got ${JSON.stringify(by.ada)}`);
+      // ...whereas the live body keeps them (same input).
+      await setRole("authenticated", { sub: fx.adminId, role: "authenticated" });
+      await expectOk("control: reseed", () => q(`select public.ad_spend_import(gen_random_uuid(), $1::jsonb)`, [JSON.stringify([row(SEED)])]));
+      await expectOk("control: live re-upload", () => q(`select public.ad_spend_import(gen_random_uuid(), $1::jsonb)`, [JSON.stringify([row({ spend_php: 25 })])]));
+      const live = await readAds("c0203");
+      assert(FIELDS.every((k) => live.ada[k] === (SEED as Json)[k]), `control: the live body keeps them, got ${JSON.stringify(live.ada)}`);
+    }));
+
+    await check("0203 control: a keep-always body (coalesce) would NOT clear a present-but-blank column", () => scoped(async () => {
+      await setRole("postgres", null);
+      await loadImport0203("_ad_spend_import_keepalways", (field) => `coalesce(excluded.${field}, a.${field})`);
+      await setRole("authenticated", { sub: fx.adminId, role: "authenticated" });
+      const row = (extra: Json) => ({ spend_date: "2026-06-16", platform: "meta", campaign_key: "d0203", ad_key: "ada", campaign_label: "D0203", spend_php: 10, ...extra });
+      await expectOk("control seed", () => q(`select public.ad_spend_import(gen_random_uuid(), $1::jsonb)`, [JSON.stringify([row(SEED)])]));
+      await expectOk("control blank re-upload (keep-always body)", () =>
+        q(`select public._ad_spend_import_keepalways(gen_random_uuid(), $1::jsonb)`, [JSON.stringify([row({ ad_label: null, leads: null, platform_bookings: null, impressions: null, clicks: null })])]));
+      const by = await readAds("d0203");
+      assert(FIELDS.every((k) => by.ada[k] === (SEED as Json)[k]), `control: the keep-always body must have failed to clear the blanks, got ${JSON.stringify(by.ada)}`);
+    }));
+
+    await check("Ad spend (0203): a kind change without rejected rows replaces the group, with the new fields; with rejected rows it is refused", () => scoped(async () => {
+      await setRole("postgres", null);
+      await setRole("authenticated", { sub: fx.adminId, role: "authenticated" });
+      const D = "2026-06-12";
+      const row = (ad: string, extra: Json) => ({ spend_date: D, platform: "meta", campaign_key: "k0203", ad_key: ad, campaign_label: "K0203", spend_php: 10, ...extra });
+      await expectOk("seed per-ad", () =>
+        q(`select public.ad_spend_import(gen_random_uuid(), $1::jsonb)`, [JSON.stringify([row("ada", { ad_label: "Ad A", leads: 5 }), row("adb", { ad_label: "Ad B", leads: 7 })])]));
+      await expectPgError("kind change with rejected rows", "22023", () =>
+        q(`select public.ad_spend_import(gen_random_uuid(), $1::jsonb, 1)`, [JSON.stringify([row("(campaign)", { leads: 12, platform_bookings: 4 })])]));
+      const kept = await q<{ n: string }>(`select count(*)::text as n from public.ad_spend_daily where campaign_key = 'k0203' and ad_key <> '(campaign)'`);
+      assert(kept.rows[0].n === "2", `a refused import must leave both per-ad rows, got ${kept.rows[0].n}`);
+      await expectOk("kind change, nothing rejected", () =>
+        q(`select public.ad_spend_import(gen_random_uuid(), $1::jsonb, 0)`, [JSON.stringify([row("(campaign)", { leads: 12, platform_bookings: 4 })])]));
+      const got = await q<{ ad_key: string; leads: number | null; platform_bookings: number | null; ad_label: string | null }>(
+        `select ad_key, leads, platform_bookings, ad_label from public.ad_spend_daily where campaign_key = 'k0203'`);
+      assert(got.rows.length === 1 && got.rows[0].ad_key === "(campaign)" && got.rows[0].leads === 12 && got.rows[0].platform_bookings === 4 && got.rows[0].ad_label === null,
+        `the group must be replaced by the campaign total with its own numbers, got ${JSON.stringify(got.rows)}`);
+    }));
+
+    await check("Ad spend (0203): ad_spend_rows returns every field, in a TOTAL order that pages without gaps or repeats", () => scoped(async () => {
+      await setRole("postgres", null);
+      // Inserted in REVERSE of the wanted order and with ties on date/platform/campaign, so heap order != sorted order.
+      const fixtures: [string, string, string, string][] = [
+        ["2026-06-14", "meta", "r0203-b", "ad2"], ["2026-06-14", "meta", "r0203-b", "ad1"],
+        ["2026-06-14", "meta", "r0203-a", "ad2"], ["2026-06-14", "meta", "r0203-a", "ad1"],
+        ["2026-06-14", "google", "r0203-z", "ad1"], ["2026-06-13", "meta", "r0203-b", "ad1"],
+      ];
+      for (const [d, p, c, ad] of fixtures) {
+        await q(
+          `insert into public.ad_spend_daily (spend_date, platform, campaign_key, ad_key, campaign_label, spend_php, ad_label, leads, platform_bookings, upload_id)
+           values ($1, $2, $3, $4, $5, 5, $6, 1, 0, gen_random_uuid())`, [d, p, c, ad, c.toUpperCase(), `Label ${ad}`]);
+      }
+      await asAdmin();
+      const cols = "spend_date::text as d, platform, campaign_key, ad_key";
+      const full = await q<{ d: string; platform: string; campaign_key: string; ad_key: string }>(
+        `select ${cols} from public.ad_spend_rows('2026-06-13'::date,'2026-06-14'::date) where campaign_key like 'r0203-%'`);
+      const expected = await q<{ d: string; platform: string; campaign_key: string; ad_key: string }>(
+        `select ${cols} from public.ad_spend_daily where campaign_key like 'r0203-%' order by spend_date, platform, campaign_key, ad_key`);
+      const k = (r: { d: string; platform: string; campaign_key: string; ad_key: string }) => [r.d, r.platform, r.campaign_key, r.ad_key].join("|");
+      assert(full.rows.length === 6, `expected 6 fixture rows, got ${full.rows.length}`);
+      assert(full.rows.map(k).join(",") === expected.rows.map(k).join(","), `order must be (date, platform, campaign_key, ad_key); got ${full.rows.map(k).join(", ")}`);
+      // PostgREST pages with limit/offset over the function's result: two-row pages must tile the whole set.
+      const paged: string[] = [];
+      for (let off = 0; off < 6; off += 2) {
+        const page = await q<{ d: string; platform: string; campaign_key: string; ad_key: string }>(
+          `select ${cols} from public.ad_spend_rows('2026-06-13'::date,'2026-06-14'::date) where campaign_key like 'r0203-%' limit 2 offset $1`, [off]);
+        paged.push(...page.rows.map(k));
+      }
+      assert(paged.join(",") === full.rows.map(k).join(","), `paging must not drop or repeat rows; paged ${paged.join(", ")}`);
+      const one = await q<{ ad_label: string | null; leads: number | null; platform_bookings: number | null; spend_php: string; campaign_label: string }>(
+        `select ad_label, leads, platform_bookings, spend_php::text, campaign_label from public.ad_spend_rows('2026-06-14'::date,'2026-06-14'::date) where campaign_key = 'r0203-z'`);
+      assert(one.rows[0].ad_label === "Label ad1" && one.rows[0].leads === 1 && one.rows[0].platform_bookings === 0 && Number(one.rows[0].spend_php) === 5 && one.rows[0].campaign_label === "R0203-Z",
+        `ad_spend_rows must return the stored fields, got ${JSON.stringify(one.rows[0])}`);
+    }));
+
+    await check("Ad spend (0203): ad_spend_rows period rules (400-day cap, start <= end, no Patient Sources 2023-12 floor) and admin-only reads", () => scoped(async () => {
+      await asAdmin();
+      await expectPgError("start after end", "22023", () => q(`select * from public.ad_spend_rows('2026-06-30'::date,'2026-06-01'::date)`));
+      await expectPgError("null start", "22023", () => q(`select * from public.ad_spend_rows(null::date,'2026-06-01'::date)`));
+      await expectPgError("401 days", "22023", () => q(`select * from public.ad_spend_rows('2025-01-01'::date,'2026-02-06'::date)`));
+      await expectOk("exactly 400 days", () => q(`select * from public.ad_spend_rows('2025-01-01'::date,'2026-02-05'::date)`));
+      await expectOk("before 2023-12-01 is fine for ad data", () => q(`select * from public.ad_spend_rows('2023-01-01'::date,'2023-06-01'::date)`));
+      // Reception sees no rows through the table either (RLS) and is refused by the function.
+      await setRole("authenticated", { sub: fx.receptionId, role: "authenticated" });
+      await expectPgError("reception", "42501", () => q(`select * from public.ad_spend_rows('2026-06-01'::date,'2026-06-30'::date)`));
+      await setRole("anon", null);
+      await expectPgError("anon", "42501", () => q(`select * from public.ad_spend_rows('2026-06-01'::date,'2026-06-30'::date)`));
     }));
 
     await check("Whole history, not the period", () => scoped(async () => {
@@ -1673,6 +2067,189 @@ async function main() {
         q(`select public.patient_sources_summary('2026-06-01'::date,'2026-06-30'::date)`));
       await expectPgError("control: live series refuses the no-claims session", "42501", () =>
         q(`select public.patient_sources_series('2026-06-01'::date,'2026-06-30'::date,'day'::text,'new'::text)`));
+    }));
+    // ---- 0206: one call per page view ---------------------------------
+    await check("0206: seeded world makes every section non-empty", () => scoped(async () => {
+      const w = await seedWorld();
+      await asAdmin();
+      for (const p of PERIODS) {
+        for (const c of gridCalls("public", p)) {
+          if (!mustBeNonEmpty(c.label, p)) continue;
+          const n = Number((await q<{ n: string }>(`select count(*)::text as n from (${c.sql}) t`, c.params)).rows[0].n);
+          assert(n > 0, `${c.label} ${p.from}..${p.to} is empty — the equivalence below would be vacuous`);
+        }
+      }
+      // Pinned: each seeded case really landed (summary always returns a row, so count(*) proves nothing).
+      const sm = await summary(P_JUNE.from, P_JUNE.to);
+      assert(sm.new_unconfirmed > 0, `new_unconfirmed must be > 0: ${JSON.stringify(sm)}`);
+      assert(sm.returning_first_recorded > 0, `returning_first_recorded must be > 0: ${JSON.stringify(sm)}`);
+      assert(sm.undated_registrations > 0, `undated_registrations must be > 0: ${JSON.stringify(sm)}`);
+      assert(sm.source_total > sm.source_recorded, `source_total must exceed source_recorded: ${JSON.stringify(sm)}`);
+      await setRole("postgres", null);
+      const ids = (await q<{ identity: string }>(`select identity from public._patient_sources_identities()`)).rows.map((r) => r.identity);
+      assert(!ids.includes(`patient:${w.del}`), "the deleted patient must not be an identity");
+      assert(!ids.includes(`patient:${w.dup}`), "the merged duplicate must not be an identity");
+      assert(ids.includes(`patient:${w.surv}`), "the merge survivor must be an identity");
+      const oldRow = await identityRow(`patient:${w.old}`);
+      assert(oldRow?.basis === "before_window", `pre-window visitor basis: ${JSON.stringify(oldRow)}`);
+      const regRow = await identityRow(`patient:${w.regOnly}`);
+      assert(regRow?.basis === "registration", `registration-only basis: ${JSON.stringify(regRow)}`);
+    }));
+
+    await check("0206: every wrapper returns exactly the pre-0206 rows", () => scoped(async () => {
+      await q(fs.readFileSync(path.join(__dirname, "fixtures/patient-sources-pre-0206.sql"), "utf8"));
+      await seedWorld();
+      await asAdmin();
+      const diffs: string[] = [];
+      for (const p of PERIODS) {
+        const now = gridCalls("public", p);
+        const old = gridCalls("ps_old", p);
+        for (let i = 0; i < now.length; i++) {
+          const a = await rowsJson(now[i].sql, now[i].params);
+          const b = await rowsJson(old[i].sql, old[i].params);
+          if (mustBeNonEmpty(now[i].label, p)) assert(JSON.parse(b).length > 0, `${now[i].label} ${p.from}..${p.to} is empty on both sides — vacuous`);
+          if (a !== b) diffs.push(`${now[i].label} ${p.from}..${p.to}: new=${a.slice(0, 300)} old=${b.slice(0, 300)}`);
+        }
+      }
+      assert(diffs.length === 0, `wrappers differ from the pre-0206 bodies:\n${diffs.join("\n")}`);
+    }));
+
+    await check("0206: report sections equal the single RPCs (with and without a previous period)", () => scoped(async () => {
+      await seedWorld();
+      await asAdmin();
+      const cases = [
+        { p: P_JUNE, grain: "day", mode: "new", prev: { from: "2026-05-02", to: "2026-05-31" } },
+        { p: P_JUNE, grain: "week", mode: "served", prev: null },
+        { p: P_LONG, grain: "month", mode: "served", prev: { from: "2024-07-23", to: "2025-08-26" } },
+        { p: P_EARLY, grain: "day", mode: "served", prev: null },
+      ];
+      for (const c of cases) {
+        const tag = `${c.p.from}..${c.p.to} ${c.grain}/${c.mode} prev=${c.prev ? "set" : "null"}`;
+        const rep = (await q<{ r: Record<string, unknown> }>(
+          `select public.patient_sources_report($1, $2, $3, $4, $5, $6) as r`,
+          [c.p.from, c.p.to, c.grain, c.mode, c.prev?.from ?? null, c.prev?.to ?? null])).rows[0].r;
+        assert(rep && typeof rep === "object", `${tag}: report returned ${JSON.stringify(rep)}`);
+        const keys = Object.keys(rep).sort().join(",");
+        assert(keys === "current,new_by_day,overlaps,previous,referrers,revenue,series,summary", `${tag}: sections are ${keys}`);
+        const same = async (label: string, section: unknown, sql: string, params: unknown[]) => {
+          const a = await sortedJson(section);
+          const b = await rowsJson(sql, params);
+          const needs = label !== "overlaps" || c.p !== P_EARLY;
+          if (needs && label !== "summary") assert(JSON.parse(b).length > 0, `${tag} ${label} is empty — vacuous`);
+          assert(a === b, `${tag} ${label}: report=${a.slice(0, 300)} rpc=${b.slice(0, 300)}`);
+        };
+        await same("summary", [rep.summary], `select * from public.patient_sources_summary($1,$2)`, [c.p.from, c.p.to]);
+        await same("series", rep.series, `select * from public.patient_sources_series($1,$2,$3,$4)`, [c.p.from, c.p.to, c.grain, c.mode]);
+        await same("current", rep.current, `select * from public.patient_sources_series($1,$2,'period',$3)`, [c.p.from, c.p.to, c.mode]);
+        await same("new_by_day", rep.new_by_day, `select * from public.patient_sources_series($1,$2,'day','new')`, [c.p.from, c.p.to]);
+        await same("revenue", rep.revenue, `select * from public.patient_sources_revenue($1,$2)`, [c.p.from, c.p.to]);
+        await same("overlaps", rep.overlaps, `select * from public.patient_sources_overlaps($1,$2)`, [c.p.from, c.p.to]);
+        await same("referrers", rep.referrers, `select * from public.patient_sources_referrers($1,$2,20)`, [c.p.from, c.p.to]);
+        if (c.prev) {
+          assert(Array.isArray(rep.previous) && (rep.previous as unknown[]).length > 0, `${tag}: previous is empty — vacuous`);
+          await same("previous", rep.previous, `select * from public.patient_sources_series($1,$2,'period',$3)`, [c.prev.from, c.prev.to, c.mode]);
+        } else {
+          assert(rep.previous === null, `${tag}: previous must be null without a previous period, got ${JSON.stringify(rep.previous)}`);
+        }
+        // Order is part of the contract (the page renders arrays as given).
+        const series = rep.series as { bucket_start: string; channel: string }[];
+        const sorted = [...series].sort((x, y) => (x.bucket_start + x.channel < y.bucket_start + y.channel ? -1 : 1));
+        assert(JSON.stringify(series) === JSON.stringify(sorted), `${tag}: series is not ordered by bucket_start, channel`);
+        const revs = (rep.revenue as { channel: string }[]).map((r) => r.channel);
+        assert(JSON.stringify(revs) === JSON.stringify([...revs].sort((x, y) => (x < y ? -1 : x > y ? 1 : 0))), `${tag}: revenue not ordered by channel: ${JSON.stringify(revs)}`);
+        const ovs = (rep.overlaps as { service_date: string; drm_id: string }[]).map((r) => r.service_date + "|" + r.drm_id);
+        assert(JSON.stringify(ovs) === JSON.stringify([...ovs].sort((x, y) => (x < y ? -1 : x > y ? 1 : 0))), `${tag}: overlaps not ordered by (service_date, drm_id): ${JSON.stringify(ovs)}`);
+        const refs = (rep.referrers as { doctor_label: string }[]).map((r) => r.doctor_label);
+        const rpcRefs = (await q<{ doctor_label: string }>(`select doctor_label from public.patient_sources_referrers($1,$2,20)`, [c.p.from, c.p.to])).rows.map((r) => r.doctor_label);
+        assert(JSON.stringify(refs) === JSON.stringify(rpcRefs), `${tag}: referrers order ${JSON.stringify(refs)} vs ${JSON.stringify(rpcRefs)}`);
+      }
+    }));
+
+    await check("0206: report gate matrix", () => scoped(async () => {
+      const sql = `select public.patient_sources_report('2026-06-01'::date,'2026-06-30'::date,'day'::text,'new'::text,null::date,null::date)`;
+      await setRole("anon", null);
+      await expectPgError("anon", "42501", () => q(sql));
+      await setRole("authenticated", { sub: fx.receptionId, role: "authenticated" });
+      await expectPgError("reception", "42501", () => q(sql));
+      await setRole("authenticated", { sub: fx.inactiveAdminId, role: "authenticated" });
+      await expectPgError("inactive admin", "42501", () => q(sql));
+      await setRole("authenticated", null);
+      await expectPgError("no JWT claims at all", "42501", () => q(sql));
+      await setRole("authenticated", { sub: fx.receptionId, role: "authenticated", app_metadata: { role: "service_role" } });
+      await expectPgError("authenticated with a service_role app_metadata", "42501", () => q(sql));
+      await setRole("postgres", null);
+      await q(`update public.staff_profiles set view_as_role = 'reception', view_as_until = now() + interval '1 hour' where id = $1`, [fx.adminId]);
+      try {
+        await asAdmin();
+        await expectPgError("admin viewing as reception", "42501", () => q(sql));
+      } finally {
+        await setRole("postgres", null);
+        await q(`update public.staff_profiles set view_as_role = null, view_as_until = null where id = $1`, [fx.adminId]);
+      }
+      await asAdmin();
+      await expectOk("admin", () => q(sql));
+      await setRole("service_role", { role: "service_role" });
+      const svc = await expectOk("service_role", () => q<{ r: unknown }>(sql + " as r"));
+      await asAdmin();
+      const adm = await q<{ r: unknown }>(sql + " as r");
+      assert(JSON.stringify(svc.rows[0].r) === JSON.stringify(adm.rows[0].r), "service_role and admin must read the same report");
+    }));
+
+    await check("0206: report refuses bad input with today's codes", () => scoped(async () => {
+      await asAdmin();
+      const call = (a: unknown[]) => q(`select public.patient_sources_report($1::date,$2::date,$3::text,$4::text,$5::date,$6::date)`, a);
+      await expectPgError("bad grain", "22023", () => call(["2026-06-01", "2026-06-30", "year", "new", null, null]));
+      await expectPgError("null grain", "22023", () => call(["2026-06-01", "2026-06-30", null, "new", null, null]));
+      await expectPgError("bad mode", "22023", () => call(["2026-06-01", "2026-06-30", "day", "converted", null, null]));
+      await expectPgError("period over 400 days", "22023", () => call(["2025-01-01", "2026-06-30", "day", "new", null, null]));
+      await expectPgError("start before 2023-12-01", "22023", () => call(["2023-11-30", "2023-12-31", "day", "new", null, null]));
+      await expectPgError("reversed period", "22023", () => call(["2026-06-30", "2026-06-01", "day", "new", null, null]));
+      await expectPgError("half a previous period (from only)", "22023", () => call(["2026-06-01", "2026-06-30", "day", "new", "2026-05-01", null]));
+      await expectPgError("half a previous period (to only)", "22023", () => call(["2026-06-01", "2026-06-30", "day", "new", null, "2026-05-31"]));
+      await expectPgError("previous period before 2023-12-01", "22023", () => call(["2023-12-01", "2023-12-31", "day", "new", "2023-11-01", "2023-11-30"]));
+    }));
+
+    await check("0206: helpers and list builders are closed; row types match their producers", () => scoped(async () => {
+      const closed = [
+        "public._ps_identity_list()", "public._ps_encounter_list()", "public._ps_revenue_line_list(date,date)",
+        "public._ps_sec_summary(public._ps_identity[],public._ps_encounter[],date,date)",
+        "public._ps_sec_series(public._ps_identity[],public._ps_encounter[],date,date,text,text)",
+        "public._ps_sec_revenue(public._ps_identity[],public._ps_revenue_line[])",
+        "public._ps_sec_overlaps(public._ps_revenue_line[])",
+        "public._ps_sec_referrers(public._ps_identity[],date,date,integer)",
+      ];
+      for (const fn of closed) {
+        const r = await q<{ a: boolean; u: boolean; s: boolean; sd: boolean }>(
+          `select has_function_privilege('anon', $1, 'execute') as a,
+                  has_function_privilege('authenticated', $1, 'execute') as u,
+                  has_function_privilege('service_role', $1, 'execute') as s,
+                  (select p.prosecdef from pg_proc p where p.oid = $1::regprocedure) as sd`, [fn]);
+        const x = r.rows[0];
+        assert(!x.a && !x.u && !x.s, `${fn} must be closed to anon/authenticated/service_role, got ${JSON.stringify(x)}`);
+        assert(!x.sd, `${fn} must not be SECURITY DEFINER`);
+      }
+      const pairs: [string, string][] = [
+        ["public._ps_identity", "public._patient_sources_identities()"],
+        ["public._ps_encounter", "public._patient_sources_encounters()"],
+        ["public._ps_revenue_line", "public._ps_revenue_lines(date,date)"],
+      ];
+      for (const [typ, fn] of pairs) {
+        const r = await q<{ t: string; f: string }>(
+          `select 'TABLE(' || (select string_agg(a.attname || ' ' || format_type(a.atttypid, a.atttypmod), ', ' order by a.attnum)
+                                 from pg_attribute a where a.attrelid = (select typrelid from pg_type where oid = $1::regtype)
+                                   and a.attnum > 0 and not a.attisdropped) || ')' as t,
+                  pg_get_function_result($2::regprocedure) as f`, [typ, fn]);
+        assert(r.rows[0].t === r.rows[0].f, `${typ} ${r.rows[0].t} does not match ${fn} ${r.rows[0].f}`);
+      }
+      const rep = await q<{ a: boolean; u: boolean; s: boolean; sd: boolean; gate: boolean }>(
+        `select has_function_privilege('anon', $1, 'execute') as a,
+                has_function_privilege('authenticated', $1, 'execute') as u,
+                has_function_privilege('service_role', $1, 'execute') as s,
+                (select p.prosecdef from pg_proc p where p.oid = $1::regprocedure) as sd,
+                pg_get_functiondef($1::regprocedure) like '%coalesce((select auth.role()), '''') = ''service_role''%' as gate`,
+        ["public.patient_sources_report(date,date,text,text,date,date)"]);
+      const x = rep.rows[0];
+      assert(!x.a && x.u && x.s && x.sd && x.gate, `patient_sources_report ACL/definer/gate wrong: ${JSON.stringify(x)}`);
     }));
   } finally {
     // Never persisted. This proof never writes anything real.

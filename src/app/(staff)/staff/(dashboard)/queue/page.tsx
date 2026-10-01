@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase/admin";
 import { requireActiveStaff } from "@/lib/auth/require-staff";
 import {
   canClaimSection,
@@ -50,6 +51,7 @@ import { fetchSharedReportTestIds } from "@/lib/visits/shared-report-links";
 import { LAB_QUEUE_GATE_VISITS_OR } from "@/lib/visits/lab-gate";
 import { DOCTOR_KINDS_PG_LIST } from "@/lib/visits/classification";
 import { QueueDeleteDialog } from "@/components/staff/queue-delete-dialog";
+import { DeleteBlockedHint } from "@/components/staff/delete-blocked-hint";
 import { PrintResultButton } from "@/components/staff/print-result-button";
 import { PrintedNote } from "@/components/staff/printed-note";
 import { StalePrintWarning } from "@/components/staff/stale-print-warning";
@@ -65,7 +67,14 @@ import { SelectionProvider } from "@/components/staff/row-selection/selection-co
 import { RowSelectCheckbox } from "@/components/staff/row-selection/row-select-checkbox";
 import { SelectAllCheckbox } from "@/components/staff/row-selection/select-all-checkbox";
 import type { SelectionEntry } from "@/lib/ui/bulk-selection";
-import { panelRowKey, queueRowKinds, type QueueRowInfo } from "@/lib/queue/bulk-queue";
+import {
+  canDeleteSampleVisit,
+  panelRowKey,
+  queueRowKinds,
+  queueSelectable,
+  samplePaymentBlock,
+  type QueueRowInfo,
+} from "@/lib/queue/bulk-queue";
 import {
   fetchPanelMembers,
   panelActionLabel,
@@ -74,9 +83,11 @@ import {
   type PanelState,
 } from "@/lib/queue/panel-members";
 import { QueueBulkBar } from "./queue-bulk-bar";
+import { DeleteSampleVisitDialog } from "../visits/[id]/delete-sample-visit-dialog";
 import { QueueReleaseButton } from "@/components/staff/release/queue-release-button";
 import { evaluateRelease, RELEASE_REFUSAL } from "@/lib/queue/release-eligibility";
-import { reportReleaseBlock } from "@/lib/queue/report-release-scope";
+import { PANEL_UNREADABLE, panelReleaseScope, type FullMember } from "@/lib/queue/report-release-scope";
+import { fetchReportMembers } from "@/lib/queue/report-members";
 import { getConsentCurrentByPatient, isConsentGateRequired } from "@/lib/consent/gate";
 import { activeEmbeddedPatients, isActivePatient } from "@/lib/patients/active";
 import { isReleaseMedium, type ReleaseMedium } from "@/lib/visits/release-media";
@@ -104,6 +115,7 @@ type QueueCardSingle = {
   section: string | null;
   visitNumber: string;
   isSample: boolean;
+  visitPaymentStatus: string;
   patientName: string;
   patientDrmId: string;
   status: string;
@@ -141,6 +153,7 @@ type QueueCardGrouped = {
   releasedAt: string | null;
   visitNumber: string;
   isSample: boolean;
+  visitPaymentStatus: string;
   patientName: string;
   patientDrmId: string;
   status: string;
@@ -598,6 +611,7 @@ export default async function QueuePage({ searchParams }: SearchProps) {
           releasedAt: r.released_at,
           visitNumber: visit.visit_number,
           isSample: visit.is_sample,
+          visitPaymentStatus: visit.payment_status,
           patientName,
           patientDrmId: patient.drm_id,
           status: r.status,
@@ -633,6 +647,7 @@ export default async function QueuePage({ searchParams }: SearchProps) {
         section: svc.section,
         visitNumber: visit.visit_number,
         isSample: visit.is_sample,
+        visitPaymentStatus: visit.payment_status,
         patientName,
         patientDrmId: patient.drm_id,
         status: r.status,
@@ -714,7 +729,24 @@ export default async function QueuePage({ searchParams }: SearchProps) {
   // is keyed by (visit, report group) and judged on its FULL membership
   // (panelStates below): paging happens before the fold, so a visible card
   // can hold part of a panel, and panel-actions.ts acts on the whole panel.
-  const selectable = !receptionView && !releasedTab;
+  //
+  // Sample visits (admin only): any card of a sample visit gets "Delete sample
+  // visit…" and a checkbox carrying the sampleDelete kind. On Released today —
+  // otherwise a record with no checkboxes — admins get checkboxes ONLY on
+  // sample-visit rows, and the only kind those rows carry is sampleDelete, so
+  // that tab's bar offers only that action. The server re-proves admin +
+  // is_sample for every visit (deleteSampleVisitFromQueueAction).
+  // A recorded payment / waived balance greys the action out with the visit
+  // page's hint and withholds the checkbox kind. HMO-claim and line blockers
+  // are NOT knowable here — those stay server-side per-visit refusals.
+  const sampleBlockHint = (card: { isSample: boolean; visitPaymentStatus: string }) =>
+    canDeleteSampleVisit(session.role, card.isSample)
+      ? samplePaymentBlock(session.role, card.visitPaymentStatus)
+      : null;
+  const sampleDeletable = (card: { isSample: boolean; visitPaymentStatus: string }) =>
+    canDeleteSampleVisit(session.role, card.isSample) && sampleBlockHint(card) === null;
+  const worklistSelectable = !receptionView && !releasedTab;
+  const selectable = queueSelectable({ role: session.role, receptionView, releasedTab });
 
   // Whole-panel state for every chemistry card on a worklist tab — the same
   // read + rule the server actions use (src/lib/queue/panel-members.ts), so
@@ -724,23 +756,41 @@ export default async function QueuePage({ searchParams }: SearchProps) {
   // Pending release only: the ready members a panel's Release sends (from the
   // FULL membership, so a page-split panel is judged whole).
   const panelReadyIds = new Map<string, string[]>();
-  if (selectable) {
+  if (worklistSelectable) {
     const refs = cards.flatMap((card) =>
       card.kind === "grouped" ? [{ visitId: card.visitId, groupId: card.groupId }] : [],
     );
     const read = await fetchPanelMembers(supabase, refs);
     if (releaseTab) {
       // A failed read leaves every panel refused (fail closed).
-      const unreadable = "Couldn't load this panel's tests — refresh the page.";
+      const unreadable = PANEL_UNREADABLE;
+      // Each combined report is judged on its FULL membership, as the database
+      // does (members in another group, on another visit, or deleted count),
+      // so read every linked report once for all the panels. The admin client
+      // so RLS can't hide a member the database would still count; a failed
+      // read blocks every panel that has a linked member.
+      const panelResultIds = read.ok
+        ? [...new Set([...read.byKey.values()].flatMap((ms) => ms.map((m) => m.resultId)).filter((id): id is string => id !== null))]
+        : [];
+      const reportRead = read.ok ? await fetchReportMembers(createAdminClient(), panelResultIds) : null;
+      // session.role is the EFFECTIVE role (View as folded in), the same one evaluateRelease gets.
+      const releaseSections = sectionsForRole(session.role);
       for (const card of cards) {
         if (card.kind !== "grouped") continue;
         card.releaseBlock = unreadable;
         const members = read.ok ? read.byKey.get(panelRowKey(card.visitId, card.groupId)) : undefined;
         if (!members) continue;
-        const ready = members.filter((m) => m.status === "ready_for_release");
-        panelReadyIds.set(panelRowKey(card.visitId, card.groupId), ready.map((m) => m.id));
+        // Each combined report on the panel is judged on its own: a finished
+        // report releases while an unfinished sibling report waits (the
+        // database refuses only the unfinished one), so only members of
+        // releasable reports (and unlinked rows) are sent.
+        const reports = reportRead?.ok ? reportRead.byResult : new Map<string, FullMember[]>();
+        const scope = panelReleaseScope(members, reports, { visitId: card.visitId, sections: releaseSections });
+        const readyIds = new Set(scope.readyIds);
+        const ready = members.filter((m) => readyIds.has(m.id));
+        panelReadyIds.set(panelRowKey(card.visitId, card.groupId), scope.readyIds);
         let block: string | null = null;
-        if (ready.length === 0) block = RELEASE_REFUSAL.notReady;
+        if (ready.length === 0) block = scope.reportBlock ?? RELEASE_REFUSAL.notReady;
         for (const m of ready) {
           const verdict = evaluateRelease(
             {
@@ -761,11 +811,6 @@ export default async function QueuePage({ searchParams }: SearchProps) {
             break;
           }
         }
-        // Whole-report rule: a member linked to the report that is not yet
-        // ready keeps the whole report from being released.
-        block ??= reportReleaseBlock(
-          members.filter((m) => m.resultId !== null).map((m) => ({ status: m.status, deleted: false })),
-        );
         card.releaseBlock = block;
       }
     }
@@ -788,6 +833,17 @@ export default async function QueuePage({ searchParams }: SearchProps) {
   const panelStateOf = (card: QueueCardGrouped) =>
     panelStates.get(panelRowKey(card.visitId, card.groupId));
   const panelKinds = (card: QueueCardGrouped) => {
+    // Released today has no bench actions: a sample panel carries only its
+    // sample-delete kind there (no panel state is read on that tab).
+    if (releasedTab) {
+      return queueRowKinds({
+        claimable: false,
+        unclaimable: false,
+        releasable: false,
+        deletable: false,
+        sampleDeletable: sampleDeletable(card),
+      });
+    }
     const state = panelStateOf(card);
     return state
       ? queueRowKinds({
@@ -795,25 +851,64 @@ export default async function QueuePage({ searchParams }: SearchProps) {
           unclaimable: state.unclaimable,
           releasable: releaseTab && card.releaseBlock === null,
           deletable: state.deletable,
+          sampleDeletable: sampleDeletable(card),
         })
       : [];
   };
   const singleKinds = (card: QueueCardSingle) =>
-    queueRowKinds({
-      claimable: card.status === "requested" && canClaimSection(session.role, card.section),
-      unclaimable: canUnclaim(card),
-      releasable: releaseTab && card.releaseBlock === null,
-      deletable: card.canDelete,
-    });
+    releasedTab
+      ? queueRowKinds({
+          claimable: false,
+          unclaimable: false,
+          releasable: false,
+          deletable: false,
+          sampleDeletable: sampleDeletable(card),
+        })
+      : queueRowKinds({
+          claimable: card.status === "requested" && canClaimSection(session.role, card.section),
+          unclaimable: canUnclaim(card),
+          releasable: releaseTab && card.releaseBlock === null,
+          deletable: card.canDelete,
+          sampleDeletable: sampleDeletable(card),
+        });
   const selectionEntries: SelectionEntry[] = [];
+  // Released today: a panel on two reports is two cards with one panelRowKey;
+  // only the first renders the checkbox (one key, one box).
+  const checkboxPanelCards = new Set<string>();
+  {
+    const seen = new Set<string>();
+    for (const card of cards) {
+      if (card.kind !== "grouped") continue;
+      const k = panelRowKey(card.visitId, card.groupId);
+      if (seen.has(k)) continue;
+      seen.add(k);
+      checkboxPanelCards.add(card.cardKey);
+    }
+  }
   const rowsByKey: Record<string, QueueRowInfo> = {};
   if (selectable) {
     for (const card of cards) {
       if (card.kind === "grouped") {
         const state = panelStateOf(card);
         const kinds = panelKinds(card);
-        if (!state || kinds.length === 0) continue;
         const rowKey = panelRowKey(card.visitId, card.groupId);
+        if (releasedTab) {
+          // Sample rows only (kinds is empty otherwise); no panel state here.
+          if (kinds.length === 0) continue;
+          // A panel that went out on two reports is TWO cards sharing one
+          // panelRowKey: one entry, or select-all double-counts it.
+          if (rowsByKey[rowKey]) continue;
+          selectionEntries.push({ rowKey, kinds, weight: card.memberIds.length });
+          rowsByKey[rowKey] = {
+            visitId: card.visitId,
+            label: `${card.label} — ${card.patientName}`,
+            visitLabel: `Visit #${card.visitNumber} — ${card.patientName}`,
+            assignedTo: null,
+            testCount: card.memberIds.length,
+          };
+          continue;
+        }
+        if (!state || kinds.length === 0) continue;
         // Weighed by EVERY member (what Delete acts on), so the selection
         // caps count the records the server will actually touch.
         selectionEntries.push({ rowKey, kinds, weight: state.allIds.length });
@@ -821,6 +916,7 @@ export default async function QueuePage({ searchParams }: SearchProps) {
         rowsByKey[rowKey] = {
           visitId: card.visitId,
           label: `${card.label} — ${card.patientName}`,
+          visitLabel: `Visit #${card.visitNumber} — ${card.patientName}`,
           assignedTo: state.holder,
           testCount: state.allIds.length,
           benchCount: state.benchIds.length,
@@ -836,6 +932,7 @@ export default async function QueuePage({ searchParams }: SearchProps) {
       rowsByKey[card.testRequestId] = {
         visitId: card.visitId,
         label: `${card.label} — ${card.patientName}`,
+        visitLabel: `Visit #${card.visitNumber} — ${card.patientName}`,
         assignedTo: card.claimedBy,
       };
     }
@@ -1149,7 +1246,7 @@ export default async function QueuePage({ searchParams }: SearchProps) {
                 <th className="w-12 px-2 py-3">
                   <SelectAllCheckbox
                     entries={selectionEntries}
-                    label="Select all tests on this page"
+                    label={releasedTab ? "Select all sample visits on this page" : "Select all tests on this page"}
                   />
                 </th>
               ) : null}
@@ -1322,6 +1419,19 @@ export default async function QueuePage({ searchParams }: SearchProps) {
                             />
                           </div>
                         ) : null}
+                        {sampleDeletable(card) ? (
+                          <div className="mt-1.5 flex justify-end">
+                            <DeleteSampleVisitDialog
+                              visitId={card.visitId}
+                              visitNumber={card.visitNumber}
+                              source="queue"
+                            />
+                          </div>
+                        ) : sampleBlockHint(card) ? (
+                          <div className="mt-1.5 flex justify-end">
+                            <DeleteBlockedHint hint={sampleBlockHint(card)!} />
+                          </div>
+                        ) : null}
                       </td>
                       {receptionView ? null : (
                         <RemarksCell remarks={cardRemarks(card)} />
@@ -1338,11 +1448,11 @@ export default async function QueuePage({ searchParams }: SearchProps) {
                   >
                     {selectable ? (
                       <td className="px-2 py-3 align-middle">
-                        {panelKinds(card).length > 0 ? (
+                        {panelKinds(card).length > 0 && checkboxPanelCards.has(card.cardKey) ? (
                           <RowSelectCheckbox
                             rowKey={panelRowKey(card.visitId, card.groupId)}
                             kinds={panelKinds(card)}
-                            weight={panelStateOf(card)!.allIds.length}
+                            weight={panelStateOf(card)?.allIds.length ?? card.memberIds.length}
                             label={`${card.label}, ${card.patientName}`}
                           />
                         ) : null}
@@ -1475,6 +1585,19 @@ export default async function QueuePage({ searchParams }: SearchProps) {
                               card.memberIds,
                             )}
                           />
+                        </div>
+                      ) : null}
+                      {sampleDeletable(card) ? (
+                        <div className="mt-1.5 flex justify-end">
+                          <DeleteSampleVisitDialog
+                            visitId={card.visitId}
+                            visitNumber={card.visitNumber}
+                            source="queue"
+                          />
+                        </div>
+                      ) : sampleBlockHint(card) ? (
+                        <div className="mt-1.5 flex justify-end">
+                          <DeleteBlockedHint hint={sampleBlockHint(card)!} />
                         </div>
                       ) : null}
                     </td>

@@ -107,7 +107,9 @@ function ReportEditFields({
         notifyPatient: notify,
       });
       if (!res.ok) {
-        setError({ message: res.error, stale: Boolean(res.stale) });
+        startTransition(() => {
+          setError({ message: res.error, stale: Boolean(res.stale) });
+        });
         return;
       }
       // Handed up to ReportEditForm: this component is about to remount

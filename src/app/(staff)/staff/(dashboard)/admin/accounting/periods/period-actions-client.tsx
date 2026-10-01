@@ -26,11 +26,15 @@ export function PeriodActionsClient({
       setErr(null);
       const result = await closeQuarterAction(year, quarter, notes.trim() || null);
       if (!result.ok) {
-        setErr(result.error);
+        startTransition(() => {
+          setErr(result.error);
+        });
         return;
       }
-      setShowCloseForm(false);
-      setNotes("");
+      startTransition(() => {
+        setShowCloseForm(false);
+        setNotes("");
+      });
     });
   }
 
@@ -43,11 +47,15 @@ export function PeriodActionsClient({
       setErr(null);
       const result = await reopenQuarterAction(year, quarter, reason.trim());
       if (!result.ok) {
-        setErr(result.error);
+        startTransition(() => {
+          setErr(result.error);
+        });
         return;
       }
-      setShowReopenForm(false);
-      setReason("");
+      startTransition(() => {
+        setShowReopenForm(false);
+        setReason("");
+      });
     });
   }
 

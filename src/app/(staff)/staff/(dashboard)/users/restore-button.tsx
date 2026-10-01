@@ -19,7 +19,9 @@ export function RestoreButton({ staffUserId, name }: Props) {
     startTransition(async () => {
       const result = await restoreStaffUserAction(staffUserId);
       if (!result.ok) {
-        setError(result.error);
+        startTransition(() => {
+          setError(result.error);
+        });
         return;
       }
       router.push(result.redirect_to);

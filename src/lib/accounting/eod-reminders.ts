@@ -26,9 +26,12 @@ export async function loadUnclosedEodDays(
   shiftId: string,
   opts: { from?: string; to?: string; throwOnError?: boolean } = {},
 ): Promise<string[]> {
+  // The type generator marks every SQL argument non-null, but
+  // eod_unclosed_days reads a null bound as "the start date" / "yesterday"
+  // (and clamps both), so null is a real value here.
   const { data, error } = await admin.rpc("eod_unclosed_days", {
-    p_from: opts.from ?? null,
-    p_to: opts.to ?? null,
+    p_from: (opts.from ?? null) as unknown as string,
+    p_to: (opts.to ?? null) as unknown as string,
     p_shift_id: shiftId,
   });
   if (error) {

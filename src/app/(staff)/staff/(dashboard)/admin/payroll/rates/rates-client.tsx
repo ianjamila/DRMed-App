@@ -111,10 +111,14 @@ export function RatesClient({
       startTransition(async () => {
         const result = await endContributionBracketAction(row.id, today);
         if (!result.ok) {
-          setActionError(result.error);
+          startTransition(() => {
+            setActionError(result.error);
+          });
           return;
         }
-        setActionError(null);
+        startTransition(() => {
+          setActionError(null);
+        });
         router.refresh();
       });
     },
@@ -131,10 +135,14 @@ export function RatesClient({
       startTransition(async () => {
         const result = await endWtBracketAction(row.id, today);
         if (!result.ok) {
-          setActionError(result.error);
+          startTransition(() => {
+            setActionError(result.error);
+          });
           return;
         }
-        setActionError(null);
+        startTransition(() => {
+          setActionError(null);
+        });
         router.refresh();
       });
     },
@@ -767,7 +775,9 @@ function AddBracketDrawer({
           marginal_rate: marginalRate,
         });
         if (!result.ok) {
-          setError(result.error);
+          startTransition(() => {
+            setError(result.error);
+          });
           return;
         }
         onCreated();
@@ -808,7 +818,9 @@ function AddBracketDrawer({
         notes: notes.trim() || null,
       });
       if (!result.ok) {
-        setError(result.error);
+        startTransition(() => {
+          setError(result.error);
+        });
         return;
       }
       onCreated();

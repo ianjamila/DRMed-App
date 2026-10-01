@@ -127,10 +127,14 @@ export function HolidaysClient({
       startTransition(async () => {
         const result = await removeHolidayAction(holiday.id);
         if (!result.ok) {
-          setActionError(result.error);
+          startTransition(() => {
+            setActionError(result.error);
+          });
           return;
         }
-        setActionError(null);
+        startTransition(() => {
+          setActionError(null);
+        });
         router.refresh();
       });
     },
@@ -426,7 +430,9 @@ function AddHolidayDrawer({
         notes: notes.trim() || null,
       });
       if (!result.ok) {
-        setError(result.error);
+        startTransition(() => {
+          setError(result.error);
+        });
         return;
       }
       onCreated();

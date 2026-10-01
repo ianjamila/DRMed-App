@@ -12,12 +12,25 @@ import {
   type DailyCampaignCounts,
 } from "@/lib/marketing/campaign-results";
 import { describeAdSpendSave } from "@/lib/marketing/ad-spend-import";
+import {
+  clearLegacyRows,
+  hasUnknownFunnel,
+  legacyRowsToCsv,
+  readLegacyRows,
+  savedRowsToAdRows,
+  type AdRow,
+} from "@/lib/marketing/ad-rows";
+import type { AdSpendDbRow } from "@/lib/marketing/patient-sources";
 import { saveAdSpendAction } from "../ad-spend-actions";
+import { AdSpendRemoveForm } from "../patients/_components/ad-spend-remove-form";
 
 // Ad-spend analytics dashboard, ported from the standalone marketing-kit tool
-// (DRMed-marketing-kit/dashboards/drmed-ad-dashboard.jsx). Fully client-side:
-// staff upload Meta/Google CSV exports, rows persist in localStorage, and a
-// deterministic sample dataset renders until real data is loaded. Keeps the
+// (DRMed-marketing-kit/dashboards/drmed-ad-dashboard.jsx). The ad rows come from
+// the database (props from marketing/page.tsx, saved by every admin's uploads);
+// the filters, grouping and charts stay client-side. An upload only sends the
+// file's text to saveAdSpendAction (the ONE write) and refreshes the page. A
+// deterministic sample dataset renders only while nothing is saved. A browser's
+// old localStorage rows (drmed_ad_data_v1) are offered once for saving. Keeps the
 // marketing kit's own palette (distinct from the staff-portal brand tokens) so
 // the tool matches its printed companion materials.
 
@@ -31,9 +44,9 @@ import {
   type ReactNode,
 } from "react";
 import dynamic from "next/dynamic";
+import { useRouter } from "next/navigation";
 import {
   Upload,
-  RotateCcw,
   Download,
   Wallet,
   Users,
@@ -59,7 +72,6 @@ const C = {
   warn: "#C98A00",
   bad: "#D1503F",
 };
-const STORE_KEY = "drmed_ad_data_v1";
 const num: CSSProperties = { fontVariantNumeric: "tabular-nums" };
 
 /* ---------- formatting ---------- */
@@ -88,19 +100,6 @@ const SpendTrend = dynamic(() => import("./ad-charts").then((m) => m.SpendTrend)
   ssr: false,
   loading: () => <ChartFallback height={232} />,
 });
-
-/* ---------- row shapes ---------- */
-interface AdRow {
-  date: string;
-  platform: string;
-  campaign: string;
-  ad: string;
-  spend: number;
-  impressions: number;
-  clicks: number;
-  leads: number;
-  bookings: number;
-}
 
 interface GroupTotals {
   spend: number;
@@ -150,40 +149,6 @@ interface SortState {
 const emptySubscribe = () => () => {};
 const getHydrated = () => true;
 const getServerHydrated = () => false;
-
-function isAdRow(v: unknown): v is AdRow {
-  if (typeof v !== "object" || v === null) return false;
-  const r = v as Record<string, unknown>; // narrowed to object above
-  return (
-    typeof r.date === "string" &&
-    typeof r.platform === "string" &&
-    typeof r.campaign === "string" &&
-    typeof r.ad === "string" &&
-    typeof r.spend === "number" &&
-    typeof r.impressions === "number" &&
-    typeof r.clicks === "number" &&
-    typeof r.leads === "number" &&
-    typeof r.bookings === "number"
-  );
-}
-
-// Read previously uploaded rows from localStorage. SSR-guarded so the lazy
-// useState initializers below can call it on the server too (returns null
-// there; the render is gated on hydration anyway).
-function loadStoredRows(): AdRow[] | null {
-  if (typeof window === "undefined") return null;
-  try {
-    const raw = window.localStorage.getItem(STORE_KEY);
-    if (!raw) return null;
-    const parsed: unknown = JSON.parse(raw);
-    if (!Array.isArray(parsed)) return null;
-    const rows = parsed.filter(isAdRow);
-    return rows.length ? rows : null;
-  } catch {
-    /* corrupt or blocked storage — fall back to sample */
-    return null;
-  }
-}
 
 /* ---------- deterministic sample data ---------- */
 function mulberry32(a: number): () => number {
@@ -247,78 +212,7 @@ function buildSample(): AdRow[] {
   return rows;
 }
 
-/* ---------- date normalization ---------- */
-// Ad exports carry dates in several shapes: ISO ("2026-06-15", sometimes with a
-// trailing time or as a "start - end" range), US slashes ("06/15/2026"),
-// day-first slashes ("15/06/2026"), or a textual month ("Jun 15, 2026").
-// Normalize them all to ISO YYYY-MM-DD so date grouping, sorting, and the trend
-// chart stay chronological. Slash dates are read month-first, falling back to
-// day-first only when the first field is too large to be a month.
-function normalizeDate(raw: string): string {
-  const s = String(raw).trim();
-  if (!s) return "";
-  const pad = (n: number) => String(n).padStart(2, "0");
-
-  // ISO anywhere in the string (handles a trailing time or a leading range date).
-  const iso = s.match(/(\d{4})-(\d{2})-(\d{2})/);
-  if (iso) return `${iso[1]}-${iso[2]}-${iso[3]}`;
-
-  // Slash- or dot-separated numeric dates.
-  const parts = s.match(/^(\d{1,4})[/.](\d{1,2})[/.](\d{1,4})$/);
-  if (parts) {
-    const [, a, b, c] = parts;
-    if (a.length === 4) return `${a}-${pad(+b)}-${pad(+c)}`; // Y/M/D
-    let month = +a;
-    let day = +b;
-    if (month > 12) [month, day] = [day, month]; // first field is day-first
-    const year = c.length <= 2 ? 2000 + +c : +c;
-    return `${year}-${pad(month)}-${pad(day)}`;
-  }
-
-  // Textual months ("Jun 15, 2026", "15 June 2026") — parsed as a local date.
-  const t = Date.parse(s);
-  if (!Number.isNaN(t)) {
-    const d = new Date(t);
-    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
-  }
-
-  // Unknown format — keep a bounded slice so grouping is at least stable.
-  return s.slice(0, 10);
-}
-
-/* ---------- flexible CSV header mapping ---------- */
-function mapRow(r: Record<string, string>): AdRow {
-  const keys = Object.keys(r);
-  const find = (...cands: string[]): string => {
-    for (const c of cands) {
-      const k = keys.find((key) => key.toLowerCase().trim().includes(c));
-      if (k && r[k] !== "" && r[k] != null) return r[k];
-    }
-    return "";
-  };
-  const n = (v: string): number => {
-    const x = parseFloat(String(v).replace(/[^0-9.\-]/g, ""));
-    return isFinite(x) ? x : 0;
-  };
-  let platform = String(find("platform", "source", "network")).trim();
-  if (/face|meta|insta|ig\b/i.test(platform)) platform = "Meta";
-  else if (/google|search|goog|adwords/i.test(platform)) platform = "Google";
-  return {
-    date: normalizeDate(find("date", "day", "reporting")),
-    platform: platform || "Other",
-    campaign: String(find("campaign")).trim() || "Unattributed",
-    ad: String(find("ad name", "ad ", "creative", "headline")).trim() || "—",
-    spend: n(find("spend", "amount", "cost")),
-    impressions: n(find("impr")),
-    clicks: n(find("link click", "clicks", "click")),
-    // "result" is a leads-only candidate: Meta exports often have a single
-    // "Results" column, and listing it under bookings too would double-map the
-    // same column into both fields (every funnel would show 100% lead→booking).
-    leads: n(find("lead", "result", "conversation", "messag")),
-    bookings: n(find("booking", "conversion", "purchase", "appointment")),
-  };
-}
-
+/* ---------- CSV template (the columns the server reads) ---------- */
 const TEMPLATE =
   "platform,date,campaign,ad,spend,impressions,clicks,leads,bookings\nMeta,2026-06-15,Beat the Hospital Price,Price vs Hospital,300,17600,300,48,29\nGoogle,2026-06-15,Beat the Hospital Price,PEME · RSA,320,170,10,3,2\n";
 
@@ -504,19 +398,38 @@ interface AdPerformanceDashboardProps {
   // True when the 400-day server fetch hit REPORT_EXPORT_MAX_ROWS on either
   // appointments or contact_messages, so the counts below may undercount.
   campaignResultsTruncated: boolean;
+  // Every saved ad row (all coverage, or its latest 400 days), from the database.
+  savedRows: AdSpendDbRow[];
+  // In-band words about days/rows NOT shown (older days cut off, row ceiling), or null.
+  savedNotice: string | null;
+  // The saved rows could not be read - shown as an error, never replaced by sample data.
+  savedLoadFailed: boolean;
+  // First / last saved day (both platforms), to pre-fill the remove form; null = nothing saved.
+  savedCoverage: { from: string; to: string } | null;
 }
 
 export function AdPerformanceDashboard({
   dailyCampaignCounts,
   campaignResultsTruncated,
+  savedRows,
+  savedNotice,
+  savedLoadFailed,
+  savedCoverage,
 }: AdPerformanceDashboardProps) {
-  // Persisted rows are read once, lazily, in the initializers below (no
-  // setState-in-effect rehydration step). `hydrated` gates the render so the
-  // server (which can't see localStorage) never paints mismatched HTML.
+  const router = useRouter();
+  // `hydrated` gates the render so the server (which can't see this browser's
+  // storage) never paints HTML the browser would then have to change.
   const hydrated = useSyncExternalStore(emptySubscribe, getHydrated, getServerHydrated);
-  const [stored] = useState(() => loadStoredRows());
-  const [data, setData] = useState<AdRow[]>(() => stored ?? buildSample());
-  const [source, setSource] = useState<"sample" | "uploaded">(stored ? "uploaded" : "sample");
+  // Rows an older version of this screen kept in THIS browser only (read once,
+  // try/catch inside: blocked storage just means none).
+  const [legacy, setLegacy] = useState<AdRow[]>(() => readLegacyRows());
+  const [legacyBusy, setLegacyBusy] = useState(false);
+  const mode: "saved" | "sample" | "error" = savedLoadFailed ? "error" : savedRows.length ? "saved" : "sample";
+  const sample = useMemo(() => buildSample(), []);
+  const data = useMemo<AdRow[]>(
+    () => (mode === "saved" ? savedRowsToAdRows(savedRows) : mode === "sample" ? sample : []),
+    [mode, savedRows, sample],
+  );
   const [platformF, setPlatformF] = useState("All");
   const [periodF, setPeriodF] = useState("28");
   const [target, setTarget] = useState(450);
@@ -525,7 +438,6 @@ export function AdPerformanceDashboard({
   const [targetDraft, setTargetDraft] = useState("450");
   const [sort, setSort] = useState<SortState>({ key: "spend", dir: "desc" });
   const [adSort, setAdSort] = useState<SortState>({ key: "spend", dir: "desc" });
-  const [note, setNote] = useState("");
   const [saveNote, setSaveNote] = useState("");
   const fileRef = useRef<HTMLInputElement>(null);
 
@@ -618,52 +530,59 @@ export function AdPerformanceDashboard({
     const input = e.target;
     const file = input.files?.[0];
     if (!file) return;
-    // Also save the spend to the clinic's records for Patient Sources' cost per
-    // new patient (spec §2.3). The server re-parses the raw file with the strict
-    // daily-only contract; the in-browser view below is unchanged.
-    setSaveNote("Saving to clinic records…");
-    void file
-      .text()
-      .then((text) => saveAdSpendAction(text))
-      .then((res) => setSaveNote(describeAdSpendSave(res)))
-      .catch(() => setSaveNote("Not saved to clinic records: the upload failed — try again."));
-    // papaparse is only needed once a staff member actually uploads a CSV, so
-    // load it on demand to keep it out of the dashboard's initial JS bundle.
-    const { default: Papa } = await import("papaparse");
-    Papa.parse<Record<string, string>>(file, {
-      header: true,
-      skipEmptyLines: true,
-      complete: (res) => {
-        const rows = res.data
-          .map(mapRow)
-          .filter((r) => r.spend > 0 || r.clicks > 0 || r.impressions > 0);
-        if (!rows.length) {
-          setNote("Couldn't read that file. Check it has spend/clicks columns — or use the template.");
-          return;
-        }
-        setData(rows);
-        setSource("uploaded");
-        setNote(`Loaded ${rows.length} rows from ${file.name}.`);
-        try {
-          window.localStorage.setItem(STORE_KEY, JSON.stringify(rows));
-        } catch {
-          /* storage full or blocked — rows stay in memory for this session */
-        }
-      },
-      error: () => setNote("Couldn't parse that CSV."),
-    });
     input.value = "";
-  };
-  const reset = () => {
-    setData(buildSample());
-    setSource("sample");
-    setNote("");
-    setSaveNote("");
+    // The server re-reads the raw file with its strict daily-only contract and
+    // saves it for every admin; nothing is parsed or kept in this browser.
+    setSaveNote("Saving to clinic records…");
     try {
-      window.localStorage.removeItem(STORE_KEY);
+      const res = await saveAdSpendAction(await file.text());
+      setSaveNote(describeAdSpendSave(res));
+      if (res.ok) router.refresh(); // show what was saved
     } catch {
-      /* blocked storage — nothing to clear */
+      setSaveNote("Not saved to clinic records: the upload failed — try again.");
     }
+  };
+  const legacyFile = useMemo(() => legacyRowsToCsv(legacy), [legacy]);
+  const saveLegacy = async () => {
+    if (legacyFile.rows === 0) {
+      setSaveNote("Nothing here can be saved — only Meta and Google rows are kept. Use Discard to clear them.");
+      return;
+    }
+    setLegacyBusy(true);
+    setSaveNote("Saving to clinic records…");
+    try {
+      const res = await saveAdSpendAction(legacyFile.csv);
+      const base = describeAdSpendSave(res);
+      if (!res.ok) {
+        setSaveNote(base);
+      } else {
+        const rejected = res.data.rejected.reduce((n, r) => n + r.count, 0);
+        const savedRows = res.data.inserted + res.data.replaced;
+        if (rejected === 0 && savedRows > 0) {
+          // Only when the database has every row: forget this browser's copy.
+          clearLegacyRows();
+          setLegacy([]);
+          setSaveNote(base);
+        } else if (rejected > 0) {
+          const why = res.data.rejected.map((r) => `${r.count} ${r.reason}`).join("; ");
+          setSaveNote(
+            `${savedRows} row${savedRows === 1 ? "" : "s"} saved, ${rejected} row${rejected === 1 ? "" : "s"} rejected (${why}). ` +
+              "This browser's copy was kept — use Discard if you don't want to keep these older rows.",
+          );
+        } else {
+          setSaveNote("Nothing was saved. This browser's copy was kept — use Discard if you don't want to keep these older rows.");
+        }
+        router.refresh();
+      }
+    } catch {
+      setSaveNote("Not saved to clinic records: the upload failed — try again. This browser's copy is still here.");
+    } finally {
+      setLegacyBusy(false);
+    }
+  };
+  const discardLegacy = () => {
+    clearLegacyRows();
+    setLegacy([]);
   };
   const onTargetChange = (e: ChangeEvent<HTMLInputElement>) => {
     const v = e.target.value;
@@ -738,7 +657,7 @@ export function AdPerformanceDashboard({
             </div>
             <p className="text-sm mt-1" style={{ color: C.sub }}>
               Spend, platform &amp; campaign performance, and patients captured ·{" "}
-              {source === "sample" ? "sample data" : "your data"}
+              {mode === "sample" ? "sample data" : mode === "saved" ? "saved clinic data" : "saved data unavailable"}
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
@@ -776,31 +695,78 @@ export function AdPerformanceDashboard({
             >
               <Download size={14} />
             </button>
-            {source === "uploaded" && (
-              <button
-                onClick={reset}
-                title="Reset to sample"
-                className="flex items-center gap-1.5 text-sm rounded-lg px-2.5 py-1.5"
-                style={{ background: C.surface, border: `1px solid ${C.line}`, color: C.sub }}
-              >
-                <RotateCcw size={14} />
-              </button>
-            )}
           </div>
         </div>
 
-        {note && (
+        {mode === "sample" && (
+          <p className="text-xs mb-3 rounded-lg px-3 py-2" style={{ background: "#fff", border: `1px solid ${C.line}`, color: C.sub }}>
+            This is <strong>sample data</strong> so you can see what the screen looks like — it is not the clinic&apos;s
+            real ad spend. Upload a Meta or Google Ads export (daily breakdown) to replace it; it is saved for every admin.
+          </p>
+        )}
+        {mode === "error" && (
+          <p role="alert" className="text-xs mb-3 rounded-lg px-3 py-2" style={{ background: "#fff", border: `1px solid ${C.bad}`, color: C.bad }}>
+            Couldn&apos;t load the saved ad spend. Reload the page — nothing below is real data, and sample data is not
+            shown in its place so it can&apos;t be mistaken for yours.
+          </p>
+        )}
+        {savedNotice && (
+          <p role="status" className="text-xs mb-3 rounded-lg px-3 py-2" style={{ background: "#fff", border: `1px solid ${C.warn}`, color: C.text }}>
+            {savedNotice}
+          </p>
+        )}
+        {mode === "saved" && hasUnknownFunnel(savedRows) && (
+          <p className="text-xs mb-3" style={{ color: C.sub }}>
+            Some saved rows have no leads or bookings figure (the file didn&apos;t include one). They count as 0 in the
+            funnel and in cost per lead / booking.
+          </p>
+        )}
+        {legacy.length > 0 && (
           <div
-            className="text-xs mb-3 rounded-lg px-3 py-2"
-            style={{ background: "#fff", border: `1px solid ${C.line}`, color: C.sub }}
+            role="region"
+            aria-label="Ad rows kept only in this browser"
+            className="text-sm mb-3 rounded-lg px-3 py-2.5 flex flex-wrap items-center gap-x-3 gap-y-2"
+            style={{ background: "#fff", border: `1px solid ${C.warn}`, color: C.text }}
           >
-            {note}
+            <span>
+              This browser still has {legacy.length} ad row{legacy.length === 1 ? "" : "s"} from earlier uploads that were
+              never saved with leads and bookings. Saving writes these older rows over any newer saved numbers for the
+              same day and ad.
+              {legacyFile.skippedOtherPlatform > 0 &&
+                ` ${legacyFile.skippedOtherPlatform} row${legacyFile.skippedOtherPlatform === 1 ? "" : "s"} on platform "Other" will be discarded — only Meta and Google can be saved.`}
+            </span>
+            <button
+              type="button"
+              onClick={saveLegacy}
+              disabled={legacyBusy}
+              className="rounded-lg px-3 py-1.5 text-sm font-medium"
+              style={{ background: C.ink, color: "#fff", opacity: legacyBusy ? 0.6 : 1 }}
+            >
+              Save them to clinic records
+            </button>
+            <button
+              type="button"
+              onClick={discardLegacy}
+              disabled={legacyBusy}
+              className="text-sm underline"
+              style={{ color: C.sub }}
+            >
+              Discard
+            </button>
           </div>
         )}
         {saveNote && (
           <p role="status" className="text-xs mb-3" style={{ color: C.sub }}>
             {saveNote}
           </p>
+        )}
+        {savedCoverage && (
+          <details className="mb-3 rounded-lg px-3 py-2 text-sm" style={{ background: "#fff", border: `1px solid ${C.line}`, color: C.text }}>
+            <summary className="cursor-pointer text-xs font-medium" style={{ color: C.sub }}>
+              Uploaded the wrong file? Remove saved spend
+            </summary>
+            <AdSpendRemoveForm defaultFrom={savedCoverage.from} defaultTo={savedCoverage.to} />
+          </details>
         )}
 
         {/* KPIs */}

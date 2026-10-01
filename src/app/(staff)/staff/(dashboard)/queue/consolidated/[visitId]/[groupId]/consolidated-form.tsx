@@ -57,7 +57,9 @@ export function ConsolidatedForm(props: Props) {
         testRequestIds: props.testRequestIds,
       });
       if (!res.ok) {
-        setError(res.error);
+        startTransition(() => {
+          setError(res.error);
+        });
         return;
       }
       router.refresh();
@@ -78,14 +80,20 @@ export function ConsolidatedForm(props: Props) {
         values: payload,
       });
       if (!res.ok) {
-        setError(res.error);
+        startTransition(() => {
+          setError(res.error);
+        });
         return;
       }
-      setReleaseNote(res.data.releaseNote);
+      startTransition(() => {
+        setReleaseNote(res.data.releaseNote);
+      });
       if (res.data.releaseDeferred) {
         // Stay on the page so the medtech sees the report is finalised but
         // not yet in the patient's hands — and why.
-        setDeferredReason(res.data.deferredReason ?? "other");
+        startTransition(() => {
+          setDeferredReason(res.data.deferredReason ?? "other");
+        });
         return;
       }
       // Stay here: the page re-renders with the new report card (and its

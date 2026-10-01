@@ -27,11 +27,13 @@ import {
 import { WAIVE_CLOSED_MONTH_MESSAGE } from "@/lib/visits/payment-edit";
 import { deleteVisitAction } from "@/lib/actions/visits/queue-deletion";
 import {
+  releaseAuditArg,
   releaseVisitSelection,
   type VisitReleaseOutcome,
 } from "@/lib/actions/visits/release-reports";
 import { RELEASE_REFUSAL } from "@/lib/queue/release-eligibility";
-import type { SkippedRow } from "@/lib/queue/bulk-queue";
+import type { BulkSampleDeleteResult, SkippedRow } from "@/lib/queue/bulk-queue";
+import { mapWithConcurrency } from "@/lib/async/map-with-concurrency";
 import {
   hasOpenHmoClaim,
   visitDeletability,
@@ -43,7 +45,6 @@ import {
   MAX_BULK_SELECTION,
   scopeToAllowedSections,
 } from "@/lib/visits/bulk-selection";
-import { countResultViews } from "@/lib/results/viewed-count";
 import { canManuallyReleasePackageHeader } from "@/lib/visits/package-header-release";
 import { isReleaseMedium, type ReleaseMedium } from "@/lib/visits/release-media";
 
@@ -477,31 +478,14 @@ export async function releaseSelectedAction(
     skipped,
     warnings: out.warnings,
     batchId,
-    notifiedCount: await notifiedCount(supabase, visitId, releaseMedium, out.announced.length),
+    notifiedCount: out.notice?.status === "sent" ? out.announced.length : 0,
   };
 }
 
-// How many released tests the patient was actually sent a notice about, for
-// the bar's "already notified" line. 0 for a report withheld as unverified
-// (not in `announced`), for a physical / pickup hand-off (notify-released
-// M7) and for a sample visit (SAMPLE_SKIP_REASON) — none of those message the
-// patient. A failed sample read counts as notified: the line then errs on
-// telling staff to inform the patient.
-async function notifiedCount(
-  supabase: Awaited<ReturnType<typeof createClient>>,
-  visitId: string,
-  medium: ReleaseMedium,
-  announced: number,
-): Promise<number> {
-  if (announced === 0 || medium === "physical" || medium === "pickup") return 0;
-  const { data } = await supabase
-    .from("visits")
-    .select("is_sample")
-    .eq("id", visitId)
-    .is("deleted_at", null)
-    .maybeSingle();
-  return data?.is_sample === true ? 0 : announced;
-}
+// notifiedCount (the bar's "already notified" line) is the real outcome of the
+// patient notice: every announced test when a message actually went out, 0 for
+// a report withheld as unverified, a physical / pickup hand-off, a sample
+// visit, a patient with no contact details or a failed send.
 
 // Server-checked 10-minute Undo for releaseSelectedAction (owner 2026-09-28):
 // same window/same-staff/own-batch rules as every other bulk Undo
@@ -705,8 +689,11 @@ function parseUndoResult(data: unknown): { undone: UndoneRow[]; skippedIds: stri
 // results through the same database function (and so the same 0110
 // accounting reversal) and per-row audit. The caller has already validated
 // input and owns revalidation; the deleted-visit check lives HERE
-// (query-surfaces.test.ts looks for it in this function). `auditExtra` is
-// merged into each row's audit metadata. `expectedReleasedAtOf`
+// (query-surfaces.test.ts looks for it in this function). The database writes
+// one test_request.release_undone audit row per undone row in the same
+// transaction (0205 — so a lost response never leaves an undo unaudited):
+// visit_id, the reason, the prior medium/time and the patient's view count
+// (all read under the row lock), `auditExtra`, and report_result_id. `expectedReleasedAtOf`
 // (undoReleaseBatchAction only) limits the undo to the EXACT release each id's
 // audit row recorded, whole reports included; every other caller omits it.
 async function undoReleasedRows(
@@ -730,6 +717,7 @@ async function undoReleasedRows(
   // concurrent release can never leave one report half undone. Headers only
   // ever flip through the 0110 cascade, never directly. The release times
   // are compared in SQL: a JavaScript Date would drop their microseconds.
+  const audit = await releaseAuditArg(auditExtra);
   const { data, error } = await withLifecycleRetry(() =>
     supabase.rpc("undo_visit_release", {
       p_visit_id: visitId,
@@ -738,6 +726,8 @@ async function undoReleasedRows(
       p_expected_released_at: expectedReleasedAtOf
         ? Object.fromEntries(expectedReleasedAtOf)
         : null,
+      p_reason: trimmedReason,
+      p_audit: audit,
     }),
   );
   if (error) return { ok: false, error: translatePgError(error) };
@@ -755,42 +745,6 @@ async function undoReleasedRows(
   // A batch Undo may legitimately restore nothing (every report changed since).
   if (undone.length === 0 && !expectedReleasedAtOf) {
     return { ok: false, error: "None of the selected tests can be unreleased." };
-  }
-
-  // Snapshot how often the patient had already viewed/downloaded each result
-  // at the moment of undo — the undone-releases report surfaces this (RA
-  // 10173: undoing does not un-see a result the patient already opened).
-  const viewedCountById = new Map<string, number>(
-    await Promise.all(
-      undone.map(async (row) => [row.id, await countResultViews(row.id)] as const),
-    ),
-  );
-
-  const h = await headers();
-  const ip = h.get("x-forwarded-for")?.split(",")[0]?.trim() ?? null;
-  const ua = h.get("user-agent");
-  for (const row of undone) {
-    await audit({
-      actor_id: session.user_id,
-      actor_type: "staff",
-      action: "test_request.release_undone",
-      resource_type: "test_request",
-      resource_id: row.id,
-      metadata: {
-        visit_id: visitId,
-        reason: trimmedReason,
-        // Read under the row lock by the RPC, so they describe the release actually undone.
-        prior_release_medium: row.prior_release_medium,
-        prior_released_at: row.prior_released_at,
-        viewed_count: viewedCountById.get(row.id) ?? 0,
-        ...auditExtra,
-        // Present only when this row was reverted as part of a whole-report
-        // undo (0172) — the combined result every member shares.
-        report_result_id: row.report_id,
-      },
-      ip_address: ip,
-      user_agent: ua,
-    });
   }
 
   return { ok: true, undoneIds: undone.map((r) => r.id), skippedIds };
@@ -815,7 +769,7 @@ export async function deleteSampleVisitAction(
 ): Promise<BulkSelectionResult> {
   const session = await requireActiveStaff();
   if (session.role !== "admin") {
-    return { ok: false, error: "Only an admin can delete a sample visit." };
+    return { ok: false, error: SAMPLE_DELETE_ADMIN_ONLY };
   }
   const parsed = QueueDeleteReasonSchema.safeParse({ reason });
   if (!parsed.success) {
@@ -824,18 +778,44 @@ export async function deleteSampleVisitAction(
       error: parsed.error.issues[0]?.message ?? "Reason is required.",
     };
   }
-  const trimmedReason = parsed.data.reason;
+  return deleteSampleVisitCore(session, visitId, parsed.data.reason, "visit_page");
+}
 
+const SAMPLE_DELETE_ADMIN_ONLY = "Only an admin can delete a sample visit.";
+const NOT_A_SAMPLE_VISIT =
+  "Not a sample visit — mark the visit as a sample first, or delete it from the visit page.";
+
+type SampleDeleteSource = "visit_page" | "queue" | "queue_bulk";
+
+// The body of deleteSampleVisitAction, shared with the Queue's row and bulk
+// "Delete sample visit" actions (below). The callers own the role + reason
+// checks; this re-reads the visit and re-proves every guard. The Queue
+// sources additionally require visits.is_sample — they have no "this was a
+// sample" tick to lean on, so a real visit must never be reachable from a
+// checkbox. The visit page keeps its tick-based flow (an admin may delete a
+// real visit whose only blocker is a released result).
+async function deleteSampleVisitCore(
+  session: Awaited<ReturnType<typeof requireActiveStaff>>,
+  visitId: string,
+  trimmedReason: string,
+  source: SampleDeleteSource,
+): Promise<BulkSelectionResult> {
   const supabase = await createClient();
   const { data: visit, error: visitErr } = await supabase
     .from("visits")
     .select(
-      "id, payment_status, deleted_at, test_requests ( id, status, is_package_header, deleted_at, hmo_claim_items ( batch_voided ) )",
+      "id, payment_status, deleted_at, is_sample, test_requests ( id, status, is_package_header, deleted_at, hmo_claim_items ( batch_voided ) )",
     )
     .eq("id", visitId)
     .maybeSingle();
   if (visitErr) return { ok: false, error: translatePgError(visitErr) };
   if (!visit) return { ok: false, error: "Visit not found." };
+  if (source !== "visit_page" && visit.is_sample !== true) {
+    return { ok: false, error: NOT_A_SAMPLE_VISIT };
+  }
+  // 0167: no delete of any kind on an inactive patient's visit.
+  const active = await assertVisitPatientActive(createAdminClient(), visitId);
+  if (!active.ok) return { ok: false, error: active.error };
 
   const lines = visit.test_requests ?? [];
   const liveLines = lines.filter((t) => t.deleted_at === null);
@@ -868,7 +848,11 @@ export async function deleteSampleVisitAction(
       visitId,
       releasedIds,
       `Sample visit deleted: ${trimmedReason}`,
-      { bulk: true, sample_visit_delete: true },
+      {
+        bulk: true,
+        sample_visit_delete: true,
+        ...(source === "visit_page" ? {} : { source }),
+      },
     );
     if (!undo.ok) {
       revalidateReleaseSurfaces(visitId);
@@ -880,6 +864,7 @@ export async function deleteSampleVisitAction(
   const deleted = await deleteVisitAction(
     visitId,
     `Sample visit: ${trimmedReason}`.slice(0, 500),
+    source === "visit_page" ? undefined : source,
   );
   if (!deleted.ok) {
     revalidateReleaseSurfaces(visitId);
@@ -896,6 +881,75 @@ export async function deleteSampleVisitAction(
   // report pages, even when nothing had been released.
   revalidateReleaseSurfaces(visitId);
   return { ok: true, count: unreleased };
+}
+
+// Queue row action: "Delete sample visit…" on a sample visit's card. Admin
+// only (the EFFECTIVE role — View as is folded in by requireActiveStaff) and
+// only for a visit flagged is_sample; everything else is the shared core.
+export async function deleteSampleVisitFromQueueAction(
+  visitId: string,
+  reason: string,
+): Promise<BulkSelectionResult> {
+  const session = await requireActiveStaff();
+  if (session.role !== "admin") {
+    return { ok: false, error: SAMPLE_DELETE_ADMIN_ONLY };
+  }
+  const parsed = QueueDeleteReasonSchema.safeParse({ reason });
+  if (!parsed.success) {
+    return { ok: false, error: parsed.error.issues[0]?.message ?? "Reason is required." };
+  }
+  return deleteSampleVisitCore(session, visitId, parsed.data.reason, "queue");
+}
+
+// Queue bulk bar: the same per-visit core over the DISTINCT visits of the
+// selection, a few at a time. Whole-call refusals (role, reason, input) come
+// back as { ok: false }; otherwise every visit lands in exactly one of
+// deletedVisitIds / skipped, with the core's own reason.
+const SAMPLE_DELETE_CONCURRENCY = 3;
+
+export async function deleteSampleVisitsFromQueueAction(
+  visitIds: string[],
+  reason: string,
+): Promise<BulkSampleDeleteResult> {
+  const session = await requireActiveStaff();
+  if (session.role !== "admin") {
+    return { ok: false, error: SAMPLE_DELETE_ADMIN_ONLY };
+  }
+  const parsed = QueueDeleteReasonSchema.safeParse({ reason });
+  if (!parsed.success) {
+    return { ok: false, error: parsed.error.issues[0]?.message ?? "Reason is required." };
+  }
+  if (!Array.isArray(visitIds) || visitIds.some((id) => typeof id !== "string" || id === "")) {
+    return { ok: false, error: "Invalid selection." };
+  }
+  const unique = [...new Set(visitIds)];
+  if (unique.length === 0) return { ok: false, error: "Nothing selected." };
+  if (unique.length > MAX_BULK_SELECTION) {
+    return { ok: false, error: `Select at most ${MAX_BULK_SELECTION} visits at a time.` };
+  }
+  const outcomes = await mapWithConcurrency(unique, SAMPLE_DELETE_CONCURRENCY, async (visitId) => {
+    try {
+      return { visitId, result: await deleteSampleVisitCore(session, visitId, parsed.data.reason, "queue_bulk") };
+    } catch (e) {
+      await reportError({ scope: "queue/delete-sample-visits", error: e, metadata: { visit_id: visitId } });
+      return {
+        visitId,
+        result: { ok: false as const, error: "Something went wrong — open the visit and check it." },
+      };
+    }
+  });
+  const deletedVisitIds: string[] = [];
+  const skipped: SkippedRow[] = [];
+  let unreleasedCount = 0;
+  for (const { visitId, result } of outcomes) {
+    if (result.ok) {
+      deletedVisitIds.push(visitId);
+      unreleasedCount += result.count;
+    } else {
+      skipped.push({ id: visitId, reason: result.error });
+    }
+  }
+  return { ok: true, deletedVisitIds, skipped, unreleasedCount };
 }
 
 // H3: admin-only escape hatch for visits that will never be cash-paid

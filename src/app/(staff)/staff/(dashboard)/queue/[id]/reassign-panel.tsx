@@ -33,11 +33,15 @@ export function ReassignPanel({
       setErr(null);
       const result = await unclaimTestAction(testRequestId, reason.trim());
       if (!result.ok) {
-        setErr(result.error);
+        startTransition(() => {
+          setErr(result.error);
+        });
         return;
       }
-      setConfirmOpen(false);
-      setReason("");
+      startTransition(() => {
+        setConfirmOpen(false);
+        setReason("");
+      });
       router.refresh();
     });
   }
@@ -51,10 +55,14 @@ export function ReassignPanel({
       setErr(null);
       const result = await reassignTestAction(testRequestId, newAssignee);
       if (!result.ok) {
-        setErr(result.error);
+        startTransition(() => {
+          setErr(result.error);
+        });
         return;
       }
-      setNewAssignee("");
+      startTransition(() => {
+        setNewAssignee("");
+      });
       router.refresh();
     });
   }

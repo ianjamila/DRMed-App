@@ -293,6 +293,7 @@ export function translatePgError(err: PgError): string {
       return err.message
         ? err.message
         : "Some tests in this report were already claimed or changed status.";
+<<<<<<< HEAD
     // 0200 reclaim_panel_members / restore_panel_members: the bulk Undo put
     // nothing back for this panel (all or nothing) — several messages, all
     // written for staff; pass them through like P0077.
@@ -300,6 +301,24 @@ export function translatePgError(err: PgError): string {
       return err.message
         ? err.message
         : "Part of this report changed since — nothing was put back.";
+=======
+    // 0196 merge_patients_guarded / undo_patient_merge_guarded: the actor is
+    // not an active admin.
+    case "P0078":
+      return "Only an active admin can merge patient records or undo a merge.";
+    // 0196: the merge or undo was refused. The SQL words each reason for an
+    // admin (already undone, past 30 days, the kept record merged or deleted
+    // since, a result now combining tests from both records…) — pass it
+    // through, like P0073.
+    case "P0079":
+      return err.message
+        ? `${err.message.charAt(0).toUpperCase()}${err.message.slice(1)}.`
+        : "This merge can't be done or undone right now. Refresh and try again.";
+    // 0196 (live version-2 merges) / 0197 (every merge): the merge marker
+    // changed outside merge_patients_guarded / undo_patient_merge_guarded.
+    case "P0080":
+      return "Patient records can only be merged or un-merged from Admin Tools › Merge Duplicate Patients.";
+>>>>>>> origin/main
     // 0198 release_visit_results / undo_visit_release: the whole call was refused; nothing changed.
     case "P0081":
       return err.message ? err.message : "This couldn't be done — refresh and try again.";

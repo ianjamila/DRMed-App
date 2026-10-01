@@ -12,14 +12,22 @@ export function ResubmitIndexNowButton({ disabled }: { disabled?: boolean }) {
       const res = await resubmitAllToIndexNowAction();
       if (res.ok) {
         if (res.data.skipped === "disabled") {
-          setResult("Submissions are disabled outside production — nothing was sent.");
+          startTransition(() => {
+            setResult("Submissions are disabled outside production — nothing was sent.");
+          });
         } else if (res.data.skipped === "no-urls") {
-          setResult("No URLs to submit.");
+          startTransition(() => {
+            setResult("No URLs to submit.");
+          });
         } else {
-          setResult(`Submitted ${res.data.submitted} of ${res.data.total} URLs to IndexNow.`);
+          startTransition(() => {
+            setResult(`Submitted ${res.data.submitted} of ${res.data.total} URLs to IndexNow.`);
+          });
         }
       } else {
-        setResult(`Error: ${res.error}`);
+        startTransition(() => {
+          setResult(`Error: ${res.error}`);
+        });
       }
     });
   }

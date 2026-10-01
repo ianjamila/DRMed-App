@@ -11,7 +11,8 @@
 -- test_requests. Calls run as `authenticated` with a JWT `sub` (or as
 -- `service_role` with p_actor), the way the app calls them.
 --
--- Run (local stack, from the repo root, with 0198 applied):
+-- Run (local stack, from the repo root, with 0198 and 0205 applied — 0205 made
+-- undo_visit_release require p_reason and added p_audit to both functions):
 --   /opt/homebrew/opt/libpq/bin/psql "$(supabase status -o json | jq -r .DB_URL)" \
 --     -v ON_ERROR_STOP=1 -f supabase/tests/0198_atomic_report_release_smoke.sql
 --
@@ -194,7 +195,7 @@ declare v jsonb;
 begin
   v := pg_temp.run_as('a0000000-0000-4000-8000-000000000198',
     $q$select public.undo_visit_release('e0000000-0000-4000-8000-000000000198',
-         '{f2000000-0000-4000-8000-000000000198}'::uuid[])$q$);
+         '{f2000000-0000-4000-8000-000000000198}'::uuid[], p_reason => 'smoke198')$q$);
   perform pg_temp.expect('2 undone count', jsonb_array_length(v -> 'undone')::text, '3');
   perform pg_temp.expect('2 prior medium',
     (select string_agg(distinct e ->> 'prior_release_medium', ',') from jsonb_array_elements(v -> 'undone') e),
@@ -248,7 +249,7 @@ begin
 end $$;
 select null from pg_temp.expect_error('5 reception undo', 'a1000000-0000-4000-8000-000000000198',
   $q$select public.undo_visit_release('e0000000-0000-4000-8000-000000000198',
-       '{f0000000-0000-4000-8000-000000000198}'::uuid[])$q$, 'P0081');
+       '{f0000000-0000-4000-8000-000000000198}'::uuid[], p_reason => 'smoke198')$q$, 'P0081');
 
 -- 6. a plain line alone; again → not_ready ---------------------------------------
 do $$
@@ -294,8 +295,8 @@ begin
     'a2000000-0000-4000-8000-000000000198');
 end $$;
 select null from pg_temp.expect('8 anon cannot execute',
-  (has_function_privilege('anon', 'public.release_visit_results(uuid,uuid[],text,uuid)', 'EXECUTE')
-   or has_function_privilege('anon', 'public.undo_visit_release(uuid,uuid[],uuid,jsonb)', 'EXECUTE'))::text, 'false');
+  (has_function_privilege('anon', 'public.release_visit_results(uuid,uuid[],text,uuid,jsonb)', 'EXECUTE')
+   or has_function_privilege('anon', 'public.undo_visit_release(uuid,uuid[],uuid,jsonb,text,jsonb)', 'EXECUTE'))::text, 'false');
 select null from pg_temp.expect('8 helpers private',
   (has_function_privilege('authenticated', 'public.release_report_locks(uuid,uuid[],text)', 'EXECUTE')
    or has_function_privilege('service_role', 'public.release_actor(uuid)', 'EXECUTE'))::text, 'false');
@@ -308,7 +309,7 @@ select null from pg_temp.expect_error('9 bad medium', 'a0000000-0000-4000-8000-0
        '{f0000000-0000-4000-8000-000000000198}'::uuid[], 'fax')$q$, 'P0081');
 select null from pg_temp.expect_error('9 undo with nothing released', 'a0000000-0000-4000-8000-000000000198',
   $q$select public.undo_visit_release('e1000000-0000-4000-8000-000000000198',
-       '{f6000000-0000-4000-8000-000000000198}'::uuid[])$q$, 'P0081');
+       '{f6000000-0000-4000-8000-000000000198}'::uuid[], p_reason => 'smoke198')$q$, 'P0081');
 update public.visits set deleted_at = now(), delete_reason = 'smoke198' where id = 'e1000000-0000-4000-8000-000000000198';
 select null from pg_temp.expect_error('9 deleted visit', 'a0000000-0000-4000-8000-000000000198',
   $q$select public.release_visit_results('e1000000-0000-4000-8000-000000000198',
@@ -348,7 +349,7 @@ begin
   -- R1 is released (step 8). Undo it, release it as a batch, keep its identities.
   perform pg_temp.run_as('a2000000-0000-4000-8000-000000000198',
     $q$select public.undo_visit_release('e0000000-0000-4000-8000-000000000198',
-         '{f0000000-0000-4000-8000-000000000198}'::uuid[])$q$);
+         '{f0000000-0000-4000-8000-000000000198}'::uuid[], p_reason => 'smoke198')$q$);
   v := pg_temp.run_as('a0000000-0000-4000-8000-000000000198',
     $q$select public.release_visit_results('e0000000-0000-4000-8000-000000000198',
          '{f0000000-0000-4000-8000-000000000198}'::uuid[], 'other')$q$);
@@ -362,7 +363,7 @@ begin
   v_old := jsonb_set(v_map, array['f1000000-0000-4000-8000-000000000198'], '"2000-01-01T00:00:00+00:00"');
   execute format('select pg_temp.run_as(%L, %L)', 'a0000000-0000-4000-8000-000000000198',
     format($q$select public.undo_visit_release('e0000000-0000-4000-8000-000000000198',
-       '{f0000000-0000-4000-8000-000000000198}'::uuid[], null, %L::jsonb)$q$, v_old)) into v;
+       '{f0000000-0000-4000-8000-000000000198}'::uuid[], null, %L::jsonb, 'smoke198')$q$, v_old)) into v;
   perform pg_temp.expect('11 changed report skipped', (v -> 'undone')::text, '[]');
   perform pg_temp.expect('11 skipped code',
     (select string_agg(e ->> 'code', ',') from jsonb_array_elements(v -> 'skipped') e), 'changed_since');
@@ -371,14 +372,14 @@ begin
   -- The exact identities: the whole report comes back.
   execute format('select pg_temp.run_as(%L, %L)', 'a0000000-0000-4000-8000-000000000198',
     format($q$select public.undo_visit_release('e0000000-0000-4000-8000-000000000198',
-       '{f0000000-0000-4000-8000-000000000198}'::uuid[], null, %L::jsonb)$q$, v_map)) into v;
+       '{f0000000-0000-4000-8000-000000000198}'::uuid[], null, %L::jsonb, 'smoke198')$q$, v_map)) into v;
   perform pg_temp.expect('11 batch undo count', jsonb_array_length(v -> 'undone')::text, '3');
   perform pg_temp.expect('11 statuses', pg_temp.statuses(pg_temp.r1()),
     'ready_for_release,ready_for_release,ready_for_release');
 end $$;
 select pg_temp.expect_error('11 malformed identities', 'a0000000-0000-4000-8000-000000000198',
   $q$select public.undo_visit_release('e0000000-0000-4000-8000-000000000198',
-       '{f0000000-0000-4000-8000-000000000198}'::uuid[], null, '{"f0000000-0000-4000-8000-000000000198":"not a time"}'::jsonb)$q$, 'P0081');
+       '{f0000000-0000-4000-8000-000000000198}'::uuid[], null, '{"f0000000-0000-4000-8000-000000000198":"not a time"}'::jsonb, 'smoke198')$q$, 'P0081');
 
 \echo '0198 smoke: all checks passed'
 rollback;

@@ -44,7 +44,9 @@ export function QueueReleaseButton({
       setMessage(null);
       const res = await releaseTestsAction({ testRequestIds, medium });
       if (!res.ok) {
-        setMessage(res.error);
+        start(() => {
+          setMessage(res.error);
+        });
         return;
       }
       const text = releaseOutcomeText({
@@ -55,7 +57,7 @@ export function QueueReleaseButton({
       });
       if (text) {
         if (outcome) outcome.show(text);
-        else setMessage(text);
+        else start(() => setMessage(text));
       }
       if (res.changedIds.length > 0 || res.alsoReleasedIds.length > 0) router.refresh();
     });

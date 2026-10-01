@@ -10,16 +10,22 @@ const fx = vi.hoisted(() => ({
   audits: [] as Array<Record<string, unknown>>,
   reported: [] as Array<{ scope: string }>,
   notifyThrows: false,
+  // What the mocked notifiers report back (the real ones return the outcome).
+  notice: { status: "sent", channels: ["email"], reason: null } as { status: string; channels: string[]; reason: string | null },
 }));
 vi.mock("@/lib/audit/log", () => ({ audit: async (e: Record<string, unknown>) => void fx.audits.push(e) }));
 vi.mock("@/lib/notifications/notify-released", () => ({
   notifyResultReleased: async (a: { testRequestId: string }) => {
     if (fx.notifyThrows) throw new Error("boom");
     fx.notified.push(a);
+    return fx.notice;
   },
 }));
 vi.mock("@/lib/notifications/notify-released-bulk", () => ({
-  notifyResultsReleasedBulk: async (a: { testRequestIds: string[] }) => void fx.notified.push(a),
+  notifyResultsReleasedBulk: async (a: { testRequestIds: string[] }) => {
+    fx.notified.push(a);
+    return fx.notice;
+  },
 }));
 vi.mock("@/lib/notifications/release-staff-alert", () => ({
   scheduleReleaseStaffAlert: (v: string, n: number) => void fx.alerts.push([v, n]),
@@ -66,6 +72,7 @@ beforeEach(() => {
   fx.audits.length = 0;
   fx.reported.length = 0;
   fx.notifyThrows = false;
+  fx.notice = { status: "sent", channels: ["email"], reason: null };
 });
 
 describe("releaseVisitSelection", () => {
@@ -75,14 +82,20 @@ describe("releaseVisitSelection", () => {
     expect(fake.rpcCalls).toEqual([
       {
         name: "release_visit_results",
-        args: { p_visit_id: "v1", p_test_request_ids: ["a", "b"], p_medium: "email", p_actor: "u1" },
+        args: {
+          p_visit_id: "v1",
+          p_test_request_ids: ["a", "b"],
+          p_medium: "email",
+          p_actor: "u1",
+          p_audit: { metadata: { source: "queue" }, ip: "1.2.3.4", user_agent: "ua" },
+        },
       },
     ]);
   });
 
   it("an empty selection makes no call and returns an empty outcome", async () => {
     const { fake, out } = run([{ id: "a" }], [], []);
-    expect(await out).toEqual({ changedIds: [], alsoReleasedIds: [], skipped: [], warnings: [], announced: [] });
+    expect(await out).toEqual({ changedIds: [], alsoReleasedIds: [], skipped: [], warnings: [], announced: [], notice: null });
     expect(fake.rpcCalls).toHaveLength(0);
   });
 
@@ -95,9 +108,20 @@ describe("releaseVisitSelection", () => {
     expect(o.announced.find((r) => r.id === "a")).toEqual({ id: "a", name: "A" });
     expect(o.skipped).toEqual([]);
     expect(o.warnings).toEqual([]);
+    expect(o.notice).toEqual({ status: "sent", channels: ["email"], reason: null });
     expect(fx.notified).toHaveLength(1);
     expect(fx.notified[0].testRequestIds?.slice().sort()).toEqual(["a", "b", "c"]);
     expect(fx.alerts).toEqual([["v1", 3]]);
+  });
+
+  it("carries a skipped or failed notice through to the outcome instead of claiming it was sent", async () => {
+    fx.notice = { status: "skipped", channels: [], reason: "no email or phone on file" };
+    const skipped = await run([{ id: "a" }], [], ["a"]).out;
+    expect(skipped.announced).toHaveLength(1);
+    expect(skipped.notice).toEqual({ status: "skipped", channels: [], reason: "no email or phone on file" });
+    fx.notifyThrows = true;
+    const failed = await run([{ id: "a" }], [], ["a"]).out;
+    expect(failed.notice).toEqual({ status: "failed", channels: [], reason: "sending failed" });
   });
 
   it("a single released row gets the single-result notice", async () => {
@@ -107,17 +131,20 @@ describe("releaseVisitSelection", () => {
     expect(fx.alerts).toEqual([["v1", 1]]);
   });
 
-  it("audits every released row (pulled-in ones too) with the exact metadata, ip and user agent, and nothing else", async () => {
-    const { out } = run([{ id: "a" }, { id: "b" }, { id: "c", status: "result_uploaded" }], report("r1", "a", "b"), ["a", "c"]);
+  it("hands the audit to the database as p_audit (caller extras + first forwarded ip + user agent) and writes no released row itself", async () => {
+    const { fake, out } = run([{ id: "a" }, { id: "b" }, { id: "c", status: "result_uploaded" }], report("r1", "a", "b"), ["a", "c"]);
     await out;
-    expect(fx.audits.map((a) => a.resource_id)).toEqual(["a", "b"]);
-    for (const a of fx.audits) {
-      expect(a).toEqual({
+    // Exactly one call, the extras exactly as passed (no visit_id / released_at: the SQL adds those).
+    expect(fake.rpcCalls).toHaveLength(1);
+    expect(fake.rpcCalls[0].args.p_audit).toEqual({ metadata: { source: "queue" }, ip: "1.2.3.4", user_agent: "ua" });
+    // The database owns test_request.released now: a TypeScript copy would double-write.
+    expect(fx.audits.filter((a) => a.action === "test_request.released")).toEqual([]);
+    // What the fake's model of the SQL writes (a, b released; c is not ready).
+    expect(fake.dbAudits.map((a) => a.resource_id)).toEqual(["a", "b"]);
+    for (const a of fake.dbAudits) {
+      expect(a).toMatchObject({
         actor_id: "u1",
-        actor_type: "staff",
         action: "test_request.released",
-        resource_type: "test_request",
-        resource_id: a.resource_id,
         metadata: { visit_id: "v1", release_medium: "email", bulk: true, selection: true, source: "queue", released_at: FAKE_RELEASED_AT },
         ip_address: "1.2.3.4",
         user_agent: "ua",
@@ -125,7 +152,7 @@ describe("releaseVisitSelection", () => {
     }
   });
 
-  it("each audit row carries the exact released_at string the RPC returned, unchanged (never through a JS Date)", async () => {
+  it("the released_at the RPC returns is not echoed into p_audit (the database stamps and writes it itself)", async () => {
     const stamp = "2026-09-30T07:00:00.987654+00:00";
     const { fake, out } = run([{ id: "a" }, { id: "b" }], [], ["a", "b"]);
     fake.overrideNextRpc("release_visit_results", {
@@ -135,24 +162,26 @@ describe("releaseVisitSelection", () => {
       ],
       refused: [],
     });
-    await out;
-    const at = (id: string) => (fx.audits.find((a) => a.resource_id === id)!.metadata as { released_at: string }).released_at;
-    expect(at("a")).toBe(stamp);
-    expect(at("b")).toBe("2026-09-30T07:00:01.000001+00:00");
+    const o = await out;
+    expect(o.changedIds).toEqual(["a", "b"]);
+    expect(fake.rpcCalls[0].args.p_audit).toEqual({ metadata: { source: "queue" }, ip: "1.2.3.4", user_agent: "ua" });
+    expect(fx.audits.filter((a) => a.action === "test_request.released")).toEqual([]);
   });
 
-  it("stamps bulk_batch_id on every released row's audit (report-mates too) and passes it to the notice", async () => {
-    const { out } = run([{ id: "a" }, { id: "b" }, { id: "c" }], report("r1", "a", "b"), ["a", "c"], undefined, "batch-1");
+  it("sends bulk_batch_id in p_audit.metadata (the database stamps it on report-mates too) and passes it to the notice", async () => {
+    const { fake, out } = run([{ id: "a" }, { id: "b" }, { id: "c" }], report("r1", "a", "b"), ["a", "c"], undefined, "batch-1");
     await out;
-    expect(fx.audits.map((a) => a.resource_id)).toEqual(["a", "b", "c"]);
-    for (const a of fx.audits) expect(a.metadata).toMatchObject({ bulk_batch_id: "batch-1", source: "queue" });
+    expect(fake.rpcCalls[0].args.p_audit).toEqual({ metadata: { source: "queue", bulk_batch_id: "batch-1" }, ip: "1.2.3.4", user_agent: "ua" });
+    expect(fake.dbAudits.map((a) => a.resource_id)).toEqual(["a", "b", "c"]);
+    for (const a of fake.dbAudits) expect(a.metadata).toMatchObject({ bulk_batch_id: "batch-1", source: "queue" });
     expect(fx.notified).toEqual([expect.objectContaining({ bulkBatchId: "batch-1" })]);
   });
 
-  it("without a bulkBatchId the audit rows carry no bulk_batch_id", async () => {
-    const { out } = run([{ id: "a" }], [], ["a"]);
+  it("without a bulkBatchId p_audit.metadata carries no bulk_batch_id", async () => {
+    const { fake, out } = run([{ id: "a" }], [], ["a"]);
     await out;
-    expect(fx.audits[0].metadata).not.toHaveProperty("bulk_batch_id");
+    expect(fake.rpcCalls[0].args.p_audit).toEqual({ metadata: { source: "queue" }, ip: "1.2.3.4", user_agent: "ua" });
+    expect(fake.dbAudits[0].metadata).not.toHaveProperty("bulk_batch_id");
   });
 
   it.each([
@@ -169,7 +198,7 @@ describe("releaseVisitSelection", () => {
     const { fake, out } = run([{ id: "a" }], [], ["a"]);
     fake.overrideNextRpc("release_visit_results", { released: [], refused: [refusal("a", code, count)] });
     const o = await out;
-    expect(o).toEqual({ changedIds: [], alsoReleasedIds: [], skipped: [{ id: "a", reason }], warnings: [], announced: [] });
+    expect(o).toEqual({ changedIds: [], alsoReleasedIds: [], skipped: [{ id: "a", reason }], warnings: [], announced: [], notice: null });
     expect(fx.notified).toHaveLength(0);
     expect(fx.alerts).toHaveLength(0);
     expect(fx.audits).toHaveLength(0);
@@ -199,6 +228,56 @@ describe("releaseVisitSelection", () => {
     expect(o.skipped).toEqual([{ id: "b", reason: RACED_REASON }]);
   });
 
+  describe("a raced release names who and when", () => {
+    const sess = (id: string) => ({ user_id: id, role: "medtech" }) as never;
+    const raced = (rows: FakeTestRow[], caller: string, staff: Record<string, string> = { maria: "Maria Santos" }) => {
+      const fake = makeFakeReleaseDb({ rows, staff });
+      const out = releaseVisitSelection({
+        supabase: fake.client, session: sess(caller), visitId: "v1", selectedIds: rows.map((r) => r.id),
+        medium: "email", auditMeta: { source: "queue" },
+      });
+      return { fake, out };
+    };
+    const stamp = "2026-09-30T06:14:00+00:00"; // Sep 30, 2:14 PM Manila (a past date, so it always carries the date)
+
+    it("another staff member released it (RPC refuses not_ready)", async () => {
+      const { out } = raced([{ id: "a", status: "released", releasedBy: "maria", releasedAt: stamp }], "u1");
+      const o = await out;
+      expect(o.skipped).toEqual([{ id: "a", reason: expect.stringMatching(/^Already released by Maria S\. on .+ at 2:14 PM\.$/) }]);
+      expect(o.changedIds).toEqual([]);
+    });
+
+    it("the caller released it themselves (a double-click or second tab)", async () => {
+      const { out } = raced([{ id: "a", status: "released", releasedBy: "u1", releasedAt: stamp }], "u1");
+      expect((await out).skipped).toEqual([{ id: "a", reason: expect.stringMatching(/^You already released this on .+ at 2:14 PM\.$/) }]);
+    });
+
+    it("an id the result lists nowhere gets the same naming", async () => {
+      const { fake, out } = raced([{ id: "a", status: "released", releasedBy: "maria", releasedAt: stamp }], "u1");
+      fake.overrideNextRpc("release_visit_results", { released: [], refused: [] });
+      expect((await out).skipped[0].reason).toMatch(/^Already released by Maria S\./);
+    });
+
+    it("a row that is not released now keeps RACED_REASON", async () => {
+      const { fake, out } = raced([{ id: "a", status: "in_progress" }], "u1");
+      fake.overrideNextRpc("release_visit_results", { released: [], refused: [refusal("a", "not_ready")] });
+      expect((await out).skipped).toEqual([{ id: "a", reason: RACED_REASON }]);
+    });
+
+    it("a failed lookup falls back to RACED_REASON and the call still resolves", async () => {
+      const { fake, out } = raced([{ id: "a", status: "released", releasedBy: "maria", releasedAt: stamp }], "u1");
+      fake.failNext("test_requests", "read");
+      const o = await out;
+      expect(o.skipped).toEqual([{ id: "a", reason: RACED_REASON }]);
+    });
+
+    it("a lookup does not run when nothing raced", async () => {
+      const { fake, out } = raced([{ id: "a" }], "u1");
+      await out;
+      expect(fake.calls).toHaveLength(0);
+    });
+  });
+
   it("a refused report and a plain row in one call: only the plain row is announced", async () => {
     const { fake, out } = run(
       [{ id: "a" }, { id: "b", status: "result_uploaded" }, { id: "c" }],
@@ -209,7 +288,7 @@ describe("releaseVisitSelection", () => {
     expect(o.changedIds).toEqual(["c"]);
     expect(o.skipped).toEqual([{ id: "a", reason: REPORT_REFUSAL.notFinished(1) }]);
     expect(fx.alerts).toEqual([["v1", 1]]);
-    expect(fx.audits.map((a) => a.resource_id)).toEqual(["c"]);
+    expect(fake.dbAudits.map((a) => a.resource_id)).toEqual(["c"]);
     expect(fake.rows.find((r) => r.id === "a")!.status).toBe("ready_for_release");
   });
 
@@ -241,6 +320,7 @@ describe("releaseVisitSelection", () => {
       skipped: [{ id: "a", reason: RELEASE_BLOCKED_CONSENT }],
       warnings: [],
       announced: [],
+      notice: null,
     });
     expect(fx.notified).toHaveLength(0);
     expect(fx.alerts).toHaveLength(0);
@@ -286,6 +366,7 @@ describe("releaseVisitSelection", () => {
       ],
       warnings: [],
       announced: [],
+      notice: null,
     });
     expect(fx.reported).toHaveLength(1);
     expect(fx.notified).toHaveLength(0);
@@ -306,12 +387,23 @@ describe("notifyReleased", () => {
 
   it("never throws: a failing notice is reported instead", async () => {
     fx.notifyThrows = true;
-    await expect(notifyReleased("v1", [{ id: "a", name: "A" }], "email")).resolves.toBeUndefined();
+    await expect(notifyReleased("v1", [{ id: "a", name: "A" }], "email")).resolves.toEqual({
+      status: "failed",
+      channels: [],
+      reason: "sending failed",
+    });
     expect(fx.reported.map((r) => r.scope)).toEqual(["notify/result-released-selection"]);
   });
 
+  it("returns the notifier's real outcome for one and for many rows", async () => {
+    fx.notice = { status: "skipped", channels: [], reason: "no email or phone on file" };
+    expect(await notifyReleased("v1", [{ id: "a", name: "A" }], "email")).toEqual(fx.notice);
+    fx.notice = { status: "sent", channels: ["email", "sms"], reason: null };
+    expect(await notifyReleased("v1", [{ id: "a", name: "A" }, { id: "b", name: "B" }], "email")).toEqual(fx.notice);
+  });
+
   it("sends nothing for an empty list", async () => {
-    await notifyReleased("v1", [], "email");
+    expect(await notifyReleased("v1", [], "email")).toBeNull();
     expect(fx.notified).toHaveLength(0);
   });
 });

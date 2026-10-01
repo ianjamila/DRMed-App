@@ -6,6 +6,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 vi.mock("server-only", () => ({}));
 vi.mock("next/headers", () => ({ headers: async () => new Headers({ "user-agent": "ua" }) }));
 const fx = vi.hoisted(() => ({
+  notice: { status: "sent", channels: ["email"], reason: null } as { status: string; channels: string[]; reason: string | null },
   notified: [] as Array<{ testRequestIds?: string[]; testRequestId?: string; releaseMedium?: string }>,
   alerts: [] as Array<[string, number]>,
 }));
@@ -14,10 +15,16 @@ vi.mock("@/lib/audit/log", () => ({
   audit: async (a: { action: string; metadata: Record<string, unknown> }) => void audits.push(a),
 }));
 vi.mock("@/lib/notifications/notify-released", () => ({
-  notifyResultReleased: async (a: { testRequestId: string }) => void fx.notified.push(a),
+  notifyResultReleased: async (a: { testRequestId: string }) => {
+    fx.notified.push(a);
+    return fx.notice;
+  },
 }));
 vi.mock("@/lib/notifications/notify-released-bulk", () => ({
-  notifyResultsReleasedBulk: async (a: { testRequestIds: string[] }) => void fx.notified.push(a),
+  notifyResultsReleasedBulk: async (a: { testRequestIds: string[] }) => {
+    fx.notified.push(a);
+    return fx.notice;
+  },
 }));
 vi.mock("@/lib/notifications/release-staff-alert", () => ({
   scheduleReleaseStaffAlert: (v: string, n: number) => void fx.alerts.push([v, n]),
@@ -26,6 +33,7 @@ vi.mock("@/lib/observability/report-error", () => ({ reportError: async () => {}
 
 import { FAKE_RELEASED_AT, makeFakeReleaseDb, type FakeTestRow } from "@/lib/actions/visits/fake-release-db";
 import { releaseFinalisedReport } from "./finalise-release";
+import { noticeAuditMeta } from "@/lib/notifications/release-notice-outcome";
 
 const session = { user_id: "u1", role: "medtech" } as never;
 const ids = ["a", "b", "c"];
@@ -53,6 +61,7 @@ beforeEach(() => {
   audits.length = 0;
   fx.notified.length = 0;
   fx.alerts.length = 0;
+  fx.notice = { status: "sent", channels: ["email"], reason: null };
 });
 
 describe("finalise-consolidated release (step 9)", () => {
@@ -67,16 +76,51 @@ describe("finalise-consolidated release (step 9)", () => {
     expect(fake.rpcCalls).toHaveLength(1);
     expect(fake.rpcCalls[0]).toEqual({
       name: "release_visit_results",
-      args: { p_visit_id: "v1", p_test_request_ids: ids, p_medium: "other", p_actor: "u1" },
+      args: {
+        p_visit_id: "v1",
+        p_test_request_ids: ids,
+        p_medium: "other",
+        p_actor: "u1",
+        // The database writes the audit rows (0205): exactly the caller extras
+        // (finalise mints no Undo batch), plus the request's ip / user agent.
+        p_audit: { metadata: { source: "finalise_consolidated", result_id: "r1" }, ip: null, user_agent: "ua" },
+      },
     });
-    const lineAudits = audits.filter((a) => a.action === "test_request.released");
-    expect(lineAudits).toHaveLength(3);
-    for (const a of lineAudits) {
-      expect(a.metadata).toMatchObject({ source: "finalise_consolidated", result_id: "r1", release_medium: "other" });
-      // The exact database stamp, unchanged; finalise mints no Undo batch.
-      expect(a.metadata).toMatchObject({ released_at: FAKE_RELEASED_AT });
+    // The TypeScript side no longer writes the row: a copy would double-write.
+    expect(audits.filter((a) => a.action === "test_request.released")).toHaveLength(0);
+    // What the database (as modelled by the fake) writes from that argument.
+    expect(fake.dbAudits).toHaveLength(3);
+    for (const a of fake.dbAudits) {
+      expect(a.metadata).toMatchObject({ source: "finalise_consolidated", result_id: "r1", release_medium: "other", released_at: FAKE_RELEASED_AT });
       expect(a.metadata).not.toHaveProperty("bulk_batch_id");
     }
+  });
+
+  it("hands the real notice outcome back so the result.released audit can record it", async () => {
+    const sent = await finaliseRelease(ids.map((id) => ({ id })));
+    expect(noticeAuditMeta(sent.outcome?.notice)).toEqual({
+      patient_notified: true,
+      patient_notice: { status: "sent", channels: ["email"], reason: null },
+    });
+
+    fx.notice = { status: "skipped", channels: [], reason: "no email or phone on file" };
+    const skipped = await finaliseRelease(ids.map((id) => ({ id })));
+    expect(skipped.outcome?.announced).toHaveLength(3);
+    expect(noticeAuditMeta(skipped.outcome?.notice)).toEqual({
+      patient_notified: false,
+      patient_notice: { status: "skipped", channels: [], reason: "no email or phone on file" },
+    });
+
+    fx.notice = { status: "failed", channels: [], reason: "sending failed" };
+    const failed = await finaliseRelease(ids.map((id) => ({ id })));
+    expect(noticeAuditMeta(failed.outcome?.notice).patient_notified).toBe(false);
+    expect(failed.outcome?.notice?.status).toBe("failed");
+  });
+
+  it("nothing released means no notice to record", async () => {
+    const { outcome } = await finaliseRelease([{ id: "a" }, { id: "b", status: "result_uploaded" }, { id: "c" }]);
+    expect(outcome).toBeNull();
+    expect(noticeAuditMeta(outcome?.notice)).toEqual({ patient_notified: false, patient_notice: null });
   });
 
   it("a released row the database returns without released_at is malformed: nothing audited or announced, reads as deferred", async () => {

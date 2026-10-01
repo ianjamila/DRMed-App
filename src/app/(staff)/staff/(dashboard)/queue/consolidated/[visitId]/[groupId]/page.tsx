@@ -45,7 +45,8 @@ import { canActOnResult } from "@/lib/visits/line-visibility";
 import { isDoctorKind } from "@/lib/visits/order-lines";
 import { isActivePatient } from "@/lib/patients/active";
 import type { ReleaseMedium } from "@/lib/visits/release-media";
-import { reportReleaseBlock } from "@/lib/queue/report-release-scope";
+import { PANEL_UNREADABLE, fullReportReleaseBlock } from "@/lib/queue/report-release-scope";
+import { fetchReportMembers } from "@/lib/queue/report-members";
 
 type One<T> = T | T[] | null;
 const one = <T,>(v: One<T>): T | null => (Array.isArray(v) ? (v[0] ?? null) : v);
@@ -333,6 +334,10 @@ export default async function ConsolidatedQueuePage({
     mayAct && patientActive && anyReady
       ? await Promise.all([isConsentGateRequired(), getPatientConsentState(visit.patient_id)])
       : [false, { current: true }];
+  // Full report membership for the Release preflight (members in another group,
+  // on another visit, or deleted count in the database); only when something
+  // can be released. Admin client: RLS must not hide a member the RPC counts.
+  const fullMembers = anyReady && mayAct && patientActive ? await fetchReportMembers(admin, resultIds) : null;
   const actionsFor: Record<string, ReactNode> = {};
   if (mayAct && patientActive) {
     for (const rep of reports) {
@@ -354,9 +359,13 @@ export default async function ConsolidatedQueuePage({
           },
           session.role,
         );
-        // Mirror the visit page: a half-finished report disables Release with the reason.
-        // Deleted members are filtered out by this page's load; the server still refuses that case.
-        const mixed = reportReleaseBlock(rep.members.map((m) => ({ status: m.status, deleted: false })));
+        // Mirror the visit page: a report the database would refuse (an unfinished or
+        // deleted member, or one in another group or visit) disables Release with the
+        // reason. Judged on the FULL membership read above; unreadable fails closed.
+        const full = fullMembers?.ok ? fullMembers.byResult.get(rep.resultId) : undefined;
+        const mixed = full
+          ? fullReportReleaseBlock(full, { visitId: visit.id, sections: allowedSections })
+          : PANEL_UNREADABLE;
         actionsFor[rep.resultId] = (
           <QueueReleaseButton
             testRequestIds={ready}

@@ -38,7 +38,9 @@ export function PayslipDetailClient({
     startTransition(async () => {
       const res = await getPayslipUrlAction(employeeRunId);
       if (!res.ok) {
-        setError(res.error);
+        startTransition(() => {
+          setError(res.error);
+        });
         return;
       }
       window.open(res.data.url, "_blank", "noopener,noreferrer");

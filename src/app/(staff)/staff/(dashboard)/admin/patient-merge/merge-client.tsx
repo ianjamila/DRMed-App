@@ -1,9 +1,11 @@
 "use client";
 
 import { useActionState, useState } from "react";
+import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { fieldList, movedSummary } from "@/lib/patients/merge-result";
 import {
   lookupPatientForMergeAction,
   mergePatientsAction,
@@ -161,21 +163,28 @@ function ConfirmMerge({
 
   if (state?.ok) {
     return (
-      <section className="rounded-xl border border-emerald-300 bg-emerald-50 p-5">
-        <h2 className="font-heading text-lg font-extrabold text-emerald-900">
-          Merge complete
-        </h2>
+      <section className="rounded-xl border border-emerald-300 bg-emerald-50 p-5" role="status">
+        <h2 className="font-heading text-lg font-extrabold text-emerald-900">Merge complete</h2>
         <p className="mt-2 text-sm text-emerald-900">
-          {state.merged_drm_id} merged into {state.kept_drm_id}. Moved{" "}
-          {state.moved.visits} visit(s), {state.moved.appointments}{" "}
-          appointment(s), {state.moved.audit_log} audit row(s),{" "}
-          {state.moved.critical_alerts} critical alert(s),{" "}
-          {state.moved.patient_consents} consent record(s),{" "}
-          {state.moved.appointment_attachments} lab-request form(s).
+          {state.merged_drm_id} merged into {state.kept_drm_id}. Moved {movedSummary(state.moved)}.
         </p>
+        {state.filled.length > 0 ? (
+          <p className="mt-1 text-sm text-emerald-900">
+            Copied onto {state.kept_drm_id} because it had none: {fieldList(state.filled)}.
+          </p>
+        ) : null}
+        {state.rechained > 0 ? (
+          <p className="mt-1 text-sm text-emerald-900">
+            {state.rechained === 1
+              ? `1 record previously merged into ${state.merged_drm_id} now points at ${state.kept_drm_id}.`
+              : `${state.rechained} records previously merged into ${state.merged_drm_id} now point at ${state.kept_drm_id}.`}
+          </p>
+        ) : null}
         <p className="mt-2 text-xs text-emerald-900">
-          The merged-in row is tombstoned with a back-pointer; the audit
-          trail is preserved.
+          The merged-in record stays on file, pointing at {state.kept_drm_id}. You can undo this within 30 days from{" "}
+          <Link href="/staff/admin/patient-merge/candidates" className="font-semibold underline">
+            Possible duplicates › Recently merged
+          </Link>.
         </p>
       </section>
     );
@@ -187,9 +196,9 @@ function ConfirmMerge({
         Confirm merge
       </h2>
       <p className="mt-1 text-xs text-[color:var(--color-brand-text-soft)]">
-        Type <span className="font-mono font-bold">MERGE</span> to confirm. This
-        cannot be undone (the merged-in row stays for audit but its data is no
-        longer the canonical record).
+        Type <span className="font-mono font-bold">MERGE</span> to confirm. Everything moves in one step — if
+        anything is in the way, nothing changes. You can undo a merge within 30 days; details the kept record was
+        missing (middle name, sex, phone, email, address, birthdate) are copied from the merged-in record.
       </p>
 
       <form action={formAction} className="mt-4 grid gap-3 sm:grid-cols-[1fr_auto]">

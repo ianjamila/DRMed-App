@@ -38,7 +38,9 @@ export function DeleteForm({ staffUserId, staffName }: Props) {
     startTransition(async () => {
       const result = await softDeleteStaffUserAction(staffUserId, formData);
       if (!result.ok) {
-        setError(result.error);
+        startTransition(() => {
+          setError(result.error);
+        });
         return;
       }
       router.push(result.redirect_to);

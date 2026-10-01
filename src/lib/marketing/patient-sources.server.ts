@@ -10,9 +10,9 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "@/types/database";
 import { PAGE_SIZE, REPORT_EXPORT_MAX_ROWS } from "@/lib/reports/paging";
 import {
-  classifyReportError,
+  classifyReportError, parsePatientSourcesReport, type PatientSourcesReport,
   type Grain, type Mode, type OverlapRow, type PeopleRow, type ReferrerRow, type ReportResult,
-  type RevenueRow, type SeriesRow, type SpendTotalRow, type SummaryRow,
+  type RevenueRow, type SeriesRow, type SpendTotalRow, type SummaryRow, type AdSpendDbRow,
 } from "./patient-sources";
 
 type Db = SupabaseClient<Database>;
@@ -45,6 +45,32 @@ export async function loadPatientSourcesSummary(supabase: Db, from: string, to: 
   const { data, error } = await supabase.rpc("patient_sources_summary", { p_from: from, p_to: to }).single();
   if (error || !data) return fail("summary", error);
   return { ok: true, data: data as unknown as SummaryRow };
+}
+
+export interface ReportQuery {
+  from: string;
+  to: string;
+  grain: Grain;
+  mode: Mode;
+  /** The comparison period, or null when there is none (e.g. it would start before Patient Sources' first date). */
+  prev: { from: string; to: string } | null;
+}
+
+/**
+ * Every section of the Patient Sources page from ONE call (0206): the database
+ * builds the identity core once, and every card reads the same snapshot.
+ * One jsonb value, so PostgREST's 1,000-row cap does not apply.
+ */
+export async function loadPatientSourcesReport(supabase: Db, q: ReportQuery): Promise<ReportResult<PatientSourcesReport>> {
+  const { data, error } = await supabase.rpc("patient_sources_report", {
+    p_from: q.from, p_to: q.to, p_grain: q.grain, p_mode: q.mode,
+    // A deliberate SQL null ("no comparison"): CLI 2.118 types every SQL argument as non-null.
+    p_prev_from: (q.prev?.from ?? null) as string, p_prev_to: (q.prev?.to ?? null) as string,
+  });
+  if (error) return fail("report", error);
+  const report = parsePatientSourcesReport(data);
+  if (!report) return fail("report (malformed reply)", { code: "XX000" });
+  return { ok: true, data: report };
 }
 
 export function loadPatientSourcesSeries(supabase: Db, from: string, to: string, grain: Grain | "period", mode: Mode) {
@@ -129,6 +155,24 @@ export function loadAdSpendTotals(supabase: Db, from: string, to: string) {
       .order("spend_date")
       .order("platform")
       .range(a, b) as unknown as PromiseLike<{ data: SpendTotalRow[] | null; error: PgErr }>,
+  );
+}
+
+/**
+ * Every saved ad row in [from, to] (at most 400 days - the RPC refuses more), for the Ad Performance
+ * screen. The RPC orders by its unique key (date, platform, campaign_key, ad_key), a TOTAL order, so
+ * .range() paging past PostgREST's 1,000-row cap cannot drop or repeat a row; the caller must show
+ * `truncated` in-band.
+ */
+export function loadAdSpendRows(supabase: Db, from: string, to: string) {
+  return pageAll<AdSpendDbRow>("ad spend rows", (a, b) =>
+    supabase
+      .rpc("ad_spend_rows", { p_from: from, p_to: to })
+      .order("spend_date")
+      .order("platform")
+      .order("campaign_key")
+      .order("ad_key")
+      .range(a, b) as unknown as PromiseLike<{ data: AdSpendDbRow[] | null; error: PgErr }>,
   );
 }
 

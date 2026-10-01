@@ -262,20 +262,24 @@ function useHistoricHmoOutcome() {
       const r = await undoHistoricHmoBatchAction({ batchId });
       if (!r.ok) {
         const gone = r.error === UNDO_EXPIRED || r.error === UNDO_ALREADY;
-        setOutcome({ message: `${r.error}\n\n${previousMessage}`, batchId: gone ? null : batchId, doneAt });
+        startUndo(() => {
+          setOutcome({ message: `${r.error}\n\n${previousMessage}`, batchId: gone ? null : batchId, doneAt });
+        });
         return;
       }
       const notRestoredLines = r.notRestored.map((n) => ({
         label: `Claim ${n.id.slice(0, 8)}`,
         reason: n.reason,
       }));
-      setOutcome({
-        message: undoOutcomeMessage(
-          { one: "claim", many: "claims" },
-          { restored: r.restoredIds.length, notRestored: notRestoredLines },
-        ),
-        batchId: null,
-        doneAt: Date.now(),
+      startUndo(() => {
+        setOutcome({
+          message: undoOutcomeMessage(
+            { one: "claim", many: "claims" },
+            { restored: r.restoredIds.length, notRestored: notRestoredLines },
+          ),
+          batchId: null,
+          doneAt: Date.now(),
+        });
       });
       router.refresh();
     });
@@ -1734,8 +1738,12 @@ function AgingMatrix({ rows }: { rows: AgingRow[] }) {
     setSnapResult(null);
     startTransition(async () => {
       const res = await snapshotHmoAgingAction({ snapshot_date: snapDate });
-      if (!res.ok) { setSnapResult(`Failed: ${res.error}`); return; }
-      setSnapResult(`Saved ${res.data?.rows} rows for ${snapDate}.`);
+      if (!res.ok) { startTransition(() => {
+  setSnapResult(`Failed: ${res.error}`);
+}); return; }
+      startTransition(() => {
+        setSnapResult(`Saved ${res.data?.rows} rows for ${snapDate}.`);
+      });
     });
   }
 

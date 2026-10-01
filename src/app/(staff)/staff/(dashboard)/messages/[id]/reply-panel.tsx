@@ -69,8 +69,10 @@ export function ReplyPanel({ messageId, firstName, emailTo, smsTo }: Props) {
         alert(res.error);
         return;
       }
-      setResult(res.data);
-      setBody("");
+      startSend(() => {
+        setResult(res.data);
+        setBody("");
+      });
       router.refresh();
     });
   }

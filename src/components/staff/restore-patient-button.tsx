@@ -20,10 +20,14 @@ export function RestorePatientButton({ patientId, drmId }: { patientId: string; 
     start(async () => {
       const res = await restorePatientAction(patientId);
       if (!res.ok) {
-        setError(res.error);
+        start(() => {
+          setError(res.error);
+        });
         return;
       }
-      setOpen(false);
+      start(() => {
+        setOpen(false);
+      });
       toast.success(`${res.data.drmId} restored`);
       router.refresh();
     });

@@ -13,6 +13,8 @@ import {
   labelsByTestId,
   parsePanelRowKey,
   rowTestCount,
+  sampleDeleteMessage,
+  sampleDeleteVisitIds,
   sentTestCount,
   type BulkQueueResult,
   type QueueRowInfo,
@@ -20,6 +22,7 @@ import {
 import { UNDO_ALREADY, UNDO_EXPIRED, UNDO_WINDOW_MS, undoOutcomeMessage } from "@/lib/ui/bulk-undo";
 import { RELEASE_MEDIUM_OPTIONS, type ReleaseMedium } from "@/lib/visits/release-media";
 import { releaseTestsAction, undoBulkQueueAction } from "./actions";
+import { deleteSampleVisitsFromQueueAction } from "../visits/[id]/actions";
 import {
   claimQueueSelectionAction,
   deleteQueueSelectionAction,
@@ -33,7 +36,7 @@ interface Props {
   rowsByKey: Record<string, QueueRowInfo>;
 }
 
-type Panel = null | "unclaim" | "delete";
+type Panel = null | "unclaim" | "delete" | "sample";
 
 // Selected keys → single test ids and chemistry panels (panelRowKey).
 function splitKeys(keys: readonly string[]) {
@@ -81,7 +84,8 @@ export function QueueBulkBar({ rowsByKey }: Props) {
   const [err, setErr] = useState<string | null>(null);
   // Which button started the transition in flight — one useTransition serves
   // all three, so without this every visible button would read "…ing".
-  const [running, setRunning] = useState<"claim" | "unclaim" | "release" | "delete" | null>(null);
+  const [running, setRunning] = useState<"claim" | "unclaim" | "release" | "delete" | "sample" | null>(null);
+  const [sampleConfirmed, setSampleConfirmed] = useState(false);
   const [medium, setMedium] = useState<ReleaseMedium>("physical");
   // The last action's outcome, naming every skipped test. An action only
   // clears the keys it acted on, so other selected rows (e.g. an
@@ -102,6 +106,21 @@ export function QueueBulkBar({ rowsByKey }: Props) {
   );
   const deleteKeys = known(keysByKind[QUEUE_KIND.delete]);
   const releaseKeys = known(keysByKind[QUEUE_KIND.release]);
+  // "Delete N sample visits…": offered ONLY when every selected row is a
+  // sample-visit row (admin-only — the page gives no other role this kind). A
+  // mixed selection offers nothing here and is never trimmed to its sample
+  // rows. N counts DISTINCT visits (a visit's rows, or panel + test of the
+  // same visit, are one visit).
+  const sampleKeys = known(keysByKind[QUEUE_KIND.sampleDelete]);
+  const sampleVisitIds = sampleDeleteVisitIds(count, sampleKeys, rowsByKey);
+  // Released today: the only action on offer is the sample delete, so the
+  // bar counts visits (a row there is one visit's card, not a bench test).
+  const sampleOnlyBar =
+    sampleVisitIds.length > 0 &&
+    claimKeys.length === 0 &&
+    unclaimKeys.length === 0 &&
+    releaseKeys.length === 0 &&
+    deleteKeys.length === 0;
   // A panel stands for its ready members; a single test for itself. One call,
   // de-duplicated — the server expands a combined report to its whole set.
   const releaseIds = Array.from(
@@ -111,6 +130,7 @@ export function QueueBulkBar({ rowsByKey }: Props) {
   function closePanel() {
     setPanel(null);
     setReason("");
+    setSampleConfirmed(false);
     setErr(null);
   }
 
@@ -158,10 +178,12 @@ export function QueueBulkBar({ rowsByKey }: Props) {
         // unless the server says the window/batch itself is gone, in which
         // case retrying can only repeat the same refusal.
         const gone = r.error === UNDO_EXPIRED || r.error === UNDO_ALREADY;
-        setOutcome({
-          message: `${r.error}\n\n${previousMessage}`,
-          edits: selectionEdits,
-          undo: gone ? null : u,
+        startUndo(() => {
+          setOutcome({
+            message: `${r.error}\n\n${previousMessage}`,
+            edits: selectionEdits,
+            undo: gone ? null : u,
+          });
         });
         return;
       }
@@ -180,13 +202,15 @@ export function QueueBulkBar({ rowsByKey }: Props) {
           notRestoredByKey.set(n.id, { label: u.labelOf[n.id] ?? "A test", reason: n.reason });
         }
       }
-      setOutcome({
-        message: undoOutcomeMessage(
-          { one: "test", many: "tests" },
-          { restored: restoredCount, notRestored: [...notRestoredByKey.values()] },
-        ),
-        edits: selectionEdits,
-        undo: null,
+      startUndo(() => {
+        setOutcome({
+          message: undoOutcomeMessage(
+            { one: "test", many: "tests" },
+            { restored: restoredCount, notRestored: [...notRestoredByKey.values()] },
+          ),
+          edits: selectionEdits,
+          undo: null,
+        });
       });
       router.refresh();
     });
@@ -264,10 +288,12 @@ export function QueueBulkBar({ rowsByKey }: Props) {
       const msg = bulkReleaseMessage(ids.length, result, labelsByTestId(rowsByKey));
       // Release keeps #261's outcome text; it carries no Undo here (the
       // 10-minute bulk Undo covers Claim / Unclaim / Delete only).
-      setOutcome({
-        message: result.warnings.length ? `${msg}\n${result.warnings.join("\n")}` : msg,
-        edits: selectionEdits,
-        undo: null,
+      start(() => {
+        setOutcome({
+          message: result.warnings.length ? `${msg}\n${result.warnings.join("\n")}` : msg,
+          edits: selectionEdits,
+          undo: null,
+        });
       });
       clearKeys(keys);
       closePanel();
@@ -299,6 +325,43 @@ export function QueueBulkBar({ rowsByKey }: Props) {
     );
   }
 
+  function removeSampleVisits() {
+    if (pending || sampleVisitIds.length === 0) return;
+    if (!reason.trim()) {
+      setErr("Reason is required.");
+      return;
+    }
+    if (!sampleConfirmed) {
+      setErr("Tick the box to confirm these were sample visits.");
+      return;
+    }
+    const keys = sampleKeys;
+    const visitIds = sampleVisitIds;
+    setRunning("sample");
+    start(async () => {
+      const result = await deleteSampleVisitsFromQueueAction(visitIds, reason.trim());
+      if (!result.ok) {
+        // Nothing was attempted (role / input / reason) — keep the selection.
+        start(() => {
+          setErr(result.error);
+        });
+        return;
+      }
+      // No Undo button: a deleted visit is restored from its page, and its
+      // results stay unreleased (the confirmation says so).
+      start(() => {
+        setOutcome({
+          message: sampleDeleteMessage(visitIds, result, rowsByKey),
+          edits: selectionEdits,
+          undo: null,
+        });
+      });
+      clearKeys(keys);
+      closePanel();
+      router.refresh();
+    });
+  }
+
   // In TESTS, not rows: a chemistry panel row stands for all its members.
   const testsIn = (keys: string[], scope: "bench" | "all") =>
     keys.reduce((n, key) => n + rowTestCount(rowsByKey[key], scope), 0);
@@ -307,7 +370,9 @@ export function QueueBulkBar({ rowsByKey }: Props) {
       ? testsIn(unclaimKeys, "bench")
       : panel === "delete"
         ? testsIn(deleteKeys, "all")
-        : 0;
+        : panel === "sample"
+          ? sampleVisitIds.length
+          : 0;
   // The rows behind an open panel can vanish under it (a realtime refresh
   // prunes them). Close it then, so it never reopens by itself — with the old
   // reason — over a later, unrelated selection. Render-time adjustment, the
@@ -332,7 +397,7 @@ export function QueueBulkBar({ rowsByKey }: Props) {
   }
 
   return (
-    <BulkBar noun="test">
+    <BulkBar noun={sampleOnlyBar ? "sample visit" : "test"}>
       {outcome ? (
         <BulkOutcomePanel
           inline
@@ -396,6 +461,21 @@ export function QueueBulkBar({ rowsByKey }: Props) {
           Delete ({testsIn(deleteKeys, "all")})
         </Button>
       ) : null}
+      {sampleVisitIds.length > 0 ? (
+        <Button
+          type="button"
+          size="sm"
+          variant="destructive"
+          disabled={pending}
+          aria-expanded={panel === "sample"}
+          onClick={() => {
+            setErr(null);
+            setPanel(panel === "sample" ? null : "sample");
+          }}
+        >
+          Delete {sampleVisitIds.length} sample visit{sampleVisitIds.length === 1 ? "" : "s"}…
+        </Button>
+      ) : null}
       {panel !== null && panelCount > 0 ? (
         <div className="basis-full space-y-2 rounded-md border border-[color:var(--color-brand-bg-mid)] bg-[color:var(--color-brand-bg)] p-2 text-left text-xs">
           <p className="text-[color:var(--color-brand-text-mid)]">
@@ -403,6 +483,15 @@ export function QueueBulkBar({ rowsByKey }: Props) {
               <>
                 Put {n(panelCount)} back in the queue for anyone in the section to claim.
                 Only possible while no result has been uploaded.
+              </>
+            ) : panel === "sample" ? (
+              <>
+                Delete {panelCount} sample visit{panelCount === 1 ? "" : "s"}. Each
+                visit&rsquo;s released results are un-released first &mdash; the patient
+                can no longer open them &mdash; and then the whole visit is deleted. The
+                patient is not contacted. A visit can be restored later; its results stay
+                unreleased. Visits that cannot be deleted (payments, a waived balance, an
+                open HMO claim) are skipped and named afterwards. Reason is audit-logged.
               </>
             ) : (
               <>
@@ -423,6 +512,17 @@ export function QueueBulkBar({ rowsByKey }: Props) {
             aria-label={panel === "unclaim" ? "Reason for unclaiming" : "Reason for deleting"}
             className="w-full rounded-md border border-[color:var(--color-brand-bg-mid)] bg-white p-2 text-xs"
           />
+          {panel === "sample" ? (
+            <label className="flex items-start gap-2 text-[color:var(--color-brand-text-mid)]">
+              <input
+                type="checkbox"
+                checked={sampleConfirmed}
+                onChange={(e) => setSampleConfirmed(e.target.checked)}
+                className="mt-0.5"
+              />
+              <span>These were sample or test visits, not real patient visits.</span>
+            </label>
+          ) : null}
           {err ? (
             <p role="alert" className="text-red-600">
               {err}
@@ -431,19 +531,21 @@ export function QueueBulkBar({ rowsByKey }: Props) {
           <div className="flex gap-2">
             <button
               type="button"
-              onClick={panel === "unclaim" ? unclaim : remove}
+              onClick={panel === "unclaim" ? unclaim : panel === "sample" ? removeSampleVisits : remove}
               disabled={pending}
               className={`min-h-[44px] rounded-md px-3 text-xs font-bold uppercase tracking-wider text-white disabled:opacity-50 ${
-                panel === "delete" ? "bg-red-700" : "bg-[color:var(--color-brand-navy)]"
+                panel === "delete" || panel === "sample" ? "bg-red-700" : "bg-[color:var(--color-brand-navy)]"
               }`}
             >
               {pending && running === panel
-                ? panel === "delete"
+                ? panel === "delete" || panel === "sample"
                   ? "Deleting…"
                   : "Unclaiming…"
-                : panel === "delete"
-                  ? `Confirm delete (${panelCount})`
-                  : `Confirm unclaim (${panelCount})`}
+                : panel === "sample"
+                  ? `Confirm delete ${panelCount} sample visit${panelCount === 1 ? "" : "s"}`
+                  : panel === "delete"
+                    ? `Confirm delete (${panelCount})`
+                    : `Confirm unclaim (${panelCount})`}
             </button>
             <button
               type="button"
