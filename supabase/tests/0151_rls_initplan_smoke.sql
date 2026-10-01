@@ -83,7 +83,12 @@ begin
       -- apply step. Only the service-role sync RPCs read or write it (0170
       -- revokes anon/authenticated: "Staging: no policy"), and no admin page
       -- shows it, so any policy here would only widen access.
-      'sheet_mirror_staging'
+      'sheet_mirror_staging',
+      -- 0210: the release-notice outbox and its OFF-by-default switch. Only the
+      -- service-role client and the service_role-only claim/finish/retry
+      -- functions touch them; a policy would only widen access.
+      'release_notices',
+      'release_notice_settings'
     );
 
   if newly_unprotected is not null then
