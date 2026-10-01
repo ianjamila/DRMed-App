@@ -27,6 +27,7 @@ const SURFACES: Record<string, string> = {
   ["src/app/api/admin/reports/patient-sources-people.csv/route.ts"]: "loadAllPeople",
   [`${S}/marketing/patients/people/page.tsx`]: "loadPeoplePage",
   [`${S}/marketing/page.tsx`]: "loadAdSpendRows",
+  ["src/lib/marketing/patient-sources-digest.server.ts"]: "loadPatientSourcesReport",
 };
 
 // The people CSV route's own audit action is named, by design (P12), exactly
