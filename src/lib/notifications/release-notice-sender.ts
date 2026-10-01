@@ -1,4 +1,5 @@
 import "server-only";
+import { createHash } from "node:crypto";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { reportError } from "@/lib/observability/report-error";
 import { isDoctorKind } from "@/lib/visits/order-lines";
@@ -30,7 +31,7 @@ type Admin = ReturnType<typeof createAdminClient>;
 //
 // At-most-once SMS (owner decision 4): the row is fenced to sms_state='unknown'
 // BEFORE the SMS leaves, and an SMS is never sent from 'unknown' / 'failed' /
-// 'sent'. Email carries Idempotency-Key result-notice:<id>:email, so a retry of
+// 'sent'. Email carries Idempotency-Key result-notice:<id>:email:<hash of subject+text>, so a retry of
 // an ambiguous email attempt cannot double-mail inside Resend's 24 h window.
 //
 // Never throws: any failure leaves the row for the sweeper (the lease expires)
@@ -49,6 +50,34 @@ const ALREADY_ANNOUNCED_WINDOW_MS = 24 * 60 * 60 * 1000;
 const NO_PHONE = "patient has no phone on file";
 const NO_EMAIL = "patient has no email on file";
 const SMS_NOT_RESENT = "text message not resent after an unknown outcome";
+
+// Resend answers 409 for two different idempotency problems (resend.com/docs/dashboard/emails/idempotency-keys):
+//   invalid_idempotent_request     — this key was used with a DIFFERENT payload: nothing was sent for this body.
+//   concurrent_idempotent_requests — the first request with this key is still in flight: it may yet deliver.
+// Both leave the email "failed" (retried). Only the first one changes the next attempt's key.
+export const EMAIL_KEY_CONFLICT = "email idempotency key conflict (different content)";
+export const EMAIL_IN_FLIGHT = "email send already in progress";
+
+export function classifyEmailError(error: string): string {
+  if (!/Resend 409/.test(error)) return error;
+  if (/invalid_idempotent_request/.test(error)) return EMAIL_KEY_CONFLICT;
+  if (/concurrent_idempotent_requests/.test(error)) return EMAIL_IN_FLIGHT;
+  return error;
+}
+
+/**
+ * Resend Idempotency-Key for one email attempt: the notice id plus a short hash of
+ * the rendered subject + text. Identical content (a retry after a crash or a lost
+ * response) reuses the key and Resend dedups it; changed content (a test undone,
+ * the review CTA toggled) gets a NEW key instead of a 409 loop. After an
+ * "invalid_idempotent_request" the attempt number is mixed in so the next try
+ * cannot hit the same conflict again.
+ */
+export function emailIdempotencyKey(row: Pick<ReleaseNoticeRow, "id" | "attempts" | "last_error">, subject: string, text: string): string {
+  const salt = row.last_error?.includes(EMAIL_KEY_CONFLICT) ? `\n#${row.attempts}` : "";
+  const hash = createHash("sha256").update(`${subject}\n${text}${salt}`).digest("hex").slice(0, 12);
+  return `result-notice:${row.id}:email:${hash}`;
+}
 
 const FENCED: SendNoticeResult = { outcome: noticeRetrying(), finalStatus: "fenced" };
 
@@ -293,7 +322,7 @@ async function sendInner(row: ReleaseNoticeRow): Promise<SendNoticeResult> {
         subject: rendered.emailSubject,
         text: rendered.emailText,
         html: rendered.emailHtml,
-        idempotencyKey: `result-notice:${row.id}:email`,
+        idempotencyKey: emailIdempotencyKey(row, rendered.emailSubject, rendered.emailText),
       })
     : Promise.resolve(null);
   const [smsResult, emailResult] = await Promise.all([smsResultP, emailResultP]);
@@ -304,7 +333,7 @@ async function sendInner(row: ReleaseNoticeRow): Promise<SendNoticeResult> {
   else if (emailResult === null) email = { state: "failed", error: "email not sent" }; // unreachable: emailSendable
   else if (emailResult.ok) email = { state: "sent", id: emailResult.id, to: to.email };
   else if (emailResult.kind === "skipped") email = { state: "skipped", reason: emailResult.reason, to: to.email };
-  else email = { state: "failed", error: emailResult.error, to: to.email };
+  else email = { state: "failed", error: classifyEmailError(emailResult.error), to: to.email };
 
   if (smsResult) {
     if (smsResult.ok) sms = { state: "sent", id: smsResult.id };

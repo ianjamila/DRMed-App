@@ -128,7 +128,7 @@ import { sendEmail } from "./email";
 import { sendSms } from "./sms";
 import { reportError } from "@/lib/observability/report-error";
 import { SAMPLE_SKIP_REASON } from "@/lib/visits/sample";
-import { sendReleaseNotice as realSend } from "./release-notice-sender";
+import { EMAIL_IN_FLIGHT, EMAIL_KEY_CONFLICT, emailIdempotencyKey, sendReleaseNotice as realSend } from "./release-notice-sender";
 import type { ReleaseNoticeRow } from "./release-notice-types";
 
 // Every send goes through here so the fake finish can echo the claimed row (as the database does).
@@ -406,9 +406,47 @@ describe("dedup — owner decision 1", () => {
 });
 
 describe("sending", () => {
-  it("sends the email with Idempotency-Key result-notice:<id>:email", async () => {
+  it("sends the email with Idempotency-Key result-notice:<id>:email:<hash of the rendered subject+text>", async () => {
     await sendReleaseNotice(baseRow({ id: "n-42" }));
-    expect(sendEmail).toHaveBeenCalledWith(expect.objectContaining({ to: "ana@example.com", idempotencyKey: "result-notice:n-42:email" }));
+    const sent = vi.mocked(sendEmail).mock.calls[0][0];
+    expect(sent.idempotencyKey).toMatch(/^result-notice:n-42:email:[0-9a-f]{12}$/);
+    expect(sent.idempotencyKey).toBe(emailIdempotencyKey({ id: "n-42", attempts: 1, last_error: null }, sent.subject, sent.text));
+    expect(sendEmail).toHaveBeenCalledWith(expect.objectContaining({ to: "ana@example.com" }));
+  });
+
+  it("identical content across attempts reuses the key; changed content (a test undone, CTA toggled) gets a new one", async () => {
+    await sendReleaseNotice(baseRow({ attempts: 1 }));
+    await sendReleaseNotice(baseRow({ attempts: 2 }));
+    fx.asked = true; // the review CTA drops out of the text
+    await sendReleaseNotice(baseRow({ attempts: 3 }));
+    fx.asked = false;
+    fx.tests = [testRow("t1", "CBC"), testRow("t2", "FBS")];
+    await sendReleaseNotice(baseRow({ test_request_ids: ["t1", "t2"], attempts: 4 }));
+    const keys = vi.mocked(sendEmail).mock.calls.map((c) => c[0].idempotencyKey);
+    expect(keys[0]).toBe(keys[1]);
+    expect(new Set(keys).size).toBe(3);
+  });
+
+  it("a Resend 409 invalid_idempotent_request is a definite 'not sent': retried, and the NEXT attempt uses a fresh key", async () => {
+    fx.recipient = active({ phone: null });
+    vi.mocked(sendEmail).mockResolvedValueOnce({ ok: false, kind: "error", error: 'Resend 409: {"name":"invalid_idempotent_request"}' });
+    const r = await sendReleaseNotice(baseRow({ attempts: 1 }));
+    expect(r.finalStatus).toBe("retry");
+    expect(finishArgs()).toMatchObject({ p_email_state: "failed", p_error: EMAIL_KEY_CONFLICT });
+    const first = vi.mocked(sendEmail).mock.calls[0][0].idempotencyKey;
+    fx.rpcs = [];
+    await sendReleaseNotice(baseRow({ attempts: 2, last_error: EMAIL_KEY_CONFLICT }));
+    expect(vi.mocked(sendEmail).mock.calls[1][0].idempotencyKey).not.toBe(first);
+  });
+
+  it("a Resend 409 concurrent_idempotent_requests retries with the SAME key (the first send may still deliver)", async () => {
+    fx.recipient = active({ phone: null });
+    vi.mocked(sendEmail).mockResolvedValueOnce({ ok: false, kind: "error", error: 'Resend 409: {"name":"concurrent_idempotent_requests"}' });
+    await sendReleaseNotice(baseRow({ attempts: 1 }));
+    expect(finishArgs()).toMatchObject({ p_final_status: "retry", p_error: EMAIL_IN_FLIGHT });
+    await sendReleaseNotice(baseRow({ attempts: 2, last_error: EMAIL_IN_FLIGHT }));
+    const keys = vi.mocked(sendEmail).mock.calls.map((c) => c[0].idempotencyKey);
+    expect(keys[0]).toBe(keys[1]);
   });
 
   it("fences sms_state='unknown' on the lease BEFORE the text leaves, and finishes sent with both channels", async () => {
