@@ -118,6 +118,9 @@ export const CRON_HEARTBEATS = [
     // Watched ONLY while the strict flag is on and was switched on more than
     // NOTICE_WATCH_GRACE_MINUTES ago; while it is off nothing is ever STALE.
     watchWhen: "release-notices-enabled",
+    // Sentry check-in margin (minutes): the default 60 is far too loose for a 5-minute
+    // schedule. pg_cron + pg_net + a cold function can drift a few minutes.
+    checkinMargin: 10,
   },
 ] as const;
 

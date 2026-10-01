@@ -39,6 +39,12 @@
 -- Supabase project (local stack included) pg_cron is available and the job is
 -- created and verified.
 --
+-- Secret exposure: net.http_request_queue briefly holds the Bearer header (until pg_net
+-- drains the row), and net._http_response keeps the response. The net schema is NOT a
+-- PostgREST exposed schema (config.toml: public, graphql_public), so no API request can
+-- read either table; pg_net owns its own table grants (they are Supabase defaults and
+-- not ours to change), so the protection is the unexposed schema, not the grants.
+--
 -- The request is fire-and-forget: pg_net queues it and returns a request id; the
 -- app route does the work. The 30 s client timeout only bounds how long pg_net
 -- waits for the response (recorded in net._http_response); the route finishes on

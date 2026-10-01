@@ -10,6 +10,8 @@ const fx = vi.hoisted(() => ({
   failed: 0,
   reported: [] as string[],
   lastHeartbeat: null as string | null,
+  flagOn: true,
+  flagError: null as unknown,
 }));
 
 vi.mock("@/lib/ops/cron-monitor", () => ({
@@ -21,6 +23,11 @@ vi.mock("@/lib/ops/cron-monitor", () => ({
   },
 }));
 vi.mock("@/lib/notifications/release-notice-sweep", () => ({
+  readOutboxEnabled: async () => {
+    if (fx.flagError) throw fx.flagError;
+    return fx.flagOn;
+  },
+  emptySweepSummary: (enabled: boolean) => ({ enabled, claimed: 0, audit_pending: 0, failures: 0 }),
   runReleaseNoticeSweep: async () => {
     if (fx.sweepError) throw fx.sweepError;
     return fx.summary;
@@ -53,6 +60,8 @@ beforeEach(() => {
   fx.failed = 0;
   fx.reported.length = 0;
   fx.lastHeartbeat = null;
+  fx.flagOn = true;
+  fx.flagError = null;
 });
 
 describe("/api/cron/release-notices", () => {
@@ -83,12 +92,27 @@ describe("/api/cron/release-notices", () => {
     expect(fx.failed).toBe(0);
   });
 
-  it("while the flag is off the sweep does nothing but the heartbeat is STILL written (first one)", async () => {
-    fx.summary = { enabled: false, claimed: 0, audit_pending: 0, failures: 0 };
+  it("while the flag is OFF it does nothing: 200, no sweep, NO heartbeat and NO Sentry check-in", async () => {
+    fx.flagOn = false;
     const res = await POST(req("Bearer s3cret"));
     expect(res.status).toBe(200);
-    expect(fx.audits).toHaveLength(1);
-    expect(fx.audits[0]).toMatchObject({ action: "system.release_notices.sweep.completed", metadata: { enabled: false } });
+    expect(await res.json()).toMatchObject({ enabled: false, claimed: 0 });
+    expect(fx.audits).toHaveLength(0);
+    expect(fx.monitored).toHaveLength(0);
+  });
+
+  it("a flag read that ERRORS answers 500, reports it, writes no heartbeat and does not look healthy", async () => {
+    fx.flagError = new Error("release_notices_enabled failed: x");
+    const res = await POST(req("Bearer s3cret"));
+    expect(res.status).toBe(500);
+    expect(fx.reported).toEqual(["cron/release-notices:flag"]);
+    expect(fx.audits).toHaveLength(0);
+  });
+
+  it("a sweep that finds the flag off by the time it runs (summary.enabled false) writes no heartbeat", async () => {
+    fx.summary = { enabled: false, claimed: 0, audit_pending: 0, failures: 0 };
+    expect((await POST(req("Bearer s3cret"))).status).toBe(200);
+    expect(fx.audits).toHaveLength(0);
   });
 
   it("a quiet run is skipped when the last heartbeat is under 60 minutes old", async () => {

@@ -54,7 +54,8 @@ const SMS_NOT_RESENT = "text message not resent after an unknown outcome";
 // Resend answers 409 for two different idempotency problems (resend.com/docs/dashboard/emails/idempotency-keys):
 //   invalid_idempotent_request     — this key was used with a DIFFERENT payload: nothing was sent for this body.
 //   concurrent_idempotent_requests — the first request with this key is still in flight: it may yet deliver.
-// Both leave the email "failed" (retried). Only the first one changes the next attempt's key.
+// Both leave the email "failed" (retried). The key hashes the FULL payload (below), so
+// invalid_idempotent_request should only recur if Resend itself changes the payload.
 export const EMAIL_KEY_CONFLICT = "email idempotency key conflict (different content)";
 export const EMAIL_IN_FLIGHT = "email send already in progress";
 
@@ -67,19 +68,44 @@ export function classifyEmailError(error: string): string {
 
 /**
  * Resend Idempotency-Key for one email attempt: the notice id plus a short hash of
- * the rendered subject + text. Identical content (a retry after a crash or a lost
- * response) reuses the key and Resend dedups it; changed content (a test undone,
- * the review CTA toggled) gets a NEW key instead of a 409 loop. After an
- * "invalid_idempotent_request" the attempt number is mixed in so the next try
- * cannot hit the same conflict again.
+ * the WHOLE payload (to + subject + text + html). Identical content (a retry after
+ * a crash or a lost response) reuses the key and Resend dedups it; changed content
+ * (a test undone, the review CTA toggled, a corrected address) gets a NEW key
+ * instead of a 409 loop. Resend remembers a key for 24 h only: an admin Retry more
+ * than 24 h after the notice was created is outside that window (0210 notes the same),
+ * so the email dedup no longer protects it — the SMS at-most-once rule still does.
  */
-export function emailIdempotencyKey(row: Pick<ReleaseNoticeRow, "id" | "attempts" | "last_error">, subject: string, text: string): string {
-  const salt = row.last_error?.includes(EMAIL_KEY_CONFLICT) ? `\n#${row.attempts}` : "";
-  const hash = createHash("sha256").update(`${subject}\n${text}${salt}`).digest("hex").slice(0, 12);
-  return `result-notice:${row.id}:email:${hash}`;
+export function emailIdempotencyKey(id: string, payload: { to: string; subject: string; text: string; html: string }): string {
+  const hash = createHash("sha256")
+    .update(JSON.stringify([payload.to, payload.subject, payload.text, payload.html]))
+    .digest("hex")
+    .slice(0, 12);
+  return `result-notice:${id}:email:${hash}`;
 }
 
-const FENCED: SendNoticeResult = { outcome: noticeRetrying(), finalStatus: "fenced" };
+/**
+ * The lease was lost (or finish raced): another worker owns the row. Say what the
+ * row says NOW — already sent reads as notified; anything else is still in the
+ * outbox's hands, so "will retry automatically".
+ */
+async function fenced(admin: Admin, row: ReleaseNoticeRow): Promise<SendNoticeResult> {
+  try {
+    const { data } = await admin
+      .from("release_notices")
+      .select("status, email_state, sms_state")
+      .eq("id", row.id)
+      .maybeSingle();
+    if (data?.status === "sent") {
+      const channels: Array<"email" | "sms"> = [];
+      if (data.email_state === "sent") channels.push("email");
+      if (data.sms_state === "sent") channels.push("sms");
+      return { outcome: { status: "sent", channels, reason: null }, finalStatus: "fenced" };
+    }
+  } catch {
+    // fall through: the safe reading is "still retrying"
+  }
+  return { outcome: noticeRetrying(), finalStatus: "fenced" };
+}
 
 interface LoadedTest {
   id: string;
@@ -108,18 +134,25 @@ interface FinishArgs {
 async function loadReleasedTests(
   admin: Admin,
   row: ReleaseNoticeRow,
+  // strict = the send-time re-check. Not strict = names for a re-audit, where a
+  // test undone since is still one the notice announced.
+  strict = true,
 ): Promise<{ loaded: LoadedTest[]; lab: LoadedTest[] } | null> {
-  const { data, error } = await admin
+  let query = admin
     .from("test_requests")
     .select("id, services!inner ( name, kind ), visits!inner ( id, is_sample, patient_id )")
     .in("id", row.test_request_ids)
     .eq("visit_id", row.visit_id)
-    .eq("status", "released")
-    // The EXACT stamp, as the string the database gave us: a JS Date would cut
-    // the microseconds and match nothing (or, worse, another release).
-    .eq("released_at", row.released_at)
     .is("deleted_at", null)
     .is("visits.deleted_at", null);
+  if (strict) {
+    query = query
+      .eq("status", "released")
+      // The EXACT stamp, as the string the database gave us: a JS Date would cut
+      // the microseconds and match nothing (or, worse, another release).
+      .eq("released_at", row.released_at);
+  }
+  const { data, error } = await query;
   if (error) return null;
   const byId = new Map<string, LoadedTest>();
   for (const r of data ?? []) {
@@ -131,6 +164,17 @@ async function loadReleasedTests(
   // Keep the order the release recorded.
   const loaded = row.test_request_ids.flatMap((id) => (byId.has(id) ? [byId.get(id)!] : []));
   return { loaded, lab: loaded.filter((t) => !isDoctorKind(t.kind)) };
+}
+
+/** The lab-only ids and names of a notice, for re-auditing it without the live send context. null = unknown. */
+export async function loadAuditTests(admin: Admin, row: ReleaseNoticeRow): Promise<{ testIds: string[]; testNames: string[] } | null> {
+  try {
+    const found = await loadReleasedTests(admin, row, false);
+    if (!found || found.lab.length === 0) return null;
+    return { testIds: found.lab.map((t) => t.id), testNames: found.lab.map((t) => t.name) };
+  } catch {
+    return null;
+  }
 }
 
 /** Were these tests all announced in a `sent` notice in the last 24 h? null = could not tell. */
@@ -202,7 +246,7 @@ async function conclude(
 ): Promise<SendNoticeResult> {
   const done = await callFinish(admin, row, f);
   if (done === "error") return { outcome: noticeRetrying(), finalStatus: "error" };
-  if (done === null) return FENCED; // a newer attempt owns the row: write nothing
+  if (done === null) return fenced(admin, row); // a newer attempt owns the row: write nothing
   if (done.resolved_at !== null) await auditTerminalNotice(admin, done, live);
   return { outcome: outcomeFromFinished(done), finalStatus: done.status as NoticeFinalStatus };
 }
@@ -210,8 +254,8 @@ async function conclude(
 const retryLater = (admin: Admin, row: ReleaseNoticeRow, error: string) => conclude(admin, row, { status: "retry", error });
 
 async function sendInner(row: ReleaseNoticeRow): Promise<SendNoticeResult> {
-  if (row.status !== "sending" || !row.lease_token) return FENCED;
   const admin = createAdminClient();
+  if (row.status !== "sending" || !row.lease_token) return fenced(admin, row);
 
   // 1. What is still released with this exact stamp.
   const found = await loadReleasedTests(admin, row);
@@ -288,7 +332,7 @@ async function sendInner(row: ReleaseNoticeRow): Promise<SendNoticeResult> {
   } else if (!to.phone) {
     sms = { state: "skipped", reason: NO_PHONE };
   } else {
-    const { data: fenced, error: fenceError } = await admin
+    const { data: fenceRows, error: fenceError } = await admin
       .from("release_notices")
       .update({ sms_state: "unknown" })
       .eq("id", row.id)
@@ -304,8 +348,8 @@ async function sendInner(row: ReleaseNoticeRow): Promise<SendNoticeResult> {
         metadata: { notice_id: row.id },
       });
       sms = { state: row.sms_state as ChannelView["state"], reason: "could not record the text attempt" };
-    } else if (!fenced || fenced.length === 0) {
-      return FENCED; // lost the lease: nothing has been sent, nothing is written
+    } else if (!fenceRows || fenceRows.length === 0) {
+      return fenced(admin, row); // lost the lease: nothing has been sent, nothing is written
     } else {
       smsAttempted = true;
       sms = { state: "unknown" }; // until the provider answers
@@ -322,7 +366,7 @@ async function sendInner(row: ReleaseNoticeRow): Promise<SendNoticeResult> {
         subject: rendered.emailSubject,
         text: rendered.emailText,
         html: rendered.emailHtml,
-        idempotencyKey: emailIdempotencyKey(row, rendered.emailSubject, rendered.emailText),
+        idempotencyKey: emailIdempotencyKey(row.id, { to: to.email!, subject: rendered.emailSubject, text: rendered.emailText, html: rendered.emailHtml }),
       })
     : Promise.resolve(null);
   const [smsResult, emailResult] = await Promise.all([smsResultP, emailResultP]);

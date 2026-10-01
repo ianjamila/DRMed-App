@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("server-only", () => ({}));
 
+import { PROVIDER_TIMEOUT_MS } from "./channel-status";
 import { sendEmail } from "./email";
 
 const fetchMock = vi.fn();
@@ -31,5 +32,16 @@ describe("sendEmail Idempotency-Key", () => {
   it("sends no Idempotency-Key header when none is given (every other sender is unchanged)", async () => {
     await sendEmail({ to: "a@example.com", subject: "s", text: "t" });
     expect(fetchMock.mock.calls[0][1].headers).not.toHaveProperty("Idempotency-Key");
+  });
+});
+
+describe("provider timeout", () => {
+  it("bounds the Resend call with a 15 s abort signal and reports a timeout as an error (ambiguous, never 'sent')", async () => {
+    fetchMock.mockRejectedValue(new DOMException("The operation timed out.", "TimeoutError"));
+    const r = await sendEmail({ to: "a@example.com", subject: "s", text: "t" });
+    expect(r).toMatchObject({ ok: false, kind: "error" });
+    const init = fetchMock.mock.calls[0][1];
+    expect(init.signal).toBeInstanceOf(AbortSignal);
+    expect(PROVIDER_TIMEOUT_MS).toBe(15_000);
   });
 });

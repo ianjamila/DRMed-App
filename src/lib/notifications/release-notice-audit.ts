@@ -42,6 +42,12 @@ export interface LiveAuditContext {
   email: ChannelView;
 }
 
+/** The lab-only ids and names a re-audit rebuilds (what the live send announced). */
+export interface RebuiltTests {
+  testIds: string[];
+  testNames: string[];
+}
+
 export type AuditNoticeResult = "stamped" | "already_audited" | "audit_failed" | "stamp_failed";
 
 function channelAudit(kind: "sms" | "email", v: ChannelView): Json {
@@ -98,8 +104,14 @@ export function notifiedMetadata(args: {
 const skippedChannel = (reason: string): ChannelView => ({ state: "skipped", reason });
 
 /** The audit entry a terminal notice earns, or null (a doctor-only skip has none today). */
-async function buildEntry(admin: Admin, row: ReleaseNoticeRow, live: LiveAuditContext | undefined): Promise<AuditEntry | null> {
-  const ids = live?.testIds.length ? live.testIds : row.test_request_ids;
+async function buildEntry(
+  admin: Admin,
+  row: ReleaseNoticeRow,
+  live: LiveAuditContext | undefined,
+  rebuilt: RebuiltTests | undefined,
+): Promise<AuditEntry | null> {
+  const ids = live?.testIds.length ? live.testIds : rebuilt?.testIds.length ? rebuilt.testIds : row.test_request_ids;
+  const names = live?.testNames ?? rebuilt?.testNames ?? null;
   const patientId = live?.patientId ?? (await patientIdOfVisit(admin, row.visit_id));
   const firstId = ids[0];
   const batch = row.bulk_batch_id ? { bulk_batch_id: row.bulk_batch_id } : {};
@@ -154,7 +166,7 @@ async function buildEntry(admin: Admin, row: ReleaseNoticeRow, live: LiveAuditCo
       action: "result.notified",
       metadata: notifiedMetadata({
         row,
-        testNames: live?.testNames ?? null,
+        testNames: names,
         testIds: ids,
         sms: forced ? skippedChannel(reason) : (live?.sms ?? viewFromRow(row, "sms")),
         email: forced ? skippedChannel(reason) : (live?.email ?? viewFromRow(row, "email")),
@@ -179,7 +191,7 @@ async function buildEntry(admin: Admin, row: ReleaseNoticeRow, live: LiveAuditCo
       action: "result.notified",
       metadata: notifiedMetadata({
         row,
-        testNames: live?.testNames ?? null,
+        testNames: names,
         testIds: ids,
         sms,
         email,
@@ -198,13 +210,30 @@ async function patientIdOfVisit(admin: Admin, visitId: string): Promise<string |
   return data?.patient_id ?? null;
 }
 
-/** null = the read failed (cannot tell): the caller must not write a possible duplicate nor stamp. */
+/** Every audit action a terminal notice can earn (release-notice-audit's buildEntry). */
+const NOTICE_AUDIT_ACTIONS = [
+  "result.notified",
+  "result.notice_abandoned",
+  "result.notice_cancelled",
+  "result.notice_suppressed",
+  "notification.skipped_inactive_patient",
+];
+const AUDIT_LOOKBACK_MS = 5 * 60 * 1000;
+
+/**
+ * Was this notice already audited? Keyed on metadata.notice_id and BOUNDED by the
+ * existing created_at index: the audit is always written AFTER finish set
+ * resolved_at, so only rows from (resolved_at - 5 min) on can be this notice's.
+ * No new audit_log index (it would lock writes on a hot table).
+ * null = the read failed (cannot tell): the caller must not write a possible duplicate nor stamp.
+ */
 async function alreadyAudited(admin: Admin, row: ReleaseNoticeRow): Promise<boolean | null> {
+  const since = new Date(Date.parse(row.resolved_at ?? row.created_at) - AUDIT_LOOKBACK_MS).toISOString();
   const { data, error } = await admin
     .from("audit_log")
     .select("id")
-    .in("resource_type", ["test_request", "visit"])
-    .in("resource_id", [...row.test_request_ids.slice(0, 1), row.visit_id])
+    .in("action", NOTICE_AUDIT_ACTIONS)
+    .gte("created_at", since)
     .eq("metadata->>notice_id", row.id)
     .limit(1);
   if (error) return null;
@@ -221,6 +250,7 @@ export async function auditTerminalNotice(
   admin: Admin,
   row: ReleaseNoticeRow,
   live?: LiveAuditContext,
+  rebuilt?: RebuiltTests,
 ): Promise<AuditNoticeResult> {
   try {
     if (row.resolved_at === null) return "already_audited"; // not terminal: nothing to audit
@@ -230,7 +260,7 @@ export async function auditTerminalNotice(
         if (seen === null) return false;
         if (seen) return true;
       }
-      const entry = await buildEntry(admin, row, live);
+      const entry = await buildEntry(admin, row, live, rebuilt);
       if (entry === null) return true;
       return auditChecked(entry);
     })();

@@ -26,7 +26,7 @@ const fx = vi.hoisted(() => ({
 const admin = {
   from: (table: string) => {
     const b: Record<string, unknown> = {};
-    for (const m of ["select", "in", "eq", "limit"]) {
+    for (const m of ["select", "in", "eq", "limit", "gte"]) {
       b[m] = (...a: unknown[]) => {
         if (table === "audit_log") fx.auditFilters.push([m, ...a]);
         return b;
@@ -91,6 +91,12 @@ describe("auditTerminalNotice (rebuilt from the row)", () => {
     expect(fx.audits[0].metadata).toMatchObject({ review_cta: { shown: false } });
   });
 
+  it("a re-audit uses the lab-only ids and names the caller rebuilt (not every id the notice carried)", async () => {
+    await auditTerminalNotice(admin as never, row({ test_request_ids: ["t1", "t2", "t3"] }), undefined, { testIds: ["t2", "t3"], testNames: ["FBS", "CBC"] });
+    expect(fx.audits[0]).toMatchObject({ resource_id: "t2" });
+    expect(fx.audits[0].metadata).toMatchObject({ bulk: true, count: 2, test_names: ["FBS", "CBC"], test_request_ids: ["t2", "t3"] });
+  });
+
   it("audits an abandoned notice as result.notice_abandoned with the (redacted) last error", async () => {
     await auditTerminalNotice(admin as never, row({ status: "abandoned", email_state: "failed", last_error: "Resend 500", sent_at: null }));
     expect(fx.audits[0]).toMatchObject({
@@ -104,7 +110,14 @@ describe("auditTerminalNotice (rebuilt from the row)", () => {
     expect(await auditTerminalNotice(admin as never, row({}))).toBe("stamped");
     expect(fx.audits).toHaveLength(0);
     expect(fx.stamps).toBe(1);
+    // keyed on notice_id and bounded by the created_at index (no audit_log index of our own)
     expect(fx.auditFilters).toContainEqual(["eq", "metadata->>notice_id", "n1"]);
+    expect(fx.auditFilters.find((f) => f[0] === "in" && f[1] === "action")![2]).toEqual(
+      expect.arrayContaining(["result.notified", "result.notice_abandoned", "result.notice_cancelled", "result.notice_suppressed", "notification.skipped_inactive_patient"]),
+    );
+    const gte = fx.auditFilters.find((f) => f[0] === "gte" && f[1] === "created_at")!;
+    expect(Date.parse(gte[2] as string)).toBe(Date.parse("2026-10-01T05:10:00+00:00") - 5 * 60_000);
+    expect(fx.auditFilters.some((f) => f[1] === "resource_id" || f[1] === "resource_type")).toBe(false);
   });
 
   it("cannot tell whether it was audited (read error) -> writes nothing and does not stamp", async () => {

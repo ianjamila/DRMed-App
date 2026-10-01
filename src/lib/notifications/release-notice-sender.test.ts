@@ -35,6 +35,7 @@ const fx = vi.hoisted(() => ({
   auditOk: true,
   throwOnRender: false,
   currentRow: null as unknown,
+  statusRow: null as unknown,
 }));
 
 vi.mock("@/lib/supabase/admin", () => ({
@@ -62,7 +63,7 @@ vi.mock("@/lib/supabase/admin", () => ({
           return b;
         };
       }
-      b.maybeSingle = async () => finalize();
+      b.maybeSingle = async () => (table === "release_notices" ? { data: fx.statusRow, error: null } : finalize());
       b.then = (resolve: (v: Res) => unknown, reject: (e: unknown) => unknown) => Promise.resolve(finalize()).then(resolve, reject);
       return b;
     },
@@ -124,11 +125,12 @@ vi.mock("./release-notice-content", async (orig) => {
   };
 });
 
+import { createAdminClient } from "@/lib/supabase/admin";
 import { sendEmail } from "./email";
 import { sendSms } from "./sms";
 import { reportError } from "@/lib/observability/report-error";
 import { SAMPLE_SKIP_REASON } from "@/lib/visits/sample";
-import { EMAIL_IN_FLIGHT, EMAIL_KEY_CONFLICT, emailIdempotencyKey, sendReleaseNotice as realSend } from "./release-notice-sender";
+import { EMAIL_IN_FLIGHT, EMAIL_KEY_CONFLICT, emailIdempotencyKey, loadAuditTests, sendReleaseNotice as realSend } from "./release-notice-sender";
 import type { ReleaseNoticeRow } from "./release-notice-types";
 
 // Every send goes through here so the fake finish can echo the claimed row (as the database does).
@@ -202,6 +204,7 @@ beforeEach(() => {
   fx.audits = [];
   fx.auditOk = true;
   fx.throwOnRender = false;
+  fx.statusRow = null;
   vi.mocked(sendEmail).mockResolvedValue({ ok: true, id: "em1" });
   vi.mocked(sendSms).mockResolvedValue({ ok: true, id: 77 });
 });
@@ -406,12 +409,21 @@ describe("dedup — owner decision 1", () => {
 });
 
 describe("sending", () => {
-  it("sends the email with Idempotency-Key result-notice:<id>:email:<hash of the rendered subject+text>", async () => {
+  it("sends the email with Idempotency-Key result-notice:<id>:email:<hash of the FULL payload>", async () => {
     await sendReleaseNotice(baseRow({ id: "n-42" }));
     const sent = vi.mocked(sendEmail).mock.calls[0][0];
     expect(sent.idempotencyKey).toMatch(/^result-notice:n-42:email:[0-9a-f]{12}$/);
-    expect(sent.idempotencyKey).toBe(emailIdempotencyKey({ id: "n-42", attempts: 1, last_error: null }, sent.subject, sent.text));
+    expect(sent.idempotencyKey).toBe(emailIdempotencyKey("n-42", { to: "ana@example.com", subject: sent.subject, text: sent.text, html: sent.html! }));
     expect(sendEmail).toHaveBeenCalledWith(expect.objectContaining({ to: "ana@example.com" }));
+  });
+
+  it("the key covers to, subject, text AND html", () => {
+    const base = { to: "a@x.test", subject: "s", text: "t", html: "h" };
+    const k = emailIdempotencyKey("n1", base);
+    for (const changed of [{ to: "b@x.test" }, { subject: "s2" }, { text: "t2" }, { html: "h2" }]) {
+      expect(emailIdempotencyKey("n1", { ...base, ...changed })).not.toBe(k);
+    }
+    expect(emailIdempotencyKey("n1", { ...base })).toBe(k);
   });
 
   it("identical content across attempts reuses the key; changed content (a test undone, CTA toggled) gets a new one", async () => {
@@ -427,16 +439,15 @@ describe("sending", () => {
     expect(new Set(keys).size).toBe(3);
   });
 
-  it("a Resend 409 invalid_idempotent_request is a definite 'not sent': retried, and the NEXT attempt uses a fresh key", async () => {
+  it("a Resend 409 invalid_idempotent_request is a definite 'not sent': retried (no salt, the key already hashes the full payload)", async () => {
     fx.recipient = active({ phone: null });
     vi.mocked(sendEmail).mockResolvedValueOnce({ ok: false, kind: "error", error: 'Resend 409: {"name":"invalid_idempotent_request"}' });
     const r = await sendReleaseNotice(baseRow({ attempts: 1 }));
     expect(r.finalStatus).toBe("retry");
     expect(finishArgs()).toMatchObject({ p_email_state: "failed", p_error: EMAIL_KEY_CONFLICT });
-    const first = vi.mocked(sendEmail).mock.calls[0][0].idempotencyKey;
-    fx.rpcs = [];
     await sendReleaseNotice(baseRow({ attempts: 2, last_error: EMAIL_KEY_CONFLICT }));
-    expect(vi.mocked(sendEmail).mock.calls[1][0].idempotencyKey).not.toBe(first);
+    const keys = vi.mocked(sendEmail).mock.calls.map((c) => c[0].idempotencyKey);
+    expect(keys[0]).toBe(keys[1]); // identical payload => identical key, never flipped by last_error
   });
 
   it("a Resend 409 concurrent_idempotent_requests retries with the SAME key (the first send may still deliver)", async () => {
@@ -550,6 +561,40 @@ describe("sending", () => {
     expect(r.finalStatus).toBe("skipped");
     expect(r.outcome).toEqual({ status: "skipped", channels: [], reason: "no email or phone on file" });
     expect(finishArgs()).toMatchObject({ p_skip_reason: "NOTIFICATIONS_LIVE not enabled in this environment" });
+  });
+});
+
+describe("fenced copy", () => {
+  it("a lost lease on a notice another worker already SENT reads as notified", async () => {
+    fx.finishRows = [];
+    fx.statusRow = { status: "sent", email_state: "sent", sms_state: "skipped" };
+    const r = await sendReleaseNotice(baseRow());
+    expect(r.finalStatus).toBe("fenced");
+    expect(r.outcome).toEqual({ status: "sent", channels: ["email"], reason: null });
+  });
+
+  it.each(["sending", "retry", "pending", "abandoned"])("a lost lease on a %s notice stays 'retrying'", async (status) => {
+    fx.finishRows = [];
+    fx.statusRow = { status, email_state: "todo", sms_state: "todo" };
+    expect((await sendReleaseNotice(baseRow())).outcome.status).toBe("retrying");
+  });
+
+  it("a status read that fails also stays 'retrying'", async () => {
+    fx.finishRows = [];
+    fx.statusRow = null;
+    expect((await sendReleaseNotice(baseRow())).outcome.status).toBe("retrying");
+  });
+});
+
+describe("loadAuditTests (re-audit names)", () => {
+  it("returns the lab-only ids and names without the released/status filters (an undone test is still one the notice announced)", async () => {
+    fx.tests = [testRow("t1", "CBC"), testRow("t2", "Consult", { kind: "doctor_consultation" })];
+    const out = await loadAuditTests(createAdminClient(), baseRow({ test_request_ids: ["t1", "t2"] }));
+    expect(out).toEqual({ testIds: ["t1"], testNames: ["CBC"] });
+    const chain = fx.calls.find((c) => c.table === "test_requests")!.calls;
+    expect(chain.some((c) => c[0] === "eq" && (c[1] === "status" || c[1] === "released_at"))).toBe(false);
+    expect(chain).toContainEqual(["is", "deleted_at", null]);
+    expect(chain).toContainEqual(["is", "visits.deleted_at", null]);
   });
 });
 

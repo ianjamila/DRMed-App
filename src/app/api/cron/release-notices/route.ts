@@ -2,7 +2,7 @@ import { createHash, timingSafeEqual } from "node:crypto";
 import { withCronMonitor } from "@/lib/ops/cron-monitor";
 import { reportError } from "@/lib/observability/report-error";
 import { writeSweepHeartbeat } from "@/lib/notifications/release-notice-heartbeat";
-import { runReleaseNoticeSweep } from "@/lib/notifications/release-notice-sweep";
+import { emptySweepSummary, readOutboxEnabled, runReleaseNoticeSweep } from "@/lib/notifications/release-notice-sweep";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -14,9 +14,9 @@ export const maxDuration = 60;
 //
 // Claims the due notices and sends each (bounded concurrency), then audits any
 // terminal notice still missing its audit row. While the strict flag
-// (release_notice_settings.enabled) is off it does nothing — but still writes
-// its heartbeat (at most hourly when quiet), so a quiet run is distinguishable
-// from a dead scheduler.
+// (release_notice_settings.enabled) is off it does nothing and writes nothing; while
+// it is on, a heartbeat (at most hourly when quiet) distinguishes a quiet run from a
+// dead scheduler.
 
 // Constant-time: both sides are hashed to equal length first.
 function bearerMatches(header: string, secret: string): boolean {
@@ -34,6 +34,19 @@ async function handle(request: Request) {
     return Response.json({ error: "unauthorized" }, { status: 401 });
   }
 
+  // The strict flag decides everything. A read that ERRORS is a failure (500, no
+  // heartbeat, reported) — never "off". While the flag is OFF the route does nothing,
+  // writes NO heartbeat (the watchdog does not watch the leg then) and makes no Sentry
+  // check-in, so switching the outbox off does not look like a broken monitor.
+  let enabled: boolean;
+  try {
+    enabled = await readOutboxEnabled();
+  } catch (err) {
+    await reportError({ scope: "cron/release-notices:flag", error: err });
+    return Response.json({ error: "flag read failed" }, { status: 500 });
+  }
+  if (!enabled) return Response.json(emptySweepSummary(false));
+
   return withCronMonitor("release-notices", async (markFailed) => {
     let summary;
     try {
@@ -43,9 +56,9 @@ async function handle(request: Request) {
       return Response.json({ error: "sweep failed" }, { status: 500 });
     }
 
-    // Run heartbeat: always when the run did work or failed, and otherwise (a quiet
-    // run, or one while the flag is off) at most once an hour.
-    await writeSweepHeartbeat(summary);
+    // Run heartbeat: only while the flag is ON; always when the run did work or
+    // failed, and otherwise (a quiet run) at most once an hour.
+    if (summary.enabled === true) await writeSweepHeartbeat(summary);
 
     if (summary.failures > 0) markFailed();
     return Response.json(summary);

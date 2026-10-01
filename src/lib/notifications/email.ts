@@ -1,5 +1,5 @@
 import "server-only";
-import { emailStatus } from "./channel-status";
+import { PROVIDER_TIMEOUT_MS, emailStatus } from "./channel-status";
 
 interface SendEmailInput {
   to: string;
@@ -47,6 +47,9 @@ export async function sendEmail(input: SendEmailInput): Promise<SendResult> {
         ...(input.html ? { html: input.html } : {}),
         ...(replyTo ? { reply_to: replyTo } : {}),
       }),
+      // A hung provider must not hold a sweep slot. A timeout is an AMBIGUOUS outcome
+      // (the mail may have left): the Idempotency-Key makes the retry safe.
+      signal: AbortSignal.timeout(PROVIDER_TIMEOUT_MS),
     });
 
     if (!res.ok) {
