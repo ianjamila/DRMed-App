@@ -14,6 +14,7 @@ import type { ReleaseNoticeOutcome } from "@/lib/notifications/release-notice-ou
 import { scheduleReleaseStaffAlert } from "@/lib/notifications/release-staff-alert";
 import { reportError } from "@/lib/observability/report-error";
 import { ipAndAgent } from "@/lib/server/action-helpers";
+import { describeRacedRelease } from "./raced-release";
 
 export type ReleasedRow = { id: string; name: string };
 
@@ -206,8 +207,16 @@ export async function releaseVisitSelection(args: {
   for (const r of refused) skip([r.id], refusalReason(r));
   const releasedRows: ReleasedRow[] = released.map((r) => ({ id: r.id, name: r.name }));
   const releasedSet = new Set(releasedRows.map((r) => r.id));
-  // Every selected id is released or refused; anything else raced.
-  for (const id of selected) if (!releasedSet.has(id)) skip([id], RACED_REASON);
+  // Every selected id is released or refused; anything else raced. A raced id
+  // that is released NOW says by whom and when (one batched, never-throwing
+  // read); every other raced id keeps the generic RACED_REASON.
+  const raced = [
+    ...refused.filter((r) => r.code === "not_ready").map((r) => r.id),
+    ...selected.filter((id) => !releasedSet.has(id) && !skipped.has(id)),
+  ];
+  const named = await describeRacedRelease(supabase, raced, session.user_id);
+  for (const r of refused) if (r.code === "not_ready") skipped.set(r.id, named.get(r.id) ?? RACED_REASON);
+  for (const id of selected) if (!releasedSet.has(id)) skip([id], named.get(id) ?? RACED_REASON);
 
   const changedIds = released.filter((r) => r.selected).map((r) => r.id);
   const alsoReleasedIds = released.filter((r) => !r.selected).map((r) => r.id);

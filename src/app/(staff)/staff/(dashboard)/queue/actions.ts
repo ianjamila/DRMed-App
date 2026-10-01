@@ -16,7 +16,8 @@ import { RELEASE_MEDIA } from "@/lib/visits/release-media";
 import { evaluateRelease, RELEASE_REFUSAL } from "@/lib/queue/release-eligibility";
 import { isConsentGateRequired, getConsentCurrentByPatient } from "@/lib/consent/gate";
 import { isActivePatient } from "@/lib/patients/active";
-import { releaseVisitSelection } from "@/lib/actions/visits/release-reports";
+import { RACED_REASON, releaseVisitSelection } from "@/lib/actions/visits/release-reports";
+import { describeRacedRelease } from "@/lib/actions/visits/raced-release";
 import { isDoctorKind } from "@/lib/visits/order-lines";
 import { DOCTOR_KINDS_PG_LIST } from "@/lib/visits/classification";
 import {
@@ -410,6 +411,7 @@ export async function releaseTestsAction(input: unknown): Promise<BulkReleaseRes
     : new Map<string, boolean>();
 
   const skipped = new Map<string, string>();
+  const alreadyReleased: string[] = [];
   const survivorsByVisit = new Map<string, string[]>();
   for (const id of ids) {
     const row = byId.get(id);
@@ -434,10 +436,14 @@ export async function releaseTestsAction(input: unknown): Promise<BulkReleaseRes
     );
     if (!verdict.ok) {
       skipped.set(id, verdict.error);
+      // A stale queue click on a line someone already released: say who and when (below).
+      if (row.status === "released" && verdict.error === RELEASE_REFUSAL.notReady) alreadyReleased.push(id);
       continue;
     }
     survivorsByVisit.set(row.visit_id, [...(survivorsByVisit.get(row.visit_id) ?? []), id]);
   }
+  // Best-effort and never throws; an id it cannot name keeps the notReady wording above.
+  for (const [id, reason] of await describeRacedRelease(supabase, alreadyReleased, session.user_id)) skipped.set(id, reason);
 
   const changedIds: string[] = [];
   const alsoReleasedIds: string[] = [];
@@ -464,7 +470,7 @@ export async function releaseTestsAction(input: unknown): Promise<BulkReleaseRes
   // Every id sent lands in exactly one of changedIds / skipped.
   const changedSet = new Set(changedIds);
   for (const id of ids) {
-    if (!changedSet.has(id) && !skipped.has(id)) skipped.set(id, "Released by someone else or changed just now.");
+    if (!changedSet.has(id) && !skipped.has(id)) skipped.set(id, RACED_REASON);
   }
 
   revalidatePath("/(staff)/staff/(dashboard)/queue", "layout");
