@@ -73,7 +73,14 @@ const REGISTRY: Record<string, RegistryEntry> = {
   undo_visit_release: { proof: ["scripts/report-release-concurrency-proof.ts"] },
   release_report_locks: { proof: ["scripts/report-release-concurrency-proof.ts"] },
   correct_payment: { proof: ["scripts/report-release-concurrency-proof.ts"] },
-  waive_visit_balance: { proof: ["supabase/tests/0183_waiver_race_smoke.sql"] },
+  waive_visit_balance: { proof: ["scripts/waiver-concurrency-proof.ts"] },
+  waiver_unrecognise_line: { proof: ["scripts/waiver-concurrency-proof.ts"] },
+  waiver_post_allocation: {
+    exempt:
+      "callee-only: runs inside waive_visit_balance's transaction under its visit + line locks; its own lock is on a row the same transaction inserted, so no contention is possible",
+  },
+  guard_payment_on_waived_visit: { proof: ["scripts/waiver-concurrency-proof.ts"] },
+  fn_undo_release_bridge: { proof: ["scripts/waiver-concurrency-proof.ts"] },
   lifecycle_lock: { proof: ["scripts/smoke-lifecycle-locks.ts"] },
   lifecycle_lock_and_assert: { proof: ["scripts/smoke-lifecycle-locks.ts"] },
   appointments_insert_slot_guarded: { proof: ["scripts/smoke-lifecycle-locks.ts"] },
@@ -103,7 +110,6 @@ const BASELINE: Record<string, string> = {
   sheet_sync_release_undo: "0170_sheet_sync_foundation.sql",
   sheet_resort_apply: "0170_sheet_sync_foundation.sql",
   sheet_alias_apply: "0170_sheet_sync_foundation.sql",
-  waiver_unrecognise_line: "0183_waived_balance_gl.sql",
   ap_post_recurring_template: "0049_ap_subledger_behavior.sql",
   ap_reallocate_bill_payment: "0049_ap_subledger_behavior.sql",
   ap_reverse_je_for_source: "0049_ap_subledger_behavior.sql",
@@ -121,8 +127,6 @@ const BASELINE: Record<string, string> = {
   claim_statement_email: "0177_statement_email_claim.sql",
   create_visit_encounter: "0184_patient_lifecycle_locks.sql",
   enforce_patient_activity: "0184_patient_lifecycle_locks.sql",
-  fn_undo_release_bridge: "0183_waived_balance_gl.sql",
-  guard_payment_on_waived_visit: "0183_waived_balance_gl.sql",
   guard_test_request_on_waived_visit: "0183_waived_balance_gl.sql",
   lifecycle_lock_results: "0184_patient_lifecycle_locks.sql",
   lock_hmo_batch_before_items: "0184_patient_lifecycle_locks.sql",
@@ -137,7 +141,6 @@ const BASELINE: Record<string, string> = {
   view_as_end_for: "0190_claim_holder_guard_and_view_as_end_for.sql",
   view_as_expire: "0187_view_as_followups.sql",
   view_as_transition: "0187_view_as_followups.sql",
-  waiver_post_allocation: "0183_waived_balance_gl.sql",
 };
 
 function loadMigrations(): MigrationFile[] {
@@ -179,7 +182,7 @@ describe("concurrency-proof guard (real migrations)", () => {
     // checkGuard already asserts existence and the per-function annotation;
     // this pins that REGISTRY is non-trivial.
     const proofs = Object.values(REGISTRY).filter((e) => "proof" in e);
-    expect(proofs.length).toBe(20);
+    expect(proofs.length).toBe(23);
   });
 });
 
