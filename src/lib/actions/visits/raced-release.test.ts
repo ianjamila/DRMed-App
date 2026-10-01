@@ -96,6 +96,28 @@ describe("describeRacedRelease", () => {
     expect(m.has("b")).toBe(true);
   });
 
+  it("never describes a released line on a soft-deleted visit", async () => {
+    const f = db([{ ...released("a", "maria", TODAY_2_14_PM), visitDeleted: true }, released("b", "maria", TODAY_2_14_PM)]);
+    const m = await describeRacedRelease(f.client as never, ["a", "b"], "me");
+    expect(m.has("a")).toBe(false);
+    expect(m.has("b")).toBe(true);
+  });
+
+  it("never describes a soft-deleted released line", async () => {
+    const f = db([{ ...released("a", "maria", TODAY_2_14_PM), deleted: true }, released("b", "maria", TODAY_2_14_PM)]);
+    const m = await describeRacedRelease(f.client as never, ["a", "b"], "me");
+    expect(m.has("a")).toBe(false);
+    expect(m.has("b")).toBe(true);
+  });
+
+  it("pages past one chunk: 201 released ids take 2 test_requests reads and all 201 are described", async () => {
+    const rows = Array.from({ length: 201 }, (_, i) => released(`r${i}`, "maria", TODAY_2_14_PM));
+    const f = db(rows);
+    const m = await describeRacedRelease(f.client as never, rows.map((r) => r.id), "me");
+    expect(f.calls.filter((c) => c.table === "test_requests")).toHaveLength(2);
+    expect(m.size).toBe(201);
+  });
+
   it("reads test_requests once for every id (batched)", async () => {
     const f = db([released("a", "maria", TODAY_2_14_PM), released("b", "maria", TODAY_2_14_PM)]);
     await describeRacedRelease(f.client as never, ["a", "b", "a"], "me");
