@@ -67,8 +67,12 @@ const MIGRATIONS_DIR = join(ROOT, "supabase/migrations");
 const REGISTRY: Record<string, RegistryEntry> = {
   ad_spend_delete: { proof: ["scripts/ad-spend-concurrency-proof.ts"] },
   ad_spend_import: { proof: ["scripts/ad-spend-concurrency-proof.ts"] },
-  claim_panel_members: { proof: ["scripts/panel-claim-concurrency-proof.ts"] },
-  unclaim_panel_members: { proof: ["scripts/panel-claim-concurrency-proof.ts"] },
+  claim_panel_members: {
+    proof: ["scripts/panel-claim-concurrency-proof.ts", "scripts/report-release-concurrency-proof.ts"],
+  },
+  unclaim_panel_members: {
+    proof: ["scripts/panel-claim-concurrency-proof.ts", "scripts/report-release-concurrency-proof.ts"],
+  },
   release_visit_results: { proof: ["scripts/report-release-concurrency-proof.ts"] },
   undo_visit_release: { proof: ["scripts/report-release-concurrency-proof.ts"] },
   release_report_locks: { proof: ["scripts/report-release-concurrency-proof.ts"] },

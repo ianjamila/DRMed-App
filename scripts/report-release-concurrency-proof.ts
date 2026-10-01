@@ -51,6 +51,32 @@
 //       hand-back WAITS on the member the release locked - no deadlock.
 //   C3  claim of an all-requested report vs a release of it (both orders):
 //       release refused, the claim wins whole.
+//   L   claim / unclaim vs release / undo collided WHILE THE ROW LOCKS ARE STILL
+//       BEING TAKEN (one side holds part of the lock set when the other arrives).
+//       The block point is read from pg_locks (the waiter's `tuple` lock names
+//       the exact row by ctid, its ungranted `transactionid` lock names the
+//       holder's xid) and the lock prefix the waiter already holds is proved
+//       (advisory locks from pg_locks; visit FOR SHARE and the lower lines by a
+//       non-blocking FOR UPDATE / FOR NO KEY UPDATE SKIP LOCKED probe).
+//       L1a-c  claim / unclaim holds the HIGHER line C, release locks A+B and
+//              waits on C; the holder commits (or rolls back): report_not_finished,
+//              nothing released, never split. L1d the same on plain lines
+//              (A released, B not_ready).
+//       L2a-b  release holds A+B and waits on C (a third writer holds C); a claim
+//              / unclaim of A,B,C arrives and queues behind it on A; both finish.
+//       L3a-c  the same shapes against UNDO on a mixed report (claim / unclaim can
+//              never WRITE a released or ready line - their predicates are
+//              requested / in_progress - but undo locks every member of the
+//              reports it touches, so a requested / in_progress member is in its
+//              lock set).
+//       L2x/L2n/L3x  the lock-ORDER race: a third writer holds the lower line L,
+//              release/undo (id order) queues on it, then a claim / unclaim whose
+//              lines are stored in the REVERSE heap order arrives. If it locks in
+//              plan (physical) order it holds H while waiting on L: when the third
+//              writer lets go it is a deadlock (40P01). The scenario OBSERVES
+//              which row the writer holds and demands the matching outcome; a
+//              reproduced deadlock is a KNOWN_BUG (printed, not counted, unless
+//              --strict) - see the report for the proposed fix.
 //   D1  payment void holds -> release WAITS (visit FOR SHARE vs the recalc's
 //       FOR UPDATE) -> void commits -> release fails the payment gate (23514).
 //   D2  release holds -> void WAITS -> both commit: released, one release
@@ -110,7 +136,17 @@
 // M4 drops the package-header lock (E), M5 drops the exact-release condition
 // from the batch Undo's report check (B4b), M6 drops 0205's string-type check on
 // the batch Undo map (B4c), M7 reverts the report check to the null-unsafe
-// `not (...)` form (B4d), M8 stamps the undo's audit rows with now() (B6).
+// `not (...)` form (B4d), M8 stamps the undo's audit rows with now() (B6),
+// M9 locks the lines in DESC id order (L1a, L3a), M10 never takes the visit row
+// FOR SHARE (caught MID-SET by L1a), M11 drops the lock statement's ORDER BY
+// (L1a, L3a: heap order is reversed there), M12 / M13 remove the ORDER BY from
+// the PROPOSED-FIX claim / unclaim pre-lock (L2x-claim + L3x, L2x-unclaim +
+// L3x-unclaim: the deadlock comes back). Rounds M9-M13 also check the failure
+// DETAIL, so each is caught for the right reason. Round B0 is the BASELINE: the
+// unmutated release copies plus the proposed-fix claim / unclaim must pass EVERY
+// forced scenario, so a broken copy cannot make every mutant look caught.
+// Dev switches: RRC_ONLY=L1a,L2x-claim (just those forced scenarios),
+// RRC_CONTROL=B0,M9 (just those rounds), --strict (a KNOWN_BUG fails the run).
 // The control rounds do NOT cover the
 // guards that live in triggers on public tables (the payment gate, the consent
 // gate, the GL bridge's one-posted-entry unique index, fn_release_header_when_
@@ -173,6 +209,9 @@ type Mode = "seq" | "indexed";
 
 // Where the functions under test live: public, or a --control mutant schema.
 let fnSchema = "public";
+// Same for claim_panel_members / unclaim_panel_members (a control round can swap
+// in the proposed-fix copy or a mutant of it without touching release's copy).
+let claimSchema = "public";
 
 interface Actor {
   name: string;
@@ -221,8 +260,22 @@ const MODE_GUCS: Record<Mode, string[]> = {
   indexed: ["set local enable_seqscan = off", "set local enable_bitmapscan = off"],
 };
 
+// A plan that walks test_requests in PHYSICAL (heap) order: the plan the planner
+// takes locally for claim's `id = any(..)` (a bitmap heap scan), and the order
+// any seq scan / status-index scan gives anywhere. Forced for the lock-order
+// scenarios so they do not depend on what this stack's table size makes natural.
+// Seq scan back ON (the "indexed" mode switches it off for the release side) and
+// every index path off, so a seq scan is the only plan left.
+const PHYSICAL_PLAN = [
+  "set local enable_seqscan = on",
+  "set local enable_indexscan = off",
+  "set local enable_indexonlyscan = off",
+  "set local enable_bitmapscan = off",
+];
+
 // BEGIN as a staff member (JWT sub, role authenticated), or as service_role.
-async function begin(a: Actor, mode: Mode): Promise<void> {
+// `extra` = more SET LOCALs (a forced plan).
+async function begin(a: Actor, mode: Mode, extra: readonly string[] = []): Promise<void> {
   await a.c.query("begin");
   if (a.uid) {
     await a.c.query("select set_config('request.jwt.claims', $1, true)", [
@@ -232,6 +285,15 @@ async function begin(a: Actor, mode: Mode): Promise<void> {
   } else {
     await a.c.query("set local role service_role");
   }
+  for (const g of MODE_GUCS[mode]) await a.c.query(g);
+  for (const g of extra) await a.c.query(g);
+}
+
+// BEGIN as the table owner (no role switch): the "something else holds a row"
+// transaction - any other writer (a result upload, a note edit) that has a line
+// locked while the two racers arrive.
+async function beginRaw(a: Actor, mode: Mode): Promise<void> {
+  await a.c.query("begin");
   for (const g of MODE_GUCS[mode]) await a.c.query(g);
 }
 
@@ -290,15 +352,18 @@ function undo(
   );
 }
 
-// unclaimPanelMembers -> rpc("unclaim_panel_members") / claimPanelMembers
+// concurrency-proof: unclaim_panel_members (C1/C2 whole-transaction; L1c/L2b/L2x/L3b hold or queue on its row locks mid-set)
+// unclaimPanelMembers -> rpc("unclaim_panel_members")
 function unclaim(a: Actor, ids: readonly string[], holders: readonly string[]): Promise<Out<number>> {
   return settle(
-    a.c.query("select public.unclaim_panel_members($1::uuid[], $2::uuid[]) as n", [ids, holders]),
+    a.c.query(`select ${claimSchema}.unclaim_panel_members($1::uuid[], $2::uuid[]) as n`, [ids, holders]),
     (r) => Number(r.rows[0].n),
   );
 }
+// concurrency-proof: claim_panel_members (C3/C3b whole-transaction; L1a/L1b/L1d/L2a/L2x/L2n/L3a/L3c/L3x hold or queue on its row locks mid-set)
+// claimPanelMembers -> rpc("claim_panel_members")
 function claim(a: Actor, ids: readonly string[]): Promise<Out<number>> {
-  return settle(a.c.query("select public.claim_panel_members($1::uuid[]) as n", [ids]), (r) => Number(r.rows[0].n));
+  return settle(a.c.query(`select ${claimSchema}.claim_panel_members($1::uuid[]) as n`, [ids]), (r) => Number(r.rows[0].n));
 }
 
 // voidPaymentAction's UPDATE (payments/[id]/void/actions.ts), issued through
@@ -383,6 +448,13 @@ function andEnd<T>(a: Actor, p: Promise<Out<T>>): Promise<Out<T>> {
 
 class Fail extends Error {}
 
+// A REAL defect the proof has reproduced and the owner has not yet decided to
+// fix (no migration is part of this proof). In the default run it is printed
+// loudly as KNOWN_BUG and does not fail the run; `--strict` makes it fail, and
+// a control round always treats it as a failure (the scenario caught something).
+class KnownBug extends Fail {}
+const STRICT = process.argv.includes("--strict");
+
 // Waiting on a ROW: an ungranted transactionid (queued behind the holder's
 // transaction) or tuple lock. A relation-level wait - another session's DDL on
 // the shared stack - does not count, so it can neither fake a forced
@@ -426,6 +498,141 @@ async function mustNotWait<T>(a: Actor, p: Promise<Out<T>>, why: string): Promis
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 // ---------------------------------------------------------------------------
+// Row-lock observation. Row locks live in the tuple header (xmax), not in
+// pg_locks - what pg_locks DOES show is a backend that is WAITING for one:
+//   * a `tuple` lock on the (page, offset) of the row it waits for - granted
+//     when it is the first waiter, ungranted when it queues behind another
+//     waiter - and
+//   * (first waiter only) an ungranted `transactionid` lock on the xid of the
+//     transaction holding the row.
+// So "A waits on row R behind B's transaction" is read straight from pg_locks
+// (R's ctid, B's backend_xid), and "A already holds row Q" is probed with a
+// non-blocking FOR NO KEY UPDATE SKIP LOCKED from a separate connection.
+// ---------------------------------------------------------------------------
+
+let probe: Client; // never inside a long transaction
+
+async function ctidOf(id: string): Promise<string> {
+  const { rows } = await monitor.query<{ c: string }>("select ctid::text as c from public.test_requests where id = $1", [id]);
+  if (rows.length !== 1) throw new Fail(`ctidOf: ${id} not found`);
+  return rows[0].c;
+}
+
+// (block, offset) as numbers, for comparing physical positions.
+function ctidParts(c: string): [number, number] {
+  const m = /^\((\d+),(\d+)\)$/.exec(c);
+  if (!m) throw new Fail(`bad ctid ${c}`);
+  return [Number(m[1]), Number(m[2])];
+}
+
+async function xidOf(a: Actor): Promise<string> {
+  const { rows } = await monitor.query<{ x: string | null }>("select backend_xid::text as x from pg_stat_activity where pid = $1", [a.pid]);
+  if (!rows[0]?.x) throw new Fail(`${a.name} has no transaction id (it has locked nothing)`);
+  return rows[0].x;
+}
+
+// Is this row locked by anyone (a lock the probe's FOR NO KEY UPDATE conflicts with)?
+async function rowLocked(table: "test_requests" | "visits", id: string): Promise<boolean> {
+  await probe.query("begin");
+  try {
+    const mode = table === "visits" ? "for update" : "for no key update";
+    const { rowCount } = await probe.query(`select 1 from public.${table} where id = $1 ${mode} skip locked`, [id]);
+    return rowCount === 0;
+  } finally {
+    await probe.query("rollback");
+  }
+}
+
+interface BlockInfo {
+  tuple: string | null; // "(page,offset)" of the row it waits for
+  tupleGranted: boolean;
+  waitXid: string | null; // transaction it waits behind (first waiter only)
+}
+async function blockInfo(pid: number): Promise<BlockInfo> {
+  const { rows } = await monitor.query<{ locktype: string; granted: boolean; page: number | null; tuple: number | null; xid: string | null }>(
+    `select locktype, granted, page, tuple, transactionid::text as xid from pg_locks
+      where pid = $1 and (locktype = 'tuple' or (locktype = 'transactionid' and not granted))`,
+    [pid],
+  );
+  const t = rows.find((r) => r.locktype === "tuple");
+  const x = rows.find((r) => r.locktype === "transactionid");
+  return {
+    tuple: t ? `(${t.page},${t.tuple})` : null,
+    tupleGranted: t?.granted ?? false,
+    waitXid: x?.xid ?? null,
+  };
+}
+
+const fmtBlock = (b: BlockInfo) =>
+  `tuple ${b.tuple ?? "none"}${b.tuple ? (b.tupleGranted ? " granted" : " queued") : ""}, waits behind xid ${b.waitXid ?? "none"}`;
+
+// Strict: the backend must be seen waiting on EXACTLY this row (its ctid) -
+// behind `behind`'s transaction when given (first waiter) - within ~5s.
+async function mustBlockOn(
+  a: Actor,
+  rowId: string,
+  label: string,
+  behind: Actor | null,
+  why: string,
+): Promise<string> {
+  const want = await ctidOf(rowId);
+  const wantXid = behind ? await xidOf(behind) : null;
+  let last: BlockInfo = { tuple: null, tupleGranted: false, waitXid: null };
+  for (let i = 0; i < 50; i++) {
+    last = await blockInfo(a.pid);
+    if (last.tuple === want && (!wantXid || last.waitXid === wantXid)) {
+      return `${a.name} waits on ${label} ${want}${wantXid ? ` behind ${behind?.name} (xid ${wantXid})` : " (queued)"}`;
+    }
+    await sleep(100);
+  }
+  throw new Fail(
+    `interleaving not reached: ${a.name} never waited on ${label} ${want}${wantXid ? ` behind ${behind?.name} (xid ${wantXid})` : ""} (${why}); last seen: ${fmtBlock(last)}`,
+  );
+}
+
+// Advisory locks a backend holds (granted), by key class. 0184's patient and
+// result-membership locks are pg_advisory_xact_lock[_shared](hashtext(..), key).
+async function advisoryHeld(pid: number): Promise<{ patient: boolean; membership: boolean }> {
+  const { rows } = await monitor.query<{ k: string }>(
+    `select case classid::bigint
+              when (hashtext('patient_lifecycle')::bigint & 4294967295) then 'patient'
+              when (hashtext('result_membership')::bigint & 4294967295) then 'membership'
+            end as k
+       from pg_locks where pid = $1 and locktype = 'advisory' and granted and mode = 'ShareLock'`,
+    [pid],
+  );
+  const ks = new Set(rows.map((r) => r.k));
+  return { patient: ks.has("patient"), membership: ks.has("membership") };
+}
+
+// What a RELEASE / UNDO that is blocked mid-set must already hold: the
+// membership (when a report is touched) and patient advisory locks SHARED, the
+// visit row FOR SHARE, and every line it locks BEFORE the one it waits on.
+async function expectPrefixHeld(
+  a: Actor,
+  p: { visit: string; lines: readonly string[]; names: readonly string[]; report: boolean },
+): Promise<string> {
+  const adv = await advisoryHeld(a.pid);
+  if (!adv.patient) throw new Fail(`${a.name} does not hold the patient lifecycle lock (shared) while blocked`);
+  if (p.report && !adv.membership) throw new Fail(`${a.name} does not hold the result-membership lock (shared) while blocked`);
+  if (!(await rowLocked("visits", p.visit))) {
+    throw new Fail(`${a.name} does not hold the visit row (FOR SHARE) while blocked mid-set`);
+  }
+  for (const [i, id] of p.lines.entries()) {
+    if (!(await rowLocked("test_requests", id))) {
+      throw new Fail(`${a.name} should already hold ${p.names[i]} (lower id) while blocked on the higher line, but ${p.names[i]} is free`);
+    }
+  }
+  return `holds ${p.report ? "membership+" : ""}patient advisory (shared), visit FOR SHARE, ${p.names.join("+")}`;
+}
+
+// Physical (heap) position: is `first` stored before `second`?
+async function storedBefore(first: string, second: string): Promise<boolean> {
+  const [a, b] = [ctidParts(await ctidOf(first)), ctidParts(await ctidOf(second))];
+  return a[0] < b[0] || (a[0] === b[0] && a[1] < b[1]);
+}
+
+// ---------------------------------------------------------------------------
 // Fixture builders (committed, as postgres)
 // ---------------------------------------------------------------------------
 
@@ -447,11 +654,23 @@ const made = { tests: [] as string[], payments: [] as string[], results: [] as s
 // states[i] is the state of ids[i] (ids sorted ascending, so ids[0] is the
 // lowest lock order). "released" rows are released as postgres AFTER payment so
 // the GL bridge posts their journal entry exactly as in production.
-async function mkFix(spec: { states: St[]; holder?: string; paid?: boolean }): Promise<Fix> {
+// `physical: "desc"` stores the lines in DESCENDING id order (inserted, and
+// moved through their state updates, last id first) so heap order is the
+// reverse of lock-by-id order; `report: false` leaves the lines unlinked
+// (plain tests, no combined report).
+async function mkFix(spec: {
+  states: St[];
+  holder?: string;
+  paid?: boolean;
+  physical?: "desc";
+  report?: boolean;
+}): Promise<Fix> {
   const n = spec.states.length;
   const ids = Array.from({ length: n }, () => randomUUID()).sort();
   const visit = randomUUID();
-  const result = n >= 2 ? randomUUID() : null;
+  const order = ids.map((_, i) => i);
+  if (spec.physical === "desc") order.reverse();
+  const result = (spec.report ?? n >= 2) ? randomUUID() : null;
   const payment = spec.paid === false ? null : randomUUID();
   const seq = ++visitSeq;
   made.tests.push(...ids);
@@ -464,11 +683,11 @@ async function mkFix(spec: { states: St[]; holder?: string; paid?: boolean }): P
        values ($1, $2, $3, (now() at time zone 'Asia/Manila')::date, 'unpaid', $4, 0)`,
       [visit, `V-${TAG_UP}-${seq}`, fx.patient, 100 * n],
     );
-    for (const [i, id] of ids.entries()) {
+    for (const i of order) {
       await monitor.query(
         `insert into public.test_requests (id, visit_id, service_id, requested_by, status, base_price_php, final_price_php)
          values ($1, $2, $3, $4, 'requested', 100, 100)`,
-        [id, visit, fx.services[i % 3], fx.med1],
+        [ids[i], visit, fx.services[i % 3], fx.med1],
       );
     }
     if (payment) {
@@ -486,7 +705,8 @@ async function mkFix(spec: { states: St[]; holder?: string; paid?: boolean }): P
         ]);
       }
     }
-    for (const [i, st] of spec.states.entries()) {
+    for (const i of order) {
+      const st = spec.states[i];
       if (st === "ready" || st === "released") {
         await monitor.query("update public.test_requests set status = 'ready_for_release' where id = $1", [ids[i]]);
       }
@@ -725,21 +945,34 @@ interface Result {
   name: string;
   ok: boolean;
   detail: string;
+  known?: boolean; // a reproduced KNOWN_BUG: printed, not counted
 }
 const results: Result[] = [];
 let sink: Result[] = results;
-let only: string[] | null = null; // control rounds run just the mutant's scenarios
+// Control rounds run just the mutant's scenarios. RRC_ONLY=L1a,L2x-claim runs
+// just those forced scenarios in the main run (a development convenience: it
+// skips the free races, the legacy demo and the plan checks' counting).
+let only: string[] | null = process.env.RRC_ONLY ? process.env.RRC_ONLY.split(",") : null;
+const ONLY_MAIN = only;
+let quietPass = false; // the baseline control round runs every scenario: print failures only
 
 async function scenario(name: string, id: string, body: () => Promise<string | void>): Promise<void> {
   if (only && !only.includes(id)) return;
   try {
     const note = await body();
     sink.push({ name, ok: true, detail: note ?? "" });
-    console.log(`  PASS  ${name}${note ? ` - ${note}` : ""}`);
+    if (!quietPass) console.log(`  PASS  ${name}${note ? ` - ${note}` : ""}`);
   } catch (e) {
     const detail = e instanceof Error ? e.message : String(e);
-    sink.push({ name, ok: false, detail });
-    console.log(`  FAIL  ${name} - ${detail}`);
+    // A KNOWN_BUG only stays out of the failures in the main run: a control
+    // round that sees one has caught the scenario's target.
+    if (e instanceof KnownBug && sink === results && !STRICT) {
+      sink.push({ name, ok: true, detail, known: true });
+      console.log(`  KNOWN_BUG  ${name} - ${detail}`);
+    } else {
+      sink.push({ name, ok: false, detail });
+      console.log(`  FAIL  ${name} - ${detail}`);
+    }
   } finally {
     await closeActors();
   }
@@ -1114,6 +1347,307 @@ async function forcedScenarios(mode: Mode): Promise<void> {
     await expectState("after", f.ids, ["ip:M2", "ip:M2", "ip:M2"]);
     await expectJes("journal", f.ids, none3);
   });
+
+  // --- L. claim / unclaim vs release / undo, collided WHILE the row locks are
+  // still being taken ---------------------------------------------------------
+  //
+  // Lock sequences (migration 0198/0205 and 0191):
+  //   release/undo  membership advisory (shared) -> patient advisory (shared) ->
+  //                 visit row FOR SHARE -> every selected / report-member /
+  //                 package-header line FOR UPDATE, ORDER BY id.
+  //   claim/unclaim ONE multi-row UPDATE ... WHERE id = any(..) (claim) / a join
+  //                 against unnest(..) (unclaim), no ORDER BY, no explicit lock:
+  //                 each row that matches the predicate is locked FOR NO KEY
+  //                 UPDATE when the executor reaches it, in PLAN order
+  //                 (physical for a seq / bitmap heap scan; id order for a pkey
+  //                 index scan), and the lifecycle trigger then takes the patient
+  //                 advisory lock SHARED (compatible with release's). Rows that
+  //                 do not match at snapshot time (ready / released / deleted)
+  //                 are never locked, so claim only ever contends with
+  //                 release/undo on REQUESTED / IN_PROGRESS lines that sit in
+  //                 their lock set (a selected line, or a member of a touched
+  //                 report).
+  // Neither claim nor unclaim touches the visit row or any membership lock.
+  const [LA, LB, LC] = ["A", "B", "C"];
+
+  // L1: the claim side holds a HIGHER line (uncommitted); release arrives, locks
+  // A and B, and blocks on C. Observed from pg_locks and the probe, not slept on.
+  for (const v of [
+    {
+      id: "L1a",
+      title: "claim holds C (uncommitted) -> release locks A+B, WAITS on C -> claim commits -> report_not_finished, none released",
+      states: ["ready", "ready", "requested"] as St[],
+      hold: "claim" as const,
+      end: "commit" as const,
+      after: ["rdy:-", "rdy:-", "ip:M2"],
+    },
+    {
+      id: "L1b",
+      title: "claim holds C -> release locks A+B, WAITS on C -> claim ROLLS BACK -> report_not_finished, C still requested",
+      states: ["ready", "ready", "requested"] as St[],
+      hold: "claim" as const,
+      end: "rollback" as const,
+      after: ["rdy:-", "rdy:-", "req:-"],
+    },
+    {
+      id: "L1c",
+      title: "unclaim holds C -> release locks A+B, WAITS on C -> unclaim commits -> report_not_finished, C handed back",
+      states: ["ready", "ready", "in_progress"] as St[],
+      hold: "unclaim" as const,
+      end: "commit" as const,
+      after: ["rdy:-", "rdy:-", "req:-"],
+    },
+  ]) {
+    await sc(v.id, v.title, async () => {
+      // physical "desc": heap order C, B, A - the reverse of the lock order - so a
+      // release that dropped its ORDER BY would lock C first and be caught here.
+      const f = await mkFix({ states: v.states, holder: fx.med2, physical: "desc" });
+      const [a, b, c] = f.ids;
+      const w = await actor("M2", fx.med2);
+      const m = await actor("M1", fx.med1);
+      await begin(w, mode);
+      const got = v.hold === "claim" ? await claim(w, [c]) : await unclaim(w, [c], [fx.med2]);
+      if (expectOk(`M2 ${v.hold} C`, got) !== 1) throw new Fail(`M2 ${v.hold}: expected 1 row`);
+      await begin(m, mode);
+      const pr = release(m, f.visit, [a, b]);
+      const waits = await mustBlockOn(m, c, LC, w, `the release locks the whole report, C is held by the ${v.hold}`);
+      const held = await expectPrefixHeld(m, { visit: f.visit, lines: [a, b], names: [LA, LB], report: true });
+      await w.c.query(v.end);
+      expectRelease("M1 release [A, B]", await pr, { released: 0, refused: { report_not_finished: 2 }, count: 1 });
+      await m.c.query("rollback");
+      await expectState("after", f.ids, v.after);
+      await expectJes("journal", f.ids, none3);
+      return `${held}; ${waits}`;
+    });
+  }
+
+  await sc("L1d", "plain lines: claim holds B -> release locks A, WAITS on B -> claim commits -> A released, B not_ready", async () => {
+    const f = await mkFix({ states: ["ready", "requested"], report: false, physical: "desc" });
+    const [a, b] = f.ids;
+    const w = await actor("M2", fx.med2);
+    const m = await actor("M1", fx.med1);
+    await begin(w, mode);
+    if (expectOk("M2 claim B", await claim(w, [b])) !== 1) throw new Fail("M2 claim: expected 1 row");
+    await begin(m, mode);
+    const pr = release(m, f.visit, [a, b]);
+    const waits = await mustBlockOn(m, b, LB, w, "the release locks every selected line, B is held by the claim");
+    const held = await expectPrefixHeld(m, { visit: f.visit, lines: [a], names: [LA], report: false });
+    await w.c.query("commit");
+    expectRelease("M1 release [A, B]", await pr, { released: 1, refused: { not_ready: 1 } });
+    await m.c.query("commit");
+    await expectState("after", f.ids, ["rel:M1", "ip:M2"]);
+    await expectJes("journal", f.ids, [
+      { posted: 1, reversed: 0 },
+      { posted: 0, reversed: 0 },
+    ]);
+    return `${held}; ${waits}`;
+  });
+
+  // L2: release holds the LOWER lines and is blocked mid-set (a third writer
+  // holds C); a claim / unclaim of the whole report arrives, queues behind the
+  // release at A and, once the third writer lets go, both finish serially.
+  for (const v of [
+    {
+      id: "L2a",
+      title: "release holds A+B, WAITS on C (third writer) -> claim of A,B,C queues behind it -> release refused (3), claim wins whole",
+      states: ["requested", "requested", "requested"] as St[],
+      writer: "claim" as const,
+      after: ["ip:M2", "ip:M2", "ip:M2"],
+    },
+    {
+      id: "L2b",
+      title: "release holds A+B, WAITS on C (third writer) -> unclaim of A,B,C queues behind it -> release refused (3), hand-back lands whole",
+      states: ["in_progress", "in_progress", "in_progress"] as St[],
+      writer: "unclaim" as const,
+      after: ["req:-", "req:-", "req:-"],
+    },
+  ]) {
+    await sc(v.id, v.title, async () => {
+      const f = await mkFix({ states: v.states, holder: fx.med2 });
+      const [a, b, c] = f.ids;
+      const g = await actor("G", null);
+      await beginRaw(g, mode);
+      await g.c.query("select 1 from public.test_requests where id = $1 for update", [c]);
+      const m = await actor("M1", fx.med1);
+      await begin(m, mode);
+      const pr = andEnd(m, release(m, f.visit, f.ids));
+      const w1 = await mustBlockOn(m, c, LC, g, "C is held by the third writer");
+      const held = await expectPrefixHeld(m, { visit: f.visit, lines: [a, b], names: [LA, LB], report: true });
+      const cl = await actor("M2", fx.med2);
+      await begin(cl, mode);
+      const pw = andEnd(cl, v.writer === "claim" ? claim(cl, f.ids) : unclaim(cl, f.ids, [fx.med2, fx.med2, fx.med2]));
+      const w2 = await mustBlockOn(cl, a, LA, m, "the write queues behind the release's lock on A");
+      await g.c.query("commit");
+      expectRelease("M1 release", await pr, { released: 0, refused: { report_not_finished: 3 }, count: 3 });
+      if (expectOk(`M2 ${v.writer}`, await pw) !== 3) throw new Fail(`M2 ${v.writer}: expected 3 rows`);
+      await expectState("after", f.ids, v.after);
+      await expectJes("journal", f.ids, none3);
+      return `${held}; ${w1}; ${w2}`;
+    });
+  }
+
+  // L3: the same two shapes against UNDO. claim / unclaim can never WRITE a
+  // released or ready line (their predicates are requested / in_progress), but
+  // undo locks EVERY member of every report it touches, so a report that holds a
+  // released line next to a requested / in_progress one (no constraint forbids
+  // it) puts that line in the undo's lock set.
+  for (const v of [
+    {
+      id: "L3a",
+      title: "mixed report: claim holds C -> undo locks A+B, WAITS on C -> claim commits -> undo undoes A+B, C stays claimed",
+      states: ["released", "released", "requested"] as St[],
+      hold: "claim" as const,
+      after: ["rdy:-", "rdy:-", "ip:M2"],
+    },
+    {
+      id: "L3b",
+      title: "mixed report: unclaim holds C -> undo locks A+B, WAITS on C -> unclaim commits -> undo undoes A+B, C handed back",
+      states: ["released", "released", "in_progress"] as St[],
+      hold: "unclaim" as const,
+      after: ["rdy:-", "rdy:-", "req:-"],
+    },
+  ]) {
+    await sc(v.id, v.title, async () => {
+      const f = await mkFix({ states: v.states, holder: fx.med2, physical: "desc" });
+      const [a, b, c] = f.ids;
+      const w = await actor("M2", fx.med2);
+      const adm = await actor("A", fx.admin1);
+      await begin(w, mode);
+      const got = v.hold === "claim" ? await claim(w, [c]) : await unclaim(w, [c], [fx.med2]);
+      if (expectOk(`M2 ${v.hold} C`, got) !== 1) throw new Fail(`M2 ${v.hold}: expected 1 row`);
+      await begin(adm, mode);
+      const pu = undo(adm, f.visit, [a]);
+      const waits = await mustBlockOn(adm, c, LC, w, `the undo locks every member of the report, C is held by the ${v.hold}`);
+      const held = await expectPrefixHeld(adm, { visit: f.visit, lines: [a, b], names: [LA, LB], report: true });
+      await w.c.query("commit");
+      const u = expectOk("A undo [A]", await pu);
+      if (u.undone.length !== 2 || u.skipped.length !== 0) {
+        throw new Fail(`A undo: expected 2 undone / 0 skipped, got ${u.undone.length} / ${u.skipped.length}`);
+      }
+      await adm.c.query("commit");
+      await expectState("after", f.ids, v.after);
+      await expectJes("journal", f.ids, [
+        { posted: 0, reversed: 1 },
+        { posted: 0, reversed: 1 },
+        { posted: 0, reversed: 0 },
+      ]);
+      return `${held}; ${waits}`;
+    });
+  }
+
+  await sc("L3c", "mixed report: undo holds A+B, WAITS on C (third writer) -> claim of C queues behind it -> both finish, C claimed", async () => {
+    const f = await mkFix({ states: ["released", "released", "requested"] });
+    const [a, b, c] = f.ids;
+    const g = await actor("G", null);
+    await beginRaw(g, mode);
+    await g.c.query("select 1 from public.test_requests where id = $1 for update", [c]);
+    const adm = await actor("A", fx.admin1);
+    await begin(adm, mode);
+    const pu = andEnd(adm, undo(adm, f.visit, [a]));
+    const w1 = await mustBlockOn(adm, c, LC, g, "C is held by the third writer");
+    const held = await expectPrefixHeld(adm, { visit: f.visit, lines: [a, b], names: [LA, LB], report: true });
+    const cl = await actor("M2", fx.med2);
+    await begin(cl, mode);
+    const pc = andEnd(cl, claim(cl, [c]));
+    const w2 = await mustBlockOn(cl, c, LC, null, "the claim queues behind the undo on C");
+    await g.c.query("commit");
+    const u = expectOk("A undo [A]", await pu);
+    if (u.undone.length !== 2) throw new Fail(`A undo: expected 2 undone, got ${u.undone.length}`);
+    if (expectOk("M2 claim C", await pc) !== 1) throw new Fail("M2 claim: expected 1 row");
+    await expectState("after", f.ids, ["rdy:-", "rdy:-", "ip:M2"]);
+    return `${held}; ${w1}; ${w2}`;
+  });
+
+  // L2x / L2n / L3x: the lock-ORDER question. release/undo take their lines in
+  // id order. claim/unclaim take theirs in plan order. Two lines L < H stored
+  // H-then-L (heap order is the reverse of id order): a third writer holds L,
+  // the release/undo queues on L FIRST, then the claim arrives and - if its plan
+  // is physical - locks H before it queues on L. When the third writer lets go,
+  // the release/undo gets L and wants H (held by the claim), the claim gets
+  // L's tuple lock and waits for the release/undo: a cycle, 40P01.
+  //   physical = the claim's plan is FORCED physical (no index scan, no bitmap):
+  //              a plan this planner and any seq / status-index scan produce;
+  //   natural  = whatever this mode's planner picks for the claim (a bitmap heap
+  //              scan locally = physical; the pkey index scan in "indexed" mode =
+  //              id order).
+  // The scenario OBSERVES which row the claim holds while it waits, then demands
+  // the matching outcome: claim already holds H -> the deadlock must happen
+  // (a KNOWN_BUG until claim locks in id order); claim holds nothing -> both must
+  // finish serially with no error.
+  const lockOrderRace = async (o: {
+    contender: "release" | "undo";
+    writer: "claim" | "unclaim";
+    plan: "physical" | "natural";
+  }): Promise<string> => {
+    const ip = o.writer === "unclaim";
+    const states: St[] = o.contender === "release" ? (ip ? ["in_progress", "in_progress"] : ["requested", "requested"]) : ["released", ip ? "in_progress" : "requested", ip ? "in_progress" : "requested"];
+    const f = await mkFix({ states, holder: fx.med2, physical: "desc" });
+    const [lo, hi] = f.ids.slice(-2); // the two lines the writer targets
+    const sel = o.contender === "release" ? f.ids : [f.ids[0]];
+    if (!(await storedBefore(hi, lo))) throw new Fail("fixture: the higher id is not stored before the lower one (heap order not reversed)");
+    const g = await actor("G", null);
+    await beginRaw(g, mode);
+    await g.c.query("select 1 from public.test_requests where id = $1 for update", [lo]);
+    const c = await actor(o.contender === "release" ? "M1" : "A", o.contender === "release" ? fx.med1 : fx.admin1);
+    await begin(c, mode);
+    const pc = andEnd<ReleaseJson | UndoJson>(
+      c,
+      (o.contender === "release" ? release(c, f.visit, sel) : undo(c, f.visit, sel)) as Promise<Out<ReleaseJson | UndoJson>>,
+    );
+    const w1 = await mustBlockOn(c, lo, "L", g, `the ${o.contender} reaches the lower line first and queues behind the third writer`);
+    const w = await actor("M2", fx.med2);
+    await begin(w, mode, o.plan === "physical" ? PHYSICAL_PLAN : []);
+    const targets = [lo, hi];
+    const pw = andEnd(w, o.writer === "claim" ? claim(w, targets) : unclaim(w, targets, [fx.med2, fx.med2]));
+    const w2 = await mustBlockOn(w, lo, "L", null, `the ${o.writer} queues on L behind the ${o.contender}`);
+    const heldH = await rowLocked("test_requests", hi);
+    await g.c.query("commit");
+    const timeout = sleep(15000).then(() => "timeout" as const);
+    const both = await Promise.race([Promise.all([pc, pw]), timeout]);
+    if (both === "timeout") throw new Fail("neither side finished within 15s of the third writer letting go");
+    const [rc, rw] = both as [Out<ReleaseJson | UndoJson>, Out<number>];
+    const deadlocks = [rc, rw].filter((x) => !x.ok && x.code === "40P01");
+    const order = heldH ? "physical: locked H before queueing on L" : "id order: locked nothing while queued on L";
+    if (heldH) {
+      if (deadlocks.length === 1 && [rc, rw].some((x) => x.ok)) {
+        const victim = !rc.ok && rc.code === "40P01" ? o.contender : o.writer;
+        throw new KnownBug(
+          `${o.writer} (${o.plan} plan, ${order}) vs ${o.contender} (id order) DEADLOCKED, victim = ${victim} (40P01): ` +
+            `${o.contender} holds L and wants H, ${o.writer} holds H and wants L. ${w1}; ${w2}. ` +
+            `Fix: ${o.writer} must take its rows in id order (SELECT ... ORDER BY id FOR NO KEY UPDATE before the UPDATE).`,
+        );
+      }
+      throw new Fail(
+        `the ${o.writer} held H while waiting on L, so a deadlock was expected, got ${[rc, rw].map((x) => (x.ok ? "ok" : x.code)).join(" / ")}`,
+      );
+    }
+    if (!rc.ok) throw new Fail(`${o.contender} failed (${rc.code} ${rc.message})`);
+    if (!rw.ok) throw new Fail(`${o.writer} failed (${rw.code} ${rw.message})`);
+    if (o.contender === "release") {
+      expectRelease("release", rc as Out<ReleaseJson>, { released: 0, refused: { report_not_finished: 2 }, count: 2 });
+    } else if ((rc.v as UndoJson).undone.length !== 1) {
+      throw new Fail(`undo: expected 1 undone, got ${(rc.v as UndoJson).undone.length}`);
+    }
+    if (rw.v !== 2) throw new Fail(`${o.writer}: expected 2 rows, got ${rw.v}`);
+    const after = ip ? "req:-" : "ip:M2";
+    await expectState("after", [lo, hi], [after, after]);
+    return `no deadlock - ${order}; ${w1}; ${w2}`;
+  };
+
+  for (const wr of ["claim", "unclaim"] as const) {
+    await sc(`L2x-${wr}`, `release (id order) vs ${wr} FORCED to a physical plan, heap order reversed: third writer holds L -> must not deadlock`, () =>
+      lockOrderRace({ contender: "release", writer: wr, plan: "physical" }),
+    );
+    await sc(`L2n-${wr}`, `release (id order) vs ${wr} on this mode's NATURAL plan, heap order reversed: must not deadlock`, () =>
+      lockOrderRace({ contender: "release", writer: wr, plan: "natural" }),
+    );
+  }
+  await sc("L3x", "undo (id order) vs claim FORCED to a physical plan on a mixed report, heap order reversed: must not deadlock", () =>
+    lockOrderRace({ contender: "undo", writer: "claim", plan: "physical" }),
+  );
+  await sc("L3x-unclaim", "undo (id order) vs unclaim FORCED to a physical plan on a mixed report, heap order reversed: must not deadlock", () =>
+    lockOrderRace({ contender: "undo", writer: "unclaim", plan: "physical" }),
+  );
 
   // --- D. release vs payment void / edit --------------------------------------
   await sc("D1", "void holds -> release WAITS (visit lock) -> void commits -> release fails the payment gate (23514)", async () => {
@@ -1559,7 +2093,13 @@ async function printPlans(): Promise<void> {
 // named forced scenarios run against the copy, and the round PASSES only when
 // every one of them fails in both plan modes.
 
-type FnName = "release_actor" | "release_report_locks" | "release_visit_results" | "undo_visit_release";
+type FnName =
+  | "release_actor"
+  | "release_report_locks"
+  | "release_visit_results"
+  | "undo_visit_release"
+  | "claim_panel_members"
+  | "unclaim_panel_members";
 
 interface Mutant {
   key: string;
@@ -1568,6 +2108,10 @@ interface Mutant {
   // [from, to] replacements applied in order; each must match exactly once-or-more (first is replaced).
   edits: Array<[string, string]>;
   mustFail: string[];
+  // Build the round on the proposed-fix claim/unclaim (the mutant removes part of the fix).
+  claimFix?: boolean;
+  // The failure detail every caught scenario must show (caught for the right reason).
+  reason?: RegExp;
 }
 
 const MUTANTS: Mutant[] = [
@@ -1635,6 +2179,50 @@ const MUTANTS: Mutant[] = [
     edits: [["v_ip, v_ua, clock_timestamp()", "v_ip, v_ua, now()"]],
     mustFail: ["B6"],
   },
+  // M9-M13: the mid-acquisition scenarios (L1-L3). Each is a lock-ORDER or
+  // lock-SET mutant that every whole-transaction scenario above lets through.
+  {
+    key: "M9",
+    what: "release locks its lines in DESC id order (release_report_locks: order by tr.id desc)",
+    fn: "release_report_locks",
+    edits: [["    order by tr.id\n      for update;", "    order by tr.id desc\n      for update;"]],
+    mustFail: ["L1a", "L3a"],
+    reason: /should already hold [AB] \(lower id\) while blocked on the higher line/,
+  },
+  {
+    key: "M10",
+    what: "release never takes the visit row FOR SHARE while it walks its lines (caught mid-set by L1a; M3 is the whole-transaction D1 twin)",
+    fn: "release_report_locks",
+    edits: [["for share;", ";"]],
+    mustFail: ["L1a"],
+    reason: /does not hold the visit row/,
+  },
+  {
+    key: "M11",
+    what: "release locks its lines in plan order (release_report_locks drops ORDER BY id; heap order is reversed in L1a)",
+    fn: "release_report_locks",
+    edits: [["    order by tr.id\n      for update;", "      for update;"]],
+    mustFail: ["L1a", "L3a"],
+    reason: /should already hold [AB] \(lower id\) while blocked on the higher line/,
+  },
+  {
+    key: "M12",
+    what: "claim without a deterministic order (the proposed fix's pre-lock loses its ORDER BY id)",
+    fn: "claim_panel_members",
+    edits: [[" order by t0.id for no key update", " for no key update"]],
+    mustFail: ["L2x-claim", "L3x"],
+    claimFix: true,
+    reason: /DEADLOCKED, victim = \w+ \(40P01\)/,
+  },
+  {
+    key: "M13",
+    what: "unclaim without a deterministic order (the proposed fix's pre-lock loses its ORDER BY id)",
+    fn: "unclaim_panel_members",
+    edits: [[" order by t0.id for no key update", " for no key update"]],
+    mustFail: ["L2x-unclaim", "L3x-unclaim"],
+    claimFix: true,
+    reason: /DEADLOCKED, victim = \w+ \(40P01\)/,
+  },
 ];
 
 const FN_SIGS: Record<FnName, string> = {
@@ -1642,7 +2230,38 @@ const FN_SIGS: Record<FnName, string> = {
   release_report_locks: "uuid, uuid[], text",
   release_visit_results: "uuid, uuid[], text, uuid, jsonb",
   undo_visit_release: "uuid, uuid[], uuid, jsonb, text, jsonb",
+  claim_panel_members: "uuid[]",
+  unclaim_panel_members: "uuid[], uuid[]",
 };
+
+// The proposed fix for the lock-order deadlock (L2x / L3x): claim and unclaim
+// take their rows in id order BEFORE the UPDATE - the same discipline
+// release_report_locks uses - so every writer of these lines locks them
+// ascending. FOR NO KEY UPDATE is what the UPDATE itself takes (no key column
+// changes), so it blocks exactly what the UPDATE would have blocked on.
+const PRELOCK = (alias: string) =>
+  `  -- proposed fix: lock the rows in id order before the UPDATE\n` +
+  `  perform 1 from public.test_requests ${alias} where ${alias}.id = any (p_test_request_ids) order by ${alias}.id for no key update;\n\n`;
+const CLAIM_FIX: Record<"claim_panel_members" | "unclaim_panel_members", [string, string]> = {
+  claim_panel_members: [
+    "  update public.test_requests\n     set status      = 'in_progress',",
+    `${PRELOCK("t0")}  update public.test_requests\n     set status      = 'in_progress',`,
+  ],
+  unclaim_panel_members: [
+    "  update public.test_requests t\n     set status      = 'requested',",
+    `${PRELOCK("t0")}  update public.test_requests t\n     set status      = 'requested',`,
+  ],
+};
+
+interface Round {
+  key: string;
+  what: string;
+  claimFix: boolean; // install the proposed-fix claim/unclaim copies (else the live ones keep serving)
+  fn?: FnName; // the function to mutate (none = the unmutated baseline)
+  edits?: Array<[string, string]>;
+  mustFail: string[] | null; // null = every forced scenario must PASS (the baseline)
+  reason?: RegExp; // the failure detail each caught scenario must show: caught for the right reason
+}
 
 async function controlRounds(): Promise<void> {
   const schema = `rrc_ctl_${TAG.slice(4)}`;
@@ -1653,23 +2272,53 @@ async function controlRounds(): Promise<void> {
       `select pg_get_functiondef('public.${fn}(${FN_SIGS[fn]})'::regprocedure) as d`,
     );
     let d = rows[0].d;
-    // The function itself and every call between the four copies.
+    // The function itself and every call between the copies.
     for (const other of names) d = d.split(`public.${other}(`).join(`${schema}.${other}(`);
     defs[fn] = d;
   }
+  const fixed = { ...defs };
+  for (const fn of ["claim_panel_members", "unclaim_panel_members"] as const) {
+    const [from, to] = CLAIM_FIX[fn];
+    if (!fixed[fn].includes(from)) throw new Error(`control: the proposed-fix anchor was not found in ${fn}`);
+    fixed[fn] = fixed[fn].replace(from, () => to);
+  }
 
-  for (const m of MUTANTS) {
-    let mutated = defs[m.fn];
-    for (const [from, to] of m.edits) {
-      if (!mutated.includes(from)) throw new Error(`control ${m.key}: "${from}" not found in ${m.fn}`);
-      mutated = mutated.replace(from, () => to);
+  const rounds: Round[] = [
+    {
+      key: "B0",
+      what: "BASELINE: unmutated copies of the four release functions + the proposed-fix claim/unclaim pass EVERY forced scenario (so a broken copy cannot make every mutant look caught)",
+      claimFix: true,
+      mustFail: null,
+    },
+    ...MUTANTS.map((m): Round => ({
+      key: m.key,
+      what: m.what,
+      claimFix: m.claimFix ?? false,
+      fn: m.fn,
+      edits: m.edits,
+      mustFail: m.mustFail,
+      reason: m.reason,
+    })),
+  ];
+
+  // RRC_CONTROL=B0,M9 runs just those rounds (a development convenience).
+  const pick = process.env.RRC_CONTROL ? process.env.RRC_CONTROL.split(",") : null;
+  for (const m of rounds) {
+    if (pick && !pick.includes(m.key)) continue;
+    const set = m.claimFix ? fixed : defs;
+    const mutated = { ...set };
+    if (m.fn) {
+      let d = mutated[m.fn];
+      for (const [from, to] of m.edits ?? []) {
+        if (!d.includes(from)) throw new Error(`control ${m.key}: "${from}" not found in ${m.fn}`);
+        d = d.replace(from, () => to);
+      }
+      mutated[m.fn] = d;
     }
     await monitor.query(`drop schema if exists ${schema} cascade`);
     await monitor.query(`create schema ${schema}`);
     try {
-      for (const fn of names) {
-        await monitor.query(fn === m.fn ? mutated : defs[fn]);
-      }
+      for (const fn of names) await monitor.query(mutated[fn]);
       await monitor.query(`grant usage on schema ${schema} to authenticated, service_role`);
       await monitor.query(`grant execute on all functions in schema ${schema} to authenticated, service_role`);
 
@@ -1677,22 +2326,46 @@ async function controlRounds(): Promise<void> {
       const caught: Result[] = [];
       sink = caught;
       fnSchema = schema;
+      claimSchema = m.claimFix ? schema : "public";
       only = m.mustFail;
+      quietPass = m.mustFail === null;
       for (const mode of ["seq", "indexed"] as Mode[]) await forcedScenarios(mode);
-      const failedIds = caught.filter((r) => !r.ok).map((r) => r.name);
-      const missed = (["seq", "indexed"] as Mode[]).flatMap((mode) =>
-        m.mustFail
-          .filter((id) => !failedIds.some((n) => n.startsWith(`[${mode}] ${id} `)))
-          .map((id) => `[${mode}] ${id}`),
-      );
-      const ok = missed.length === 0;
-      const detail = ok ? `caught by ${failedIds.length} scenario(s)` : `NOT caught by ${missed.join(", ")}`;
+      const failed = caught.filter((r) => !r.ok);
+      let ok: boolean;
+      let detail: string;
+      if (m.mustFail === null) {
+        ok = failed.length === 0 && caught.length >= 40;
+        detail = ok
+          ? `${caught.length} scenario runs, all passed`
+          : failed.length > 0
+            ? `${failed.length} of ${caught.length} failed on an UNMUTATED copy: ${failed.map((r) => r.name).join("; ")}`
+            : `only ${caught.length} scenario runs executed`;
+      } else {
+        const must = m.mustFail;
+        const modes = ["seq", "indexed"] as Mode[];
+        const missed = modes.flatMap((mode) =>
+          must.filter((id) => !failed.some((r) => r.name.startsWith(`[${mode}] ${id} `))).map((id) => `[${mode}] ${id}`),
+        );
+        const wrongReason = m.reason
+          ? failed.filter((r) => !(m.reason as RegExp).test(r.detail)).map((r) => `${r.name}: ${r.detail}`)
+          : [];
+        ok = missed.length === 0 && wrongReason.length === 0;
+        detail =
+          missed.length > 0
+            ? `NOT caught by ${missed.join(", ")}`
+            : wrongReason.length > 0
+              ? `caught for the WRONG reason: ${wrongReason.join(" | ")}`
+              : `caught by ${failed.length} scenario(s)`;
+        for (const r of failed) console.log(`    caught: ${r.name.slice(0, 40)}... -> ${r.detail.slice(0, 190)}`);
+      }
       results.push({ name: `control ${m.key} (${m.what})`, ok, detail });
       console.log(`  ${ok ? "PASS" : "FAIL"}  control ${m.key} - ${detail}`);
     } finally {
       sink = results;
-      only = null;
+      quietPass = false;
+      only = ONLY_MAIN;
       fnSchema = "public";
+      claimSchema = "public";
       await monitor.query(`drop schema if exists ${schema} cascade`);
     }
   }
@@ -1719,6 +2392,7 @@ async function teardown(): Promise<void> {
 async function main(): Promise<void> {
   const rounds = Number(process.env.RRC_ROUNDS ?? 25);
   monitor = await connect();
+  probe = await connect();
 
   // One run at a time on the shared stack: the startup sweep below removes
   // EVERY rrc- fixture, which would pull a concurrent run's live rows out from
@@ -1728,6 +2402,7 @@ async function main(): Promise<void> {
   );
   if (!lock[0].got) {
     console.error("[report-release:concurrency-proof] another run is in progress on this stack - try again when it finishes.");
+    await probe.end().catch(() => undefined);
     await monitor.end();
     process.exit(3);
   }
@@ -1772,11 +2447,20 @@ async function main(): Promise<void> {
   } finally {
     if (seeded || (await countTagged(TAG)) > 0) await teardown();
     else await closeActors();
+    await probe.end().catch(() => undefined);
     await monitor.end();
   }
 
-  const failed = results.filter((r) => !r.ok);
-  console.log(`\n${results.length - failed.length}/${results.length} passed`);
+  const known = results.filter((r) => r.known);
+  const counted = results.filter((r) => !r.known);
+  const failed = counted.filter((r) => !r.ok);
+  console.log(`\n${counted.length - failed.length}/${counted.length} passed`);
+  if (known.length > 0) {
+    console.log(
+      `KNOWN_BUG: ${known.length} scenario(s) reproduced a real defect (not counted above; ${STRICT ? "--strict is on" : "re-run with --strict to fail on them"}):`,
+    );
+    for (const k of known) console.log(`  - ${k.name}`);
+  }
   process.exit(failed.length ? 1 : 0);
 }
 
