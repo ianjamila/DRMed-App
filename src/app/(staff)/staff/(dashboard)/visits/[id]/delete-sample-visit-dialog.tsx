@@ -1,20 +1,26 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import { deleteSampleVisitAction } from "./actions";
+import { deleteSampleVisitAction, deleteSampleVisitFromQueueAction } from "./actions";
 
 // Admin-only, shown when released results are the ONLY thing stopping a
 // visit delete. Same inline-expand pattern as QueueDeleteDialog, plus a
 // required "this was a sample visit" tick — un-releasing takes results away
 // from a patient, so it must never be a one-click slip on a real visit.
+//
+// `source="queue"` is the Queue's row action on a sample visit's card (same
+// confirmation, the queue server action, which also re-proves is_sample); the
+// Queue does not know the released count, so its wording says "any".
 export function DeleteSampleVisitDialog({
   visitId,
   visitNumber,
   releasedCount,
+  source = "visit_page",
 }: {
   visitId: string;
   visitNumber: string;
-  releasedCount: number;
+  releasedCount?: number;
+  source?: "visit_page" | "queue";
 }) {
   const [open, setOpen] = useState(false);
   const [reason, setReason] = useState("");
@@ -40,7 +46,10 @@ export function DeleteSampleVisitDialog({
     }
     startTransition(async () => {
       setErr(null);
-      const result = await deleteSampleVisitAction(visitId, reason.trim());
+      const result =
+        source === "queue"
+          ? await deleteSampleVisitFromQueueAction(visitId, reason.trim())
+          : await deleteSampleVisitAction(visitId, reason.trim());
       if (!result.ok) {
         startTransition(() => {
           setErr(result.error);
@@ -59,23 +68,29 @@ export function DeleteSampleVisitDialog({
           onClick={() => setOpen(true)}
           className="font-semibold text-red-700 hover:underline"
         >
-          Delete sample visit
+          Delete sample visit{source === "queue" ? "…" : ""}
         </button>
         <span className="text-[color:var(--color-brand-text-soft)]">
-          Has released results — only for a visit that was never real.
+          {source === "queue"
+            ? "Sample visits only — un-releases any results."
+            : "Has released results — only for a visit that was never real."}
         </span>
       </span>
     );
   }
 
-  const results = `${releasedCount} released result${releasedCount === 1 ? "" : "s"}`;
+  const results =
+    releasedCount === undefined
+      ? "released results (if any)"
+      : `${releasedCount} released result${releasedCount === 1 ? "" : "s"}`;
   return (
     <div className="w-72 space-y-2 rounded-md border border-[color:var(--color-brand-bg-mid)] bg-[color:var(--color-brand-bg)] p-2 text-left text-xs">
       <p className="text-[color:var(--color-brand-text-mid)]">
         Delete visit #{visitNumber} as a sample visit. This first unreleases
         its {results} — the patient can no longer open them, and each one is
-        listed in Undone Releases — then deletes the visit. The visit can be
-        restored later; the results stay unreleased. Reason is audit-logged.
+        listed in Undone Releases — then deletes the whole visit. The patient is
+        not contacted. The visit can be restored later; the results stay
+        unreleased. Reason is audit-logged.
       </p>
       <textarea
         rows={2}

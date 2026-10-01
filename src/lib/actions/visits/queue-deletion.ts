@@ -51,6 +51,9 @@ async function requireQueueDeleteStaff() {
 export async function deleteVisitAction(
   visitId: string,
   reason: string,
+  // Where a sample-visit delete came from (audit marker only; anything else
+  // is ignored, so a forged value cannot write arbitrary metadata).
+  source?: string,
 ): Promise<QueueDeletionResult> {
   const { session, error: roleError } = await requireQueueDeleteStaff();
   if (!session) return { ok: false, error: roleError };
@@ -89,6 +92,7 @@ export async function deleteVisitAction(
     resource_id: visitId,
     metadata: {
       reason: parsed.reason,
+      ...(source === "queue" || source === "queue_bulk" ? { source } : {}),
       visit_number: visit.visit_number,
       total_php: Number(visit.total_php),
       active_test_count: (visit.test_requests ?? []).filter(
