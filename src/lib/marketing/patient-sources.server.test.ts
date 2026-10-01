@@ -146,6 +146,20 @@ describe("loadPatientSourcesTrend", () => {
   it("keeps the bars when only ad spend fails", async () => {
     const { supabase } = both({ code: "XX000" });
     const res = await loadPatientSourcesTrend(supabase, "2026-10-01");
+    expect(res.ok).toBe(true);
+    expect(res.ok && res.data.newByDay).toEqual(nbd);
     expect(res.ok && res.data.spend.ok).toBe(false);
+  });
+
+  it("returns the report failure as-is (no partial card)", async () => {
+    const supabase = {
+      rpc(name: string) {
+        if (name === "patient_sources_report") return Promise.resolve({ data: null, error: { code: "42501" } });
+        const b = { order() { return b; }, range() { return Promise.resolve({ data: [], error: null }); } };
+        return b;
+      },
+    };
+    const res = await loadPatientSourcesTrend(supabase as never, "2026-10-01");
+    expect(res).toMatchObject({ ok: false, kind: "forbidden" });
   });
 });

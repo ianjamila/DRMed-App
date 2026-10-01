@@ -18,7 +18,7 @@ describe("reportCsvResponse asOf", () => {
       asOf: "Numbers as of Oct 1, 2026, 9:14 AM",
     });
     const lines = (await res.text()).trim().split(/\r?\n/);
-    expect(lines.at(-1)).toContain("Numbers as of Oct 1, 2026, 9:14 AM");
+    expect(lines.at(-1)).toBe('"Numbers as of Oct 1, 2026, 9:14 AM"'); // quoted: the stamp holds commas
     expect(lines.at(-2)).toContain("TRUNCATED");
     expect(auditMock).toHaveBeenCalledWith(expect.objectContaining({ metadata: expect.objectContaining({ rows_exported: 2 }) }));
   });
