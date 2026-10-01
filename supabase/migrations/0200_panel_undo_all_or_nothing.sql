@@ -39,10 +39,18 @@
 -- conflicts with) — so a panel Undo racing a release on the same visit queues
 -- behind it, removing the row-order deadlock with 0198. NO KEY UPDATE keeps
 -- FK child inserts (a new result link) unblocked. The UPDATE's own predicates,
--- re-evaluated after the locks, still decide all-or-nothing. One cycle
--- remains by design: a queued EXCLUSIVE patient lifecycle lock (0184, patient
--- delete/restore) can still end one side as 40P01, which callers retry once
--- (withLifecycleRetry) — the class 0184 accepts.
+-- re-evaluated after the locks, still decide all-or-nothing. Two cycles
+-- remain by design, each ending ONE side as 40P01 with nothing half-done,
+-- and restorePanelMembers / reclaimPanelMembers retry it once
+-- (withLifecycleRetry):
+--   * a queued EXCLUSIVE patient lifecycle lock (0184, patient
+--     delete/restore) — the class 0184 accepts;
+--   * a manual queue Restore on the same visit: its UPDATE locks the line
+--     first and 0183's waived-visit guard then takes the visit FOR UPDATE,
+--     the reverse of restore_panel_members' visit-then-lines (which matches
+--     0198). The same reverse order already meets 0198's release; matching
+--     0198 keeps the release path cycle-free. Proven (S7 / F2) by
+--     scripts/panel-undo-concurrency-proof.ts.
 -- =============================================================================
 
 create or replace function public.reclaim_panel_members(
