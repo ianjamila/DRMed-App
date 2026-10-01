@@ -75,10 +75,11 @@ interface Outcome {
 
 // The lab queue's selection bar: Claim · Unclaim (optional reason) · Release
 // (medium picker; a panel sends its ready members) · Delete
-// (required reason, red confirm — QueueDeleteDialog's wording). Claim, Unclaim,
-// Release and Delete each leave a 10-minute ↶ Undo on their outcome (the sample
-// visit delete does not). Each button acts on the selected rows that carry its kind; the server re-proves every
-// row and reports the ones it skipped by name.
+// (required reason, red confirm — QueueDeleteDialog's wording). Claim,
+// Unclaim, Release and Delete each leave a 10-minute ↶ Undo on their outcome
+// (the sample visit delete does not). Each button acts on the selected rows
+// that carry its kind; the server re-proves every row and reports the ones it
+// skipped by name.
 export function QueueBulkBar({ rowsByKey }: Props) {
   const { keysByKind, clearKeys, count, selectionEdits } = useRowSelection();
   const router = useRouter();

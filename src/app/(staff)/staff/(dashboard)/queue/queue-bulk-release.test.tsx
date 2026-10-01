@@ -20,6 +20,7 @@ vi.mock("@/lib/actions/visits/queue-deletion", () => ({}));
 
 import { releaseTestsAction, undoBulkQueueAction } from "./actions";
 import { undoReleaseBatchAction } from "../visits/[id]/actions";
+import { UNDO_ALREADY, UNDO_EXPIRED } from "@/lib/ui/bulk-undo";
 import { QueueBulkBar } from "./queue-bulk-bar";
 import { SelectionProvider } from "@/components/staff/row-selection/selection-context";
 import { RowSelectCheckbox } from "@/components/staff/row-selection/row-select-checkbox";
@@ -263,5 +264,44 @@ describe("QueueBulkBar release Undo", () => {
     await user.click(await screen.findByRole("button", { name: "↶ Undo" }));
     await screen.findByText(/back to Ready for release/);
     expect(vi.mocked(undoBulkQueueAction)).not.toHaveBeenCalled();
+  });
+
+  it("a batch id with nothing released and nothing alongside it offers no Undo", async () => {
+    vi.mocked(releaseTestsAction).mockResolvedValue({ ...OK, changedIds: [], batchId: "b-1" });
+    await releaseCbc();
+    await screen.findByRole("status");
+    expect(screen.queryByRole("button", { name: "↶ Undo" })).toBeNull();
+  });
+
+  it("offers Undo when only report-mates were released alongside the selection", async () => {
+    vi.mocked(releaseTestsAction).mockResolvedValue({
+      ...OK,
+      changedIds: [],
+      alsoReleasedIds: ["x1"],
+      batchId: "b-1",
+    });
+    await releaseCbc();
+    expect(await screen.findByRole("button", { name: "↶ Undo" })).toBeTruthy();
+  });
+
+  it.each([
+    ["UNDO_EXPIRED", UNDO_EXPIRED],
+    ["UNDO_ALREADY", UNDO_ALREADY],
+  ])("removes ↶ Undo once the server answers %s", async (_name, error) => {
+    vi.mocked(releaseTestsAction).mockResolvedValue({ ...OK, batchId: "b-1" });
+    vi.mocked(undoReleaseBatchAction).mockResolvedValue({ ok: false, error });
+    const user = await releaseCbc();
+    await user.click(await screen.findByRole("button", { name: "↶ Undo" }));
+    await screen.findByText(error, { exact: false });
+    expect(screen.queryByRole("button", { name: "↶ Undo" })).toBeNull();
+  });
+
+  it("a new tick drops the release outcome and its Undo", async () => {
+    vi.mocked(releaseTestsAction).mockResolvedValue({ ...OK, batchId: "b-1" });
+    const user = await releaseCbc();
+    await screen.findByRole("button", { name: "↶ Undo" });
+    await user.click(screen.getByLabelText("Select Chemistry"));
+    expect(screen.queryByRole("button", { name: "↶ Undo" })).toBeNull();
+    expect(screen.queryByText(/Released 1/)).toBeNull();
   });
 });
