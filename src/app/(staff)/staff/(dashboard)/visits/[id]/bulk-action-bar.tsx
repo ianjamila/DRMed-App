@@ -206,7 +206,6 @@ export function BulkActionBar({
         else alert(result.error);
         return;
       }
-      clearIds(sentIds);
       // #261's outcome text (count, the tests a combined report pulled in,
       // each skipped reason, warnings) in this bar's own panel, with ↶ Undo.
       // The bar is not remounted by the refresh, so the panel survives it.
@@ -222,6 +221,7 @@ export function BulkActionBar({
       const notified = (result.notifiedCount ?? 0) > 0;
       if (notified) lines.push(ALREADY_NOTIFIED);
       startRelease(() => {
+        clearIds(sentIds);
         setOutcome({
           message: lines.filter(Boolean).join("\n"),
           undo: result.batchId ? { batchId: result.batchId, doneAt: Date.now(), notified } : null,
@@ -255,8 +255,8 @@ export function BulkActionBar({
       }
       startUnrelease(() => {
         setReason("");
+        clearIds(sentIds);
       });
-      clearIds(sentIds);
     });
   }
 

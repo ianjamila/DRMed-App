@@ -60,6 +60,8 @@ const ALLOWED: Record<string, string> = {};
  */
 const STATE_HOOK_METHODS: Record<string, readonly string[]> = {
   useReleaseOutcome: ["show"],
+  // Both row-selection contexts (visits/[id] and components/staff/row-selection).
+  useRowSelection: ["clear", "clearIds", "clearKeys", "toggle"],
 };
 
 /** `/^set[A-Z]/` also matches these browser globals; they are not state. */
