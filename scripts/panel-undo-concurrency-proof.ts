@@ -422,6 +422,7 @@ async function settle<T>(p: Promise<QueryResult>, pick: (r: QueryResult) => T): 
 }
 
 // reclaimPanelMembers (lib/actions/queue/panel-writes.ts) -> rpc("reclaim_panel_members")
+// concurrency-proof: reclaim_panel_members
 function reclaim(
   a: Actor,
   ids: readonly string[],
@@ -439,6 +440,7 @@ function reclaim(
 }
 
 // restore_panel_members (same file), through the service-role admin client.
+// concurrency-proof: restore_panel_members
 function restore(a: Actor, visit: string, ids: readonly string[], deletedAt: readonly string[]): Promise<N> {
   return settle(
     a.c.query(`select ${fnSchema}.restore_panel_members($1::uuid, $2::uuid[], $3::timestamptz[]) as n`, [

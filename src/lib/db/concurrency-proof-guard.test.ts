@@ -69,6 +69,8 @@ const REGISTRY: Record<string, RegistryEntry> = {
   ad_spend_import: { proof: ["scripts/ad-spend-concurrency-proof.ts"] },
   claim_panel_members: { proof: ["scripts/panel-claim-concurrency-proof.ts"] },
   unclaim_panel_members: { proof: ["scripts/panel-claim-concurrency-proof.ts"] },
+  reclaim_panel_members: { proof: ["scripts/panel-undo-concurrency-proof.ts"] },
+  restore_panel_members: { proof: ["scripts/panel-undo-concurrency-proof.ts"] },
   release_visit_results: { proof: ["scripts/report-release-concurrency-proof.ts"] },
   undo_visit_release: { proof: ["scripts/report-release-concurrency-proof.ts"] },
   release_report_locks: { proof: ["scripts/report-release-concurrency-proof.ts"] },
@@ -182,7 +184,7 @@ describe("concurrency-proof guard (real migrations)", () => {
     // checkGuard already asserts existence and the per-function annotation;
     // this pins that REGISTRY is non-trivial.
     const proofs = Object.values(REGISTRY).filter((e) => "proof" in e);
-    expect(proofs.length).toBe(23);
+    expect(proofs.length).toBe(25);
   });
 });
 

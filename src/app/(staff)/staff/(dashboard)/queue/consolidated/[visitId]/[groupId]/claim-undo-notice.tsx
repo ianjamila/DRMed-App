@@ -29,18 +29,22 @@ export function ClaimUndoNotice({
     if (pending) return;
     start(async () => {
       const r = await undoBulkQueueAction({ batchId });
-      if (!r.ok) {
-        setMessage(r.error);
-        if (r.error === UNDO_EXPIRED || r.error === UNDO_ALREADY) setUndoable(false);
-        return;
-      }
-      setUndoable(false);
-      if (r.restoredIds.length > 0) {
-        setMessage(`Undone — ${reportName} is back in the queue, unclaimed.`);
-        router.refresh();
-      } else {
-        setMessage(`Not undone — ${r.notRestored[0]?.reason ?? "it changed since"}.`);
-      }
+      // Post-await updates go back inside the transition (React 19 keeps only
+      // pre-await updates in it) — see src/lib/react/transition-state.test.ts.
+      start(() => {
+        if (!r.ok) {
+          setMessage(r.error);
+          if (r.error === UNDO_EXPIRED || r.error === UNDO_ALREADY) setUndoable(false);
+          return;
+        }
+        setUndoable(false);
+        if (r.restoredIds.length > 0) {
+          setMessage(`Undone — ${reportName} is back in the queue, unclaimed.`);
+          router.refresh();
+        } else {
+          setMessage(`Not undone — ${r.notRestored[0]?.reason ?? "it changed since"}.`);
+        }
+      });
     });
   }
 
