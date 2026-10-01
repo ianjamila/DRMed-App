@@ -21,8 +21,9 @@ import {
 } from "@/lib/queue/bulk-queue";
 import { UNDO_ALREADY, UNDO_EXPIRED, UNDO_WINDOW_MS, undoOutcomeMessage } from "@/lib/ui/bulk-undo";
 import { RELEASE_MEDIUM_OPTIONS, type ReleaseMedium } from "@/lib/visits/release-media";
+import { ALREADY_NOTIFIED, NOTICE_RETRYING, releaseUndoMessage } from "@/lib/visits/release-messages";
 import { releaseTestsAction, undoBulkQueueAction } from "./actions";
-import { deleteSampleVisitsFromQueueAction } from "../visits/[id]/actions";
+import { deleteSampleVisitsFromQueueAction, undoReleaseBatchAction } from "../visits/[id]/actions";
 import {
   claimQueueSelectionAction,
   deleteQueueSelectionAction,
@@ -51,12 +52,17 @@ function splitKeys(keys: readonly string[]) {
 }
 
 interface OutcomeUndo {
+  /** "queue": Claim / Unclaim / Delete (undoBulkQueueAction). "release": undoReleaseBatchAction. */
+  kind: "queue" | "release";
   batchId: string;
   doneAt: number;
-  /** Every selection key (test id or panel key) this action sent, mapped to
-   * that row's label — snapshotted here since the keys may not resolve to a
-   * row any more once the page refreshes. */
+  /** Selection key (queue) or TEST id (release, a panel's members included),
+   * mapped to that row's label — snapshotted here since the keys may not
+   * resolve to a row any more once the page refreshes. */
   labelOf: Record<string, string>;
+  /** release only: the patient's notice went out (notifiedCount > 0), so the
+   * Undo message repeats the "already notified" warning. */
+  notified?: boolean;
 }
 
 interface Outcome {
@@ -69,8 +75,9 @@ interface Outcome {
 
 // The lab queue's selection bar: Claim · Unclaim (optional reason) · Release
 // (medium picker; a panel sends its ready members) · Delete
-// (required reason, red confirm — QueueDeleteDialog's wording). Each button
-// acts on the selected rows that carry its kind; the server re-proves every
+// (required reason, red confirm — QueueDeleteDialog's wording). Claim, Unclaim,
+// Release and Delete each leave a 10-minute ↶ Undo on their outcome (the sample
+// visit delete does not). Each button acts on the selected rows that carry its kind; the server re-proves every
 // row and reports the ones it skipped by name.
 export function QueueBulkBar({ rowsByKey }: Props) {
   const { keysByKind, clearKeys, count, selectionEdits } = useRowSelection();
@@ -145,14 +152,15 @@ export function QueueBulkBar({ rowsByKey }: Props) {
       else alert(result.error);
       return;
     }
-    // Claim, Unclaim and Delete all get Undo, for ANY selection — single
-    // tests, chemistry panels or a mix (one batch id covers the whole call) —
-    // but only when the server gave us that batch id and at least one row
+    // Claim, Unclaim and Delete get Undo here (Release builds its own), for ANY
+    // selection — single tests, chemistry panels or a mix (one batch id covers
+    // the whole call) — but only when the server gave us that batch id and at least one row
     // actually changed. A panel is undone whole or not at all (see
     // undoBulkQueueAction in actions.ts).
     const undo: OutcomeUndo | null =
       result.batchId && result.changedIds.length > 0
         ? {
+            kind: "queue",
             batchId: result.batchId,
             doneAt,
             labelOf: Object.fromEntries(keys.map((key) => [key, rowsByKey[key]?.label ?? "A test"])),
@@ -177,20 +185,43 @@ export function QueueBulkBar({ rowsByKey }: Props) {
   function runUndo(u: OutcomeUndo) {
     if (undoing) return;
     const previousMessage = outcome?.message ?? "";
+    // Keep the snapshot so the operator can retry inside the window — unless
+    // the server says the window/batch itself is gone, in which case retrying
+    // can only repeat the same refusal. (Re-enters the transition: it runs
+    // after an await.)
+    function refuseUndo(error: string) {
+      const gone = error === UNDO_EXPIRED || error === UNDO_ALREADY;
+      startUndo(() => {
+        setOutcome({
+          message: `${error}\n\n${previousMessage}`,
+          edits: selectionEdits,
+          undo: gone ? null : u,
+        });
+      });
+    }
     startUndo(async () => {
+      if (u.kind === "release") {
+        const r = await undoReleaseBatchAction({ batchId: u.batchId });
+        if (!r.ok) {
+          refuseUndo(r.error);
+          return;
+        }
+        // restoredIds / notRestored ids are TEST ids; a panel's members each
+        // resolve to the card's label (two members = two lines, honestly).
+        const message = releaseUndoMessage({
+          restored: r.restoredIds.length,
+          notRestored: r.notRestored.map((n) => ({ label: u.labelOf[n.id] ?? "A test", reason: n.reason })),
+          notified: u.notified === true,
+        });
+        startUndo(() => {
+          setOutcome({ message, edits: selectionEdits, undo: null });
+        });
+        router.refresh();
+        return;
+      }
       const r = await undoBulkQueueAction({ batchId: u.batchId });
       if (!r.ok) {
-        // Keep the snapshot so the operator can retry inside the window —
-        // unless the server says the window/batch itself is gone, in which
-        // case retrying can only repeat the same refusal.
-        const gone = r.error === UNDO_EXPIRED || r.error === UNDO_ALREADY;
-        startUndo(() => {
-          setOutcome({
-            message: `${r.error}\n\n${previousMessage}`,
-            edits: selectionEdits,
-            undo: gone ? null : u,
-          });
-        });
+        refuseUndo(r.error);
         return;
       }
       // The count is the server's own: the number of TEST rows put back. Not
@@ -291,15 +322,26 @@ export function QueueBulkBar({ rowsByKey }: Props) {
         alert(result.error);
         return;
       }
-      const msg = bulkReleaseMessage(ids.length, result, labelsByTestId(rowsByKey));
-      // Release keeps #261's outcome text; it carries no Undo here (the
-      // 10-minute bulk Undo covers Claim / Unclaim / Delete only).
+      const labels = labelsByTestId(rowsByKey);
+      const lines = [bulkReleaseMessage(ids.length, result, labels), ...result.warnings];
+      // Undo does not un-notify: say so only when a notice actually went out.
+      const notified = result.notifiedCount > 0;
+      if (notified) lines.push(ALREADY_NOTIFIED);
+      if (result.noticeRetrying) lines.push(NOTICE_RETRYING);
+      // Offered only when the server minted a batch id (something was released).
+      // Keyed by TEST id — a panel's members each map to the card's label.
+      const undo: OutcomeUndo | null =
+        result.batchId && result.changedIds.length + result.alsoReleasedIds.length > 0
+          ? {
+              kind: "release",
+              batchId: result.batchId,
+              doneAt: Date.now(),
+              labelOf: Object.fromEntries(ids.map((id) => [id, labels[id]?.label ?? "A test"])),
+              notified,
+            }
+          : null;
       start(() => {
-        setOutcome({
-          message: result.warnings.length ? `${msg}\n${result.warnings.join("\n")}` : msg,
-          edits: selectionEdits,
-          undo: null,
-        });
+        setOutcome({ message: lines.join("\n"), edits: selectionEdits, undo });
         clearKeys(keys);
         closePanel();
       });
