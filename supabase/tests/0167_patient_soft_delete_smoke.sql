@@ -116,6 +116,15 @@ exception when others then
   return s;
 end $f$;
 
+-- 0196: merge markers are written through the private merge writer, both
+-- columns together (0197 refuses anything else).
+create function pg_temp.mark_merged(src uuid, keep uuid) returns void language plpgsql as $f$
+begin
+  set local role patient_merge_writer;
+  update public.patients set merged_into_id = keep, merged_at = now() where id = src;
+  reset role;
+end $f$;
+
 -- 0119 strips PUBLIC EXECUTE from every function postgres creates, temp ones
 -- included, so without this a helper called after `set local role …`
 -- fails with "permission denied for function". Re-run after adding helpers.
@@ -808,7 +817,7 @@ begin
   reset role;
   q := pg_temp.mk_patient('S5B');
   m := pg_temp.mk_patient('S5C');
-  update public.patients set merged_into_id = q, merged_at = now() where id = m;
+  perform pg_temp.mark_merged(m, q);
   set local role service_role;
   perform pg_temp.expect('s5.15 merged row cannot be deleted',
     pg_temp.state_of(format($q$select public.delete_patient(%L, 'duplicate', '', %L, %L)$q$, m, k_admin, ctx)), 'P0058');
@@ -958,7 +967,7 @@ begin
   -- part 6, added after this section was first drafted) — give it a
   -- released line so delete_patient() below succeeds as intended.
   perform pg_temp.mk_line(v, 'released', 0, null);
-  update public.patients set merged_into_id = keep, merged_at = now() where id = merged;
+  perform pg_temp.mark_merged(merged, keep);
 
   -- The portal client is an anon JWT carrying patient_id (createPatientClient).
   set local role anon;
@@ -1028,7 +1037,7 @@ declare
 begin
   -- gone and live share an email so they would pair in the dedup view.
   update public.patients set email = 'pds7a@example.test' where id = gone;
-  update public.patients set merged_into_id = keep, merged_at = now() where id = merged;
+  perform pg_temp.mark_merged(merged, keep);
   set local role service_role;
   perform public.delete_patient(gone, 'duplicate', '', k_admin, '{}'::jsonb);
   reset role;
@@ -1121,7 +1130,7 @@ begin
   -- Merged: never matched either.
   keep := pg_temp.mk_patient('S8K');
   merged_src := r.id;
-  update public.patients set merged_into_id = keep, merged_at = now() where id = merged_src;
+  perform pg_temp.mark_merged(merged_src, keep);
   set local role service_role;
   select * into r from public.resolve_patient_guarded('pds8@example.test', 'Olve', '1991-02-06', fields);
   reset role;

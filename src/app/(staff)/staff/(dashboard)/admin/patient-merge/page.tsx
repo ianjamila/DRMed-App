@@ -24,10 +24,10 @@ export default async function PatientMergeAdminPage() {
           </Link>
         </div>
         <p className="mt-1 text-sm text-[color:var(--color-brand-text-soft)]">
-          When a patient ends up with two rows (typo on email, name
-          variation, etc.), reassign their visits and appointments to a
-          single canonical record. The duplicate row is tombstoned, never
-          hard-deleted, so the audit trail and old DRM-ID stay resolvable.
+          When a patient ends up with two records (a typo in the email, a name variation…), move their visits,
+          appointments, results, consent records and lab-request uploads onto one record. The other record stays on
+          file pointing at the one you keep, so its old DRM-ID and the audit trail still resolve. Undo is available
+          for 30 days.
         </p>
       </header>
 

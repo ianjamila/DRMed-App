@@ -3359,35 +3359,50 @@ export type Database = {
       }
       patient_merges: {
         Row: {
+          context: Json | null
+          fill_snapshot: Json | null
           filled_from_source: string[]
           id: string
           keep_id: string
           merged_at: string
           merged_by: string | null
           moved: NonNullable<Json>
+          rechained: string[]
+          snapshot_version: number | null
           source_id: string
+          undo_report: Json | null
           undone_at: string | null
           undone_by: string | null
         }
         Insert: {
+          context?: Json | null
+          fill_snapshot?: Json | null
           filled_from_source?: string[]
           id?: string
           keep_id: string
           merged_at?: string
           merged_by?: string | null
           moved?: NonNullable<Json>
+          rechained?: string[]
+          snapshot_version?: number | null
           source_id: string
+          undo_report?: Json | null
           undone_at?: string | null
           undone_by?: string | null
         }
         Update: {
+          context?: Json | null
+          fill_snapshot?: Json | null
           filled_from_source?: string[]
           id?: string
           keep_id?: string
           merged_at?: string
           merged_by?: string | null
           moved?: NonNullable<Json>
+          rechained?: string[]
+          snapshot_version?: number | null
           source_id?: string
+          undo_report?: Json | null
           undone_at?: string | null
           undone_by?: string | null
         }
@@ -7693,6 +7708,15 @@ export type Database = {
         Args: { p_for_delete?: boolean; p_id: string; p_kind: string }
         Returns: string[]
       }
+      merge_patients_guarded: {
+        Args: {
+          p_actor: string
+          p_context?: Json
+          p_keep: string
+          p_source: string
+        }
+        Returns: Json
+      }
       next_pf_disbursement_batch_number: {
         Args: { p_year: number }
         Returns: number
@@ -7714,6 +7738,10 @@ export type Database = {
         }[]
       }
       patient_delete_blockers: { Args: { p_patient_id: string }; Returns: Json }
+      patient_has_live_v2_merge: {
+        Args: { p_patient_id: string }
+        Returns: boolean
+      }
       patient_kept_counts: {
         Args: { p_patient_ids: string[] }
         Returns: {
@@ -7834,6 +7862,10 @@ export type Database = {
       }
       recompute_hmo_item_resolution_amounts: {
         Args: { p_item_id: string }
+        Returns: undefined
+      }
+      recompute_patient_consent_cache: {
+        Args: { p_patient_id: string }
         Returns: undefined
       }
       record_hmo_settlement: {
@@ -8212,6 +8244,10 @@ export type Database = {
       unclaim_panel_members: {
         Args: { p_holders: string[]; p_test_request_ids: string[] }
         Returns: number
+      }
+      undo_patient_merge_guarded: {
+        Args: { p_actor: string; p_context?: Json; p_merge_id: string }
+        Returns: Json
       }
       undo_visit_release: {
         Args: {

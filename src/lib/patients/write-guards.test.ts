@@ -57,6 +57,11 @@ const KNOWN_WRITER_RPCS = new Set<string>([
   // circular. See their EXEMPT entries below.
   "delete_patient",
   "restore_patient",
+  // 0196: the merge / undo-merge functions ARE the lifecycle change (the
+  // merge marker); each refuses an inactive record itself (P0058/P0079)
+  // under exclusive lifecycle locks. See their EXEMPT entries below.
+  "merge_patients_guarded",
+  "undo_patient_merge_guarded",
   "claim_panel_members", // panel-writes.ts claimPanelMembers — all-or-nothing panel claim (0191).
   "unclaim_panel_members", // panel-writes.ts unclaimPanelMembers — all-or-nothing panel hand-back (0191).
   "create_visit_encounter", // visits/new/actions.ts createVisitAction — visit, lines, PIN in one transaction (0184).
@@ -136,11 +141,9 @@ const EXEMPT: Record<string, string> = {
   [`src/app/api/cron/data-retention/route.ts:GET`]:
     "Deletes expired visit_pins past the retention cutoff regardless of patient lifecycle — a retention policy, not clinical/financial work.",
   [`src/app/(staff)/staff/(dashboard)/admin/patient-merge/actions.ts:mergePatientsAction`]:
-    "Task 15 merge — inline-checks deleted_at/merged_into_id on both rows before writing; the merge/undo-merge lifecycle path is reviewed separately from Task 22/23's active-patient rule.",
+    "merge_patients_guarded (0196) IS the merge — it locks both records exclusively and refuses a deleted, merged or missing one (P0058) inside the same transaction, so an app-level active-patient guard here would be circular and racy.",
   [`src/app/(staff)/staff/(dashboard)/admin/patient-merge/actions.ts:undoMergeAction`]:
-    "Task 15 undo-merge — the paired lifecycle RPC-equivalent caller to mergePatientsAction above.",
-  [`src/app/(staff)/staff/(dashboard)/admin/patient-merge/actions.ts:revertFillFields`]:
-    "0184 review follow-up — only called by mergePatientsAction's own tombstone-failure branch, to undo a fill that already landed while the merge itself is being abandoned; same reviewed-separately reasoning as mergePatientsAction/undoMergeAction above, not a live merge write.",
+    "undo_patient_merge_guarded (0196) IS the undo — it refuses (P0079) a kept record that is deleted or merged elsewhere, under the same locks; the source is inactive by definition until the undo clears its marker.",
   [`src/lib/actions/visits/queue-deletion.ts:deleteVisitAction`]:
     "Deletes stay unguarded by design (Task 23) — they remove work, never put it back.",
   [`src/lib/actions/queue/bulk-delete-core.ts:deleteTestRequestsForVisit`]:
