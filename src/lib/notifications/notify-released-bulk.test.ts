@@ -24,6 +24,7 @@ const fx = vi.hoisted(() => ({
   askedForReview: false,
   audits: [] as Record<string, unknown>[],
   recipientOverride: null as unknown,
+  isCalls: [] as Array<[string, string, unknown]>,
 }));
 
 vi.mock("@/lib/supabase/admin", () => ({
@@ -32,7 +33,11 @@ vi.mock("@/lib/supabase/admin", () => ({
       const chain: Record<string, unknown> = {};
       const self = () => chain;
       let eqId: string | null = null;
-      for (const m of ["select", "is"]) chain[m] = self;
+      chain.select = self;
+      chain.is = (col: string, val: unknown) => {
+        fx.isCalls.push([table, col, val]);
+        return chain;
+      };
       chain.eq = (_col: string, val: string) => {
         eqId = val;
         return chain;
@@ -114,6 +119,7 @@ beforeEach(() => {
   fx.askedForReview = false;
   fx.audits = [];
   fx.recipientOverride = null;
+  fx.isCalls = [];
   vi.mocked(sendEmail).mockResolvedValue({ ok: true, id: "em1" });
   vi.mocked(sendSms).mockResolvedValue({ ok: true, id: "sm1" });
 });
@@ -135,7 +141,12 @@ describe("notifyResultsReleasedBulk — skips", () => {
     expect(fx.audits).toHaveLength(0);
   });
 
-  it("skips when the visit is not found (or deleted)", async () => {
+  it("only looks up a live visit: filters out a deleted one", async () => {
+    await notifyResultsReleasedBulk(base);
+    expect(fx.isCalls).toContainEqual(["visits", "deleted_at", null]);
+  });
+
+  it("skips when the visit is not found", async () => {
     fx.visits = {};
     expect(await notifyResultsReleasedBulk(base)).toEqual({ status: "skipped", channels: [], reason: "visit not found" });
     expectNothingSent();
@@ -286,6 +297,44 @@ describe("notifyResultsReleasedBulk — sent / failed", () => {
   it("uses singular wording for a one-test batch", async () => {
     await notifyResultsReleasedBulk({ ...base, testRequestIds: ["tr1"], testNames: ["CBC"] });
     expect(sendEmail).toHaveBeenCalledWith(expect.objectContaining({ subject: "1 lab result ready — DRMed" }));
+    expect(vi.mocked(sendSms).mock.calls[0][0].message).toContain("1 result from your DRMed visit is ready");
+  });
+
+  it("lists at most 6 names and summarises the rest as \"+1 more\" in text and html", async () => {
+    const names = ["T1", "T2", "T3", "T4", "T5", "T6", "T7"];
+    await notifyResultsReleasedBulk({ ...base, testRequestIds: names.map((n) => `id-${n}`), testNames: names });
+    const mail = vi.mocked(sendEmail).mock.calls[0][0];
+    expect(mail.text).toContain("  - T6");
+    expect(mail.text).not.toContain("T7");
+    expect(mail.text).toContain("  + 1 more");
+    expect(mail.html).toContain("+1 more");
+    expect(mail.html).not.toContain("T7");
+    expect(mail.subject).toBe("7 lab results ready — DRMed");
+  });
+
+  it("does not show the review CTA when the patient was already asked", async () => {
+    fx.askedForReview = true;
+    await notifyResultsReleasedBulk(base);
+    expect(noteAudits()[0].metadata).toMatchObject({ review_cta: { shown: false } });
+    expect(vi.mocked(sendEmail).mock.calls[0][0].text).not.toContain("Google review");
+  });
+
+  it("omits the review CTA when the visit snapshot has no email, even if the fresh recipient record does", async () => {
+    // hasEmail reads the joined snapshot; the address actually used is re-read.
+    fx.visits = { v1: visitRow({ patients: { id: "pt1", drm_id: "DRM-0001", first_name: "Ana", phone: patientRow.phone, email: null } }) };
+    await notifyResultsReleasedBulk(base);
+    const mail = vi.mocked(sendEmail).mock.calls[0][0];
+    expect(mail.text).not.toContain("Google review");
+    expect(mail.html).not.toContain("review");
+  });
+
+  it("does not show the review CTA when the patient has no email (SMS still sends)", async () => {
+    fx.patientRow = { ...patientRow, email: null };
+    // Even if the audit says they were never asked, no email means no CTA.
+    fx.askedForReview = false;
+    expect(await notifyResultsReleasedBulk(base)).toEqual({ status: "sent", channels: ["sms"], reason: null });
+    expect(sendEmail).not.toHaveBeenCalled();
+    expect(noteAudits()[0].metadata).toMatchObject({ review_cta: { shown: false } });
   });
 
   it("is sent with email only when SMS is skipped", async () => {
@@ -304,7 +353,10 @@ describe("notifyResultsReleasedBulk — sent / failed", () => {
         metadata: { visit_id: "v1", test_request_ids: ["tr1", "tr2"] },
       }),
     );
-    expect(noteAudits()[0].metadata).toMatchObject({ email: { ok: false, error: "resend 500", to: "ana@example.com" } });
+    expect(noteAudits()[0].metadata).toMatchObject({
+      email: { ok: false, error: "resend 500", to: "ana@example.com" },
+      review_cta: { shown: false },
+    });
   });
 
   it("returns failed when SMS errors and email is absent, reporting the sms scope", async () => {
@@ -313,6 +365,7 @@ describe("notifyResultsReleasedBulk — sent / failed", () => {
     expect(await notifyResultsReleasedBulk(base)).toEqual({ status: "failed", channels: [], reason: "sending failed" });
     expect(sendEmail).not.toHaveBeenCalled();
     expect(reportError).toHaveBeenCalledWith(expect.objectContaining({ scope: "notify/result-released-bulk:sms" }));
+    expect(noteAudits()[0].metadata).toMatchObject({ review_cta: { shown: false } });
   });
 
   it("is still sent when one channel errors but the other delivers", async () => {

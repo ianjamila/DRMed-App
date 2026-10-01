@@ -22,6 +22,7 @@ const fx = vi.hoisted(() => ({
   askedForReview: false,
   audits: [] as Record<string, unknown>[],
   recipientOverride: null as unknown,
+  isCalls: [] as Array<[string, string, unknown]>,
 }));
 
 vi.mock("@/lib/supabase/admin", () => ({
@@ -29,7 +30,11 @@ vi.mock("@/lib/supabase/admin", () => ({
     from: (table: string) => {
       const chain: Record<string, unknown> = {};
       const self = () => chain;
-      for (const m of ["select", "eq", "is"]) chain[m] = self;
+      for (const m of ["select", "eq"]) chain[m] = self;
+      chain.is = (col: string, val: unknown) => {
+        fx.isCalls.push([table, col, val]);
+        return chain;
+      };
       if (table === "test_requests") {
         chain.maybeSingle = async (): Promise<Res> => ({ data: fx.testRow, error: null });
       } else if (table === "patients") {
@@ -111,6 +116,7 @@ beforeEach(() => {
   fx.askedForReview = false;
   fx.audits = [];
   fx.recipientOverride = null;
+  fx.isCalls = [];
   vi.mocked(sendEmail).mockResolvedValue({ ok: true, id: "em1" });
   vi.mocked(sendSms).mockResolvedValue({ ok: true, id: "sm1" });
 });
@@ -121,7 +127,14 @@ function expectNothingSent() {
 }
 
 describe("notifyResultReleased — skips", () => {
-  it("skips when the test request is not found (or deleted)", async () => {
+  it("only looks up live rows: filters out a deleted line and a deleted visit", async () => {
+    await notifyResultReleased(base);
+    const tr = fx.isCalls.filter(([t]) => t === "test_requests");
+    expect(tr).toContainEqual(["test_requests", "deleted_at", null]);
+    expect(tr).toContainEqual(["test_requests", "visits.deleted_at", null]);
+  });
+
+  it("skips when the test request is not found", async () => {
     fx.testRow = null;
     expect(await notifyResultReleased(base)).toEqual({ status: "skipped", channels: [], reason: "test not found" });
     expectNothingSent();
@@ -301,7 +314,10 @@ describe("notifyResultReleased — sent / failed", () => {
         metadata: { test_request_id: "tr1", visit_id: "v1" },
       }),
     );
-    expect(noteAudits()[0].metadata).toMatchObject({ email: { ok: false, error: "resend 500", to: "ana@example.com" } });
+    expect(noteAudits()[0].metadata).toMatchObject({
+      email: { ok: false, error: "resend 500", to: "ana@example.com" },
+      review_cta: { shown: false },
+    });
   });
 
   it("returns failed when SMS errors and email is absent, reporting the sms scope", async () => {
@@ -310,6 +326,31 @@ describe("notifyResultReleased — sent / failed", () => {
     expect(await notifyResultReleased(base)).toEqual({ status: "failed", channels: [], reason: "sending failed" });
     expect(sendEmail).not.toHaveBeenCalled();
     expect(reportError).toHaveBeenCalledWith(expect.objectContaining({ scope: "notify/result-released:sms" }));
+    expect(noteAudits()[0].metadata).toMatchObject({ review_cta: { shown: false } });
+  });
+
+  it("omits the review CTA when the visit snapshot has no email, even if the fresh recipient record does", async () => {
+    // hasEmail reads the joined snapshot; the address actually used is re-read.
+    fx.testRow = testRow({ patients: { id: "pt1", drm_id: "DRM-0001", first_name: "Ana", phone: patientRow.phone, email: null } });
+    await notifyResultReleased(base);
+    const mail = vi.mocked(sendEmail).mock.calls[0][0];
+    expect(mail.text).not.toContain("Google review");
+    expect(mail.html).not.toContain("review");
+  });
+
+  it("does not show the review CTA when the patient has no email (SMS still sends)", async () => {
+    fx.patientRow = { ...patientRow, email: null };
+    expect(await notifyResultReleased(base)).toEqual({ status: "sent", channels: ["sms"], reason: null });
+    expect(noteAudits()[0].metadata).toMatchObject({ review_cta: { shown: false } });
+  });
+
+  it("greets \"there\" when the patient has no first name", async () => {
+    fx.testRow = testRow({ patients: { id: "pt1", drm_id: "DRM-0001", first_name: null, phone: patientRow.phone, email: patientRow.email } });
+    await notifyResultReleased(base);
+    expect(vi.mocked(sendSms).mock.calls[0][0].message).toContain("Hi there,");
+    const mail = vi.mocked(sendEmail).mock.calls[0][0];
+    expect(mail.text).toContain("Hi there,");
+    expect(mail.html).toContain("Hi <b>there</b>");
   });
 
   it("is still sent when one channel errors but the other delivers (error is reported)", async () => {
