@@ -283,6 +283,7 @@ async function main() {
   try {
     await seed(s);
 
+    // concurrency-proof: merge_patients_guarded
     await race("M1a visit insert on the source first → merge waits, then moves it", async (a, b, sv) => {
       const k = await patient(sv, "K");
       const src = await patient(sv, "S");
@@ -457,6 +458,7 @@ async function main() {
       console.log(`  (M7: ${retried}/20 rounds needed the retry)`);
     });
 
+    // concurrency-proof: undo_patient_merge_guarded
     await race("M8 double undo → the second waits, then P0079", (a, b, sv) =>
       m8(a, b, sv, "public.undo_patient_merge_guarded"));
 
