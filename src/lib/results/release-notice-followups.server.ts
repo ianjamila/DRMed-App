@@ -28,6 +28,28 @@ export type StuckNotices =
 
 export const STUCK_NOTICE_LIMIT = 200;
 
+// The ONE definition of "an abandoned notice someone can still act on": the
+// patient's visit and the patient are live. The follow-ups list, the Cron
+// Health abandoned counts and the dashboard card all go through it, so they
+// can never disagree. Needs the `visits!inner ( patients!inner ( ... ) )` embed.
+export const LIVE_ABANDONED_FILTERS = [
+  ["visits.deleted_at", null],
+  ["visits.patients.deleted_at", null],
+  ["visits.patients.merged_into_id", null],
+] as const;
+
+interface LiveFilterable<T> {
+  eq(column: string, value: string): T;
+  is(column: string, value: null): T;
+}
+export function onlyLiveAbandoned<T extends LiveFilterable<T>>(q: T): T {
+  let out = q.eq("status", "abandoned");
+  for (const [col, val] of LIVE_ABANDONED_FILTERS) out = out.is(col, val);
+  return out;
+}
+
+const COUNT_EMBED = "id, visits!inner ( patients!inner ( id ) )";
+
 type PatientEmbed = { first_name: string; middle_name: string | null; last_name: string; drm_id: string };
 type VisitEmbed = { visit_number: string; patients: PatientEmbed | PatientEmbed[] | null };
 
@@ -36,16 +58,14 @@ export async function fetchStuckNotices(): Promise<StuckNotices> {
 
   // A deleted visit, or a deleted / merged patient, is never listed: nobody is
   // to be contacted about it (the sender cancels or skips those anyway).
-  const abandoned = await admin
-    .from("release_notices")
-    .select(
-      `id, visit_id, test_request_ids, attempts, resolved_at, last_error,
+  const abandoned = await onlyLiveAbandoned(
+    admin
+      .from("release_notices")
+      .select(
+        `id, visit_id, test_request_ids, attempts, resolved_at, last_error,
        visits!inner ( visit_number, patients!inner ( first_name, middle_name, last_name, drm_id ) )`,
-    )
-    .eq("status", "abandoned")
-    .is("visits.deleted_at", null)
-    .is("visits.patients.deleted_at", null)
-    .is("visits.patients.merged_into_id", null)
+      ),
+  )
     .order("resolved_at", { ascending: false })
     .order("id", { ascending: true })
     .limit(STUCK_NOTICE_LIMIT + 1);
@@ -104,8 +124,8 @@ export async function fetchOutboxCounts(now: number = Date.now()): Promise<Outbo
       .lt("lease_expires_at", nowIso)
       .order("lease_expires_at", { ascending: true })
       .limit(1),
-    admin.from("release_notices").select("id", { count: "exact", head: true }).eq("status", "abandoned").gte("resolved_at", since(DAY)),
-    admin.from("release_notices").select("id", { count: "exact", head: true }).eq("status", "abandoned").gte("resolved_at", since(7 * DAY)),
+    onlyLiveAbandoned(admin.from("release_notices").select(COUNT_EMBED, { count: "exact", head: true })).gte("resolved_at", since(DAY)),
+    onlyLiveAbandoned(admin.from("release_notices").select(COUNT_EMBED, { count: "exact", head: true })).gte("resolved_at", since(7 * DAY)),
     admin.from("release_notices").select("id", { count: "exact", head: true }).eq("status", "sent").gte("sent_at", since(DAY)),
   ]);
   if (queued.error || overdue.error || leases.error || ab24.error || ab7.error || sent.error) return { ok: false };
@@ -122,4 +142,13 @@ export async function fetchOutboxCounts(now: number = Date.now()): Promise<Outbo
       sent24h: sent.count ?? 0,
     },
   };
+}
+
+/** Dashboard card: how many abandoned notices the Result Follow-ups list would show (exact, not capped). */
+export async function fetchAbandonedNoticeCount(): Promise<{ ok: true; count: number } | { ok: false; error: unknown }> {
+  const r = await onlyLiveAbandoned(
+    createAdminClient().from("release_notices").select(COUNT_EMBED, { count: "exact", head: true }),
+  );
+  if (r.error) return { ok: false, error: new Error(r.error.message) };
+  return { ok: true, count: r.count ?? 0 };
 }
