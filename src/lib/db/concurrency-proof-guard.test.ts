@@ -99,6 +99,14 @@ const REGISTRY: Record<string, RegistryEntry> = {
   reschedule_closure_appointments: { proof: ["scripts/smoke-lifecycle-locks.ts"] },
   result_edit_commit: { proof: ["scripts/smoke-lifecycle-locks.ts"] },
   sheet_review_resolve: { proof: ["scripts/sheet-sync-db-proof.ts"] },
+  _sheet_sync_fence: { proof: ["scripts/sheet-sync-concurrency-proof.ts"] },
+  sheet_sync_acquire: { proof: ["scripts/sheet-sync-concurrency-proof.ts"] },
+  sheet_sync_apply_customer_ops: { proof: ["scripts/sheet-sync-concurrency-proof.ts"] },
+  sheet_sync_revert_run: { proof: ["scripts/sheet-sync-concurrency-proof.ts"] },
+  sheet_sync_upsert_review: { proof: ["scripts/sheet-sync-concurrency-proof.ts"] },
+  sheet_sync_release_undo: { proof: ["scripts/sheet-sync-concurrency-proof.ts"] },
+  sheet_resort_apply: { proof: ["scripts/sheet-sync-concurrency-proof.ts"] },
+  sheet_alias_apply: { proof: ["scripts/sheet-sync-concurrency-proof.ts"] },
   merge_patients_guarded: { proof: ["scripts/merge-concurrency-proof.ts"] },
   undo_patient_merge_guarded: { proof: ["scripts/merge-concurrency-proof.ts"] },
   queue_claim_remarks: {
@@ -111,14 +119,6 @@ const REGISTRY: Record<string, RegistryEntry> = {
 const BASELINE: Record<string, string> = {
   bridge_payment_delete: "0141_manila_posting_dates_remainder.sql",
   restore_patient: "0184_patient_lifecycle_locks.sql",
-  _sheet_sync_fence: "0170_sheet_sync_foundation.sql",
-  sheet_sync_acquire: "0170_sheet_sync_foundation.sql",
-  sheet_sync_apply_customer_ops: "0193_sync_review_gaps.sql",
-  sheet_sync_revert_run: "0204_sheet_links_clear_held_patient.sql",
-  sheet_sync_upsert_review: "0170_sheet_sync_foundation.sql",
-  sheet_sync_release_undo: "0170_sheet_sync_foundation.sql",
-  sheet_resort_apply: "0170_sheet_sync_foundation.sql",
-  sheet_alias_apply: "0170_sheet_sync_foundation.sql",
   ap_post_recurring_template: "0049_ap_subledger_behavior.sql",
   ap_reallocate_bill_payment: "0049_ap_subledger_behavior.sql",
   ap_reverse_je_for_source: "0049_ap_subledger_behavior.sql",
@@ -191,7 +191,8 @@ describe("concurrency-proof guard (real migrations)", () => {
     // checkGuard already asserts existence and the per-function annotation;
     // this pins that REGISTRY is non-trivial.
     const proofs = Object.values(REGISTRY).filter((e) => "proof" in e);
-    expect(proofs.length).toBe(28);
+    // a floor, not an exact pin: parallel proof branches each add entries
+    expect(proofs.length).toBeGreaterThanOrEqual(36);
   });
 });
 
