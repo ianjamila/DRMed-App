@@ -1,14 +1,14 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { CRON_HEARTBEATS, deriveCronStatus } from "./cron-heartbeats";
+import { CRON_HEARTBEATS, NOTICE_WATCH_GRACE_MINUTES, deriveCronStatus, isNoticeSweepWatched } from "./cron-heartbeats";
 
 const workflow = readFileSync(".github/workflows/cron-watchdog.yml", "utf8");
 
 // Intentionally strict: an SQL shape change must update this parser, not skip rows.
 function parseWatched(source: string) {
-  const values = source.match(/WITH watched\(route, actions, max_age, active_from, require_trigger\) AS \(\s*VALUES([\s\S]*?)\), heartbeats AS/);
+  const values = source.match(/WITH watched\(route, actions, max_age, active_from, require_trigger, watch_when\) AS \(\s*VALUES([\s\S]*?)\), gates AS/);
   if (!values) throw new Error("Cannot find watched VALUES table");
-  const rowPattern = /\('([^']+)',\s*ARRAY\[([^\]]+)\],\s*interval '(\d+) (hours|days)',\s*date '(\d{4}-\d{2}-\d{2})',\s*(NULL::text|'[^']+')\)/g;
+  const rowPattern = /\('([^']+)',\s*ARRAY\[([^\]]+)\],\s*interval '(\d+) (hours|days)',\s*date '(\d{4}-\d{2}-\d{2})',\s*(NULL::text|'[^']+'),\s*(NULL::text|'[^']+')\)/g;
   const rows = [...values[1].matchAll(rowPattern)];
   if (rows.length !== CRON_HEARTBEATS.length) {
     throw new Error(`Parsed ${rows.length} watched rows; expected ${CRON_HEARTBEATS.length}`);
@@ -17,12 +17,13 @@ function parseWatched(source: string) {
   if (withoutRows.replace(/--[^\n]*/g, "").replace(/[\s,]/g, "")) {
     throw new Error("Unparsed SQL remains in watched VALUES");
   }
-  return rows.map(([, route, actions, amount, unit, activeFrom, requireTrigger]) => ({
+  return rows.map(([, route, actions, amount, unit, activeFrom, requireTrigger, watchWhen]) => ({
     route,
     actions: [...actions.matchAll(/'([^']+)'/g)].map((m) => m[1]).sort(),
     maxAge: Number(amount) * (unit === "days" ? 24 : 1) * 60 * 60 * 1000,
     activeFrom,
     requireTrigger: requireTrigger === "NULL::text" ? null : requireTrigger.slice(1, -1),
+    watchWhen: watchWhen === "NULL::text" ? null : watchWhen.slice(1, -1),
   }));
 }
 
@@ -58,6 +59,7 @@ describe("cron drift guards", () => {
       route: c.path.replace("/api/cron/", ""),
       actions: [...c.actions].sort(), maxAge: c.maxAge, activeFrom: c.activeFrom,
       requireTrigger: "requireTrigger" in c ? c.requireTrigger : null,
+      watchWhen: "watchWhen" in c ? c.watchWhen : null,
     })).sort(byRoute));
   });
 
@@ -79,6 +81,30 @@ describe("cron drift guards", () => {
     expect(workflow).toContain("WHEN last_seen IS NULL AND now() < active_from THEN 'PENDING'");
     expect(workflow).toContain("WHEN last_seen IS NULL OR age > max_age THEN 'STALE'");
     expect(workflow).toContain("ELSE 'HEALTHY'");
+  });
+});
+
+describe("the release-notices watch gate", () => {
+  it("only release-notices is gated, and the SQL gate is the flag AND 15 minutes since it was switched on", () => {
+    expect(CRON_HEARTBEATS.filter((c) => "watchWhen" in c).map((c) => c.key)).toEqual(["release-notices"]);
+    expect(workflow).toContain("s.enabled AND s.updated_at < now() - interval '15 minutes'");
+    expect(workflow).toContain("WHEN NOT watched THEN 'PENDING'");
+    expect(NOTICE_WATCH_GRACE_MINUTES).toBe(15);
+  });
+  const now = Date.parse("2026-10-05T12:00:00Z");
+  it.each([
+    ["flag off", false, "2026-10-01T00:00:00Z", false],
+    ["on, switched on 5 minutes ago", true, "2026-10-05T11:55:00Z", false],
+    ["on, exactly 15 minutes", true, "2026-10-05T11:45:00Z", false],
+    ["on, 16 minutes ago", true, "2026-10-05T11:44:00Z", true],
+    ["on, no timestamp", true, null, false],
+  ] as const)("%s", (_l, enabled, updatedAt, expected) => {
+    expect(isNoticeSweepWatched(enabled, updatedAt, now)).toBe(expected);
+  });
+  it("an unwatched leg is never stale, even with no heartbeat after its grace date", () => {
+    expect(deriveCronStatus(null, now, 6 * 3_600_000, "2026-10-02", false)).toBe("pending");
+    expect(deriveCronStatus("2026-09-01T00:00:00Z", now, 6 * 3_600_000, "2026-10-02", false)).toBe("pending");
+    expect(deriveCronStatus(null, now, 6 * 3_600_000, "2026-10-02", true)).toBe("stale");
   });
 });
 

@@ -115,8 +115,19 @@ export const CRON_HEARTBEATS = [
     activeFrom: "2026-10-02",
     // Scheduled by a Supabase pg_cron job (0212), NOT by vercel.json.
     scheduler: "pg_cron",
+    // Watched ONLY while the strict flag is on and was switched on more than
+    // NOTICE_WATCH_GRACE_MINUTES ago; while it is off nothing is ever STALE.
+    watchWhen: "release-notices-enabled",
   },
 ] as const;
+
+/** Minutes the release-notice flag must have been on before its sweeper is watched. */
+export const NOTICE_WATCH_GRACE_MINUTES = 15;
+
+/** The watchdog's `release-notices-enabled` gate (cron-watchdog.yml), mirrored for Cron Health. */
+export function isNoticeSweepWatched(enabled: boolean, updatedAt: string | null, now: number): boolean {
+  return enabled && updatedAt !== null && now - Date.parse(updatedAt) > NOTICE_WATCH_GRACE_MINUTES * 60_000;
+}
 
 export type CronKey = (typeof CRON_HEARTBEATS)[number]["key"];
 export type CronStatus = "healthy" | "pending" | "stale";
@@ -127,7 +138,9 @@ export function deriveCronStatus(
   now: number,
   maxAge: number,
   activeFrom: string,
+  watched = true,
 ): CronStatus {
+  if (!watched) return "pending";
   if (lastSeen === null) {
     return now < Date.parse(`${activeFrom}T00:00:00Z`) ? "pending" : "stale";
   }

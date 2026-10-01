@@ -27,27 +27,35 @@ jobs:
           # be in the past for future readers. A new cron added later gets its
           # own active_from one day after its first expected run.
           sql=$(cat <<'SQL'
-          WITH watched(route, actions, max_age, active_from, require_trigger) AS (
+          WITH watched(route, actions, max_age, active_from, require_trigger, watch_when) AS (
             VALUES
-              ('sync-accounting', ARRAY['accounting.sync.completed', 'accounting.sync.empty', 'accounting.sync.skipped'], interval '30 hours', date '2026-09-15', NULL::text),
-              ('appointment-reminders', ARRAY['appointment.reminders.completed'], interval '30 hours', date '2026-09-18', NULL::text),
-              ('data-retention', ARRAY['data_retention.sweep'], interval '30 hours', date '2026-09-15', NULL::text),
-              ('recurring-bills', ARRAY['recurring_bills.completed'], interval '30 hours', date '2026-09-18', NULL::text),
-              ('template-health', ARRAY['result_template.health_alert'], interval '30 hours', date '2026-09-15', NULL::text),
-              ('template-health?mode=weekly', ARRAY['result_template.health_summary'], interval '8 days', date '2026-09-22', NULL::text),
-              ('dedup-digest', ARRAY['system.dedup_digest.completed'], interval '8 days', date '2026-09-22', NULL::text),
+              ('sync-accounting', ARRAY['accounting.sync.completed', 'accounting.sync.empty', 'accounting.sync.skipped'], interval '30 hours', date '2026-09-15', NULL::text, NULL::text),
+              ('appointment-reminders', ARRAY['appointment.reminders.completed'], interval '30 hours', date '2026-09-18', NULL::text, NULL::text),
+              ('data-retention', ARRAY['data_retention.sweep'], interval '30 hours', date '2026-09-15', NULL::text, NULL::text),
+              ('recurring-bills', ARRAY['recurring_bills.completed'], interval '30 hours', date '2026-09-18', NULL::text, NULL::text),
+              ('template-health', ARRAY['result_template.health_alert'], interval '30 hours', date '2026-09-15', NULL::text, NULL::text),
+              ('template-health?mode=weekly', ARRAY['result_template.health_summary'], interval '8 days', date '2026-09-22', NULL::text, NULL::text),
+              ('dedup-digest', ARRAY['system.dedup_digest.completed'], interval '8 days', date '2026-09-22', NULL::text, NULL::text),
               -- sheet-sync's "Sync now" / CLI runs also audit actor_type
               -- 'system' (run.ts) — require_trigger keeps a manual/CLI run
               -- from masking a stopped Vercel cron here too.
-              ('sheet-sync', ARRAY['sheet_sync.completed', 'sheet_sync.skipped'], interval '30 hours', date '2026-09-29', 'cron'),
-              ('stale-bookings', ARRAY['system.stale_bookings.completed'], interval '30 hours', date '2026-09-27', NULL::text),
+              ('sheet-sync', ARRAY['sheet_sync.completed', 'sheet_sync.skipped'], interval '30 hours', date '2026-09-29', 'cron', NULL::text),
+              ('stale-bookings', ARRAY['system.stale_bookings.completed'], interval '30 hours', date '2026-09-27', NULL::text, NULL::text),
               -- release-notices is scheduled by a Supabase pg_cron job (0212),
-              -- not vercel.json, every 5 minutes; and it only runs once the Vault
-              -- secrets are set and the release-notice flag is on.
-              ('release-notices', ARRAY['system.release_notices.sweep.completed'], interval '6 hours', date '2026-10-02', NULL::text)
+              -- not vercel.json, every 5 minutes. It only ticks while the strict
+              -- release-notice flag is on, so it is watched ONLY while
+              -- release_notice_settings.enabled and the flag was switched on more
+              -- than 15 minutes ago (the 'release-notices-enabled' gate below).
+              ('release-notices', ARRAY['system.release_notices.sweep.completed'], interval '6 hours', date '2026-10-02', NULL::text, 'release-notices-enabled')
+          ), gates AS (
+            SELECT 'release-notices-enabled'::text AS gate,
+                   coalesce((SELECT s.enabled AND s.updated_at < now() - interval '15 minutes'
+                             FROM public.release_notice_settings s WHERE s.id), false) AS open
           ), heartbeats AS (
             SELECT w.route, w.max_age, w.active_from, latest.created_at AS last_seen,
-                   now() - latest.created_at AS age
+                   now() - latest.created_at AS age,
+                   (w.watch_when IS NULL
+                    OR coalesce((SELECT g.open FROM gates g WHERE g.gate = w.watch_when), false)) AS watched
             FROM watched w
             LEFT JOIN LATERAL (
               SELECT a.created_at
@@ -61,6 +69,7 @@ jobs:
             ) latest ON true
           )
           SELECT CASE
+                   WHEN NOT watched THEN 'PENDING'
                    WHEN last_seen IS NULL AND now() < active_from THEN 'PENDING'
                    WHEN last_seen IS NULL OR age > max_age THEN 'STALE'
                    ELSE 'HEALTHY'
