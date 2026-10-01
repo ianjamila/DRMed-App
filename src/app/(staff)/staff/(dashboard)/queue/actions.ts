@@ -327,7 +327,8 @@ const BULK_INPUT_ERROR = "Could not read the selection — refresh the queue and
 // whole or not at all — the per-visit pipeline (releaseVisitSelection) owns
 // the membership reads, the fail-closed rules, the write, the completeness
 // check and the notices. This action owns the role gate, the selected-rows
-// read and per-row eligibility, and the revalidation.
+// read and per-row eligibility, the revalidation, and mints the call's Undo
+// batch id.
 // ---------------------------------------------------------------------------
 
 const BulkReleaseSchema = z.object({
@@ -400,6 +401,13 @@ export async function releaseTestsAction(input: unknown): Promise<BulkReleaseRes
   const changedIds: string[] = [];
   const alsoReleasedIds: string[] = [];
   const warnings: string[] = [];
+  // Undo: ONE server-minted batch id for the whole call, across
+  // every visit — releaseVisitSelection hands it to release_visit_results,
+  // whose audit rows (0205) stamp it, with the exact released_at, on EVERY
+  // line it releases (report-mates included) and on the patient notice, so
+  // undoReleaseBatchAction can read back exactly what this call released.
+  // Returned only once something actually released (below).
+  const batchId = crypto.randomUUID();
   // A few visits at a time; results are aggregated in order of first
   // appearance in the input, whatever order the visits finish in.
   const outcomes = await mapWithConcurrency([...survivorsByVisit], 4, ([visitId, selectedIds]) =>
@@ -410,13 +418,19 @@ export async function releaseTestsAction(input: unknown): Promise<BulkReleaseRes
       selectedIds,
       medium,
       auditMeta: { source: "queue" },
+      bulkBatchId: batchId,
     }),
   );
+  let notifiedCount = 0;
+  let noticeRetrying = false;
   for (const out of outcomes) {
     changedIds.push(...out.changedIds);
     alsoReleasedIds.push(...out.alsoReleasedIds);
     for (const w of out.warnings) if (!warnings.includes(w)) warnings.push(w);
     for (const s of out.skipped) skipped.set(s.id, s.reason);
+    // Same rule as the visit page (releaseSelectedAction): the REAL outcome.
+    if (out.notice?.status === "sent") notifiedCount += out.announced.length;
+    if (out.notice?.status === "retrying") noticeRetrying = true;
   }
 
   // Every id sent lands in exactly one of changedIds / skipped.
@@ -428,12 +442,16 @@ export async function releaseTestsAction(input: unknown): Promise<BulkReleaseRes
   revalidatePath("/(staff)/staff/(dashboard)/queue", "layout");
   revalidatePath("/staff");
   for (const visitId of survivorsByVisit.keys()) revalidatePath(`/staff/visits/${visitId}`);
+  const releasedAny = changedIds.length + alsoReleasedIds.length > 0;
   return {
     ok: true,
     changedIds,
     alsoReleasedIds,
     skipped: ids.filter((id) => skipped.has(id) && !changedSet.has(id)).map((id) => ({ id, reason: skipped.get(id)! })),
     warnings,
+    notifiedCount,
+    ...(releasedAny ? { batchId } : {}),
+    ...(noticeRetrying ? { noticeRetrying: true as const } : {}),
   };
 }
 

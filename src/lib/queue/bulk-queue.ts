@@ -250,6 +250,12 @@ export type BulkReleaseResult =
       skipped: SkippedRow[];
       alsoReleasedIds: string[];
       warnings: string[];
+      /** The 10-minute Undo handle (undoReleaseBatchAction) — present only when something was released. */
+      batchId?: string;
+      /** Released tests whose patient notice actually went out (status "sent"), summed over visits. */
+      notifiedCount: number;
+      /** true when any visit's notice is being retried by the outbox (0210) — nothing sent yet. */
+      noticeRetrying?: true;
     }
   | { ok: false; error: string };
 

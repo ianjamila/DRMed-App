@@ -1554,6 +1554,132 @@ async function sectionVisitRelease(c: CheckContext, admin: Page): Promise<void> 
 }
 
 // ---------------------------------------------------------------------------
+// Queue bulk Release (Pending release tab) -> server-checked 10-minute Undo.
+// The Queue's Release spans visits, so Undo has to be grouped per visit: tick
+// one test on each of TWO paid fixture visits (9101 CBC + 9102 ESR), release
+// them in one batch, then undo the whole batch. Same notice rules as V1/V1b.
+// ---------------------------------------------------------------------------
+async function sectionQueueRelease(c: CheckContext, admin: Page): Promise<void> {
+  for (const [label, medium, notified] of [
+    ["V2 Queue Release (Email) across two visits -> Undo", "email", true],
+    ["V2b Queue Release (Physical) across two visits -> Undo, no notified claim", "physical", false],
+  ] as const) {
+    await check(c, label, async () => {
+      const visits = await c.sql("select id, visit_number from visits where visit_number in ('9101','9102')");
+      const v1 = visits.find((v) => v.visit_number === "9101");
+      const v2 = visits.find((v) => v.visit_number === "9102");
+      if (!v1 || !v2) return { ok: false, detail: "fixture visits 9101/9102 missing" };
+      const visitIds = [v1.id, v2.id] as string[];
+      // One test per visit, both on PAID fixture visits (release is unblocked).
+      // Every BSQ fixture test starts at "requested"; the Pending-release tab
+      // only lists ready_for_release rows. Restored in `finally` below.
+      const pick = (visitId: unknown, code: string) =>
+        c.sql(
+          `update test_requests set status = 'ready_for_release'
+           where visit_id = $1 and service_id = (select id from services where code = $2)`,
+          [visitId, code],
+        );
+      const statuses = () =>
+        c.sql(
+          `select v.visit_number, s.code, tr.status from test_requests tr
+             join services s on s.id = tr.service_id join visits v on v.id = tr.visit_id
+            where (v.visit_number = '9101' and s.code = 'BSQ-CBC')
+               or (v.visit_number = '9102' and s.code = 'BSQ-ESR')
+            order by v.visit_number`,
+        );
+      try {
+        await pick(v1.id, "BSQ-CBC");
+        await pick(v2.id, "BSQ-ESR");
+        await goto(admin, `${APP_BASE}/staff/queue?filter=pending_release&q=BSQ`);
+        const cbcBox = admin.locator('tbody input[type="checkbox"][aria-label*="Complete Blood Count"]');
+        const esrBox = admin.locator('tbody input[type="checkbox"][aria-label*="ESR"]');
+        await cbcBox.first().check();
+        await esrBox.first().check();
+        await admin.waitForSelector(BAR, { timeout: 10_000 });
+        await admin.locator(BAR).locator('select[aria-label="Release medium"]').selectOption(medium);
+        const [{ now: clickedAt }] = await c.sql("select clock_timestamp() as now");
+        await admin.locator(BAR).locator("button", { hasText: /^Release 2/ }).click();
+        await admin.waitForSelector(OUTCOME, { timeout: 30_000 }).catch(() => {});
+        await sleep(300);
+
+        // As V1: the "already notified" line reflects the notice's REAL
+        // outcome, and local email/SMS is usually skipped — read the
+        // result.notified audit rows of BOTH visits instead of assuming.
+        const noticeRows = await c.sql(
+          `select metadata from audit_log
+            where action = 'result.notified' and metadata->>'visit_id' = any($1::text[]) and created_at >= $2`,
+          [visitIds, clickedAt],
+        );
+        const noticeSent = noticeRows.some((r) => {
+          const m = r.metadata as { email?: { ok?: boolean }; sms?: { ok?: boolean } } | null;
+          return m?.email?.ok === true || m?.sms?.ok === true;
+        });
+        const expectNotified = notified && noticeSent;
+
+        const afterRelease = await statuses();
+        const batchId = await latestBatchId(c, "test_request.released");
+        let batchVisits = 0;
+        if (batchId) {
+          const [{ n }] = await c.sql(
+            "select count(distinct metadata->>'visit_id')::int as n from audit_log where metadata->>'bulk_batch_id' = $1",
+            [batchId],
+          );
+          batchVisits = Number(n);
+        }
+        const outcomeAfterRelease = await outcomeText(admin);
+        const undoBtn = admin.locator('button:has-text("↶ Undo")').first();
+        const hadUndo = (await waitForCount(undoBtn)) > 0;
+        if (hadUndo) await undoBtn.click();
+        await waitForUndoToFinish(admin);
+
+        const afterUndo = await statuses();
+        const outcomeAfterUndo = await outcomeText(admin);
+        const auditCount = batchId ? await undoRowCount(c, batchId) : 0;
+
+        const ok =
+          afterRelease.length === 2 &&
+          afterRelease.every((r) => r.status === "released") &&
+          !!outcomeAfterRelease &&
+          (!notified || noticeRows.length > 0) &&
+          outcomeAfterRelease.includes("already notified") === expectNotified &&
+          !!batchId &&
+          batchVisits === 2 &&
+          hadUndo &&
+          afterUndo.length === 2 &&
+          afterUndo.every((r) => r.status === "ready_for_release") &&
+          !!outcomeAfterUndo &&
+          outcomeAfterUndo.includes("back to Ready for release") &&
+          outcomeAfterUndo.includes("already notified") === expectNotified &&
+          auditCount === 2;
+        return {
+          ok,
+          detail: {
+            afterRelease,
+            afterUndo,
+            outcomeAfterRelease,
+            outcomeAfterUndo,
+            batchId,
+            batchVisits,
+            auditCount,
+            notices: noticeRows.length,
+            noticeSent,
+          },
+        };
+      } finally {
+        // Put the two lines back so the next check (and later sections) start
+        // from the seeded "requested" state.
+        await c.sql(
+          `update test_requests set status = 'requested'
+            where visit_id = any($1::uuid[]) and status = 'ready_for_release'
+              and service_id in (select id from services where code in ('BSQ-CBC','BSQ-ESR'))`,
+          [visitIds],
+        );
+      }
+    });
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Historic HMO claims: 10-minute Undo for Mark billed / Mark paid / Write off
 // (extras (d)). Fixtures: four `BSQ Hist *` claims, all unbilled
 // (bulk-select-fixtures.sql). Every check reads the claim and its journal
@@ -1838,6 +1964,9 @@ async function main(): Promise<void> {
 
   await reseed(c);
   await sectionVisitRelease(c, admin);
+
+  await reseed(c);
+  await sectionQueueRelease(c, admin);
 
   await reseed(c);
   await sectionHistoricHmoUndo(c, admin);

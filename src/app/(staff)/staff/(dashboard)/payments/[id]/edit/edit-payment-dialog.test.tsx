@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -103,7 +103,9 @@ describe("EditPaymentDialog", () => {
       reason: "Patient paid more by GCash",
       expected: { amount_php: 500, method: "cash", reference_number: "OR-1", notes: "counter note" },
     });
-    expect(screen.queryByText("Edit payment")).toBeNull(); // dialog closed
+    // The close lands after the action promise resolves AND the post-await
+    // transition commits AND base-ui finishes unmounting - not at click return.
+    await waitFor(() => expect(screen.queryByText("Edit payment")).toBeNull()); // dialog closed
   });
 
   it("a refused (stale) save shows the error and keeps the dialog with what was typed", async () => {
