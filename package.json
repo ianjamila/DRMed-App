@@ -61,7 +61,8 @@
     "merge:concurrency-proof": "tsx scripts/merge-concurrency-proof.ts",
     "panel-undo:concurrency-proof": "tsx scripts/panel-undo-concurrency-proof.ts",
     "report-release:concurrency-proof": "tsx scripts/report-release-concurrency-proof.ts",
-    "waiver:concurrency-proof": "tsx scripts/waiver-concurrency-proof.ts"
+    "waiver:concurrency-proof": "tsx scripts/waiver-concurrency-proof.ts",
+    "release-notice:concurrency-proof": "tsx scripts/release-notice-concurrency-proof.ts"
   },
   "dependencies": {
     "@base-ui/react": "^1.4.1",

@@ -44,6 +44,10 @@ history: **0160** (`queue_claim_remarks`, #214) and **0151** (`rls_initplan_and_
 
 **0200** (`panel_undo_all_or_nothing`, P0082 — `reclaim_panel_members` / `restore_panel_members`) is on branch `feat/queue-undo-atomic`, not yet on prod; it is below prod head 0208, so its push needs `--include-all`.
 
+**0210** (`release_notice_outbox`, PR 1 of 3 of the durable "result ready" notice outbox, no P-code) is in flight on `feat/notice-retry` and NOT on prod yet: INERT — table `release_notices`, one-row switch `release_notice_settings` (seeded OFF; read strictly by `release_notices_enabled()`: missing row / error = OFF), `claim_release_notice` / `finish_release_notice` / `retry_release_notice`, all service_role-only (RLS on, no policy; `seed.sql` mirrors the revokes). Nothing calls them until PR 2 (sender + sweeper route) and PR 3 (`release_visit_results` enqueues). Push it right before PR 1 merges. Proof: `npm run release-notice:concurrency-proof -- --control`; smoke `supabase/tests/0210_release_notice_outbox_smoke.sql`. Spec: `docs/superpowers/specs/2026-10-01-release-notice-outbox-design.md`.
+
+**0211** (`claim_unclaim_lock_order`, no P-code, `test/release-lock-interleave`) — NOT on prod until its PR merges: `claim_panel_members` / `unclaim_panel_members` pre-lock the rows they will update `ORDER BY id`, closing a proven 40P01 deadlock against `release_visit_results` / `undo_visit_release` (proof: `scripts/report-release-concurrency-proof.ts` L2x/L3x). Same bodies and ACLs as 0191.
+
 **Rule — claim a number before you use it: `npm run claim -- migration` / `npm run claim -- pcode <n>`.**
 Several sessions work here at once, each in its own worktree, and picking "the next number" by
 looking around is a race: on 2026-09-15 two branches took 0147 and P0050; on 2026-09-24 two took
