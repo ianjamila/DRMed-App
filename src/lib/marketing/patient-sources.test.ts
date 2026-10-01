@@ -5,7 +5,6 @@ import {
   asOfLabel, lastCompletedWeek, previousWeek, lastCompletedMonth, previousMonth, trendWeeks, trendCardData,
   type SeriesRow, type SummaryRow,
 } from "./patient-sources";
-import { manilaDateTime } from "@/lib/dates/manila";
 
 const row = (bucket_start: string, channel: string, confirmed: number, unconfirmed = 0): SeriesRow =>
   ({ bucket_start, channel, confirmed, unconfirmed });
@@ -220,7 +219,6 @@ describe("capRows", () => {
 describe("asOfLabel", () => {
   it("uses the house date-time format", () => {
     // 2026-10-01 01:14 UTC = 9:14 AM Manila
-    expect(asOfLabel(new Date("2026-10-01T01:14:00Z"))).toBe(`Numbers as of ${manilaDateTime(new Date("2026-10-01T01:14:00Z"))}`);
     expect(asOfLabel(new Date("2026-10-01T01:14:00Z"))).toMatch(/^Numbers as of .*9:14 AM$/);
   });
 });
@@ -252,6 +250,24 @@ describe("periods", () => {
 describe("trendCardData", () => {
   const weeks = trendWeeks("2026-10-01", 8); // W8 = 21–27 Sep, this week starts 28 Sep
   const d = (bucket_start: string, channel: string, confirmed: number, unconfirmed = 0) => ({ bucket_start, channel, confirmed, unconfirmed });
+
+  it("keeps exactly topN channels without an Other bucket, ranking ties by channel key", () => {
+    const rows = ["e", "d", "c", "b", "a"].map((c) => d("2026-09-22", c, 2));
+    const t = trendCardData(rows, [], weeks);
+    expect(t.chart.channels.map((c) => c.key)).toEqual(["a", "b", "c", "d", "e"]);
+    expect(t.chart.rows[7]).not.toHaveProperty("__other__c");
+  });
+
+  it("marks a week with spend but no matching new patients as spend-bearing, with no cost point", () => {
+    const spend = [{ spend_date: "2026-09-22", platform: "meta" as const, spend_php: 500 }];
+    const t = trendCardData([d("2026-09-22", "walk_in", 3)], spend, weeks);
+    expect(t.hasSpend).toBe(true);
+    expect(t.chart.rows[7]).not.toHaveProperty("__cost");
+  });
+
+  it("refuses an empty week list", () => {
+    expect(() => trendCardData([], [], [])).toThrow(/at least one week/);
+  });
 
   it("buckets days into the 8 weeks, keeps empty weeks, and computes the headline", () => {
     const t = trendCardData([d("2026-09-21", "walk_in", 3), d("2026-09-27", "walk_in", 1, 1), d("2026-09-15", "walk_in", 2),

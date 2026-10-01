@@ -367,6 +367,7 @@ export interface TrendCard {
  * combined cost per new patient for weeks that have saved ad spend.
  */
 export function trendCardData(newByDay: readonly SeriesRow[], spend: readonly SpendTotalRow[], weeks: readonly Period[], topN = 5): TrendCard {
+  if (weeks.length === 0) throw new Error("trendCardData needs at least one week");
   const first = weeks[0].from;
   const last = weeks[weeks.length - 1].to;
   const weekOf = (day: string) => weeks.find((w) => day >= w.from && day <= w.to)?.from ?? null;
