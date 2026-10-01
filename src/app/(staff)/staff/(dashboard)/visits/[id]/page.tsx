@@ -16,7 +16,9 @@ import {
 } from "@/lib/visits/line-visibility";
 import { ReleaseButton } from "./release-button";
 import { ReleaseOutcomeProvider } from "@/components/staff/release/release-outcome";
-import { reportReleaseBlock } from "@/lib/queue/report-release-scope";
+import { visitReportBlocks } from "@/lib/queue/report-release-scope";
+import { fetchReportMembers } from "@/lib/queue/report-members";
+import { sectionsForRole } from "@/lib/auth/role-sections";
 import { fetchSharedReportTestIds } from "@/lib/visits/shared-report-links";
 import { ReleaseAllButton } from "./release-all-button";
 import { ReleasePackageHeaderButton } from "./release-package-header-button";
@@ -374,30 +376,22 @@ export default async function VisitDetailPage({ params, searchParams }: Props) {
     for (const trId of members) reportScopeByTrId[trId] = scope;
   }
   // Whole-report release rule, display side: a combined report releases every
-  // ready member or none, so a report with an unfinished or deleted-unreleased
-  // member disables Release (and the bulk checkbox) with the same message the
-  // action would refuse with. Display only — releaseVisitSelection re-proves it
-  // (members on another visit are invisible here; the server refuses those).
-  const trState = new Map((tests ?? []).map((t) => [t.id, { status: t.status, deleted: t.deleted_at !== null }]));
-  const reportBlockByTrId: Record<string, string> = {};
-  const blockByScope = new Map<object, string | null>();
-  for (const [trId, scope] of Object.entries(reportScopeByTrId)) {
-    if (!blockByScope.has(scope)) {
-      blockByScope.set(
-        scope,
-        // Every member comes from this visit's rows, so a missing id can't normally
-        // happen; skip it rather than guess (display only — the server re-proves).
-        reportReleaseBlock(
-          scope.memberIds.flatMap((id) => {
-            const st = trState.get(id);
-            return st ? [st] : [];
-          }),
-        ),
-      );
-    }
-    const block = blockByScope.get(scope);
-    if (block) reportBlockByTrId[trId] = block;
-  }
+  // ready member or none, so a report that release_visit_results would refuse
+  // (an unfinished or deleted-unreleased member, or one in another group or on
+  // another visit) disables Release (and the bulk checkbox) with the same
+  // message the action would refuse with. Judged ONLY on the FULL membership of
+  // EVERY result linked to this visit's tests: a result with one local line can
+  // still be combined (a link on another visit, or a deleted test), which the
+  // visit's own rows can't see. Admin client so RLS can't hide a member the
+  // database counts. Display only — releaseVisitSelection re-proves it; an
+  // unreadable report fails closed.
+  const fullReports = await fetchReportMembers(createAdminClient(), [...membersByResultId.keys()]);
+  const reportBlockByTrId: Record<string, string> = Object.fromEntries(
+    visitReportBlocks(membersByResultId, fullReports.ok ? fullReports.byResult : null, {
+      visitId: visit.id,
+      sections: sectionsForRole(session.role),
+    }),
+  );
   // Live ready members, for the bulk bar's "also releases N more" preview.
   const readyTrIds = (tests ?? [])
     .filter((t) => t.deleted_at === null && t.status === "ready_for_release")

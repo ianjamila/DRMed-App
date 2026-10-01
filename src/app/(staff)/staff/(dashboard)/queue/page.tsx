@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase/admin";
 import { requireActiveStaff } from "@/lib/auth/require-staff";
 import {
   canClaimSection,
@@ -76,7 +77,8 @@ import {
 import { QueueBulkBar } from "./queue-bulk-bar";
 import { QueueReleaseButton } from "@/components/staff/release/queue-release-button";
 import { evaluateRelease, RELEASE_REFUSAL } from "@/lib/queue/release-eligibility";
-import { panelReleaseScope } from "@/lib/queue/report-release-scope";
+import { PANEL_UNREADABLE, panelReleaseScope, type FullMember } from "@/lib/queue/report-release-scope";
+import { fetchReportMembers } from "@/lib/queue/report-members";
 import { getConsentCurrentByPatient, isConsentGateRequired } from "@/lib/consent/gate";
 import { activeEmbeddedPatients, isActivePatient } from "@/lib/patients/active";
 import { isReleaseMedium, type ReleaseMedium } from "@/lib/visits/release-media";
@@ -731,7 +733,18 @@ export default async function QueuePage({ searchParams }: SearchProps) {
     const read = await fetchPanelMembers(supabase, refs);
     if (releaseTab) {
       // A failed read leaves every panel refused (fail closed).
-      const unreadable = "Couldn't load this panel's tests — refresh the page.";
+      const unreadable = PANEL_UNREADABLE;
+      // Each combined report is judged on its FULL membership, as the database
+      // does (members in another group, on another visit, or deleted count),
+      // so read every linked report once for all the panels. The admin client
+      // so RLS can't hide a member the database would still count; a failed
+      // read blocks every panel that has a linked member.
+      const panelResultIds = read.ok
+        ? [...new Set([...read.byKey.values()].flatMap((ms) => ms.map((m) => m.resultId)).filter((id): id is string => id !== null))]
+        : [];
+      const reportRead = read.ok ? await fetchReportMembers(createAdminClient(), panelResultIds) : null;
+      // session.role is the EFFECTIVE role (View as folded in), the same one evaluateRelease gets.
+      const releaseSections = sectionsForRole(session.role);
       for (const card of cards) {
         if (card.kind !== "grouped") continue;
         card.releaseBlock = unreadable;
@@ -741,7 +754,8 @@ export default async function QueuePage({ searchParams }: SearchProps) {
         // report releases while an unfinished sibling report waits (the
         // database refuses only the unfinished one), so only members of
         // releasable reports (and unlinked rows) are sent.
-        const scope = panelReleaseScope(members);
+        const reports = reportRead?.ok ? reportRead.byResult : new Map<string, FullMember[]>();
+        const scope = panelReleaseScope(members, reports, { visitId: card.visitId, sections: releaseSections });
         const readyIds = new Set(scope.readyIds);
         const ready = members.filter((m) => readyIds.has(m.id));
         panelReadyIds.set(panelRowKey(card.visitId, card.groupId), scope.readyIds);
