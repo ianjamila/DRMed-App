@@ -112,9 +112,14 @@ begin
   reset role;
 end $f$;
 
-create function pg_temp.merge_into(src uuid, keep uuid) returns void language sql as $f$
+-- 0196: merge markers are written through the private merge writer, both
+-- columns together (0197 refuses anything else).
+create function pg_temp.merge_into(src uuid, keep uuid) returns void language plpgsql as $f$
+begin
+  set local role patient_merge_writer;
   update public.patients set merged_into_id = keep, merged_at = now() where id = src;
-$f$;
+  reset role;
+end $f$;
 
 create function pg_temp.expect(label text, got text, want text) returns void language plpgsql as $f$
 begin
@@ -129,6 +134,21 @@ create function pg_temp.state_of(sql text) returns text language plpgsql as $f$
 declare s text;
 begin
   execute sql;
+  return 'ok';
+exception when others then
+  get stacked diagnostics s = returned_sqlstate;
+  return s;
+end $f$;
+
+-- Like state_of, but runs sql as the given role for the one statement (0196:
+-- proving a direct marker write is refused/allowed under patient_merge_writer
+-- specifically, not just postgres/service_role).
+create function pg_temp.state_as(r text, sql text) returns text language plpgsql as $f$
+declare s text;
+begin
+  execute format('set local role %I', r);
+  execute sql;
+  reset role;
   return 'ok';
 exception when others then
   get stacked diagnostics s = returned_sqlstate;
@@ -2006,13 +2026,14 @@ begin
 end
 $s14$;
 
--- --- s15: undo-merge step order (src/lib/patients/undo-merge-steps.ts) --------
--- undoMergeSteps() clears the source's merge marker FIRST, then moves its
--- rows back table by table, then clears the kept record's filled-in fields,
--- then marks the ledger undone (0184 review minor #4). This proves both
--- halves in one rolled-back transaction: the OLD (wrong) order — moving a
--- row back to the still-merged source before clearing its marker — is
--- refused by a_lifecycle_guard; the real (marker-first) order succeeds.
+-- --- s15: undo-merge step order (public.undo_patient_merge_guarded, 0196) ----
+-- undo_patient_merge_guarded() clears the source's merge marker FIRST, then
+-- moves its rows back table by table, then clears the kept record's
+-- filled-in fields, then marks the ledger undone (0184 review minor #4; the
+-- order now lives in the SQL function itself, not app-side step code). This
+-- proves both halves in one rolled-back transaction: the OLD (wrong) order —
+-- moving a row back to the still-merged source before clearing its marker —
+-- is refused by a_lifecycle_guard; the real (marker-first) order succeeds.
 do $s15$
 declare
   k_admin  constant uuid := 'a0000000-0000-4000-8000-000000000184';
@@ -2107,7 +2128,9 @@ begin
   -- real assertion failure inside (a different sqlstate) is re-raised, not
   -- swallowed.
   begin
+    set local role patient_merge_writer;
     update public.patients set merged_into_id = null, merged_at = null where id = src_pt;
+    reset role;
     perform pg_temp.expect('s15.5b marker cleared but the visit has not moved yet: moving the alert back to src is refused (23514, not P0058)',
       pg_temp.state_of(format($q$update public.critical_alerts set patient_id = %L where id = %L$q$, src_pt, al_id)), '23514');
     -- Differential proof: with a_lifecycle_guard disabled on critical_alerts
@@ -2143,12 +2166,13 @@ begin
   perform pg_temp.expect('s15.5e CONTROL fixture back to still-merged after the second-order proof',
     (select merged_into_id::text from public.patients where id = src_pt), keep_pt::text);
 
-  -- NEW order: undoMergeSteps()'s actual sequence. This fixture has nothing
-  -- under appointments/audit_log/patient_consents (empty move_back — a no-op,
-  -- same as the app skipping an empty id list) and nothing filled_from_source
-  -- (empty clear_filled_fields), so only the four steps below do anything.
+  -- NEW order: undo_patient_merge_guarded()'s actual sequence (0196). This
+  -- fixture has nothing under appointments/audit_log/patient_consents (empty
+  -- move_back — a no-op, same as the function skipping an empty id list) and
+  -- nothing filled_from_source (empty clear_filled_fields), so only the four
+  -- steps below do anything.
   perform pg_temp.expect('s15.6 NEW order step 1 (clear_source_marker) succeeds',
-    pg_temp.state_of(format($q$update public.patients set merged_into_id = null, merged_at = null where id = %L$q$, src_pt)), 'ok');
+    pg_temp.state_as('patient_merge_writer', format($q$update public.patients set merged_into_id = null, merged_at = null where id = %L$q$, src_pt)), 'ok');
   perform pg_temp.expect('s15.7 NEW order step 2 (move_back visits) succeeds now the source is active',
     pg_temp.state_of(format($q$update public.visits set patient_id = %L where id = %L$q$, src_pt, v_id)), 'ok');
   perform pg_temp.expect('s15.8 NEW order step 3 (move_back critical_alerts) succeeds — the alert''s patient now matches its test''s (already-moved) visit',

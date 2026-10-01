@@ -5,23 +5,36 @@ import { LATEST_CONSENT_EVENT_ORDER } from "./latest-event";
 
 const MIGRATIONS_DIR = join(process.cwd(), "supabase/migrations");
 
-/** The body of the newest migration that (re)defines the consent sync trigger. */
-function latestSyncFunctionSql(): string {
+/** The newest migration's definition of public.<fn>, up to the end of its body. */
+function latestFunctionSql(fn: string): string {
+  const re = new RegExp(String.raw`create\s+or\s+replace\s+function\s+public\.${fn}\b`, "i");
   const defining = readdirSync(MIGRATIONS_DIR)
     .filter((f) => f.endsWith(".sql"))
     .sort()
     .map((f) => readFileSync(join(MIGRATIONS_DIR, f), "utf8"))
-    .filter((sql) => /create\s+or\s+replace\s+function\s+public\.sync_patient_consent_state/i.test(sql));
+    .filter((sql) => re.test(sql));
   const sql = defining.at(-1);
-  if (!sql) throw new Error("no migration defines sync_patient_consent_state");
-  return sql.slice(sql.search(/function\s+public\.sync_patient_consent_state/i));
+  if (!sql) throw new Error(`no migration defines ${fn}`);
+  const from = sql.slice(sql.search(re));
+  const bodyEnd = from.indexOf("$$;", from.indexOf("$$") + 2);
+  return bodyEnd > 0 ? from.slice(0, bodyEnd) : from;
 }
 
 describe("latest consent event ordering", () => {
   it("matches the order sync_patient_consent_state uses", () => {
     const { column, ascending } = LATEST_CONSENT_EVENT_ORDER;
+    const sync = latestFunctionSql("sync_patient_consent_state");
+    // 0196: the trigger delegates to recompute_patient_consent_cache, which FOLDS
+    // every event in ascending seq order — the event that decides the state is
+    // the LAST one, i.e. the first in descending seq order, which is what
+    // LATEST_CONSENT_EVENT_ORDER must name for the app to read the same event.
+    if (/recompute_patient_consent_cache\s*\(/i.test(sync)) {
+      expect({ column, ascending }).toEqual({ column: "seq", ascending: false });
+      expect(latestFunctionSql("recompute_patient_consent_cache")).toMatch(/order\s+by\s+(?:\w+\.)?seq\s*(?:asc\s*)?$/im);
+      return;
+    }
     const direction = ascending ? "asc" : "desc";
-    expect(latestSyncFunctionSql()).toMatch(new RegExp(String.raw`order\s+by\s+${column}\s+${direction}`, "i"));
+    expect(sync).toMatch(new RegExp(String.raw`order\s+by\s+${column}\s+${direction}`, "i"));
   });
 
   it("never orders by created_at, which ties between a grant and a withdrawal", () => {

@@ -115,7 +115,13 @@ begin
   where n.nspname = 'public'
     and c.relkind = 'r'
     and c.relrowsecurity
-    and not exists (select 1 from pg_policy p where p.polrelid = c.oid)
+    and (not exists (select 1 from pg_policy p where p.polrelid = c.oid)
+         -- 0196: patient_merges and patient_consents now carry policies (merge
+         -- and undo run as the private patient_merge_writer role), but the
+         -- policies name only that writer — anon/authenticated must still hold
+         -- nothing, so they stay in this scan even though the "no policy"
+         -- half of the second assertion above no longer selects them.
+         or c.relname in ('patient_merges', 'patient_consents'))
     and (has_table_privilege(r.rolname, c.oid,
            'SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER,MAINTAIN')
          or has_any_column_privilege(r.rolname, c.oid, 'SELECT,INSERT,UPDATE,REFERENCES')
