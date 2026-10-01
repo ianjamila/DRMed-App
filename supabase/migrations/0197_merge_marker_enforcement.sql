@@ -21,8 +21,15 @@
 -- This migration SUPERSEDES 0196's narrower rollback guard (section 5): this
 -- trigger covers every merged_into_id/merged_at change, writer or not, so
 -- 0196's guard_live_merge_marker + patient_has_live_v2_merge are dropped.
--- Rollback: drop trigger trg_patients_merge_marker_guard (app unaffected);
--- reverting 0197 = re-run 0196 section 5 to restore the narrower guard.
+-- Rollback: drop trigger trg_patients_merge_marker_guard (app unaffected) —
+-- that leaves NO marker guard (0196's is dropped here), so reverting 0197 =
+-- drop the trigger AND re-run 0196 section 5 to restore the narrower guard.
+-- An app rollback below #286 (the pre-0196 multi-step merge) must do both
+-- FIRST: with 0197 in place the old merge moves every row, then its final
+-- tombstone write fails P0080 and leaves only a best-effort app-side rollback.
+-- Bulk backfills of patients: exclude merged rows, or disable BOTH
+-- trg_patients_lifecycle_guard and trg_patients_merge_marker_guard inside the
+-- migration and assert both are re-enabled (0170 disabled only the first).
 -- =============================================================================
 
 set lock_timeout = '5s';

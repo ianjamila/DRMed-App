@@ -20,6 +20,10 @@ describe("0197_merge_marker_enforcement.sql", () => {
     expect(raises.length).toBeGreaterThanOrEqual(6);
     for (const r of raises) expect(r).toMatch(/errcode = 'P00(80|58)'/);
   });
+  it("exempts only the marker pair and bookkeeping columns (widening either weakens the guard)", () => {
+    expect(sql).toContain("k_marker constant text[] := array['merged_into_id', 'merged_at', 'updated_at', 'row_version'];");
+    expect(sql).toContain("k_bookkeeping constant text[] := array['updated_at', 'row_version'];");
+  });
   it("revokes the guard function from runtime roles", () => {
     expect(sql).toContain("revoke all on function public.enforce_merge_marker() from public, anon, authenticated, service_role");
   });

@@ -232,8 +232,11 @@ async function main() {
   // right after the one statement.
   async function markMerged(srcId: string, keepId: string): Promise<void> {
     await q(`set role patient_merge_writer`);
-    await q(`update public.patients set merged_into_id = $1, merged_at = now() where id = $2`, [keepId, srcId]);
-    await q(`reset role`);
+    try {
+      await q(`update public.patients set merged_into_id = $1, merged_at = now() where id = $2`, [keepId, srcId]);
+    } finally {
+      await q(`reset role`);
+    }
   }
 
   function describeError(err: unknown): string {

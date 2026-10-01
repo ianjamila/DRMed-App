@@ -192,7 +192,10 @@ role, same ownership transfer, same non-membership proof. Two lessons it added:
 both columns together** (`merged_into_id` and `merged_at` in the same statement) — 0197 refuses
 anything else, including a fixture that sets only one of the pair, and a patient INSERTed already merged. The same shape as 0167's rule for
 `deleted_at`: a future bulk data fix on `patients` must skip merged rows, because 0197 refuses any
-OTHER-column change on a row that is (before and after) merged.
+OTHER-column change on a row that is (before and after) merged — for every role, postgres included. Disabling
+only `trg_patients_lifecycle_guard` (0170's backfill pattern) is no longer enough: disable `trg_patients_merge_marker_guard`
+too, inside the migration, and assert both are re-enabled. An app rollback below #286 must first drop that trigger and
+re-run 0196 section 5 (see the 0197 header).
 
 ## Proving a migration under concurrency
 

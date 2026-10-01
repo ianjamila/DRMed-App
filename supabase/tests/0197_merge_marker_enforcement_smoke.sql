@@ -135,10 +135,14 @@ begin
     pg_temp.state_of(format('update public.patients set merged_into_id = %L, merged_at = now() where id = %L', k, s)), 'P0080');
   perform pg_temp.expect('b3 a patient cannot be created already merged',
     pg_temp.state_of(format($q$insert into public.patients (drm_id, first_name, last_name, birthdate, merged_into_id, merged_at) values ('DRM-MMB1Z', 'Z', 'Z', '1990-01-01', %L, now())$q$, k)), 'P0080');
+  perform pg_temp.expect('b3b nor created with only merged_at set',
+    pg_temp.state_of($q$insert into public.patients (drm_id, first_name, last_name, birthdate, merged_at) values ('DRM-MMB1Y', 'Y', 'Y', '1990-01-01', now())$q$), 'P0080');
   perform pg_temp.expect('b4 writer: marker without merged_at refused',
     pg_temp.state_as('patient_merge_writer', format('update public.patients set merged_into_id = %L where id = %L', k, s)), 'P0080');
   perform pg_temp.expect('b5 writer: merged_at alone refused',
     pg_temp.state_as('patient_merge_writer', format('update public.patients set merged_at = now() where id = %L', s)), 'P0080');
+  -- Backstop, not this guard: the lifecycle writer has no column grant on the
+  -- markers, so the privilege check (42501) fires before any trigger.
   perform pg_temp.expect('b6 lifecycle writer cannot set markers',
     (pg_temp.state_as('patient_lifecycle_writer', format('update public.patients set merged_into_id = %L, merged_at = now() where id = %L', k, s))
       in ('42501', 'P0080'))::text, 'true');
@@ -149,6 +153,14 @@ begin
   perform pg_temp.expect('b7 the merge function still works', (select merged_into_id from public.patients where id = s)::text, k::text);
   perform pg_temp.expect('b8 editing a merged record is refused',
     pg_temp.state_as('service_role', format('update public.patients set phone = %L where id = %L', '09170000000', s)), 'P0058');
+  perform pg_temp.expect('b8b the P0058 refusal does not depend on the role: postgres',
+    pg_temp.state_of(format('update public.patients set phone = %L where id = %L', '09170000000', s)), 'P0058');
+  perform pg_temp.expect('b8c … nor the merge writer',
+    pg_temp.state_as('patient_merge_writer', format('update public.patients set phone = %L where id = %L', '09170000000', s)), 'P0058');
+  perform pg_temp.expect('b8d writer: a re-parent that also changes another field is refused',
+    pg_temp.state_as('patient_merge_writer', format('update public.patients set merged_into_id = %L, phone = %L where id = %L', x, '09170000000', s)), 'P0080');
+  perform pg_temp.expect('b8e writer: an un-merge that also changes another field is refused',
+    pg_temp.state_as('patient_merge_writer', format('update public.patients set merged_into_id = null, merged_at = null, phone = %L where id = %L', '09170000000', s)), 'P0080');
   perform pg_temp.expect('b9 a bookkeeping-only touch of a merged record is allowed',
     pg_temp.state_as('service_role', format('update public.patients set updated_at = clock_timestamp() where id = %L', s)), 'ok');
   perform pg_temp.expect('b9b a no-op update of a merged record is allowed',
