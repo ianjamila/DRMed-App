@@ -29,6 +29,14 @@
 //   PSQL=/opt/homebrew/opt/libpq/bin/psql
 //   DB=postgresql://postgres:postgres@127.0.0.1:54322/postgres
 //   MIG=supabase/migrations/0189_patient_sources.sql
+//   MIG_LIVE — where each body lives NOW (a control that edits a superseded
+//   body proves nothing): identity core + encounters + revenue lines =
+//   0193_sync_review_gaps.sql; the five report RPCs + their rules =
+//   0206_patient_sources_report.sql (_ps_sec_* helpers and wrappers);
+//   patient_sources_people = 0189. Letters A, B, C, E, F, G, L edit the core
+//   -> edit 0193 (psql -f 0193 is safe: create-or-replace + its own
+//   post-conditions). Letter D edits the summary WRAPPER gate -> 0206 (and
+//   drop summary from 0206's post-condition arrays for that round).
 //
 //   A. _patient_sources_encounters, sheet branch: the ELSE clause of the
 //      `case when l.patient_id is null then 'name:' || l.loose_key` emits the
@@ -126,6 +134,33 @@
 //      New. Confirmed 2026-09-28:
 //        FAIL … — expected basis 'before_window' (not 'registration'), got
 //        {"first_date":"2026-06-15","basis":"registration", …}
+//   D (re-pointed to 0206, 2026-09-30). Confirmed: FAIL ACL matrix - functions
+//      — ACL reception/patient_sources_summary: expected error 42501, but the
+//      call succeeded (also fails the two 0199 service_role checks).
+//   M–P (0206, 2026-09-30), each confirmed with the FAIL line quoted:
+//   M. patient_sources_report: delete the 'overlaps' entry. Confirmed
+//      2026-09-30: FAIL 0206: report sections equal the single RPCs (with and
+//      without a previous period) — 2026-06-01..2026-06-30 day/new prev=set:
+//      sections are current,new_by_day,previous,referrers,revenue,series,summary
+//   N. patient_sources_report 'current': 'period', p_mode -> 'period', 'new'.
+//      Confirmed 2026-09-30: FAIL 0206: report sections equal the single RPCs
+//      … — 2026-06-01..2026-06-30 week/served prev=null current: report=[…
+//      "confirmed":4,"unconfirmed":0 …] rpc=[… "confirmed":4,"unconfirmed":1 …]
+//   O. patient_sources_report gate: drop the coalesce -> the migration's own
+//      post-condition aborts ("0206: public.patient_sources_report(...) does
+//      not carry the coalesced service_role gate"). Then also drop the report
+//      from that post-condition's gate array. Confirmed 2026-09-30: FAIL 0206:
+//      report gate matrix — no JWT claims at all: expected error 42501, but
+//      the call succeeded; and FAIL 0206: helpers and list builders are
+//      closed; row types match their producers — patient_sources_report
+//      ACL/definer/gate wrong: {"a":false,"u":true,"s":true,"sd":true,"gate":false}
+//   P. _ps_sec_series 'new' branch: `and not i.is_returning` -> `and true`.
+//      Confirmed 2026-09-30: FAIL 0206: every wrapper returns exactly the
+//      pre-0206 rows — wrappers differ from the pre-0206 bodies: (the proof
+//      prints only the first line; the per-call diffs follow it in the message)
+//   0206 re-apply needs the objects dropped first:
+//     psql $DB -c "drop function if exists public.patient_sources_report(date,date,text,text,date,date);
+//                  drop type if exists public._ps_identity, public._ps_encounter, public._ps_revenue_line cascade;"
 //
 //   for each letter: edit $MIG, then
 //     $PSQL $DB -v ON_ERROR_STOP=1 -f $MIG
@@ -495,6 +530,105 @@ async function main() {
   }
 
   // ---------------------------------------------------------------------
+  // ---- 0206: a seeded world where every section is non-empty ----------
+  // Dates straddle the three comparison periods below. Built inside a
+  // scoped() check, so it never outlives that check.
+  const loose = (last: string, first: string) => looseKeyOf({ last, first, middle: null });
+  const P_EARLY = { from: "2023-12-01", to: "2024-01-31" };
+  const P_JUNE = { from: "2026-06-01", to: "2026-06-30" };
+  const P_LONG = { from: "2025-08-27", to: "2026-09-30" }; // exactly 400 days
+  const PERIODS = [P_EARLY, P_JUNE, P_LONG];
+
+  interface World { del: string; dup: string; surv: string; regOnly: string; old: string; imp: string; }
+  async function seedWorld(): Promise<World> {
+    const sources = ["walk_in", "online_facebook", "online_google", null] as const;
+    const days = ["2023-12-05", "2024-01-20", "2025-09-10", "2026-02-14", "2026-06-03", "2026-06-17", "2026-06-28", "2026-09-29"];
+    // App-native patients, one per (source, day), with a priced visit that day.
+    let n = 0;
+    const firstDayIds: string[] = [];
+    for (const source of sources) {
+      for (const d of days) {
+        n += 1;
+        const id = await patient(`World${n}`, `App${n}`, { source: source ?? undefined, createdAt: `${d}T09:00:00+08:00` });
+        await visit(id, d, 300 + n);
+        if (d === days[0]) firstDayIds.push(id);
+        if (n % 3 === 0) await visit(id, "2026-06-20", 150); // a repeat visit inside June
+        if (n % 4 === 0) await q(`update public.patients set referred_by_doctor = $1 where id = $2`, [`Dr. World ${n % 3}`, id]);
+      }
+    }
+    // An early referrer, so referrers is non-empty for P_EARLY too.
+    await q(`update public.patients set referred_by_doctor = 'Dr. Early' where id = $1`, [firstDayIds[0]]);
+    // Activity inside both previous windows used by the report-sections check.
+    const prevA = await patient("WorldPrevA", "Pia", { source: "walk_in", createdAt: "2026-05-15T09:00:00+08:00" });
+    await visit(prevA, "2026-05-15", 260);
+    await sheetLine("2026-05-20", loose("WorldPrevSheetA", "Pam"), null, 90);
+    const prevB = await patient("WorldPrevB", "Pio", { source: "online_facebook", createdAt: "2025-03-01T09:00:00+08:00" });
+    await visit(prevB, "2025-03-01", 270);
+    await sheetLine("2025-03-05", loose("WorldPrevSheetB", "Pat"), null, 95);
+    // Imported patient with a sheet registration + returning flag, linked sheet lines, and a same-day app visit (overlap).
+    const imp = await patient("WorldImported", "Ivy", { source: "online_google", imported: true });
+    await facts(imp, "2026-06-05", "repeat");
+    await customerRow(loose("WorldImported", "Ivy"), { patientId: imp, source: "online_google", registeredOn: "2026-06-05", referredBy: "Dr. Sheetworld" });
+    await visit(imp, "2026-06-10", 500);
+    await sheetLine("2026-06-10", loose("WorldImported", "Ivy"), imp, 700);
+    await sheetLine("2026-06-12", loose("WorldImported", "Ivy"), imp, 200);
+    // Merged pair: the duplicate's visit counts for the survivor.
+    const surv = await patient("WorldMerge", "Sam", { source: "walk_in", createdAt: "2026-06-02T10:00:00+08:00" });
+    const dup = await patient("WorldMerge", "Samuel", { source: "online_facebook", createdAt: "2026-06-04T10:00:00+08:00" });
+    await visit(dup, "2026-06-06", 250);
+    await q(`update public.patients set merged_into_id = $1 where id = $2`, [surv, dup]);
+    // Deleted patient: must drop out everywhere.
+    const del = await patient("WorldDeleted", "Dee", { source: "walk_in", createdAt: "2026-06-08T10:00:00+08:00" });
+    await visit(del, "2026-06-08", 999);
+    await softDelete(del);
+    // Unlinked sheet names (unconfirmed), one with a single Customers row + referrer, one lines-only.
+    await customerRow(loose("WorldSheet", "Una"), { source: "online_facebook", registeredOn: "2026-06-09", referredBy: "Dr. World 1" });
+    await sheetLine("2026-06-15", loose("WorldSheet", "Una"), null, 400);
+    await sheetLine("2025-10-01", loose("WorldSheet", "Lina"), null, 120);
+    await sheetLine("2026-06-15", loose("WorldSheet", "Lina"), null, 80);
+    // Registration-only (no visit) and undated (no date at all) patients.
+    const regOnly = await patient("WorldRegOnly", "Rae", { imported: true });
+    await facts(regOnly, "2026-06-21", "new");
+    await patient("WorldUndated", "Uri", { imported: true });
+    // Pre-window visitor with a later registration: never New.
+    const old = await patient("WorldOld", "Ola", { source: "walk_in", createdAt: "2026-06-11T10:00:00+08:00" });
+    await visit(old, "2023-06-01", 100);
+    return { del, dup, surv, regOnly, old, imp };
+  }
+
+  /** Which labels the seed guarantees non-empty for a period (overlaps only exist from June on). */
+  const mustBeNonEmpty = (label: string, p: { from: string; to: string }) => !(label.startsWith("overlaps") && p === P_EARLY);
+
+  // Both sides go through node-pg's jsonb parsing (so numeric 1500.00 and 1500
+  // both become 1500) and are sorted AFTER that, in JS — sorting on jsonb text
+  // in SQL would order "1500.00" and "1500" differently.
+  const canon = (rows: unknown[]) => JSON.stringify(rows.map((x) => JSON.stringify(x)).sort());
+  /** Canonical, order-insensitive JSON of a set-returning call. */
+  async function rowsJson(sql: string, params: unknown[]): Promise<string> {
+    const r = await q<{ j: unknown }>(`select to_jsonb(t) as j from (${sql}) t`, params);
+    return canon(r.rows.map((x) => x.j));
+  }
+  /** Canonical JSON of a report section (already parsed jsonb). */
+  async function sortedJson(arr: unknown): Promise<string> {
+    return canon(Array.isArray(arr) ? arr : []);
+  }
+  /** Every (function, args) the page and CSV use, per period. `schema` is 'public' or 'ps_old'. */
+  function gridCalls(schema: "public" | "ps_old", p: { from: string; to: string }) {
+    const calls: { label: string; sql: string; params: unknown[] }[] = [
+      { label: "summary", sql: `select * from ${schema}.patient_sources_summary($1, $2)`, params: [p.from, p.to] },
+      { label: "revenue", sql: `select * from ${schema}.patient_sources_revenue($1, $2)`, params: [p.from, p.to] },
+      { label: "overlaps", sql: `select * from ${schema}.patient_sources_overlaps($1, $2)`, params: [p.from, p.to] },
+      { label: "referrers", sql: `select * from ${schema}.patient_sources_referrers($1, $2, 20)`, params: [p.from, p.to] },
+      { label: "referrers limit 1", sql: `select * from ${schema}.patient_sources_referrers($1, $2, 1)`, params: [p.from, p.to] },
+    ];
+    for (const grain of ["day", "week", "month", "period"]) {
+      for (const mode of ["new", "served"]) {
+        calls.push({ label: `series ${grain}/${mode}`, sql: `select * from ${schema}.patient_sources_series($1, $2, $3, $4)`, params: [p.from, p.to, grain, mode] });
+      }
+    }
+    return calls;
+  }
+
   await q("begin");
   try {
     fx = await setupFixtures();
@@ -507,6 +641,7 @@ async function main() {
         { name: "patient_sources_revenue", sql: `select public.patient_sources_revenue('2026-06-01'::date,'2026-06-30'::date)` },
         { name: "patient_sources_overlaps", sql: `select public.patient_sources_overlaps('2026-06-01'::date,'2026-06-30'::date)` },
         { name: "patient_sources_referrers", sql: `select public.patient_sources_referrers('2026-06-01'::date,'2026-06-30'::date,20::int)` },
+        { name: "patient_sources_report", sql: `select public.patient_sources_report('2026-06-01'::date,'2026-06-30'::date,'day'::text,'new'::text,null::date,null::date)` },
         { name: "patient_sources_people", sql: `select public.patient_sources_people('2026-06-01'::date,'2026-06-30'::date,'new'::text,null::text,50::int,0::int)` },
         { name: "ad_spend_import", sql: `select public.ad_spend_import(gen_random_uuid(), '[{"spend_date":"2026-06-01","platform":"meta","campaign_key":"c","ad_key":"a","campaign_label":"C","spend_php":1}]'::jsonb)` },
         { name: "ad_spend_delete", sql: `select public.ad_spend_delete('meta'::text,'2026-06-01'::date,'2026-06-01'::date)` },
@@ -1919,6 +2054,189 @@ async function main() {
         q(`select public.patient_sources_summary('2026-06-01'::date,'2026-06-30'::date)`));
       await expectPgError("control: live series refuses the no-claims session", "42501", () =>
         q(`select public.patient_sources_series('2026-06-01'::date,'2026-06-30'::date,'day'::text,'new'::text)`));
+    }));
+    // ---- 0206: one call per page view ---------------------------------
+    await check("0206: seeded world makes every section non-empty", () => scoped(async () => {
+      const w = await seedWorld();
+      await asAdmin();
+      for (const p of PERIODS) {
+        for (const c of gridCalls("public", p)) {
+          if (!mustBeNonEmpty(c.label, p)) continue;
+          const n = Number((await q<{ n: string }>(`select count(*)::text as n from (${c.sql}) t`, c.params)).rows[0].n);
+          assert(n > 0, `${c.label} ${p.from}..${p.to} is empty — the equivalence below would be vacuous`);
+        }
+      }
+      // Pinned: each seeded case really landed (summary always returns a row, so count(*) proves nothing).
+      const sm = await summary(P_JUNE.from, P_JUNE.to);
+      assert(sm.new_unconfirmed > 0, `new_unconfirmed must be > 0: ${JSON.stringify(sm)}`);
+      assert(sm.returning_first_recorded > 0, `returning_first_recorded must be > 0: ${JSON.stringify(sm)}`);
+      assert(sm.undated_registrations > 0, `undated_registrations must be > 0: ${JSON.stringify(sm)}`);
+      assert(sm.source_total > sm.source_recorded, `source_total must exceed source_recorded: ${JSON.stringify(sm)}`);
+      await setRole("postgres", null);
+      const ids = (await q<{ identity: string }>(`select identity from public._patient_sources_identities()`)).rows.map((r) => r.identity);
+      assert(!ids.includes(`patient:${w.del}`), "the deleted patient must not be an identity");
+      assert(!ids.includes(`patient:${w.dup}`), "the merged duplicate must not be an identity");
+      assert(ids.includes(`patient:${w.surv}`), "the merge survivor must be an identity");
+      const oldRow = await identityRow(`patient:${w.old}`);
+      assert(oldRow?.basis === "before_window", `pre-window visitor basis: ${JSON.stringify(oldRow)}`);
+      const regRow = await identityRow(`patient:${w.regOnly}`);
+      assert(regRow?.basis === "registration", `registration-only basis: ${JSON.stringify(regRow)}`);
+    }));
+
+    await check("0206: every wrapper returns exactly the pre-0206 rows", () => scoped(async () => {
+      await q(fs.readFileSync(path.join(__dirname, "fixtures/patient-sources-pre-0206.sql"), "utf8"));
+      await seedWorld();
+      await asAdmin();
+      const diffs: string[] = [];
+      for (const p of PERIODS) {
+        const now = gridCalls("public", p);
+        const old = gridCalls("ps_old", p);
+        for (let i = 0; i < now.length; i++) {
+          const a = await rowsJson(now[i].sql, now[i].params);
+          const b = await rowsJson(old[i].sql, old[i].params);
+          if (mustBeNonEmpty(now[i].label, p)) assert(JSON.parse(b).length > 0, `${now[i].label} ${p.from}..${p.to} is empty on both sides — vacuous`);
+          if (a !== b) diffs.push(`${now[i].label} ${p.from}..${p.to}: new=${a.slice(0, 300)} old=${b.slice(0, 300)}`);
+        }
+      }
+      assert(diffs.length === 0, `wrappers differ from the pre-0206 bodies:\n${diffs.join("\n")}`);
+    }));
+
+    await check("0206: report sections equal the single RPCs (with and without a previous period)", () => scoped(async () => {
+      await seedWorld();
+      await asAdmin();
+      const cases = [
+        { p: P_JUNE, grain: "day", mode: "new", prev: { from: "2026-05-02", to: "2026-05-31" } },
+        { p: P_JUNE, grain: "week", mode: "served", prev: null },
+        { p: P_LONG, grain: "month", mode: "served", prev: { from: "2024-07-23", to: "2025-08-26" } },
+        { p: P_EARLY, grain: "day", mode: "served", prev: null },
+      ];
+      for (const c of cases) {
+        const tag = `${c.p.from}..${c.p.to} ${c.grain}/${c.mode} prev=${c.prev ? "set" : "null"}`;
+        const rep = (await q<{ r: Record<string, unknown> }>(
+          `select public.patient_sources_report($1, $2, $3, $4, $5, $6) as r`,
+          [c.p.from, c.p.to, c.grain, c.mode, c.prev?.from ?? null, c.prev?.to ?? null])).rows[0].r;
+        assert(rep && typeof rep === "object", `${tag}: report returned ${JSON.stringify(rep)}`);
+        const keys = Object.keys(rep).sort().join(",");
+        assert(keys === "current,new_by_day,overlaps,previous,referrers,revenue,series,summary", `${tag}: sections are ${keys}`);
+        const same = async (label: string, section: unknown, sql: string, params: unknown[]) => {
+          const a = await sortedJson(section);
+          const b = await rowsJson(sql, params);
+          const needs = label !== "overlaps" || c.p !== P_EARLY;
+          if (needs && label !== "summary") assert(JSON.parse(b).length > 0, `${tag} ${label} is empty — vacuous`);
+          assert(a === b, `${tag} ${label}: report=${a.slice(0, 300)} rpc=${b.slice(0, 300)}`);
+        };
+        await same("summary", [rep.summary], `select * from public.patient_sources_summary($1,$2)`, [c.p.from, c.p.to]);
+        await same("series", rep.series, `select * from public.patient_sources_series($1,$2,$3,$4)`, [c.p.from, c.p.to, c.grain, c.mode]);
+        await same("current", rep.current, `select * from public.patient_sources_series($1,$2,'period',$3)`, [c.p.from, c.p.to, c.mode]);
+        await same("new_by_day", rep.new_by_day, `select * from public.patient_sources_series($1,$2,'day','new')`, [c.p.from, c.p.to]);
+        await same("revenue", rep.revenue, `select * from public.patient_sources_revenue($1,$2)`, [c.p.from, c.p.to]);
+        await same("overlaps", rep.overlaps, `select * from public.patient_sources_overlaps($1,$2)`, [c.p.from, c.p.to]);
+        await same("referrers", rep.referrers, `select * from public.patient_sources_referrers($1,$2,20)`, [c.p.from, c.p.to]);
+        if (c.prev) {
+          assert(Array.isArray(rep.previous) && (rep.previous as unknown[]).length > 0, `${tag}: previous is empty — vacuous`);
+          await same("previous", rep.previous, `select * from public.patient_sources_series($1,$2,'period',$3)`, [c.prev.from, c.prev.to, c.mode]);
+        } else {
+          assert(rep.previous === null, `${tag}: previous must be null without a previous period, got ${JSON.stringify(rep.previous)}`);
+        }
+        // Order is part of the contract (the page renders arrays as given).
+        const series = rep.series as { bucket_start: string; channel: string }[];
+        const sorted = [...series].sort((x, y) => (x.bucket_start + x.channel < y.bucket_start + y.channel ? -1 : 1));
+        assert(JSON.stringify(series) === JSON.stringify(sorted), `${tag}: series is not ordered by bucket_start, channel`);
+        const revs = (rep.revenue as { channel: string }[]).map((r) => r.channel);
+        assert(JSON.stringify(revs) === JSON.stringify([...revs].sort((x, y) => (x < y ? -1 : x > y ? 1 : 0))), `${tag}: revenue not ordered by channel: ${JSON.stringify(revs)}`);
+        const ovs = (rep.overlaps as { service_date: string; drm_id: string }[]).map((r) => r.service_date + "|" + r.drm_id);
+        assert(JSON.stringify(ovs) === JSON.stringify([...ovs].sort((x, y) => (x < y ? -1 : x > y ? 1 : 0))), `${tag}: overlaps not ordered by (service_date, drm_id): ${JSON.stringify(ovs)}`);
+        const refs = (rep.referrers as { doctor_label: string }[]).map((r) => r.doctor_label);
+        const rpcRefs = (await q<{ doctor_label: string }>(`select doctor_label from public.patient_sources_referrers($1,$2,20)`, [c.p.from, c.p.to])).rows.map((r) => r.doctor_label);
+        assert(JSON.stringify(refs) === JSON.stringify(rpcRefs), `${tag}: referrers order ${JSON.stringify(refs)} vs ${JSON.stringify(rpcRefs)}`);
+      }
+    }));
+
+    await check("0206: report gate matrix", () => scoped(async () => {
+      const sql = `select public.patient_sources_report('2026-06-01'::date,'2026-06-30'::date,'day'::text,'new'::text,null::date,null::date)`;
+      await setRole("anon", null);
+      await expectPgError("anon", "42501", () => q(sql));
+      await setRole("authenticated", { sub: fx.receptionId, role: "authenticated" });
+      await expectPgError("reception", "42501", () => q(sql));
+      await setRole("authenticated", { sub: fx.inactiveAdminId, role: "authenticated" });
+      await expectPgError("inactive admin", "42501", () => q(sql));
+      await setRole("authenticated", null);
+      await expectPgError("no JWT claims at all", "42501", () => q(sql));
+      await setRole("authenticated", { sub: fx.receptionId, role: "authenticated", app_metadata: { role: "service_role" } });
+      await expectPgError("authenticated with a service_role app_metadata", "42501", () => q(sql));
+      await setRole("postgres", null);
+      await q(`update public.staff_profiles set view_as_role = 'reception', view_as_until = now() + interval '1 hour' where id = $1`, [fx.adminId]);
+      try {
+        await asAdmin();
+        await expectPgError("admin viewing as reception", "42501", () => q(sql));
+      } finally {
+        await setRole("postgres", null);
+        await q(`update public.staff_profiles set view_as_role = null, view_as_until = null where id = $1`, [fx.adminId]);
+      }
+      await asAdmin();
+      await expectOk("admin", () => q(sql));
+      await setRole("service_role", { role: "service_role" });
+      const svc = await expectOk("service_role", () => q<{ r: unknown }>(sql + " as r"));
+      await asAdmin();
+      const adm = await q<{ r: unknown }>(sql + " as r");
+      assert(JSON.stringify(svc.rows[0].r) === JSON.stringify(adm.rows[0].r), "service_role and admin must read the same report");
+    }));
+
+    await check("0206: report refuses bad input with today's codes", () => scoped(async () => {
+      await asAdmin();
+      const call = (a: unknown[]) => q(`select public.patient_sources_report($1::date,$2::date,$3::text,$4::text,$5::date,$6::date)`, a);
+      await expectPgError("bad grain", "22023", () => call(["2026-06-01", "2026-06-30", "year", "new", null, null]));
+      await expectPgError("null grain", "22023", () => call(["2026-06-01", "2026-06-30", null, "new", null, null]));
+      await expectPgError("bad mode", "22023", () => call(["2026-06-01", "2026-06-30", "day", "converted", null, null]));
+      await expectPgError("period over 400 days", "22023", () => call(["2025-01-01", "2026-06-30", "day", "new", null, null]));
+      await expectPgError("start before 2023-12-01", "22023", () => call(["2023-11-30", "2023-12-31", "day", "new", null, null]));
+      await expectPgError("reversed period", "22023", () => call(["2026-06-30", "2026-06-01", "day", "new", null, null]));
+      await expectPgError("half a previous period (from only)", "22023", () => call(["2026-06-01", "2026-06-30", "day", "new", "2026-05-01", null]));
+      await expectPgError("half a previous period (to only)", "22023", () => call(["2026-06-01", "2026-06-30", "day", "new", null, "2026-05-31"]));
+      await expectPgError("previous period before 2023-12-01", "22023", () => call(["2023-12-01", "2023-12-31", "day", "new", "2023-11-01", "2023-11-30"]));
+    }));
+
+    await check("0206: helpers and list builders are closed; row types match their producers", () => scoped(async () => {
+      const closed = [
+        "public._ps_identity_list()", "public._ps_encounter_list()", "public._ps_revenue_line_list(date,date)",
+        "public._ps_sec_summary(public._ps_identity[],public._ps_encounter[],date,date)",
+        "public._ps_sec_series(public._ps_identity[],public._ps_encounter[],date,date,text,text)",
+        "public._ps_sec_revenue(public._ps_identity[],public._ps_revenue_line[])",
+        "public._ps_sec_overlaps(public._ps_revenue_line[])",
+        "public._ps_sec_referrers(public._ps_identity[],date,date,integer)",
+      ];
+      for (const fn of closed) {
+        const r = await q<{ a: boolean; u: boolean; s: boolean; sd: boolean }>(
+          `select has_function_privilege('anon', $1, 'execute') as a,
+                  has_function_privilege('authenticated', $1, 'execute') as u,
+                  has_function_privilege('service_role', $1, 'execute') as s,
+                  (select p.prosecdef from pg_proc p where p.oid = $1::regprocedure) as sd`, [fn]);
+        const x = r.rows[0];
+        assert(!x.a && !x.u && !x.s, `${fn} must be closed to anon/authenticated/service_role, got ${JSON.stringify(x)}`);
+        assert(!x.sd, `${fn} must not be SECURITY DEFINER`);
+      }
+      const pairs: [string, string][] = [
+        ["public._ps_identity", "public._patient_sources_identities()"],
+        ["public._ps_encounter", "public._patient_sources_encounters()"],
+        ["public._ps_revenue_line", "public._ps_revenue_lines(date,date)"],
+      ];
+      for (const [typ, fn] of pairs) {
+        const r = await q<{ t: string; f: string }>(
+          `select 'TABLE(' || (select string_agg(a.attname || ' ' || format_type(a.atttypid, a.atttypmod), ', ' order by a.attnum)
+                                 from pg_attribute a where a.attrelid = (select typrelid from pg_type where oid = $1::regtype)
+                                   and a.attnum > 0 and not a.attisdropped) || ')' as t,
+                  pg_get_function_result($2::regprocedure) as f`, [typ, fn]);
+        assert(r.rows[0].t === r.rows[0].f, `${typ} ${r.rows[0].t} does not match ${fn} ${r.rows[0].f}`);
+      }
+      const rep = await q<{ a: boolean; u: boolean; s: boolean; sd: boolean; gate: boolean }>(
+        `select has_function_privilege('anon', $1, 'execute') as a,
+                has_function_privilege('authenticated', $1, 'execute') as u,
+                has_function_privilege('service_role', $1, 'execute') as s,
+                (select p.prosecdef from pg_proc p where p.oid = $1::regprocedure) as sd,
+                pg_get_functiondef($1::regprocedure) like '%coalesce((select auth.role()), '''') = ''service_role''%' as gate`,
+        ["public.patient_sources_report(date,date,text,text,date,date)"]);
+      const x = rep.rows[0];
+      assert(!x.a && x.u && x.s && x.sd && x.gate, `patient_sources_report ACL/definer/gate wrong: ${JSON.stringify(x)}`);
     }));
   } finally {
     // Never persisted. This proof never writes anything real.
