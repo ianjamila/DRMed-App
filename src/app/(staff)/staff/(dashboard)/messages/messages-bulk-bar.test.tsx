@@ -117,7 +117,8 @@ describe("MessagesBulkBar", () => {
     await userEvent.click(screen.getByRole("button", { name: "Mark closed (2)" }));
     await userEvent.click(await screen.findByRole("button", { name: "↶ Undo" }));
     expect(undoMessageStatusManyAction).toHaveBeenCalledWith({ batchId: "b-1" });
-    const text = (await screen.findByRole("status")).textContent ?? "";
+    await waitFor(() => expect(screen.getByRole("status").textContent).toContain("Undone — 1 message"));
+    const text = screen.getByRole("status").textContent ?? "";
     expect(text).toContain("Undone — 1 message is back to what it was.");
     expect(text).toContain("Ben Diaz: changed again since");
     expect(screen.queryByRole("button", { name: "↶ Undo" })).toBeNull();
@@ -130,7 +131,7 @@ describe("MessagesBulkBar", () => {
     await userEvent.click(screen.getByLabelText("Select Ana Cruz"));
     await userEvent.click(screen.getByRole("button", { name: "Mark closed (1)" }));
     await userEvent.click(await screen.findByRole("button", { name: "↶ Undo" }));
-    expect((await screen.findByRole("status")).textContent).toContain(UNDO_EXPIRED);
+    await waitFor(() => expect(screen.getByRole("status").textContent).toContain(UNDO_EXPIRED));
     expect(screen.queryByRole("button", { name: "↶ Undo" })).toBeNull();
   });
 
@@ -154,7 +155,7 @@ describe("MessagesBulkBar", () => {
     await userEvent.click(screen.getByLabelText("Select Ana Cruz"));
     await userEvent.click(screen.getByRole("button", { name: "Mark closed (1)" }));
     await userEvent.click(await screen.findByRole("button", { name: "↶ Undo" }));
-    expect((await screen.findByRole("status")).textContent).toContain("could not be undone just now — try again");
+    await waitFor(() => expect(screen.getByRole("status").textContent).toContain("could not be undone just now — try again"));
     expect(screen.getByRole("button", { name: "↶ Undo" })).toBeTruthy();
   });
 
@@ -220,8 +221,7 @@ describe("MessagesBulkBar", () => {
     const undo = await screen.findByRole("button", { name: "↶ Undo" });
     rerender(<Harness barRows={{}} />); // the page refresh no longer lists either message
     await userEvent.click(undo);
-    const text = (await screen.findByRole("status")).textContent ?? "";
-    expect(text).toContain("Ben Diaz: changed again since");
+    await waitFor(() => expect(screen.getByRole("status").textContent).toContain("Ben Diaz: changed again since"));
   });
 
   it("a resetKey change drops the selection and the bar", async () => {
