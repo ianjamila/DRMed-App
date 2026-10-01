@@ -149,6 +149,10 @@ const SURFACES: Record<string, Surface> = {
     meaning: "structural",
     why: "Reads released_at / released_by of the ids a Release click just lost a race on, to word the refusal. Those ids come only from releaseVisitSelection / releaseTestsAction, whose eligibility checks (evaluateRelease, the RPC) refuse doctor lines before this read, and it filters status = released. It shows a name and a time, never a count or a list of lab work.",
   },
+  "lib/actions/visits/release-undo-refusal.ts": {
+    meaning: "all",
+    why: "Words a refused release Undo: reads whether a combined report's OTHER members are released, by id. Reports are chemistry-only, but the read is by id and makes no lab-vs-bill claim — a doctor line can never be a report member, so filtering it would be dead weight.",
+  },
   // --- Reports -------------------------------------------------------------
   "lib/reports/lab-tat.ts": {
     meaning: "lab",
@@ -451,6 +455,10 @@ const LIFECYCLES: Record<string, LifecycleSurface> = {
   "lib/actions/visits/raced-release.ts": {
     lifecycle: "live",
     why: "Words the refusal for a Release click that lost a race. Filters the line own deleted_at and its visit deleted_at (visits!inner), so a queue-deleted line or visit is never described as released (it keeps the generic reason).",
+  },
+  "lib/actions/visits/release-undo-refusal.ts": {
+    lifecycle: "live",
+    why: "A deleted report-mate is not 'released separately' — only live released lines count, so the read filters the line own deleted_at and its visit deleted_at (visits!inner).",
   },
   // --- Deliberately spans deleted rows -------------------------------------
   "app/(staff)/staff/(dashboard)/payments/[id]/void/actions.ts": {

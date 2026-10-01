@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -72,7 +72,7 @@ describe("VoidPaymentDialog", () => {
       category: "other",
       reason: "Refunded by bank transfer instead",
     });
-    expect(screen.queryByText(/^Delete this/)).toBeNull(); // dialog closed
+    await waitFor(() => expect(screen.queryByText(/^Delete this/)).toBeNull()); // dialog closed
   });
 
   it("offers the Move/Edit handoff only when the payment is one they'd actually accept", async () => {

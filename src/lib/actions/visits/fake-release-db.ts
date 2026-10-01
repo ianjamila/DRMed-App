@@ -6,6 +6,8 @@
 //    HONOURS eq / neq / in / is / not filters (dotted paths reach into embeds)
 //    and records every call, so a test that drops a filter from the code under
 //    test fails instead of passing vacuously.
+//  - `from("result_test_requests")` serves `links` as { result_id, test_request_id }
+//    rows (select only, same filters and failure injection).
 //  - `rpc("release_visit_results" | "undo_visit_release")` is a TypeScript
 //    model of migration 0198: same result shape, same refusal codes, same
 //    whole-report rule (a combined report goes out whole or not at all,
@@ -262,6 +264,13 @@ export function makeFakeReleaseDb(seed: {
       if (fail) return { data: null, error: fail.error };
       const all = Object.entries(seed.staff ?? {}).map(([id, full_name]) => ({ id, full_name }));
       return { data: all.filter((p) => call.filters.every((f) => matches(p, f))), error: null };
+    }
+    if (call.table === "result_test_requests") {
+      hooks.beforeRead?.(call.table);
+      const fail = take(call.table, ["read"]);
+      if (fail) return { data: null, error: fail.error };
+      const all = links.map((l) => ({ result_id: l.resultId, test_request_id: l.testRequestId }));
+      return { data: all.filter((l) => call.filters.every((f) => matches(l, f))), error: null };
     }
     if (call.table !== "test_requests") throw new Error(`fake db: unsupported table ${call.table}`);
     hooks.beforeRead?.(call.table);

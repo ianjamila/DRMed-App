@@ -16,7 +16,12 @@ import {
   undoReleaseSelectedAction,
 } from "./actions";
 import { useRowSelection } from "./selection-context";
-import { RELEASE_BLOCKED_CONSENT, RELEASE_BLOCKED_UNPAID } from "@/lib/visits/release-messages";
+import {
+  ALREADY_NOTIFIED,
+  NOTICE_RETRYING,
+  RELEASE_BLOCKED_CONSENT,
+  RELEASE_BLOCKED_UNPAID,
+} from "@/lib/visits/release-messages";
 
 // Undo state for a "Release selected" batch — server-checked, 10-minute
 // window (owner 2026-09-28). Kept as local state, not tied to
@@ -37,10 +42,6 @@ interface ReleaseUndo {
   doneAt: number;
   notified: boolean;
 }
-
-const NOTICE_RETRYING =
-  "The patient's \"result ready\" message has not gone out yet — it will retry automatically.";
-const ALREADY_NOTIFIED = "The patient was already notified that results are ready — tell them if needed.";
 
 interface Props {
   visitId: string;

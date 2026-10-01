@@ -11,6 +11,7 @@
     "test": "vitest run",
     "claim": "node scripts/claim-number.mjs",
     "test:watch": "vitest",
+    "test:stress": "node scripts/test-stress.mjs",
     "db:types": "node scripts/db-types.mjs",
     "db:local-rest-utf8": "node scripts/local-rest-utf8.mjs",
     "db:types:local": "node scripts/db-types.mjs",
@@ -66,7 +67,8 @@
     "waiver:concurrency-proof": "tsx scripts/waiver-concurrency-proof.ts",
     "ps-digest-claim:concurrency-proof": "tsx scripts/ps-digest-claim-concurrency-proof.ts",
     "release-notice:concurrency-proof": "tsx scripts/release-notice-concurrency-proof.ts",
-    "view-as-restore:concurrency-proof": "tsx scripts/view-as-restore-concurrency-proof.ts"
+    "view-as-restore:concurrency-proof": "tsx scripts/view-as-restore-concurrency-proof.ts",
+    "notice-claims:concurrency-proof": "tsx scripts/notice-claims-concurrency-proof.ts"
   },
   "dependencies": {
     "@base-ui/react": "^1.4.1",
