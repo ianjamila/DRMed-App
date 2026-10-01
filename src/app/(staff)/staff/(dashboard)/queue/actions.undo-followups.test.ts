@@ -2,12 +2,13 @@ import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
-// Codex review findings 6 + 7 (P2, 2026-09-30). No pure seam to unit-test
-// these DB writes in isolation (admin/RLS clients, audit(), Server Actions) —
-// pinned as source text, in the style of
-// admin/accounting/hmo-claims/actions.undo-reversal.test.ts. The pure
-// planning helpers these call into (partiallyRestoredIds, stillCommittedRows)
-// are unit-tested in src/lib/queue/partial-panel.test.ts.
+// Source-text pins for undoBulkQueueAction's panel paths. The behaviour
+// itself (rows, audits, refusals, races) is pinned end to end against a fake
+// client in actions.undo-behaviour.test.ts; what reads better as text is
+// "which helper does this branch call, and is the compensation machinery gone"
+// — a panel's Undo is atomic in the database now (0191 / 0200), so the
+// member-by-member write, the compensating revert/re-delete and the
+// leftover-audit helper must not creep back.
 
 const FILE = join(process.cwd(), "src/app/(staff)/staff/(dashboard)/queue/actions.ts");
 const src = readFileSync(FILE, "utf8");
@@ -19,88 +20,33 @@ function bodyOf(fnName: string): string {
   return next === -1 ? src.slice(start) : src.slice(start, next);
 }
 
-describe("finding 6: a bulk-delete Undo that only partially restores a panel compensates the rest back", () => {
-  it("undoBulkQueueAction's restore branch checks each pre-validated group for a partial restore via partiallyRestoredIds", () => {
-    const body = bodyOf("undoBulkQueueAction");
-    expect(body).toMatch(/partiallyRestoredIds\(ids,\s*restoredTestIds\)/);
+describe("a panel's Undo is atomic in the database — no compensation machinery is left", () => {
+  const body = bodyOf("undoBulkQueueAction");
+
+  it("the compensation helpers and their wording are gone from actions.ts", () => {
+    expect(src).not.toMatch(/auditLeftoverPanelRows/);
+    expect(src).not.toMatch(/partial-panel/);
+    expect(src).not.toMatch(/PARTIAL_PANEL_LEFTOVER_REASON|stillCommittedRows|partiallyRestoredIds/);
+    expect(body).not.toMatch(/compensatedIds|compensatedCount|compensationReasonOf|compensation: true/);
+    expect(body).not.toMatch(/partial_panel/);
   });
 
-  it("compensates a partial restore by re-deleting to the batch's recorded deletedAt and the row's PRIOR deleted_by/delete_reason", () => {
-    const body = bodyOf("undoBulkQueueAction");
-    const at = body.indexOf('.update({\n                deleted_at: step.deletedAt');
-    expect(at, "compensation update not found").toBeGreaterThan(-1);
-    const call = body.slice(at, body.indexOf(".select(\"id\")", at));
-    expect(call).toMatch(/deleted_by:\s*prior\?\.deleted_by\s*\?\?\s*null/);
-    expect(call).toMatch(/delete_reason:\s*prior\?\.delete_reason\s*\?\?\s*null/);
-    // Predicated on the row being currently restored (null) — never blind.
-    expect(call).toMatch(/\.eq\("id",\s*id\)/);
-    expect(call).toMatch(/\.is\("deleted_at",\s*null\)/);
+  it("the restore branch hands a panel to restorePanelMembers only AFTER assertVisitPatientActive, and the panel's refusal reason is what the operator sees", () => {
+    const at = body.indexOf("for (const group of panelGroups) {");
+    expect(at, "panel restore loop not found").toBeGreaterThan(-1);
+    const loop = body.slice(at, body.indexOf("if (restoredTestIds.size > 0) anyChanged = true;", at));
+    const guard = loop.indexOf("await assertVisitPatientActive(admin, visitId)");
+    const write = loop.indexOf("await restorePanelMembers(session, admin, {");
+    expect(guard).toBeGreaterThan(-1);
+    expect(write).toBeGreaterThan(guard);
+    // the row's own just-read spelling, not the audit string
+    expect(loop).toMatch(/deletedAt:\s*currentDeletedAtById\.get\(s\.id\)!/);
+    expect(loop).toMatch(/reasonOf\.set\(group\.key, active\.error\)/);
+    expect(loop).toMatch(/reasonOf\.set\(group\.key, result\.error\)/);
   });
 
-  it("the pre-validation read that feeds compensation's prior state selects deleted_by and delete_reason", () => {
-    const body = bodyOf("undoBulkQueueAction");
-    const at = body.indexOf('.select("id, deleted_at, deleted_by, delete_reason, visits ( deleted_at )")');
-    expect(at, "pre-validation select not extended with deleted_by/delete_reason").toBeGreaterThan(-1);
-  });
-
-  it("audits every successfully compensated (re-deleted) row as test_request.deleted, flagged as a compensation", () => {
-    const body = bodyOf("undoBulkQueueAction");
-    const auditAt = body.indexOf('action: "test_request.deleted"', body.indexOf("compensatedIds.push"));
-    expect(auditAt, "compensation audit row not found after compensatedIds.push").toBeGreaterThan(-1);
-    const call = body.slice(auditAt, body.indexOf("});", auditAt));
-    expect(call).toMatch(/compensation:\s*true/);
-    expect(call).toMatch(/undo_of_batch:\s*parsed\.data\.batchId/);
-  });
-
-  it("a group is never marked restoredIds unless every member is still in restoredTestIds — compensated ids are removed from that set", () => {
-    const body = bodyOf("undoBulkQueueAction");
-    expect(body).toMatch(/restoredTestIds\.delete\(id\)/);
-    const finalLoopAt = body.lastIndexOf("ids.every((id) => restoredTestIds.has(id))");
-    expect(finalLoopAt).toBeGreaterThan(-1);
-  });
-
-  it("a partial group that could not be FULLY compensated back is reported with the shared partial-panel wording, not the generic one", () => {
-    expect(src).toMatch(/import \{[\s\S]*?PARTIAL_PANEL_LEFTOVER_REASON[\s\S]*?\} from "@\/lib\/queue\/partial-panel";/);
-    const body = bodyOf("undoBulkQueueAction");
-    const at = body.indexOf("compensationReasonOf.set(");
-    expect(at).toBeGreaterThan(-1);
-    const call = body.slice(at, body.indexOf(");", at) + 1);
-    expect(call).toMatch(/stillLeftover\.length > 0 \? PARTIAL_PANEL_LEFTOVER_REASON : RESTORE_PANEL_CHANGED/);
-  });
-});
-
-describe("finding 7: auditLeftoverPanelRows fails CLOSED when its verification read errors", () => {
-  const at = src.indexOf("async function auditLeftoverPanelRows(");
-  const body = src.slice(at, src.indexOf("\nexport type ClaimResult", at));
-
-  it("checks the verification read's error (and null data), not just an empty array", () => {
-    expect(at).toBeGreaterThan(-1);
-    expect(body).toMatch(/const \{ data: fresh, error \} = await supabase/);
-    expect(body).toMatch(/if \(error \|\| !fresh\) \{/);
-  });
-
-  it("on a failed read, audits EVERY row passed in (not just an empty 'leftover' list) with outcome_unverified", () => {
-    const failClosedAt = body.indexOf("if (error || !fresh) {");
-    const failClosedBody = body.slice(failClosedAt, body.indexOf("\n  }", failClosedAt));
-    expect(failClosedBody).toMatch(/for \(const row of rows\)/);
-    expect(failClosedBody).toMatch(/outcome_unverified:\s*true/);
-    expect(failClosedBody).toMatch(/return ids;/);
-  });
-
-  it("takes rows (with visit_id) rather than bare ids, so the fail-closed path has a visit_id to audit with even when the read never ran", () => {
-    expect(body).toMatch(/rows:\s*readonly \{ id: string; visit_id: string \}\[\]/);
-  });
-
-  it("every call site passes the full row (id + visit_id), not a bare id array, so fail-closed has what it needs", () => {
-    // Only undoBulkQueueAction's reclaim compensation branch calls this now —
-    // the bulk claim/unclaim panel loops moved to panel-actions.ts and the
-    // Undo's panel un-claim goes through unclaim_panel_members (0191's own
-    // atomicity, no app-level compensation left to audit).
-    const calls = [...src.matchAll(/auditLeftoverPanelRows\(\s*supabase,\s*([a-zA-Z.()=> ]+),/g)];
-    expect(calls.length).toBe(1);
-    for (const m of calls) {
-      expect(m[1].trim()).toBe("got");
-    }
+  it("singles still restore through restoreTestRequestsForVisit with the exact deleted_at map", () => {
+    expect(body).toMatch(/await restoreTestRequestsForVisit\(\s*session,\s*visitId,\s*ids,[\s\S]*?expectedDeletedAtOf,?\s*\)/);
   });
 });
 
@@ -134,14 +80,23 @@ describe("Task 5: panel Undo un-claims through unclaim_panel_members; reclaim re
     expect(unclaimBranch).toMatch(/unclaimStepStillHeld\(r, step, session\.user_id\)/);
   });
 
-  it("reclaim writes each member's OWN holder — never the first member's", () => {
+  it("reclaim writes each member's OWN holder — never the first member's — through reclaimPanelMembers / the exact-predicate single write", () => {
     expect(reclaimBranch.length).toBeGreaterThan(0);
     expect(reclaimBranch).not.toMatch(/steps\[0\]!\.holder/);
     expect(reclaimBranch).toMatch(/const holderOf = holderByMember\(steps\)/);
+    expect(reclaimBranch).toMatch(/await reclaimPanelMembers\(session, supabase, \{/);
+    expect(reclaimBranch).toMatch(/holder:\s*holderOf\.get\(id\)!,\s*startedAt:\s*startedAtOf\.get\(id\)\s*\?\?\s*null/);
     expect(reclaimBranch).toMatch(/assigned_to:\s*holderOf\.get\(id\)!/);
-    expect(reclaimBranch).toMatch(/\.eq\("assigned_to",\s*holderOf\.get\(row\.id\)!\)/);
-    expect(reclaimBranch).toMatch(/r\.assigned_to === holderOf\.get\(r\.id\)/);
-    expect(reclaimBranch).toMatch(/to:\s*holderOf\.get\(row\.id\) \?\? null/);
+    expect(reclaimBranch).toMatch(/to:\s*holderOf\.get\(data\.id\) \?\? null/);
+    expect(reclaimBranch).toMatch(/via:\s*BULK_UNDO_VIA/);
+    expect(reclaimBranch).toMatch(/panel_key:\s*steps\[0\]!\.panelKey/);
+    // a refusal (P0082) sends the whole panel to notRestored
+    expect(reclaimBranch).toMatch(/if \(!result\.ok\) \{\s*notRestored\.push\(\{ id: group\.key, reason: result\.error \}\)/);
+  });
+
+  it("the single-row writes (un-claim and re-claim) retry a lost lifecycle race once", () => {
+    expect(unclaimBranch).toMatch(/await withLifecycleRetry\(\(\) =>\s*supabase\s*\.from\("test_requests"\)\s*\.update\(\{ status: "requested"/);
+    expect(reclaimBranch).toMatch(/await withLifecycleRetry\(\(\) =>\s*supabase\s*\.from\("test_requests"\)\s*\.update\(\{\s*status: "in_progress"/);
   });
 
   it("reclaim validates every distinct holder's profile and refuses the whole panel with RECLAIM_HOLDER_UNUSABLE", () => {
