@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 
 vi.mock("server-only", () => ({}));
 
-import { loadAdSpendRows, loadPatientSourcesReport } from "./patient-sources.server";
+import { loadAdSpendRows, loadPatientSourcesReport, loadPatientSourcesTrend } from "./patient-sources.server";
 import type { AdSpendDbRow } from "./patient-sources";
 
 const row = (i: number): AdSpendDbRow => ({
@@ -105,5 +105,47 @@ describe("loadPatientSourcesReport", () => {
     const { supabase } = one({ summary: {} });
     const res = await loadPatientSourcesReport(supabase, { from: "2026-06-01", to: "2026-06-30", grain: "day", mode: "new", prev: null });
     expect(res).toMatchObject({ ok: false, kind: "error" });
+  });
+});
+
+describe("loadPatientSourcesTrend", () => {
+  const summary = {
+    new_confirmed: 0, new_unconfirmed: 0, returning_first_recorded: 0, served_confirmed: 0, served_unconfirmed: 0,
+    undated_registrations: 0, source_recorded: 0, source_total: 0, sheet_last_dates: {}, sync_paused: false,
+    last_synced_at: null, sheet_rows_present: true, last_run_status: null,
+  };
+  const nbd = [{ bucket_start: "2026-09-22", channel: "walk_in", confirmed: 2, unconfirmed: 0 }];
+  function both(spendError: { code: string } | null = null) {
+    const calls: [string, unknown][] = [];
+    const supabase = {
+      rpc(name: string, args: unknown) {
+        calls.push([name, args]);
+        if (name === "patient_sources_report") {
+          return Promise.resolve({ data: { summary, series: [], current: [], previous: null, new_by_day: nbd, revenue: [], overlaps: [], referrers: [] }, error: null });
+        }
+        const b = { order() { return b; }, range() { return Promise.resolve({ data: spendError ? null : [], error: spendError }); } };
+        return b;
+      },
+    };
+    return { supabase: supabase as never, calls };
+  }
+
+  it("reads 8 completed weeks through today in ONE report call, plus ad spend over the 8 weeks", async () => {
+    const { supabase, calls } = both();
+    const res = await loadPatientSourcesTrend(supabase, "2026-10-01");
+    expect(calls[0]).toEqual(["patient_sources_report", {
+      p_from: "2026-08-03", p_to: "2026-10-01", p_grain: "week", p_mode: "new", p_prev_from: null, p_prev_to: null,
+    }]);
+    expect(calls[1]).toEqual(["ad_spend_daily_totals", { p_from: "2026-08-03", p_to: "2026-09-27" }]);
+    expect(res.ok && res.data.newByDay).toEqual(nbd);
+    expect(res.ok && res.data.spend).toEqual({ ok: true, rows: [] });
+    expect(res.ok && res.data.weeks).toHaveLength(8);
+    expect(res.ok && typeof res.data.readAt).toBe("string");
+  });
+
+  it("keeps the bars when only ad spend fails", async () => {
+    const { supabase } = both({ code: "XX000" });
+    const res = await loadPatientSourcesTrend(supabase, "2026-10-01");
+    expect(res.ok && res.data.spend.ok).toBe(false);
   });
 });
