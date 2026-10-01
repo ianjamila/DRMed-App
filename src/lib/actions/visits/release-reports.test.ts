@@ -20,6 +20,8 @@ const outbox = vi.hoisted(() => ({
   enabledError: null as null | { message: string },
   claimData: [{ id: "n1", lease_token: "lease-1", status: "sending" }] as unknown[],
   claimError: null as null | { message: string },
+  cancelData: true as unknown,
+  cancelError: null as null | { message: string },
   rpcs: [] as Array<{ name: string; args: unknown }>,
   sent: [] as unknown[],
   sendResult: { outcome: { status: "sent", channels: ["email"], reason: null }, finalStatus: "sent" } as unknown,
@@ -30,6 +32,7 @@ vi.mock("@/lib/supabase/admin", () => ({
       outbox.rpcs.push({ name, args });
       if (name === "release_notices_enabled") return { data: outbox.enabled, error: outbox.enabledError };
       if (name === "claim_release_notice") return { data: outbox.claimData, error: outbox.claimError };
+      if (name === "cancel_release_notice") return { data: outbox.cancelData, error: outbox.cancelError };
       throw new Error("unexpected rpc " + name);
     },
   }),
@@ -104,6 +107,8 @@ beforeEach(() => {
   outbox.enabledError = null;
   outbox.claimData = [{ id: "n1", lease_token: "lease-1", status: "sending" }];
   outbox.claimError = null;
+  outbox.cancelData = true;
+  outbox.cancelError = null;
   outbox.rpcs.length = 0;
   outbox.sent.length = 0;
   outbox.sendResult = { outcome: { status: "sent", channels: ["email"], reason: null }, finalStatus: "sent" };
@@ -444,7 +449,9 @@ describe("notifyReleased", () => {
 
 // ---------------------------------------------------------------------------
 // 0210/0212 — the outbox fast path. PR 3 makes release_visit_results return
-// notice_id; until then it is absent and the legacy sender must run unchanged.
+// notice_id (0214) only while the flag is ON inside the release; absent, the legacy
+// sender runs unchanged. A notice_id is the outbox's whatever the flag reads at send
+// time: ON -> claim + send, OFF (flipped mid-flight) -> fenced cancel, then legacy.
 // ---------------------------------------------------------------------------
 describe("outbox fast path", () => {
   const withNotice = (noticeId: unknown) => (f: ReturnType<typeof makeFakeReleaseDb>) =>
@@ -463,23 +470,46 @@ describe("outbox fast path", () => {
     expect(o.notice).toEqual({ status: "sent", channels: ["email"], reason: null });
   });
 
-  it("a notice_id but the strict flag OFF: the legacy sender runs, only the flag was read", async () => {
+  it("a notice_id but the flag flipped OFF mid-flight: the row is cancelled (fenced), THEN the legacy sender runs", async () => {
     outbox.enabled = false;
     const o = await run([{ id: "a" }], [], ["a"], withNotice("n1")).out;
-    expect(adminRpcs()).toEqual(["release_notices_enabled"]);
+    expect(outbox.rpcs).toEqual([
+      { name: "release_notices_enabled", args: undefined },
+      { name: "cancel_release_notice", args: { p_id: "n1", p_reason: "outbox switched off before the send; sent directly" } },
+    ]);
+    expect(adminRpcs()).not.toContain("claim_release_notice");
     expect(fx.notified).toHaveLength(1);
     expect(outbox.sent).toHaveLength(0);
     expect(o.notice?.status).toBe("sent");
   });
 
-  it("a notice_id and a flag read that ERRORS (or answers anything but true) is OFF too", async () => {
+  it("a flag read that ERRORS (or answers anything but true) is OFF too: cancel, then legacy", async () => {
     outbox.enabledError = { message: "boom" };
     await run([{ id: "a" }], [], ["a"], withNotice("n1")).out;
     outbox.enabledError = null;
     outbox.enabled = "true";
     await run([{ id: "a" }], [], ["a"], withNotice("n1")).out;
+    expect(adminRpcs().filter((n) => n === "cancel_release_notice")).toHaveLength(2);
     expect(fx.notified).toHaveLength(2);
     expect(outbox.sent).toHaveLength(0);
+  });
+
+  it("flag OFF and the cancel finds the row already owned or finished (false): NO legacy send, reads as retrying", async () => {
+    outbox.enabled = false;
+    outbox.cancelData = false;
+    const o = await run([{ id: "a" }], [], ["a"], withNotice("n1")).out;
+    expect(fx.notified).toHaveLength(0);
+    expect(outbox.sent).toHaveLength(0);
+    expect(o.notice).toEqual({ status: "retrying", channels: [], reason: "will retry automatically" });
+  });
+
+  it("flag OFF and the cancel itself errors: reported, NO legacy send (the row's state is unknown), operator sees a failure", async () => {
+    outbox.enabled = false;
+    outbox.cancelError = { message: "boom" };
+    const o = await run([{ id: "a" }], [], ["a"], withNotice("n1")).out;
+    expect(fx.reported.map((r) => r.scope)).toContain("notify/release-notice:cancel");
+    expect(fx.notified).toHaveLength(0);
+    expect(o.notice).toEqual({ status: "failed", channels: [], reason: "sending failed" });
   });
 
   it.each([42, "", null, {}])("an unusable notice_id (%j) is ignored: legacy path, no outbox read", async (bad) => {
@@ -531,3 +561,139 @@ describe("outbox fast path", () => {
     expect(fx.notified).toHaveLength(0);
   });
 });
+
+// ---------------------------------------------------------------------------
+// 0214 — release_visit_results enqueues, undo_visit_release cancels (the fake
+// models both; the SQL is proved by supabase/tests/0214_release_notice_enqueue_smoke.sql
+// and scripts/report-release-concurrency-proof.ts).
+// ---------------------------------------------------------------------------
+describe("release-notice enqueue (0214 model)", () => {
+  type Fake = ReturnType<typeof makeFakeReleaseDb>;
+  type Rpc = (name: string, args: Record<string, unknown>) => Promise<{ data: unknown; error: unknown }>;
+  const rpcOf = (f: Fake) => (f.client as unknown as { rpc: Rpc }).rpc;
+  const on = (f: Fake) => f.setOutboxEnabled(true);
+  const undo = (f: Fake, ids: string[]) =>
+    rpcOf(f)("undo_visit_release", { p_visit_id: "v1", p_test_request_ids: ids, p_actor: "u1", p_reason: "test" });
+
+  it("flag OFF (the default): no notice row and no notice_id — the legacy path is byte-identical", async () => {
+    const { fake, out } = run([{ id: "a" }, { id: "b" }], [], ["a", "b"]);
+    const o = await out;
+    expect(fake.notices).toHaveLength(0);
+    const call = await rpcOf(fake)("release_visit_results", { p_visit_id: "v1", p_test_request_ids: ["a"], p_medium: "email" });
+    expect(Object.keys(call.data as object).sort()).toEqual(["refused", "released"]);
+    expect(fx.notified).toHaveLength(1);
+    expect(outbox.rpcs).toHaveLength(0);
+    expect(o.notice?.status).toBe("sent");
+  });
+
+  it("flag ON: ONE pending notice per call covering every released id, with the medium, the batch id and the stamp", async () => {
+    const { fake, out } = run([{ id: "a" }, { id: "b" }, { id: "c" }], [], ["a", "b", "c"], on, "batch-9");
+    await out;
+    expect(fake.notices).toHaveLength(1);
+    expect(fake.notices[0]).toMatchObject({
+      visit_id: "v1",
+      status: "pending",
+      test_request_ids: ["a", "b", "c"],
+      release_medium: "email",
+      bulk_batch_id: "batch-9",
+      released_at: FAKE_RELEASED_AT,
+      next_attempt_at: FAKE_RELEASED_AT,
+      lease_token: null,
+      resolved_at: null,
+    });
+    // the outbox owned the send: claimed that very notice, the legacy sender stayed silent
+    expect(outbox.rpcs.at(-1)).toEqual({ name: "claim_release_notice", args: { p_id: fake.notices[0].id, p_limit: 1 } });
+    expect(fx.notified).toHaveLength(0);
+  });
+
+  it("flag ON: report-mates released with the selection are in the same single notice", async () => {
+    const { fake, out } = run([{ id: "a" }, { id: "b" }, { id: "c" }], report("R", "a", "b", "c"), ["a"], on);
+    const o = await out;
+    expect(o.alsoReleasedIds.sort()).toEqual(["b", "c"]);
+    expect(fake.notices).toHaveLength(1);
+    expect(fake.notices[0].test_request_ids).toEqual(["a", "b", "c"]);
+  });
+
+  it("flag ON but nothing released (refused / not ready): no notice and no notice_id", async () => {
+    const { fake, out } = run([{ id: "a", status: "in_progress" }], [], ["a"], on);
+    await out;
+    expect(fake.notices).toHaveLength(0);
+  });
+
+  it("two calls enqueue two notices (one per call), each with its own ids", async () => {
+    const { fake, out } = run([{ id: "a" }, { id: "b" }], [], ["a"], on);
+    await out;
+    await releaseVisitSelection({ supabase: fake.client, session, visitId: "v1", selectedIds: ["b"], medium: "email", auditMeta: {} });
+    expect(fake.notices.map((n) => n.test_request_ids)).toEqual([["a"], ["b"]]);
+  });
+
+  it("undo cancels a pending notice once EVERY test is un-released, and leaves a partly undone one alone", async () => {
+    const { fake, out } = run([{ id: "a" }, { id: "b" }], [], ["a", "b"], on);
+    await out;
+    await undo(fake, ["a"]);
+    expect(fake.notices[0].status).toBe("pending");
+    await undo(fake, ["b"]);
+    expect(fake.notices[0]).toMatchObject({ status: "cancelled", lease_token: null, skip_reason: "release undone" });
+    expect(fake.notices[0].resolved_at).not.toBeNull();
+  });
+
+  it("undo cancels a retry notice, never a sending one, and never a terminal one", async () => {
+    const { fake, out } = run([{ id: "a" }], [], ["a"], on);
+    await out;
+    fake.markNoticeSending(fake.notices[0].id);
+    await undo(fake, ["a"]);
+    expect(fake.notices[0]).toMatchObject({ status: "sending", resolved_at: null });
+    expect(fake.notices[0].lease_token).not.toBeNull();
+
+    const r2 = run([{ id: "a" }], [], ["a"], on);
+    await r2.out;
+    r2.fake.notices[0].status = "retry";
+    await undo(r2.fake, ["a"]);
+    expect(r2.fake.notices[0].status).toBe("cancelled");
+
+    const r3 = run([{ id: "a" }], [], ["a"], on);
+    await r3.out;
+    r3.fake.notices[0].status = "sent";
+    await undo(r3.fake, ["a"]);
+    expect(r3.fake.notices[0].status).toBe("sent");
+  });
+
+  it("undo cancels whatever the flag now says", async () => {
+    const { fake, out } = run([{ id: "a" }], [], ["a"], on);
+    await out;
+    fake.setOutboxEnabled(false);
+    await undo(fake, ["a"]);
+    expect(fake.notices[0].status).toBe("cancelled");
+  });
+
+  it("cancel_release_notice is fenced: pending / retry -> true, sending / terminal / unknown -> false", async () => {
+    const { fake, out } = run([{ id: "a" }], [], ["a"], on);
+    await out;
+    const id = fake.notices[0].id;
+    const cancel = (nid: string) => rpcOf(fake)("cancel_release_notice", { p_id: nid, p_reason: "r" });
+    fake.markNoticeSending(id);
+    expect((await cancel(id)).data).toBe(false);
+    expect(fake.notices[0].status).toBe("sending");
+    fake.notices[0].status = "pending";
+    expect((await cancel(id)).data).toBe(true);
+    expect(fake.notices[0]).toMatchObject({ status: "cancelled", skip_reason: "r" });
+    expect((await cancel(id)).data).toBe(false);
+    expect((await cancel("nope")).data).toBe(false);
+  });
+
+  it("end to end, the flag flipped OFF between the release and the send: cancelled, then ONE legacy send", async () => {
+    const { fake, out } = run([{ id: "a" }], [], ["a"], (f) => {
+      on(f);
+      // The release (flag ON in its transaction) enqueues; the app's flag read then says OFF.
+      f.hooks.beforeRpc = () => {
+        outbox.enabled = false;
+      };
+    });
+    const o = await out;
+    expect(fake.notices).toHaveLength(1);
+    expect(adminRpcsOf()).toEqual(["release_notices_enabled", "cancel_release_notice"]);
+    expect(fx.notified).toHaveLength(1);
+    expect(o.notice?.status).toBe("sent");
+  });
+});
+const adminRpcsOf = () => outbox.rpcs.map((r) => r.name);

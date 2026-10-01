@@ -75,7 +75,7 @@ Failed / abandoned notices on `/staff/result-follow-ups` (existing `RetryNoticeB
    (CRON_SECRET, heartbeat registration in all three places), migration enabling pg_cron/pg_net + the 5-min job
    reading Vault, follow-ups page rows + manual Retry. Uses the outbox only when the flag is on AND a `notice_id`
    came back; otherwise the legacy path is unchanged.
-3. **Migration B:** re-create `release_visit_results` (enqueue + `notice_id`, gated in SQL by the strict flag) and
+3. **Migration B (DONE — 0214, `feat/notice-enqueue`):** re-create `release_visit_results` (enqueue + `notice_id`, gated in SQL by the strict flag) and
    `undo_visit_release` (cancel); update `fake-release-db.ts`; extend the report-release proof.
    PR 3 must also: (a) set `resolved_at` on any row it inserts as `suppressed` / `cancelled` and on any
    `pending` / `retry` row `undo_visit_release` cancels (a CHECK ties every terminal status to `resolved_at`;
@@ -89,6 +89,8 @@ Failed / abandoned notices on `/staff/result-follow-ups` (existing `RetryNoticeB
    terminal rows with `audited_at is null` (a crash between finish and the audit write, or a claim that closed an
    exhausted lease as `abandoned`) and audits them, idempotent through the stamp. `last_error` / `skip_reason`
    are redacted of addresses and phone-shaped digit runs in SQL; a `sent` finish clears `last_error`.
+
+PR 3 shipped as 0214 (`release_notice_enqueue`): enqueue + `notice_id`, undo cancel, the fenced `cancel_release_notice(p_id, p_reason)` (not a claim + `finish`), the flag-race handling in `notifyReleased`, the fake DB model, proof scenarios N0-N6 + mutants M14-M18, and the smoke. Notes: the enqueue failing never blocks a release (WARNING, no `notice_id`, legacy send); two calls sharing a transaction merge into the first's pending row; undo and `cancel_release_notice` stamp `audited_at` (the undo already audited itself, and a late `result.notice_cancelled` row carrying the old `bulk_batch_id` would read as a change to a re-release's batch Undo).
 
 Then: set the Vault secrets, flip the flag on prod after verifying. Rollback = flip the flag off (never delete
 the row).
