@@ -160,7 +160,7 @@ function normaliseType(raw: string): string {
 
 /** One argument: drop mode, name and default; keep the type. */
 function normaliseArg(arg: string): string | null {
-  let a = arg.trim().replace(/\s+(?:default\b|=).*$/is, "").trim();
+  const a = arg.trim().replace(/\s+(?:default\b|=)[\s\S]*$/i, "").trim();
   if (a === "") return null;
   const toks = a.split(/\s+/);
   if (MODES.has(toks[0].toLowerCase()) && toks.length > 1) toks.shift();
