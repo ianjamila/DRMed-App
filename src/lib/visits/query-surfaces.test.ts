@@ -145,6 +145,10 @@ interface Surface {
  * Paths are relative to `src/`, posix-separated.
  */
 const SURFACES: Record<string, Surface> = {
+  "lib/actions/visits/raced-release.ts": {
+    meaning: "structural",
+    why: "Reads released_at / released_by of the ids a Release click just lost a race on, to word the refusal. Those ids come only from releaseVisitSelection / releaseTestsAction, whose eligibility checks (evaluateRelease, the RPC) refuse doctor lines before this read, and it filters status = released. It shows a name and a time, never a count or a list of lab work.",
+  },
   // --- Reports -------------------------------------------------------------
   "lib/reports/lab-tat.ts": {
     meaning: "lab",
@@ -439,6 +443,10 @@ interface LifecycleSurface {
  * Paths are relative to `src/`, posix-separated.
  */
 const LIFECYCLES: Record<string, LifecycleSurface> = {
+  "lib/actions/visits/raced-release.ts": {
+    lifecycle: "live",
+    why: "Words the refusal for a Release click that lost a race. Filters the line own deleted_at and its visit deleted_at (visits!inner), so a queue-deleted line or visit is never described as released (it keeps the generic reason).",
+  },
   // --- Deliberately spans deleted rows -------------------------------------
   "app/(staff)/staff/(dashboard)/payments/[id]/void/actions.ts": {
     lifecycle: "any",

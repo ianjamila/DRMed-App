@@ -29,6 +29,11 @@
  * callbacks, try/catch/finally and `.then` bodies. A setter inside a nested
  * synchronous `X(() => …)` is fine, and is how the fix is written.
  *
+ * A setter counts as "after the await" when it follows the callback's first
+ * await, sits in a `.then/.catch/.finally` callback, or follows the first await
+ * of a nested async function. Aliases are resolved: `useTransition as x`,
+ * `startTransition as x`, `React.*`, and `const y = setX;` / `const run = start;`.
+ *
  * Known limit: position is lexical. A helper closure declared BEFORE the first
  * await but called after it is not seen.
  *
@@ -100,6 +105,11 @@ export function scanSource(text: string, full: string): Hit[] {
   const starters = new Set<string>();
   const setters = new Set<string>();
   let reactNs: string | null = null;
+  // Local names of React hooks, so `import { useTransition as usePending }` resolves.
+  const transitionHooks = new Set(["useTransition"]);
+  const stateHooks = new Set(["useState", "useReducer"]);
+  // `const alias = other;` declarations, resolved to a fixpoint after pass 1.
+  const aliasDecls: { name: string; target: string }[] = [];
 
   const calleeName = (e: ts.Expression): string | null =>
     ts.isIdentifier(e)
@@ -115,8 +125,11 @@ export function scanSource(text: string, full: string): Hit[] {
       if (node.moduleSpecifier.text === "react" && clause?.namedBindings) {
         if (ts.isNamedImports(clause.namedBindings)) {
           for (const el of clause.namedBindings.elements) {
-            if ((el.propertyName ?? el.name).text === "startTransition") {
-              starters.add(el.name.text);
+            const imported = (el.propertyName ?? el.name).text;
+            if (imported === "startTransition") starters.add(el.name.text);
+            if (imported === "useTransition") transitionHooks.add(el.name.text);
+            if (imported === "useState" || imported === "useReducer") {
+              stateHooks.add(el.name.text);
             }
           }
         } else reactNs = clause.namedBindings.name.text;
@@ -134,13 +147,36 @@ export function scanSource(text: string, full: string): Hit[] {
       const fn = calleeName(node.initializer.expression);
       const second = node.name.elements[1];
       if (second && ts.isBindingElement(second) && ts.isIdentifier(second.name)) {
-        if (fn === "useTransition") starters.add(second.name.text);
-        if (fn === "useState" || fn === "useReducer") setters.add(second.name.text);
+        if (fn && transitionHooks.has(fn)) starters.add(second.name.text);
+        if (fn && stateHooks.has(fn)) setters.add(second.name.text);
       }
+    }
+    if (
+      ts.isVariableDeclaration(node) &&
+      ts.isIdentifier(node.name) &&
+      node.initializer &&
+      ts.isIdentifier(node.initializer)
+    ) {
+      aliasDecls.push({ name: node.name.text, target: node.initializer.text });
     }
     ts.forEachChild(node, collect);
   };
   collect(src);
+
+  // `const reportError = setError;` / `const run = start;` (and chains of them).
+  for (let changed = true; changed; ) {
+    changed = false;
+    for (const { name, target } of aliasDecls) {
+      if (starters.has(target) && !starters.has(name)) {
+        starters.add(name);
+        changed = true;
+      }
+      if (setters.has(target) && !setters.has(name)) {
+        setters.add(name);
+        changed = true;
+      }
+    }
+  }
 
   const isStarterCall = (n: ts.Node): n is ts.CallExpression => {
     if (!ts.isCallExpression(n)) return false;
@@ -170,23 +206,62 @@ export function scanSource(text: string, full: string): Hit[] {
 
   const hits = new Map<string, Hit>();
 
-  const analyse = (cb: ts.ArrowFunction | ts.FunctionExpression) => {
-    // First await whose nearest enclosing function is the callback itself.
-    let firstAwaitEnd = Infinity;
+  /** End of the first await whose nearest enclosing function is `fn` itself. */
+  const firstAwaitEndOf = (fn: ts.Node): number => {
+    let end = Infinity;
     const findAwait = (n: ts.Node) => {
-      if (n !== cb && isFunctionLike(n)) return;
-      if (ts.isAwaitExpression(n)) firstAwaitEnd = Math.min(firstAwaitEnd, n.getEnd());
+      if (n !== fn && isFunctionLike(n)) return;
+      if (ts.isAwaitExpression(n)) end = Math.min(end, n.getEnd());
       ts.forEachChild(n, findAwait);
     };
-    findAwait(cb);
-    if (firstAwaitEnd === Infinity) return;
+    findAwait(fn);
+    return end;
+  };
+
+  /** A function passed to `.then` / `.catch` / `.finally`: runs after suspension. */
+  const isPromiseCallback = (fn: ts.Node): boolean => {
+    const p = fn.parent;
+    return (
+      !!p &&
+      ts.isCallExpression(p) &&
+      p.arguments.includes(fn as ts.Expression) &&
+      ts.isPropertyAccessExpression(p.expression) &&
+      ["then", "catch", "finally"].includes(p.expression.name.text)
+    );
+  };
+
+  const analyse = (cb: ts.ArrowFunction | ts.FunctionExpression) => {
+    const firstAwaitEnd = firstAwaitEndOf(cb);
+
+    /**
+     * Does `n` execute after a suspension? Either it follows the callback's
+     * own first await, or it sits in a promise-chain callback, or it follows
+     * the first await of a nested async function (which suspends by itself,
+     * however the outer callback awaits it).
+     */
+    const afterSuspension = (n: ts.Node): boolean => {
+      if (n.getEnd() > firstAwaitEnd) return true;
+      for (let p: ts.Node | undefined = n.parent; p && p !== cb; p = p.parent) {
+        if (!isFunctionLike(p)) continue;
+        if (isPromiseCallback(p)) return true;
+        if (
+          isFn(p) &&
+          isAsync(p) &&
+          !(p.parent && isStarterCall(p.parent) && p.parent.arguments[0] === p) &&
+          n.getEnd() > firstAwaitEndOf(p)
+        ) {
+          return true;
+        }
+      }
+      return false;
+    };
 
     const visit = (n: ts.Node) => {
       if (
         ts.isCallExpression(n) &&
         ts.isIdentifier(n.expression) &&
         isSetterName(n.expression.text) &&
-        n.getEnd() > firstAwaitEnd
+        afterSuspension(n)
       ) {
         // Exempt only when the setter's NEAREST enclosing function is the
         // synchronous starter callback itself (no other function boundary),
@@ -336,6 +411,142 @@ export function C() {
     expect(scanSource(code, join(SRC_DIR, "x/demo.tsx")).map((h) => h.setter)).toEqual([
       "setX",
     ]);
+  });
+
+  describe("awaited promise callbacks and nested async functions", () => {
+    it("flags a setter in a .then callback inside the awaited expression", () => {
+      expect(
+        scan(`start(async () => { await go().then(() => setError("x")); });`),
+      ).toEqual(["setError"]);
+    });
+
+    it("flags a setter in .catch / .finally callbacks inside the awaited expression", () => {
+      expect(
+        scan(`start(async () => { await go().catch(() => setError("a")).finally(() => setError("b")); });`),
+      ).toEqual(["setError", "setError"]);
+    });
+
+    it("flags a setter after the inner await of an awaited Promise.all(map(async))", () => {
+      expect(
+        scan(`start(async () => {
+          await Promise.all(items.map(async (i) => { await f(i); setError("x"); }));
+        });`),
+      ).toEqual(["setError"]);
+    });
+
+    it("flags a setter after the inner await of a nested async arrow", () => {
+      expect(
+        scan(`start(async () => {
+          const inner = async () => { await go(); setError("x"); };
+          await inner();
+        });`),
+      ).toEqual(["setError"]);
+    });
+
+    it("flags a nested async setter even when the outer callback never awaits", () => {
+      expect(
+        scan(`start(async () => { items.forEach(async (i) => { await f(i); setError("x"); }); });`),
+      ).toEqual(["setError"]);
+    });
+
+    it("ignores a setter before the inner await of a nested async function", () => {
+      expect(
+        scan(`start(async () => {
+          await Promise.all(items.map(async (i) => { setError("x"); await f(i); }));
+        });`),
+      ).toEqual([]);
+    });
+
+    it("accepts a setter re-wrapped inside a .then / nested async function", () => {
+      expect(
+        scan(`start(async () => {
+          await go().then(() => { start(() => setError("x")); });
+          await Promise.all(items.map(async (i) => { await f(i); start(() => setError("y")); }));
+        });`),
+      ).toEqual([]);
+    });
+  });
+
+  describe("aliases", () => {
+    const at = (code: string) =>
+      scanSource(code, join(SRC_DIR, "x/demo.tsx")).map((h) => h.setter);
+
+    it("resolves an aliased useTransition import", () => {
+      expect(
+        at(`import { useState, useTransition as usePending } from "react";
+export function C() {
+  const [, setX] = useState(0);
+  const [, run] = usePending();
+  run(async () => { await go(); setX(1); });
+}`),
+      ).toEqual(["setX"]);
+    });
+
+    it("resolves React.useTransition via a default or namespace import", () => {
+      for (const imp of [`import React from "react";`, `import * as React from "react";`]) {
+        expect(
+          at(`${imp}
+export function C() {
+  const [, setX] = React.useState(0);
+  const [, run] = React.useTransition();
+  run(async () => { await go(); setX(1); });
+}`),
+        ).toEqual(["setX"]);
+      }
+    });
+
+    it("resolves startTransition imported under another name and React.startTransition", () => {
+      expect(
+        at(`import { startTransition as st, useState } from "react";
+export function C() {
+  const [, setX] = useState(0);
+  st(async () => { await go(); setX(1); });
+}`),
+      ).toEqual(["setX"]);
+      expect(
+        at(`import React, { useState } from "react";
+export function C() {
+  const [, setX] = useState(0);
+  React.startTransition(async () => { await go(); setX(1); });
+}`),
+      ).toEqual(["setX"]);
+    });
+
+    it("resolves an aliased useState import for a non-set* setter name", () => {
+      expect(
+        at(`import { useState as useS, useTransition } from "react";
+export function C() {
+  const [, update] = useS(0);
+  const [, run] = useTransition();
+  run(async () => { await go(); update(1); });
+}`),
+      ).toEqual(["update"]);
+    });
+
+    it("resolves a simple setter alias, and chained aliases", () => {
+      expect(
+        scan(`const reportError = setError;
+        start(async () => { await go(); reportError("x"); });`),
+      ).toEqual(["reportError"]);
+      expect(
+        scan(`const a = setError; const b = a;
+        start(async () => { await go(); b("x"); });`),
+      ).toEqual(["b"]);
+    });
+
+    it("resolves a starter alias", () => {
+      expect(
+        scan(`const run = start;
+        run(async () => { await go(); setError("x"); });`),
+      ).toEqual(["setError"]);
+    });
+
+    it("accepts an aliased setter re-wrapped in the transition", () => {
+      expect(
+        scan(`const reportError = setError;
+        start(async () => { await go(); start(() => reportError("x")); });`),
+      ).toEqual([]);
+    });
   });
 
   it("recognises an aliased useTransition starter", () => {

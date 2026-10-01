@@ -46,9 +46,12 @@ export interface FakeTestRow {
   patientActive?: boolean;
   releasedAt?: string | null;
   releaseMedium?: string | null;
+  /** auth user id that released it (test_requests.released_by); the RPC model stamps p_actor. */
+  releasedBy?: string | null;
 }
 
-export type FakeRow = Required<Omit<FakeTestRow, "hmoProviderId" | "releasedAt" | "releaseMedium" | "parentId">> & {
+export type FakeRow = Required<Omit<FakeTestRow, "hmoProviderId" | "releasedAt" | "releaseMedium" | "parentId" | "releasedBy">> & {
+  releasedBy: string | null;
   parentId: string | null;
   hmoProviderId: string | null;
   releasedAt: string | null;
@@ -103,6 +106,8 @@ export function makeFakeReleaseDb(seed: {
   actorRole?: string | (() => string);
   /** Result-view counts the modelled undo snapshots into viewed_count (default 0). */
   viewedCounts?: Record<string, number>;
+  /** staff_profiles rows (id → full_name) served by from("staff_profiles") — the raced-release name lookup. */
+  staff?: Record<string, string>;
 }) {
   const rows: FakeRow[] = seed.rows.map((r) => ({
     visitId: "v1",
@@ -120,6 +125,7 @@ export function makeFakeReleaseDb(seed: {
     patientActive: true,
     releasedAt: null,
     releaseMedium: null,
+    releasedBy: null,
     ...r,
   }));
   const links: FakeLink[] = [...(seed.links ?? [])];
@@ -159,6 +165,7 @@ export function makeFakeReleaseDb(seed: {
     parent_id: r.parentId,
     released_at: r.releasedAt,
     release_medium: r.releaseMedium,
+    released_by: r.releasedBy,
     services: { section: r.section, kind: r.kind, name: r.name },
     visits: {
       deleted_at: r.visitDeleted ? "2026-01-01T00:00:00Z" : null,
@@ -215,6 +222,13 @@ export function makeFakeReleaseDb(seed: {
   };
 
   function execute(call: FakeCall): { data: unknown; error: Err | null } {
+    if (call.table === "staff_profiles") {
+      hooks.beforeRead?.(call.table);
+      const fail = take(call.table, ["read"]);
+      if (fail) return { data: null, error: fail.error };
+      const all = Object.entries(seed.staff ?? {}).map(([id, full_name]) => ({ id, full_name }));
+      return { data: all.filter((p) => call.filters.every((f) => matches(p, f))), error: null };
+    }
     if (call.table !== "test_requests") throw new Error(`fake db: unsupported table ${call.table}`);
     hooks.beforeRead?.(call.table);
     const fail = take(call.table, ["read"]);
@@ -287,6 +301,7 @@ export function makeFakeReleaseDb(seed: {
       const r = rows.find((x) => x.id === id)!;
       r.status = "released";
       r.releasedAt = FAKE_RELEASED_AT;
+      r.releasedBy = args.p_actor as string;
       r.releaseMedium = args.p_medium as string;
       return { id, name: r.name, report_id: okReports.get(id) ?? null, selected: ids.includes(id), released_at: FAKE_RELEASED_AT };
     });
@@ -374,6 +389,7 @@ export function makeFakeReleaseDb(seed: {
         });
         r.status = "ready_for_release";
         r.releasedAt = null;
+        r.releasedBy = null;
         r.releaseMedium = null;
         return prior;
       });
