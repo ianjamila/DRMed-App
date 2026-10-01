@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -187,8 +187,9 @@ describe("running a bulk action", () => {
       { ids: ["a2", "a3"], from: "confirmed" },
     ]);
     expect(to).toBe("arrived");
+    // The selection clears in the post-await transition, after the click returns.
+    await waitFor(() => expect(screen.queryByRole("region", { name: "Selected rows" })).toBeNull());
     expect(window.alert).not.toHaveBeenCalled(); // every booking changed — nothing to explain
-    expect(screen.queryByRole("region", { name: "Selected rows" })).toBeNull();
     expect(router.refresh).toHaveBeenCalled();
   });
 
@@ -243,7 +244,7 @@ describe("running a bulk action", () => {
     await user.click(screen.getByRole("checkbox", { name: "Select g1" }));
     await user.click(screen.getByRole("button", { name: "Mark arrived (1)" }));
 
-    expect(window.alert).toHaveBeenCalledWith("Reception or admin only.");
+    await waitFor(() => expect(window.alert).toHaveBeenCalledWith("Reception or admin only."));
     expect(screen.getByRole("button", { name: "Cancel (1)" })).toBeTruthy();
     expect(router.refresh).toHaveBeenCalled(); // a partial write can still have committed some rows
   });
@@ -303,7 +304,7 @@ it("a mixed-status selection keeps the outcome inline (the bar didn't empty), an
   // sent and pruned — g2 stays selected, the bar keeps rendering, and the
   // outcome for what just happened shows INSIDE it (not in the standalone slot).
   expect(screen.getByRole("region", { name: "Selected rows" })).toBeTruthy();
-  const panel = screen.getByRole("status");
+  const panel = await screen.findByRole("status");
   expect(panel.textContent).toContain("Marked 1 booking arrived.");
 
   // A deliberate new edit (ticking/unticking a row) drops the stale outcome —

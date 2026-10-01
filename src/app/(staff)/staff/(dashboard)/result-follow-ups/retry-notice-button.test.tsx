@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -26,14 +26,14 @@ describe("Retry notice", () => {
     render(<RetryNoticeButton amendmentId="am-1" showingAll={false} />);
     await userEvent.setup().click(screen.getByRole("button", { name: "Retry notice" }));
     expect(retryPatientNoticeAction).toHaveBeenCalledWith("am-1");
-    expect(router.replace).toHaveBeenCalledWith("/staff/result-follow-ups?retried=sent");
+    await waitFor(() => expect(router.replace).toHaveBeenCalledWith("/staff/result-follow-ups?retried=sent"));
   });
 
   it("keeps the followed-up view when it was showing", async () => {
     vi.mocked(retryPatientNoticeAction).mockResolvedValue({ ok: true, data: { outcome: "failed" } });
     render(<RetryNoticeButton amendmentId="am-1" showingAll />);
     await userEvent.setup().click(screen.getByRole("button", { name: "Retry notice" }));
-    expect(router.replace).toHaveBeenCalledWith("/staff/result-follow-ups?retried=failed&all=1");
+    await waitFor(() => expect(router.replace).toHaveBeenCalledWith("/staff/result-follow-ups?retried=failed&all=1"));
   });
 
   it("shows a refusal next to the button and stays on the page", async () => {

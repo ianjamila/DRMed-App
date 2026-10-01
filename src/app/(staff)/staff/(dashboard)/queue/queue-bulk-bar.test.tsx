@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -326,7 +326,7 @@ it("a row not eligible for the pressed button stays selected, the outcome shows 
   // t5 was never claim-eligible, so it was never sent and stays selected —
   // the bar keeps rendering, with the outcome for what just happened INSIDE it.
   expect(screen.getByRole("region", { name: "Selected rows" })).toBeTruthy();
-  const panel = screen.getByRole("status");
+  const panel = await screen.findByRole("status");
   expect(panel.textContent).toContain("Claimed 1 test.");
 
   // A deliberate new edit drops the stale outcome — prove it, don't assume:
@@ -489,7 +489,7 @@ describe("Undo after a chemistry-panel bulk action", () => {
     expect(undoBulkQueueAction).toHaveBeenCalledTimes(1);
     expect(undoBulkQueueAction).toHaveBeenCalledWith({ batchId: "b-1" });
     // The Undo counts the 3 tests the server restored, not the 1 panel key.
-    expect((await screen.findByRole("status")).textContent).toContain("Undone — 3 tests are back to what they were.");
+    await waitFor(() => expect(screen.getByRole("status").textContent).toContain("Undone — 3 tests are back to what they were."));
   });
 
   it("Unclaim of ONE panel row offers ↶ Undo that undoes the whole batch", async () => {
@@ -521,7 +521,7 @@ describe("Undo after a chemistry-panel bulk action", () => {
     expect((await screen.findByRole("status")).textContent).toContain("Unclaimed 3 tests.");
     await user.click(await screen.findByRole("button", { name: "↶ Undo" }));
     expect(undoBulkQueueAction).toHaveBeenCalledWith({ batchId: "b-unclaim-panel" });
-    expect((await screen.findByRole("status")).textContent).toContain("Undone — 3 tests are back to what they were.");
+    await waitFor(() => expect(screen.getByRole("status").textContent).toContain("Undone — 3 tests are back to what they were."));
   });
 
   it("Delete of ONE panel row offers ↶ Undo that undoes the whole batch", async () => {
@@ -554,7 +554,7 @@ describe("Undo after a chemistry-panel bulk action", () => {
     expect((await screen.findByRole("status")).textContent).toContain("Deleted 3 tests.");
     await user.click(await screen.findByRole("button", { name: "↶ Undo" }));
     expect(undoBulkQueueAction).toHaveBeenCalledWith({ batchId: "b-delete-panel" });
-    expect((await screen.findByRole("status")).textContent).toContain("Undone — 3 tests are back to what they were.");
+    await waitFor(() => expect(screen.getByRole("status").textContent).toContain("Undone — 3 tests are back to what they were."));
   });
 
   it("a panel Claim result with no batchId shows no ↶ Undo", async () => {
@@ -606,7 +606,7 @@ it("an ok:false result is alerted and keeps the selection so the operator can re
   await user.click(screen.getByRole("checkbox", { name: "Select t1" }));
   await user.click(screen.getByRole("button", { name: "Claim (1)" }));
 
-  expect(window.alert).toHaveBeenCalledWith("Only lab staff can claim or unclaim tests from the queue.");
+  await waitFor(() => expect(window.alert).toHaveBeenCalledWith("Only lab staff can claim or unclaim tests from the queue."));
   expect(screen.getByRole("button", { name: "Claim (1)" })).toBeTruthy();
   expect((screen.getByRole("checkbox", { name: "Select t1" }) as HTMLInputElement).checked).toBe(true);
 });
