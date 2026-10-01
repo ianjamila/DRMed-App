@@ -17,7 +17,8 @@ const ms = Number(process.env.LATE_MOCKS_MS ?? 0);
 
 if (Number.isFinite(ms) && ms > 0) {
   const late = <T,>(value: T) => new Promise<T>((resolve) => setTimeout(() => resolve(value), ms));
-  const realFn = vi.fn.bind(vi) as (...args: unknown[]) => any;
+  type Loose = { mockResolvedValue: unknown; mockResolvedValueOnce: unknown; mockImplementation: (f: () => unknown) => unknown; mockImplementationOnce: (f: () => unknown) => unknown };
+  const realFn = vi.fn.bind(vi) as unknown as (...args: unknown[]) => Loose;
   (vi as { fn: unknown }).fn = (...args: unknown[]) => {
     const mock = realFn(...args);
     mock.mockResolvedValue = (value: unknown) => mock.mockImplementation(() => late(value));
