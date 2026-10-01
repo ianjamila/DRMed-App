@@ -11,6 +11,7 @@ const NOT_PATIENT: Record<string, string> = {
   "src/lib/notifications/sms.ts": "The provider wrapper itself.",
   "src/app/(staff)/staff/(dashboard)/admin/newsletter/actions.ts": "Newsletter subscribers, not patient records (spec: subscriptions are untouched).",
   "src/app/(staff)/staff/(dashboard)/admin/settings/alerts/actions.ts": "Test email to staff alert recipients.",
+  "src/app/(staff)/staff/(dashboard)/admin/settings/alerts/preview-actions.ts": "Patient Sources digest preview, sent only to the signed-in admin (counts, no patient data).",
   "src/app/(staff)/staff/(dashboard)/messages/actions.ts": "Reply to a website message sender, not a patient record.",
   "src/app/api/cron/dedup-digest/route.ts": "Staff digest.",
   "src/app/api/cron/stale-bookings/route.ts": "Staff reminder (Bookings not acted on).",
