@@ -756,6 +756,35 @@ begin
 end
 $s6b$;
 
+-- s6c --------------------------------------------------------------------------
+-- Undo moves a recorded row back only while it is still on keep: a recorded
+-- visit or appointment that left keep after the merge stays where it went.
+do $s6c$
+declare
+  k uuid; s uuid; x uuid; vs1 uuid; vs2 uuid; ap1 uuid; ap2 uuid; mid uuid; rep jsonb;
+begin
+  k := pg_temp.mk_patient('S6CK');
+  s := pg_temp.mk_patient('S6CS');
+  x := pg_temp.mk_patient('S6CX');
+  vs1 := pg_temp.mk_visit(s);
+  vs2 := pg_temp.mk_visit(s);
+  ap1 := pg_temp.mk_appt(s, gen_random_uuid());
+  ap2 := pg_temp.mk_appt(s, gen_random_uuid());
+
+  mid := (pg_temp.merge(k, s)->>'merge_id')::uuid;
+  update public.visits set patient_id = x where id = vs2;
+  update public.appointments set patient_id = x where id = ap2;
+
+  rep := pg_temp.undo(mid);
+  perform pg_temp.expect('s6c.1 recorded rows still on keep go back; rows moved elsewhere stay there',
+    (select patient_id from public.visits where id = vs1)::text || '|' || (select patient_id from public.visits where id = vs2)::text || '|' ||
+    (select patient_id from public.appointments where id = ap1)::text || '|' || (select patient_id from public.appointments where id = ap2)::text,
+    s::text || '|' || x::text || '|' || s::text || '|' || x::text);
+  perform pg_temp.expect('s6c.2 report counts only the rows moved back',
+    (rep->'moved_back'->>'visits') || '|' || (rep->'moved_back'->>'appointments'), '1|1');
+end
+$s6c$;
+
 -- s7 ---------------------------------------------------------------------------
 do $s7$
 declare
