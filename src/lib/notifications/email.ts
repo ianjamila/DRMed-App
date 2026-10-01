@@ -1,11 +1,14 @@
 import "server-only";
-import { emailStatus } from "./channel-status";
+import { PROVIDER_TIMEOUT_MS, emailStatus } from "./channel-status";
 
 interface SendEmailInput {
   to: string;
   subject: string;
   text: string;
   html?: string;
+  // Resend `Idempotency-Key`: a retry of the SAME send with the same key inside
+  // Resend's 24 h window returns the first response instead of mailing again.
+  idempotencyKey?: string;
 }
 
 export type SendResult =
@@ -34,6 +37,7 @@ export async function sendEmail(input: SendEmailInput): Promise<SendResult> {
       headers: {
         Authorization: `Bearer ${apiKey}`,
         "Content-Type": "application/json",
+        ...(input.idempotencyKey ? { "Idempotency-Key": input.idempotencyKey } : {}),
       },
       body: JSON.stringify({
         from,
@@ -43,6 +47,9 @@ export async function sendEmail(input: SendEmailInput): Promise<SendResult> {
         ...(input.html ? { html: input.html } : {}),
         ...(replyTo ? { reply_to: replyTo } : {}),
       }),
+      // A hung provider must not hold a sweep slot. A timeout is an AMBIGUOUS outcome
+      // (the mail may have left): the Idempotency-Key makes the retry safe.
+      signal: AbortSignal.timeout(PROVIDER_TIMEOUT_MS),
     });
 
     if (!res.ok) {

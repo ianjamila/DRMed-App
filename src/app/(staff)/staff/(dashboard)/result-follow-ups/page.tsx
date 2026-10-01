@@ -17,6 +17,8 @@ import { PlainTh } from "@/components/staff/sortable-th";
 import { emailStatus, patientNoticeSetupNote, smsStatus } from "@/lib/notifications/channel-status";
 import { MarkContactedButton } from "./mark-contacted-button";
 import { RetryNoticeButton } from "./retry-notice-button";
+import { RetryReleaseNoticeButton } from "./retry-release-notice-button";
+import { fetchStuckNotices } from "@/lib/results/release-notice-followups.server";
 
 export const metadata = {
   title: "Result Follow-ups",
@@ -25,7 +27,7 @@ export const metadata = {
 const BASE_PATH = "/staff/result-follow-ups";
 
 interface SearchProps {
-  searchParams: Promise<{ all?: string; retried?: string }>;
+  searchParams: Promise<{ all?: string; retried?: string; noticeRetried?: string }>;
 }
 
 function statusText(row: OutdatedCopyRow): string {
@@ -44,6 +46,10 @@ export default async function ResultFollowUpsPage({ searchParams }: SearchProps)
 
   const db = await createClient();
   const result = await fetchOutdatedCopies(db, includeAll);
+  // 0210/0212: "result ready" messages the sender gave up on (service-role read,
+  // after the role gate above; names and states only, never an address).
+  const stuck = await fetchStuckNotices();
+  const isAdmin = session.role === "admin";
 
   const toggleHref = includeAll ? BASE_PATH : `${BASE_PATH}?all=1`;
   // 0188: the Retry notice outcome, carried in the URL by RetryNoticeButton
@@ -95,6 +101,15 @@ export default async function ResultFollowUpsPage({ searchParams }: SearchProps)
           }`}
         >
           Retry notice: {retried}
+        </p>
+      ) : null}
+
+      {params.noticeRetried === "1" ? (
+        <p
+          role="status"
+          className="mb-4 max-w-2xl rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-2 text-sm font-semibold text-emerald-800"
+        >
+          Queued — the message will be sent again within a few minutes.
         </p>
       ) : null}
 
@@ -194,6 +209,82 @@ export default async function ResultFollowUpsPage({ searchParams }: SearchProps)
           </table>
         </Panel>
       )}
+
+      {/* 0210/0212: the patient's "your result is ready" message that never went out. */}
+      {!stuck.ok ? (
+        <Panel className="mt-8 p-6 text-sm text-amber-700">Couldn&apos;t load unsent result messages.</Panel>
+      ) : stuck.abandoned.length > 0 || stuck.waitingForRetry > 0 ? (
+        <section aria-labelledby="unsent-notices-heading" className="mt-8">
+          <h2
+            id="unsent-notices-heading"
+            className="mb-1 text-lg font-bold text-[color:var(--color-brand-navy)]"
+          >
+            Result-ready messages that did not go out
+          </h2>
+          <p className="mb-3 max-w-2xl text-sm text-[color:var(--color-brand-text-soft)]">
+            The system retries a failed message by itself over several hours. These are the ones it gave up on — the
+            patient has not been told their result is ready.
+            {isAdmin ? " Retry sending after the problem is fixed, or call the patient." : " Ask an admin to retry, or call the patient."}
+            {stuck.waitingForRetry > 0
+              ? ` ${stuck.waitingForRetry} more ${stuck.waitingForRetry === 1 ? "is" : "are"} still waiting for an automatic retry.`
+              : ""}
+          </p>
+          {stuck.abandoned.length > 0 ? (
+            <Panel className="overflow-x-auto">
+              {stuck.capped ? (
+                <p role="status" className="border-b border-amber-200 bg-amber-50 px-4 py-2 text-xs font-semibold text-amber-800">
+                  Showing the most recent {stuck.abandoned.length}.
+                </p>
+              ) : null}
+              <table className="w-full text-sm">
+                <thead className="bg-[color:var(--color-brand-bg)] text-left text-xs font-bold uppercase tracking-wider text-[color:var(--color-brand-text-soft)]">
+                  <tr>
+                    <PlainTh label="Patient" />
+                    <PlainTh label="Visit" />
+                    <PlainTh label="Tests" />
+                    <PlainTh label="Gave up" />
+                    <PlainTh label="Problem" />
+                    {isAdmin ? <PlainTh label="Action" align="right" /> : null}
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-[color:var(--color-brand-bg-mid)]">
+                  {stuck.abandoned.map((n) => (
+                    <tr key={n.id} className="hover:bg-[color:var(--color-brand-bg)]">
+                      <td className="px-4 py-3">
+                        <Link
+                          href={`/staff/visits/${n.visit_id}`}
+                          className="font-semibold text-[color:var(--color-brand-navy)] hover:underline"
+                        >
+                          {n.patient_name}
+                        </Link>
+                        <p className="font-mono text-xs text-[color:var(--color-brand-text-soft)]">{n.drm_id}</p>
+                      </td>
+                      <td className="px-4 py-3 font-mono text-xs text-[color:var(--color-brand-text-mid)]">
+                        {n.visit_number || "—"}
+                      </td>
+                      <td className="px-4 py-3 text-[color:var(--color-brand-text-mid)]">{n.test_count}</td>
+                      <td className="px-4 py-3 text-[color:var(--color-brand-text-mid)]">
+                        {n.gave_up_at ? manilaDateTime(n.gave_up_at) : "—"}
+                        <p className="text-xs text-[color:var(--color-brand-text-soft)]">
+                          after {n.attempts} {n.attempts === 1 ? "try" : "tries"}
+                        </p>
+                      </td>
+                      <td className="max-w-xs px-4 py-3 text-xs text-[color:var(--color-brand-text-mid)]">
+                        {n.last_error ?? "—"}
+                      </td>
+                      {isAdmin ? (
+                        <td className="px-4 py-3 text-right">
+                          <RetryReleaseNoticeButton noticeId={n.id} showingAll={includeAll} />
+                        </td>
+                      ) : null}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </Panel>
+          ) : null}
+        </section>
+      ) : null}
     </div>
   );
 }

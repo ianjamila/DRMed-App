@@ -17,6 +17,13 @@ export interface AuditEntry {
 }
 
 export async function audit(entry: AuditEntry): Promise<void> {
+  await auditChecked(entry);
+}
+
+// Same insert, but resolves false when it failed (the failure is still logged,
+// never thrown), for a caller that must not lose the row: the release-notice
+// outbox stamps a notice as audited only after its audit row is really in.
+export async function auditChecked(entry: AuditEntry): Promise<boolean> {
   const admin = createAdminClient();
   const { error } = await admin.from("audit_log").insert({
     actor_id: entry.actor_id,
@@ -34,5 +41,7 @@ export async function audit(entry: AuditEntry): Promise<void> {
     // Audit-log failures must not block user-facing operations.
     // Sentry hookup comes in Phase 8.
     console.error("audit log insert failed", { entry, error });
+    return false;
   }
+  return true;
 }

@@ -1,5 +1,5 @@
 import "server-only";
-import { smsStatus } from "./channel-status";
+import { PROVIDER_TIMEOUT_MS, smsStatus } from "./channel-status";
 
 interface SendSmsInput {
   to: string;
@@ -41,6 +41,9 @@ export async function sendSms(input: SendSmsInput): Promise<SmsResult> {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
       body: body.toString(),
+      // A timeout is ambiguous (the text may have left): the release-notice sender
+      // keeps sms_state 'unknown' and NEVER resends it.
+      signal: AbortSignal.timeout(PROVIDER_TIMEOUT_MS),
     });
     if (!res.ok) {
       const text = await res.text().catch(() => "");

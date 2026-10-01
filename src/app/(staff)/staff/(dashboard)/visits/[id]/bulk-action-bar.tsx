@@ -38,6 +38,8 @@ interface ReleaseUndo {
   notified: boolean;
 }
 
+const NOTICE_RETRYING =
+  "The patient's \"result ready\" message has not gone out yet — it will retry automatically.";
 const ALREADY_NOTIFIED = "The patient was already notified that results are ready — tell them if needed.";
 
 interface Props {
@@ -220,6 +222,7 @@ export function BulkActionBar({
       // Undo does not un-notify: say so only when a notice actually went out.
       const notified = (result.notifiedCount ?? 0) > 0;
       if (notified) lines.push(ALREADY_NOTIFIED);
+      if (result.noticeRetrying) lines.push(NOTICE_RETRYING);
       startRelease(() => {
         clearIds(sentIds);
         setOutcome({

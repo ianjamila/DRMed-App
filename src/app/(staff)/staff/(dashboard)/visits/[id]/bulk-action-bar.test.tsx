@@ -92,6 +92,27 @@ describe("Release selected -> outcome + Undo", () => {
     expect(screen.getByRole("button", { name: "↶ Undo" })).toBeTruthy();
   });
 
+  it("says the patient's message will retry automatically (and does not claim they were notified)", async () => {
+    const user = userEvent.setup();
+    vi.mocked(releaseSelectedAction).mockResolvedValue({
+      ok: true,
+      count: 1,
+      alsoReleasedCount: 0,
+      skipped: [],
+      warnings: [],
+      batchId: "batch-r",
+      notifiedCount: 0,
+      noticeRetrying: true,
+    });
+    render(<Harness />);
+
+    await user.click(screen.getByRole("checkbox", { name: "Select CBC" }));
+    await user.click(screen.getByRole("button", { name: /Release selected/ }));
+
+    expect(await screen.findByText(/has not gone out yet — it will retry automatically/)).toBeTruthy();
+    expect(screen.queryByText(/already notified that results are ready/)).toBeNull();
+  });
+
   it("shows the restored message and hides Undo once the undo succeeds", async () => {
     const user = userEvent.setup();
     vi.mocked(releaseSelectedAction).mockResolvedValue({

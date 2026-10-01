@@ -1,9 +1,21 @@
 import { describe, expect, it } from "vitest";
-import { noticeAuditMeta, noticeFromChannels, noticeSkipped } from "./release-notice-outcome";
+import { noticeAuditMeta, noticeFromChannels, noticeRetrying, noticeSkipped } from "./release-notice-outcome";
 
 const ok = { ok: true as const };
 const err = { ok: false as const, kind: "error" as const };
 const skip = { ok: false as const, kind: "skipped" as const };
+
+describe("noticeRetrying (0210 outbox)", () => {
+  it("is a retrying status with no channels and the plain reason", () => {
+    expect(noticeRetrying()).toEqual({ status: "retrying", channels: [], reason: "will retry automatically" });
+  });
+  it("is not 'sent': the audit meta says the patient was NOT notified, and keeps the status", () => {
+    expect(noticeAuditMeta(noticeRetrying())).toEqual({
+      patient_notified: false,
+      patient_notice: { status: "retrying", channels: [], reason: "will retry automatically" },
+    });
+  });
+});
 
 describe("noticeSkipped", () => {
   it("carries the reason and no channels", () => {
