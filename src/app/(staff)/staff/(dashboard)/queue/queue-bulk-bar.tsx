@@ -113,6 +113,14 @@ export function QueueBulkBar({ rowsByKey }: Props) {
   // same visit, are one visit).
   const sampleKeys = known(keysByKind[QUEUE_KIND.sampleDelete]);
   const sampleVisitIds = sampleDeleteVisitIds(count, sampleKeys, rowsByKey);
+  // Released today: the only action on offer is the sample delete, so the
+  // bar counts visits (a row there is one visit's card, not a bench test).
+  const sampleOnlyBar =
+    sampleVisitIds.length > 0 &&
+    claimKeys.length === 0 &&
+    unclaimKeys.length === 0 &&
+    releaseKeys.length === 0 &&
+    deleteKeys.length === 0;
   // A panel stands for its ready members; a single test for itself. One call,
   // de-duplicated — the server expands a combined report to its whole set.
   const releaseIds = Array.from(
@@ -389,7 +397,7 @@ export function QueueBulkBar({ rowsByKey }: Props) {
   }
 
   return (
-    <BulkBar noun="test">
+    <BulkBar noun={sampleOnlyBar ? "sample visit" : "test"}>
       {outcome ? (
         <BulkOutcomePanel
           inline

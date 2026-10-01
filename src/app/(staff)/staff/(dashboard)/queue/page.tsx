@@ -51,6 +51,7 @@ import { fetchSharedReportTestIds } from "@/lib/visits/shared-report-links";
 import { LAB_QUEUE_GATE_VISITS_OR } from "@/lib/visits/lab-gate";
 import { DOCTOR_KINDS_PG_LIST } from "@/lib/visits/classification";
 import { QueueDeleteDialog } from "@/components/staff/queue-delete-dialog";
+import { DeleteBlockedHint } from "@/components/staff/delete-blocked-hint";
 import { PrintResultButton } from "@/components/staff/print-result-button";
 import { PrintedNote } from "@/components/staff/printed-note";
 import { StalePrintWarning } from "@/components/staff/stale-print-warning";
@@ -71,6 +72,7 @@ import {
   panelRowKey,
   queueRowKinds,
   queueSelectable,
+  samplePaymentBlock,
   type QueueRowInfo,
 } from "@/lib/queue/bulk-queue";
 import {
@@ -113,6 +115,7 @@ type QueueCardSingle = {
   section: string | null;
   visitNumber: string;
   isSample: boolean;
+  visitPaymentStatus: string;
   patientName: string;
   patientDrmId: string;
   status: string;
@@ -150,6 +153,7 @@ type QueueCardGrouped = {
   releasedAt: string | null;
   visitNumber: string;
   isSample: boolean;
+  visitPaymentStatus: string;
   patientName: string;
   patientDrmId: string;
   status: string;
@@ -607,6 +611,7 @@ export default async function QueuePage({ searchParams }: SearchProps) {
           releasedAt: r.released_at,
           visitNumber: visit.visit_number,
           isSample: visit.is_sample,
+          visitPaymentStatus: visit.payment_status,
           patientName,
           patientDrmId: patient.drm_id,
           status: r.status,
@@ -642,6 +647,7 @@ export default async function QueuePage({ searchParams }: SearchProps) {
         section: svc.section,
         visitNumber: visit.visit_number,
         isSample: visit.is_sample,
+        visitPaymentStatus: visit.payment_status,
         patientName,
         patientDrmId: patient.drm_id,
         status: r.status,
@@ -730,8 +736,15 @@ export default async function QueuePage({ searchParams }: SearchProps) {
   // sample-visit rows, and the only kind those rows carry is sampleDelete, so
   // that tab's bar offers only that action. The server re-proves admin +
   // is_sample for every visit (deleteSampleVisitFromQueueAction).
-  const sampleDeletable = (card: { isSample: boolean }) =>
-    canDeleteSampleVisit(session.role, card.isSample);
+  // A recorded payment / waived balance greys the action out with the visit
+  // page's hint and withholds the checkbox kind. HMO-claim and line blockers
+  // are NOT knowable here — those stay server-side per-visit refusals.
+  const sampleBlockHint = (card: { isSample: boolean; visitPaymentStatus: string }) =>
+    canDeleteSampleVisit(session.role, card.isSample)
+      ? samplePaymentBlock(session.role, card.visitPaymentStatus)
+      : null;
+  const sampleDeletable = (card: { isSample: boolean; visitPaymentStatus: string }) =>
+    canDeleteSampleVisit(session.role, card.isSample) && sampleBlockHint(card) === null;
   const worklistSelectable = !receptionView && !releasedTab;
   const selectable = queueSelectable({ role: session.role, receptionView, releasedTab });
 
@@ -859,6 +872,19 @@ export default async function QueuePage({ searchParams }: SearchProps) {
           sampleDeletable: sampleDeletable(card),
         });
   const selectionEntries: SelectionEntry[] = [];
+  // Released today: a panel on two reports is two cards with one panelRowKey;
+  // only the first renders the checkbox (one key, one box).
+  const checkboxPanelCards = new Set<string>();
+  {
+    const seen = new Set<string>();
+    for (const card of cards) {
+      if (card.kind !== "grouped") continue;
+      const k = panelRowKey(card.visitId, card.groupId);
+      if (seen.has(k)) continue;
+      seen.add(k);
+      checkboxPanelCards.add(card.cardKey);
+    }
+  }
   const rowsByKey: Record<string, QueueRowInfo> = {};
   if (selectable) {
     for (const card of cards) {
@@ -869,6 +895,9 @@ export default async function QueuePage({ searchParams }: SearchProps) {
         if (releasedTab) {
           // Sample rows only (kinds is empty otherwise); no panel state here.
           if (kinds.length === 0) continue;
+          // A panel that went out on two reports is TWO cards sharing one
+          // panelRowKey: one entry, or select-all double-counts it.
+          if (rowsByKey[rowKey]) continue;
           selectionEntries.push({ rowKey, kinds, weight: card.memberIds.length });
           rowsByKey[rowKey] = {
             visitId: card.visitId,
@@ -1398,6 +1427,10 @@ export default async function QueuePage({ searchParams }: SearchProps) {
                               source="queue"
                             />
                           </div>
+                        ) : sampleBlockHint(card) ? (
+                          <div className="mt-1.5 flex justify-end">
+                            <DeleteBlockedHint hint={sampleBlockHint(card)!} />
+                          </div>
                         ) : null}
                       </td>
                       {receptionView ? null : (
@@ -1415,7 +1448,7 @@ export default async function QueuePage({ searchParams }: SearchProps) {
                   >
                     {selectable ? (
                       <td className="px-2 py-3 align-middle">
-                        {panelKinds(card).length > 0 ? (
+                        {panelKinds(card).length > 0 && checkboxPanelCards.has(card.cardKey) ? (
                           <RowSelectCheckbox
                             rowKey={panelRowKey(card.visitId, card.groupId)}
                             kinds={panelKinds(card)}
@@ -1561,6 +1594,10 @@ export default async function QueuePage({ searchParams }: SearchProps) {
                             visitNumber={card.visitNumber}
                             source="queue"
                           />
+                        </div>
+                      ) : sampleBlockHint(card) ? (
+                        <div className="mt-1.5 flex justify-end">
+                          <DeleteBlockedHint hint={sampleBlockHint(card)!} />
                         </div>
                       ) : null}
                     </td>

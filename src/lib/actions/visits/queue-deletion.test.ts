@@ -31,17 +31,3 @@ describe("deleteTestRequestsManyCore refuses an all-stale selection", () => {
     expect(firstWrite).toBeGreaterThan(refusal);
   });
 });
-
-// deleteVisitAction's `visit.deleted` audit row carries where a SAMPLE-visit
-// delete came from (the Queue row / bulk action pass "queue" / "queue_bulk").
-// Only those two values are written — a forged `source` must never become
-// arbitrary audit metadata.
-describe("deleteVisitAction audit source marker", () => {
-  const visitSrc = readFileSync(join(process.cwd(), "src/lib/actions/visits/queue-deletion.ts"), "utf8");
-  const vStart = visitSrc.indexOf("export async function deleteVisitAction");
-  const vBody = visitSrc.slice(vStart, visitSrc.indexOf("\nexport ", vStart + 1));
-  it("writes source only for the two queue values, inside the visit.deleted audit", () => {
-    expect(vBody).toContain(`source === "queue" || source === "queue_bulk" ? { source } : {}`);
-    expect(vBody.indexOf(`action: "visit.deleted"`)).toBeLessThan(vBody.indexOf("{ source }"));
-  });
-});

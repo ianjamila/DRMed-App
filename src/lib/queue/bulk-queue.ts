@@ -4,6 +4,7 @@
 // export async functions and both sides need these.
 
 import { formatBulkOutcome } from "@/lib/ui/bulk-outcome";
+import { visitDeletability } from "@/lib/visits/deletion";
 
 export const QUEUE_KIND = {
   claim: "claimable",
@@ -22,6 +23,26 @@ export type QueueKind = (typeof QUEUE_KIND)[keyof typeof QUEUE_KIND];
  */
 export function canDeleteSampleVisit(role: string, isSample: boolean): boolean {
   return role === "admin" && isSample;
+}
+
+/**
+ * The hint to show in place of "Delete sample visit…" when the visit's PAYMENT
+ * state already blocks any delete (recorded payments, a waived balance) — the
+ * visit page's DeleteBlockedHint pattern; null when nothing blocks.
+ *
+ * Only the payment rules are asked: the lines and HMO-claim inputs are passed
+ * as "nothing there" on purpose (the Queue card does not carry them), so open
+ * HMO claims and line-level blockers stay SERVER-side refusals, reported per
+ * visit by the action.
+ */
+export function samplePaymentBlock(role: string, paymentStatus: string): string | null {
+  const d = visitDeletability(role, {
+    payment_status: paymentStatus,
+    deleted_at: null,
+    test_statuses: [],
+    has_open_hmo_claim: false,
+  });
+  return !d.ok && (d.reason === "has_payments" || d.reason === "waived") ? d.hint : null;
 }
 
 /**

@@ -23,6 +23,7 @@ import {
   queueRowKinds,
   queueSelectable,
   sampleDeleteVisitIds,
+  samplePaymentBlock,
   type QueueRowInfo,
 } from "@/lib/queue/bulk-queue";
 
@@ -79,6 +80,8 @@ describe("Delete N sample visits… in the bulk bar", () => {
     expect(screen.queryByRole("button", { name: /^Claim/ })).toBeNull();
     expect(screen.queryByRole("button", { name: /^Release/ })).toBeNull();
     expect(screen.queryByRole("button", { name: /^Delete \(/ })).toBeNull();
+    // Only the sample action is on offer, so the bar counts visits.
+    expect(screen.getByText(/sample visits selected/)).toBeTruthy();
   });
 
   it("a mixed selection (sample + non-sample) does not offer it", async () => {
@@ -165,6 +168,14 @@ describe("sampleDeleteVisitIds / row predicates", () => {
     expect(queueSelectable({ role: "lab_tech", receptionView: false, releasedTab: false })).toBe(true);
     expect(queueSelectable({ role: "reception", receptionView: true, releasedTab: false })).toBe(false);
     expect(queueSelectable({ role: "reception", receptionView: true, releasedTab: true })).toBe(false);
+  });
+  it("a recorded payment or waived balance blocks a sample row (hint shown, kind withheld); HMO/lines stay server-side", () => {
+    expect(samplePaymentBlock("admin", "unpaid")).toBeNull();
+    expect(samplePaymentBlock("admin", "paid")).toBe("Has recorded payments — void them first.");
+    expect(samplePaymentBlock("admin", "partial")).toBe("Has recorded payments — void them first.");
+    expect(samplePaymentBlock("admin", "waived")).toBe("Balance was waived — deletion not available.");
+    // A role that cannot delete gets no payment hint (the row action is hidden anyway).
+    expect(samplePaymentBlock("lab_tech", "paid")).toBeNull();
   });
   it("a sample row on released today carries only the sample kind; a non-sample row carries none", () => {
     const only = { claimable: false, unclaimable: false, releasable: false, deletable: false };

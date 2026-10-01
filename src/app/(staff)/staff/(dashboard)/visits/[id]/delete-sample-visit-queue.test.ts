@@ -16,6 +16,7 @@ const fx = vi.hoisted(() => ({
   deleteResult: {} as Record<string, { ok: boolean; error?: string }>,
   revalidated: [] as unknown[][],
   dbReads: 0,
+  patientActive: true,
 }));
 vi.mock("next/cache", () => ({ revalidatePath: (...a: unknown[]) => fx.revalidated.push(a) }));
 vi.mock("next/headers", () => ({ headers: async () => new Headers() }));
@@ -49,7 +50,8 @@ vi.mock("@/lib/supabase/server", () => ({
   }),
 }));
 vi.mock("@/lib/supabase/admin", () => ({ createAdminClient: () => ({}) }));
-vi.mock("@/lib/patients/require-active", () => ({ assertVisitPatientActive: async () => ({ ok: true }) }));
+vi.mock("@/lib/patients/require-active", () => ({ assertVisitPatientActive: async () =>
+    fx.patientActive ? { ok: true } : { ok: false, error: "This patient record is inactive." } }));
 vi.mock("@/lib/audit/log", () => ({ audit: async () => {} }));
 vi.mock("@/lib/server/action-helpers", () => ({ ipAndAgent: async () => ({ ip: null, ua: null }) }));
 vi.mock("@/lib/observability/report-error", () => ({ reportError: async () => {} }));
@@ -64,6 +66,7 @@ vi.mock("@/lib/actions/visits/queue-deletion", () => ({
   },
 }));
 
+const { MAX_BULK_SELECTION } = await import("@/lib/visits/bulk-selection");
 const { deleteSampleVisitFromQueueAction, deleteSampleVisitsFromQueueAction, deleteSampleVisitAction } = await import(
   "./actions"
 );
@@ -92,6 +95,7 @@ beforeEach(() => {
   fx.deleteResult = {};
   fx.revalidated.length = 0;
   fx.dbReads = 0;
+  fx.patientActive = true;
 });
 
 describe("deleteSampleVisitFromQueueAction", () => {
@@ -141,6 +145,26 @@ describe("deleteSampleVisitFromQueueAction", () => {
     const res = await deleteSampleVisitFromQueueAction("v1", "demo");
     expect(res.ok).toBe(false);
     expect(fx.undoCalls).toEqual([]);
+  });
+});
+
+describe("an inactive patient's visit (0167)", () => {
+  it.each([
+    ["visit_page", () => deleteSampleVisitAction("v1", "demo")],
+    ["queue", () => deleteSampleVisitFromQueueAction("v1", "demo")],
+  ])("%s source is refused: nothing un-released, nothing deleted", async (_s, run) => {
+    fx.patientActive = false;
+    const res = await run();
+    expect(res).toEqual({ ok: false, error: "This patient record is inactive." });
+    expect(fx.undoCalls).toEqual([]);
+    expect(fx.deleteCalls).toEqual([]);
+  });
+
+  it("bulk reports it as a skipped visit", async () => {
+    fx.patientActive = false;
+    const res = await deleteSampleVisitsFromQueueAction(["v1"], "demo");
+    expect(res).toMatchObject({ ok: true, deletedVisitIds: [], skipped: [{ id: "v1", reason: "This patient record is inactive." }] });
+    expect(fx.deleteCalls).toEqual([]);
   });
 });
 
@@ -199,6 +223,18 @@ describe("deleteSampleVisitsFromQueueAction", () => {
     const res = await deleteSampleVisitsFromQueueAction(["v1"], "demo");
     expect(res).toEqual({ ok: false, error: "Only an admin can delete a sample visit." });
     expect(fx.dbReads).toBe(0);
+  });
+
+  it("refuses more than MAX_BULK_SELECTION distinct visits and deletes nothing", async () => {
+    const ids = Array.from({ length: MAX_BULK_SELECTION + 1 }, (_, i) => `x${i}`);
+    for (const id of ids) fx.visits[id] = visit(id);
+    const res = await deleteSampleVisitsFromQueueAction(ids, "demo");
+    expect(res.ok).toBe(false);
+    expect(fx.deleteCalls).toEqual([]);
+    expect(fx.undoCalls).toEqual([]);
+    // Duplicates do not count toward the cap.
+    const dup = await deleteSampleVisitsFromQueueAction(Array(MAX_BULK_SELECTION + 5).fill("v1"), "demo");
+    expect(dup).toMatchObject({ ok: true, deletedVisitIds: ["v1"] });
   });
 
   it("refuses an empty selection and a missing reason", async () => {
