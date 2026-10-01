@@ -700,7 +700,9 @@ function DownloadButton({
     startTransition(async () => {
       const res = await getPayslipUrlAction(employeeRunId);
       if (!res.ok) {
-        setError(res.error);
+        startTransition(() => {
+          setError(res.error);
+        });
         return;
       }
       // Open in a new tab so we don't navigate away from the list.

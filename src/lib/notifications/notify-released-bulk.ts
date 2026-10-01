@@ -15,6 +15,7 @@ import { SAMPLE_SKIP_REASON } from "@/lib/visits/sample";
 import { patientAlreadyAskedForReview } from "./review-cta";
 import { checkPatientRecipient } from "./active-patient-recipient";
 import { auditSkippedInactiveRecipient } from "./inactive-recipient-audit";
+import { noticeFromChannels, noticeSkipped, type ReleaseNoticeOutcome } from "./release-notice-outcome";
 
 interface Input {
   visitId: string;
@@ -46,8 +47,8 @@ export async function notifyResultsReleasedBulk({
   testNames,
   releaseMedium,
   bulkBatchId,
-}: Input): Promise<void> {
-  if (testRequestIds.length === 0) return;
+}: Input): Promise<ReleaseNoticeOutcome> {
+  if (testRequestIds.length === 0) return noticeSkipped("nothing to announce");
   const admin = createAdminClient();
 
   const { data: visit } = await admin
@@ -64,9 +65,9 @@ export async function notifyResultsReleasedBulk({
     .is("deleted_at", null)
     .maybeSingle();
 
-  if (!visit) return;
+  if (!visit) return noticeSkipped("visit not found");
   const patient = Array.isArray(visit.patients) ? visit.patients[0] : visit.patients;
-  if (!patient) return;
+  if (!patient) return noticeSkipped("patient not found");
 
   const count = testNames.length;
 
@@ -104,7 +105,7 @@ export async function notifyResultsReleasedBulk({
         ...(bulkBatchId ? { bulk_batch_id: bulkBatchId } : {}),
       },
     });
-    return;
+    return noticeSkipped(skipReason);
   }
 
   const portalUrl = PORTAL_URL;
@@ -183,7 +184,9 @@ export async function notifyResultsReleasedBulk({
       resourceType: "visit",
       resourceId: visitId,
     });
-    return;
+    return noticeSkipped(
+      recipient.kind === "inactive" ? "patient is not active" : "walk-in patient — no contact details",
+    );
   }
   const to = recipient.patient;
 
@@ -251,4 +254,5 @@ export async function notifyResultsReleasedBulk({
       ...(bulkBatchId ? { bulk_batch_id: bulkBatchId } : {}),
     },
   });
+  return noticeFromChannels(smsResult, emailResult);
 }

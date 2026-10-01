@@ -78,8 +78,8 @@ const SURFACES: Record<string, Surface> = {
   "scripts/smoke-chemistry-consolidated.ts": { meaning: "lifecycle", why: "Fixture lookup refuses a DRM-ID held by an inactive record." },
 
   // --- mixed ----------------------------------------------------------------
-  [`src/${S}/admin/patient-merge/actions.ts`]: { meaning: "mixed", why: "Preview/candidates are active; merge and undo load lifecycle; the recent-merges list is history." },
-  "scripts/patient-dedup/engine.ts": { meaning: "mixed", why: "loadRows is active; mergeOne re-reads lifecycle before writing." },
+  [`src/${S}/admin/patient-merge/actions.ts`]: { meaning: "mixed", why: "Preview/lookup reads are active; the recent-merges list and the notice email's first-name read are history; merge and undo themselves run in SQL (0196)." },
+  "scripts/patient-dedup/engine.ts": { meaning: "mixed", why: "loadRows is active; each merge is one merge_patients_guarded call that re-checks both records under lock (0196)." },
 };
 
 const isCheckable = (p: string) =>

@@ -18,7 +18,9 @@ export function RetryNoticeButton({ amendmentId, showingAll }: { amendmentId: st
       setErr(null);
       const result = await retryPatientNoticeAction(amendmentId);
       if (!result.ok) {
-        setErr(result.error);
+        startTransition(() => {
+          setErr(result.error);
+        });
         return;
       }
       const qs = new URLSearchParams({ retried: result.data.outcome });

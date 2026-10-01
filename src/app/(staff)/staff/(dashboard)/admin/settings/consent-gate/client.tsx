@@ -21,11 +21,15 @@ export function ConsentGateToggle({
     start(async () => {
       const res = await setConsentGateRequiredAction(next);
       if (!res.ok) {
-        setErr(res.error ?? "Could not update the setting. Try again.");
+        start(() => {
+          setErr(res.error ?? "Could not update the setting. Try again.");
+        });
         return;
       }
-      setOn(next);
-      setConfirming(false);
+      start(() => {
+        setOn(next);
+        setConfirming(false);
+      });
     });
   }
 

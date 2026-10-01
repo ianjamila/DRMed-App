@@ -57,12 +57,14 @@ export function DashboardCardSettingsClient({
       const result = await setCardVisibility(role, cardId, nextVisible);
       if (!result.ok) {
         // Roll back optimistic update on failure.
-        setLocalCards((prev) =>
-          prev.map((c) =>
-            c.id === cardId ? { ...c, visible: currentlyVisible } : c,
-          ),
-        );
-        setError(result.error ?? "Failed to update card visibility.");
+        startTransition(() => {
+          setLocalCards((prev) =>
+            prev.map((c) =>
+              c.id === cardId ? { ...c, visible: currentlyVisible } : c,
+            ),
+          );
+          setError(result.error ?? "Failed to update card visibility.");
+        });
       }
     });
   }

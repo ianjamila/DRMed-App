@@ -147,14 +147,16 @@ export function AppointmentsBulkBar({ groupsByKey, isAdmin }: Props) {
         button.action !== "delete" && result.batchId && result.changedIds.length > 0
           ? { batchId: result.batchId, doneAt: Date.now(), ...labelOfKeys(keys, groupsByKey) }
           : null;
-      setOutcome({
-        message: bulkAppointmentsMessage(button, outcomeResult, groupsByKey, notSent),
-        edits: selectionEdits,
-        undo,
+      start(() => {
+        setOutcome({
+          message: bulkAppointmentsMessage(button, outcomeResult, groupsByKey, notSent),
+          edits: selectionEdits,
+          undo,
+        });
+        // Pruning wins (spec §4): clear everything sent — and the inactive ones the
+        // button left out, which the message now names — the panel is the record.
+        clearKeys([...keys, ...notSent]);
       });
-      // Pruning wins (spec §4): clear everything sent — and the inactive ones the
-      // button left out, which the message now names — the panel is the record.
-      clearKeys([...keys, ...notSent]);
       router.refresh();
     });
   }
@@ -169,10 +171,12 @@ export function AppointmentsBulkBar({ groupsByKey, isAdmin }: Props) {
         // unless the server says the window/batch itself is gone, in which
         // case retrying can only repeat the same refusal.
         const gone = r.error === UNDO_EXPIRED || r.error === UNDO_ALREADY;
-        setOutcome({
-          message: `${r.error}\n\n${previousMessage}`,
-          edits: selectionEdits,
-          undo: gone ? null : u,
+        startUndo(() => {
+          setOutcome({
+            message: `${r.error}\n\n${previousMessage}`,
+            edits: selectionEdits,
+            undo: gone ? null : u,
+          });
         });
         return;
       }
@@ -188,13 +192,15 @@ export function AppointmentsBulkBar({ groupsByKey, isAdmin }: Props) {
           notRestoredByKey.set(key, { label: u.labelOf[n.id] ?? "A booking", reason: n.reason });
         }
       }
-      setOutcome({
-        message: undoOutcomeMessage(
-          { one: "booking", many: "bookings" },
-          { restored: restoredKeys.size, notRestored: [...notRestoredByKey.values()] },
-        ),
-        edits: selectionEdits,
-        undo: null,
+      startUndo(() => {
+        setOutcome({
+          message: undoOutcomeMessage(
+            { one: "booking", many: "bookings" },
+            { restored: restoredKeys.size, notRestored: [...notRestoredByKey.values()] },
+          ),
+          edits: selectionEdits,
+          undo: null,
+        });
       });
       router.refresh();
     });

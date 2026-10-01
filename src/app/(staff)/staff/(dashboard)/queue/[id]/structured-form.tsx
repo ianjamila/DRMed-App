@@ -213,7 +213,9 @@ export function StructuredResultForm(props: Props) {
           props.testRequestId,
           buildPayload(),
         );
-        setFeedback(result);
+        start(() => {
+          setFeedback(result);
+        });
         if (result.ok) router.refresh();
         return;
       }
@@ -239,12 +241,16 @@ export function StructuredResultForm(props: Props) {
           props.onAmended(result);
           return;
         }
-        setFeedback(result);
+        start(() => {
+          setFeedback(result);
+        });
         if (result.ok) router.refresh();
         return;
       }
       const result = await finaliseStructuredAction(props.testRequestId, fd);
-      setFeedback(result);
+      start(() => {
+        setFeedback(result);
+      });
       if (result.ok) router.refresh();
     });
   }

@@ -193,10 +193,10 @@ export async function uploadDtrAction(
       time_out: r.time_out_iso,
       total_hours: r.total_hours,
       status,
-      // reason: source_row is a typed Json column, but Record<string, string>
-      // is a richer shape than Json's recursive type allows. The cast widens it
-      // back to Json for the typed insert.
-      source_row: r.source_row as unknown as Json,
+      // reason: source_row is a typed NOT NULL Json column, but
+      // Record<string, string> is a richer shape than Json's recursive type
+      // allows. The cast widens it back to (non-null) Json for the typed insert.
+      source_row: r.source_row as unknown as NonNullable<Json>,
       notes: r.parse_warnings.length > 0 ? r.parse_warnings.join("; ") : null,
     };
   });

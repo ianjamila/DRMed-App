@@ -1,5 +1,4 @@
 import "server-only";
-import { headers } from "next/headers";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Json } from "@/types/database";
 import type { StaffSession } from "@/lib/auth/require-staff";
@@ -9,15 +8,15 @@ import { REPORT_REFUSAL } from "@/lib/queue/report-release-scope";
 import { RELEASE_REFUSAL_PATIENT_INACTIVE } from "@/lib/visits/release-messages";
 import { withLifecycleRetry } from "@/lib/patients/lifecycle-retry";
 import { translatePgError } from "@/lib/accounting/pg-errors";
-import { audit } from "@/lib/audit/log";
 import { notifyResultReleased } from "@/lib/notifications/notify-released";
 import { notifyResultsReleasedBulk } from "@/lib/notifications/notify-released-bulk";
+import type { ReleaseNoticeOutcome } from "@/lib/notifications/release-notice-outcome";
 import { scheduleReleaseStaffAlert } from "@/lib/notifications/release-staff-alert";
 import { reportError } from "@/lib/observability/report-error";
+import { ipAndAgent } from "@/lib/server/action-helpers";
+import { describeRacedRelease } from "./raced-release";
 
 export type ReleasedRow = { id: string; name: string };
-/** A released row with the exact released_at the database stamped (the batch Undo matches on it). */
-type StampedRow = ReleasedRow & { releasedAt: string };
 
 export type VisitReleaseOutcome = {
   /** Selected ids the write actually released (authoritative RETURNING). */
@@ -29,6 +28,8 @@ export type VisitReleaseOutcome = {
   warnings: string[];
   /** Every released row — a combined report is complete by construction, so all of it is announced. */
   announced: ReleasedRow[];
+  /** What actually happened to the patient's notice; null when nothing was announced or sent. */
+  notice: ReleaseNoticeOutcome | null;
 };
 
 export const RACED_REASON = "Released by someone else or changed just now.";
@@ -84,39 +85,14 @@ function refusalReason(r: RpcRefused): string {
   return REPORT_CODE_REASON[r.code] ?? RACED_REASON;
 }
 
-/** One `test_request.released` audit row per row the database released. */
-async function auditReleased(
-  session: Pick<StaffSession, "user_id">,
-  visitId: string,
-  medium: ReleaseMedium,
-  released: readonly StampedRow[],
-  auditMeta: Record<string, Json>,
-): Promise<void> {
-  const h = await headers();
-  const ip = h.get("x-forwarded-for")?.split(",")[0]?.trim() ?? null;
-  const ua = h.get("user-agent");
-  for (const row of released) {
-    await audit({
-      actor_id: session.user_id,
-      actor_type: "staff",
-      action: "test_request.released",
-      resource_type: "test_request",
-      resource_id: row.id,
-      metadata: {
-        visit_id: visitId,
-        release_medium: medium,
-        bulk: true,
-        selection: true,
-        ...auditMeta,
-        // The exact instant the database stamped (full precision, never through
-        // a JS Date): the 10-minute Undo (undoReleaseBatchAction) restores a row
-        // only while it still carries this release.
-        released_at: row.releasedAt,
-      },
-      ip_address: ip,
-      user_agent: ua,
-    });
-  }
+/**
+ * The p_audit argument of release_visit_results / undo_visit_release (0205):
+ * the database writes the per-row audit rows itself, in the same transaction
+ * as the change, from these caller extras plus the request ip / user agent.
+ */
+export async function releaseAuditArg(metadata: Record<string, Json>): Promise<Json> {
+  const { ip, ua } = await ipAndAgent();
+  return { metadata, ip, user_agent: ua };
 }
 
 /** The patient "result ready" notice for rows a caller decided to announce. Never throws. */
@@ -127,13 +103,13 @@ export async function notifyReleased(
   // The release call's bulk_batch_id, stamped on the notice's own audit row
   // so the batch's Undo does not read it as a later, unrelated change.
   bulkBatchId?: string,
-): Promise<void> {
-  if (rows.length === 0) return;
+): Promise<ReleaseNoticeOutcome | null> {
+  if (rows.length === 0) return null;
   try {
     if (rows.length === 1) {
-      await notifyResultReleased({ testRequestId: rows[0].id, visitId, releaseMedium: medium, bulkBatchId });
+      return await notifyResultReleased({ testRequestId: rows[0].id, visitId, releaseMedium: medium, bulkBatchId });
     } else {
-      await notifyResultsReleasedBulk({
+      return await notifyResultsReleasedBulk({
         visitId,
         testRequestIds: rows.map((r) => r.id),
         testNames: rows.map((r) => r.name),
@@ -147,6 +123,7 @@ export async function notifyReleased(
       error: err,
       metadata: { visit_id: visitId, test_request_ids: rows.map((r) => r.id) },
     });
+    return { status: "failed", channels: [], reason: "sending failed" };
   }
 }
 
@@ -154,8 +131,11 @@ export async function notifyReleased(
  * Release `selectedIds` (all on `visitId`, already eligibility-checked by the
  * caller) through release_visit_results (0198): the database plans the
  * whole-report rule under locks and writes in one statement, so a combined
- * report is released whole or not at all. Audits every released row, notifies
- * the patient (notifyReleased) and schedules the staff alert. Never returns a
+ * report is released whole or not at all. The database also writes one
+ * test_request.released audit row per released row in that transaction (0205
+ * — keys visit_id, release_medium, bulk, selection, `auditMeta`, released_at),
+ * so a lost response never leaves a release unaudited. Notifies the patient
+ * (notifyReleased) and schedules the staff alert. Never returns a
  * failure: every problem lands the affected selected ids in `skipped`.
  */
 export async function releaseVisitSelection(args: {
@@ -185,14 +165,17 @@ export async function releaseVisitSelection(args: {
     changedIds: string[],
     alsoReleasedIds: string[],
     announced: ReleasedRow[],
+    notice: ReleaseNoticeOutcome | null = null,
   ): VisitReleaseOutcome => ({
     changedIds,
     alsoReleasedIds,
     skipped: selected.filter((id) => skipped.has(id)).map((id) => ({ id, reason: skipped.get(id)! })),
     warnings: [],
     announced,
+    notice,
   });
   if (selected.length === 0) return finish([], [], []);
+  const audit = await releaseAuditArg(auditMeta);
 
   const { data, error } = await withLifecycleRetry(() =>
     supabase.rpc("release_visit_results", {
@@ -200,6 +183,7 @@ export async function releaseVisitSelection(args: {
       p_test_request_ids: selected,
       p_medium: medium,
       p_actor: session.user_id,
+      p_audit: audit,
     }),
   );
   if (error) {
@@ -221,20 +205,25 @@ export async function releaseVisitSelection(args: {
 
   const { released, refused } = result;
   for (const r of refused) skip([r.id], refusalReason(r));
-  const stamped: StampedRow[] = released.map((r) => ({ id: r.id, name: r.name, releasedAt: r.released_at }));
-  const releasedRows: ReleasedRow[] = stamped.map(({ id, name }) => ({ id, name }));
+  const releasedRows: ReleasedRow[] = released.map((r) => ({ id: r.id, name: r.name }));
   const releasedSet = new Set(releasedRows.map((r) => r.id));
-  // Every selected id is released or refused; anything else raced.
-  for (const id of selected) if (!releasedSet.has(id)) skip([id], RACED_REASON);
-
-  await auditReleased(session, visitId, medium, stamped, auditMeta);
+  // Every selected id is released or refused; anything else raced. A raced id
+  // that is released NOW says by whom and when (one batched, never-throwing
+  // read); every other raced id keeps the generic RACED_REASON.
+  const raced = [
+    ...refused.filter((r) => r.code === "not_ready").map((r) => r.id),
+    ...selected.filter((id) => !releasedSet.has(id) && !skipped.has(id)),
+  ];
+  const named = await describeRacedRelease(supabase, raced, session.user_id);
+  for (const r of refused) if (r.code === "not_ready") skipped.set(r.id, named.get(r.id) ?? RACED_REASON);
+  for (const id of selected) if (!releasedSet.has(id)) skip([id], named.get(id) ?? RACED_REASON);
 
   const changedIds = released.filter((r) => r.selected).map((r) => r.id);
   const alsoReleasedIds = released.filter((r) => !r.selected).map((r) => r.id);
+  let notice: ReleaseNoticeOutcome | null = null;
   if (releasedRows.length > 0) {
-    await notifyReleased(visitId, releasedRows, medium, bulkBatchId);
+    notice = await notifyReleased(visitId, releasedRows, medium, bulkBatchId);
     scheduleReleaseStaffAlert(visitId, releasedRows.length);
   }
-  return finish(changedIds, alsoReleasedIds, releasedRows);
-
+  return finish(changedIds, alsoReleasedIds, releasedRows, notice);
 }

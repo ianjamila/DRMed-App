@@ -217,12 +217,15 @@ export type Database = {
       ad_spend_daily: {
         Row: {
           ad_key: string
+          ad_label: string | null
           campaign_key: string
           campaign_label: string
           clicks: number | null
           id: number
           impressions: number | null
+          leads: number | null
           platform: string
+          platform_bookings: number | null
           spend_date: string
           spend_php: number
           upload_id: string
@@ -231,12 +234,15 @@ export type Database = {
         }
         Insert: {
           ad_key: string
+          ad_label?: string | null
           campaign_key: string
           campaign_label: string
           clicks?: number | null
           id?: never
           impressions?: number | null
+          leads?: number | null
           platform: string
+          platform_bookings?: number | null
           spend_date: string
           spend_php: number
           upload_id: string
@@ -245,12 +251,15 @@ export type Database = {
         }
         Update: {
           ad_key?: string
+          ad_label?: string | null
           campaign_key?: string
           campaign_label?: string
           clicks?: number | null
           id?: never
           impressions?: number | null
+          leads?: number | null
           platform?: string
+          platform_bookings?: number | null
           spend_date?: string
           spend_php?: number
           upload_id?: string
@@ -901,8 +910,8 @@ export type Database = {
           due_date: string
           gross_amount?: number
           id?: string
-          net_payable?: number | null
-          outstanding_amount?: number | null
+          net_payable?: never
+          outstanding_amount?: never
           paid_amount?: number
           posted_at?: string | null
           posted_by?: string | null
@@ -929,8 +938,8 @@ export type Database = {
           due_date?: string
           gross_amount?: number
           id?: string
-          net_payable?: number | null
-          outstanding_amount?: number | null
+          net_payable?: never
+          outstanding_amount?: never
           paid_amount?: number
           posted_at?: string | null
           posted_by?: string | null
@@ -2282,13 +2291,6 @@ export type Database = {
             referencedColumns: ["id"]
           },
           {
-            foreignKeyName: "gift_codes_redeemed_payment_id_fkey"
-            columns: ["redeemed_payment_id"]
-            isOneToOne: false
-            referencedRelation: "v_historical_payments"
-            referencedColumns: ["id"]
-          },
-          {
             foreignKeyName: "gift_codes_redeemed_visit_id_fkey"
             columns: ["redeemed_visit_id"]
             isOneToOne: false
@@ -2736,13 +2738,6 @@ export type Database = {
             columns: ["payment_id"]
             isOneToOne: false
             referencedRelation: "payments"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "hmo_payment_allocations_payment_id_fkey"
-            columns: ["payment_id"]
-            isOneToOne: false
-            referencedRelation: "v_historical_payments"
             referencedColumns: ["id"]
           },
           {
@@ -3364,35 +3359,50 @@ export type Database = {
       }
       patient_merges: {
         Row: {
+          context: Json | null
+          fill_snapshot: Json | null
           filled_from_source: string[]
           id: string
           keep_id: string
           merged_at: string
           merged_by: string | null
-          moved: Json
+          moved: NonNullable<Json>
+          rechained: string[]
+          snapshot_version: number | null
           source_id: string
+          undo_report: Json | null
           undone_at: string | null
           undone_by: string | null
         }
         Insert: {
+          context?: Json | null
+          fill_snapshot?: Json | null
           filled_from_source?: string[]
           id?: string
           keep_id: string
           merged_at?: string
           merged_by?: string | null
-          moved?: Json
+          moved?: NonNullable<Json>
+          rechained?: string[]
+          snapshot_version?: number | null
           source_id: string
+          undo_report?: Json | null
           undone_at?: string | null
           undone_by?: string | null
         }
         Update: {
+          context?: Json | null
+          fill_snapshot?: Json | null
           filled_from_source?: string[]
           id?: string
           keep_id?: string
           merged_at?: string
           merged_by?: string | null
-          moved?: Json
+          moved?: NonNullable<Json>
+          rechained?: string[]
+          snapshot_version?: number | null
           source_id?: string
+          undo_report?: Json | null
           undone_at?: string | null
           undone_by?: string | null
         }
@@ -3721,13 +3731,6 @@ export type Database = {
             referencedColumns: ["id"]
           },
           {
-            foreignKeyName: "payments_corrects_payment_id_fkey"
-            columns: ["corrects_payment_id"]
-            isOneToOne: false
-            referencedRelation: "v_historical_payments"
-            referencedColumns: ["id"]
-          },
-          {
             foreignKeyName: "payments_legacy_import_run_id_fkey"
             columns: ["legacy_import_run_id"]
             isOneToOne: false
@@ -3902,7 +3905,7 @@ export type Database = {
           id: string
           import_id: string
           notes: string | null
-          source_row: Json
+          source_row: NonNullable<Json>
           status: string
           time_in: string | null
           time_out: string | null
@@ -3915,7 +3918,7 @@ export type Database = {
           id?: string
           import_id: string
           notes?: string | null
-          source_row: Json
+          source_row: NonNullable<Json>
           status?: string
           time_in?: string | null
           time_out?: string | null
@@ -3928,7 +3931,7 @@ export type Database = {
           id?: string
           import_id?: string
           notes?: string | null
-          source_row?: Json
+          source_row?: NonNullable<Json>
           status?: string
           time_in?: string | null
           time_out?: string | null
@@ -4837,6 +4840,107 @@ export type Database = {
         }
         Relationships: []
       }
+      release_notice_settings: {
+        Row: {
+          enabled: boolean
+          id: boolean
+          updated_at: string
+          updated_by: string | null
+        }
+        Insert: {
+          enabled?: boolean
+          id?: boolean
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Update: {
+          enabled?: boolean
+          id?: boolean
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Relationships: []
+      }
+      release_notices: {
+        Row: {
+          attempts: number
+          audited_at: string | null
+          bulk_batch_id: string | null
+          created_at: string
+          email_provider_id: string | null
+          email_state: string
+          id: string
+          last_error: string | null
+          lease_expires_at: string | null
+          lease_token: string | null
+          next_attempt_at: string
+          release_medium: string | null
+          released_at: string
+          resolved_at: string | null
+          sent_at: string | null
+          skip_reason: string | null
+          sms_provider_id: string | null
+          sms_state: string
+          status: string
+          test_request_ids: string[]
+          visit_id: string
+        }
+        Insert: {
+          attempts?: number
+          audited_at?: string | null
+          bulk_batch_id?: string | null
+          created_at?: string
+          email_provider_id?: string | null
+          email_state?: string
+          id?: string
+          last_error?: string | null
+          lease_expires_at?: string | null
+          lease_token?: string | null
+          next_attempt_at?: string
+          release_medium?: string | null
+          released_at: string
+          resolved_at?: string | null
+          sent_at?: string | null
+          skip_reason?: string | null
+          sms_provider_id?: string | null
+          sms_state?: string
+          status?: string
+          test_request_ids: string[]
+          visit_id: string
+        }
+        Update: {
+          attempts?: number
+          audited_at?: string | null
+          bulk_batch_id?: string | null
+          created_at?: string
+          email_provider_id?: string | null
+          email_state?: string
+          id?: string
+          last_error?: string | null
+          lease_expires_at?: string | null
+          lease_token?: string | null
+          next_attempt_at?: string
+          release_medium?: string | null
+          released_at?: string
+          resolved_at?: string | null
+          sent_at?: string | null
+          skip_reason?: string | null
+          sms_provider_id?: string | null
+          sms_state?: string
+          status?: string
+          test_request_ids?: string[]
+          visit_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "release_notices_visit_id_fkey"
+            columns: ["visit_id"]
+            isOneToOne: false
+            referencedRelation: "visits"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       report_group_service_params: {
         Row: {
           created_at: string
@@ -5680,7 +5784,7 @@ export type Database = {
           patient_id: string | null
           payment_detail_raw: string | null
           payment_method_raw: string | null
-          raw: Json
+          raw: NonNullable<Json>
           release_medium_raw: string | null
           released_on: string | null
           revenue_php: number | null
@@ -5707,7 +5811,7 @@ export type Database = {
           patient_id?: string | null
           payment_detail_raw?: string | null
           payment_method_raw?: string | null
-          raw: Json
+          raw: NonNullable<Json>
           release_medium_raw?: string | null
           released_on?: string | null
           revenue_php?: number | null
@@ -5734,7 +5838,7 @@ export type Database = {
           patient_id?: string | null
           payment_detail_raw?: string | null
           payment_method_raw?: string | null
-          raw?: Json
+          raw?: NonNullable<Json>
           release_medium_raw?: string | null
           released_on?: string | null
           revenue_php?: number | null
@@ -5786,21 +5890,21 @@ export type Database = {
       }
       sheet_mirror_staging: {
         Row: {
-          row: Json
+          row: NonNullable<Json>
           run_id: string
           seq: number
           staged_at: string
           tab: string
         }
         Insert: {
-          row: Json
+          row: NonNullable<Json>
           run_id: string
           seq?: never
           staged_at?: string
           tab: string
         }
         Update: {
-          row?: Json
+          row?: NonNullable<Json>
           run_id?: string
           seq?: never
           staged_at?: string
@@ -5821,8 +5925,8 @@ export type Database = {
           decided_at: string
           decided_by: string | null
           decision: string
-          hold_reason: string | null
           held_patient_id: string | null
+          hold_reason: string | null
           link_key: string
           method: string
           patient_id: string | null
@@ -5832,8 +5936,8 @@ export type Database = {
           decided_at?: string
           decided_by?: string | null
           decision?: string
-          hold_reason?: string | null
           held_patient_id?: string | null
+          hold_reason?: string | null
           link_key: string
           method: string
           patient_id?: string | null
@@ -5843,8 +5947,8 @@ export type Database = {
           decided_at?: string
           decided_by?: string | null
           decision?: string
-          hold_reason?: string | null
           held_patient_id?: string | null
+          hold_reason?: string | null
           link_key?: string
           method?: string
           patient_id?: string | null
@@ -5955,7 +6059,7 @@ export type Database = {
           item_key: string
           kind: string
           last_seen_at: string
-          payload: Json
+          payload: NonNullable<Json>
           resolution: Json | null
           resolved_at: string | null
           resolved_by: string | null
@@ -5969,7 +6073,7 @@ export type Database = {
           item_key: string
           kind: string
           last_seen_at?: string
-          payload?: Json
+          payload?: NonNullable<Json>
           resolution?: Json | null
           resolved_at?: string | null
           resolved_by?: string | null
@@ -5983,7 +6087,7 @@ export type Database = {
           item_key?: string
           kind?: string
           last_seen_at?: string
-          payload?: Json
+          payload?: NonNullable<Json>
           resolution?: Json | null
           resolved_at?: string | null
           resolved_by?: string | null
@@ -6011,12 +6115,12 @@ export type Database = {
           id: string
           lease_token: string | null
           legacy_import_run_id: string | null
-          per_tab: Json
+          per_tab: NonNullable<Json>
           released_by_run_id: string | null
           reverted_by_run_id: string | null
           started_at: string
           status: string
-          summary: Json
+          summary: NonNullable<Json>
           trigger: string
         }
         Insert: {
@@ -6028,12 +6132,12 @@ export type Database = {
           id?: string
           lease_token?: string | null
           legacy_import_run_id?: string | null
-          per_tab?: Json
+          per_tab?: NonNullable<Json>
           released_by_run_id?: string | null
           reverted_by_run_id?: string | null
           started_at?: string
           status: string
-          summary?: Json
+          summary?: NonNullable<Json>
           trigger: string
         }
         Update: {
@@ -6045,12 +6149,12 @@ export type Database = {
           id?: string
           lease_token?: string | null
           legacy_import_run_id?: string | null
-          per_tab?: Json
+          per_tab?: NonNullable<Json>
           released_by_run_id?: string | null
           reverted_by_run_id?: string | null
           started_at?: string
           status?: string
-          summary?: Json
+          summary?: NonNullable<Json>
           trigger?: string
         }
         Relationships: [
@@ -6945,66 +7049,6 @@ export type Database = {
         }
         Relationships: []
       }
-      v_historical_payments: {
-        Row: {
-          amount_php: number | null
-          created_at: string | null
-          id: string | null
-          method: string | null
-          notes: string | null
-          received_at: string | null
-          received_by: string | null
-          reference_number: string | null
-          visit_id: string | null
-          void_reason: string | null
-          voided_at: string | null
-          voided_by: string | null
-        }
-        Insert: {
-          amount_php?: number | null
-          created_at?: string | null
-          id?: string | null
-          method?: string | null
-          notes?: string | null
-          received_at?: string | null
-          received_by?: string | null
-          reference_number?: string | null
-          visit_id?: string | null
-          void_reason?: string | null
-          voided_at?: string | null
-          voided_by?: string | null
-        }
-        Update: {
-          amount_php?: number | null
-          created_at?: string | null
-          id?: string | null
-          method?: string | null
-          notes?: string | null
-          received_at?: string | null
-          received_by?: string | null
-          reference_number?: string | null
-          visit_id?: string | null
-          void_reason?: string | null
-          voided_at?: string | null
-          voided_by?: string | null
-        }
-        Relationships: [
-          {
-            foreignKeyName: "payments_visit_id_fkey"
-            columns: ["visit_id"]
-            isOneToOne: false
-            referencedRelation: "visits"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "payments_voided_by_fkey"
-            columns: ["voided_by"]
-            isOneToOne: false
-            referencedRelation: "staff_profiles"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
       v_hmo_ar_aging: {
         Row: {
           bucket: string | null
@@ -7334,7 +7378,7 @@ export type Database = {
     }
     Functions: {
       _patient_sources_encounters: {
-        Args: never
+        Args: Record<PropertyKey, never>
         Returns: {
           identity: string
           loose_key: string
@@ -7344,7 +7388,7 @@ export type Database = {
         }[]
       }
       _patient_sources_identities: {
-        Args: never
+        Args: Record<PropertyKey, never>
         Returns: {
           basis: string
           channel: string
@@ -7353,10 +7397,14 @@ export type Database = {
           identity: string
           is_returning: boolean
           loose_key: string
+          referrer_raw: string
           survivor_id: string
         }[]
       }
-      _ps_assert_mirror_mode: { Args: never; Returns: undefined }
+      _ps_assert_mirror_mode: {
+        Args: Record<PropertyKey, never>
+        Returns: undefined
+      }
       _ps_bucket: {
         Args: { p_d: string; p_from: string; p_grain: string }
         Returns: string
@@ -7366,11 +7414,27 @@ export type Database = {
         Returns: undefined
       }
       _ps_doctor_norm: { Args: { p: string }; Returns: string }
+      _ps_encounter_list: {
+        Args: Record<PropertyKey, never>
+        Returns: unknown[][]
+      }
+      _ps_identity_list: {
+        Args: Record<PropertyKey, never>
+        Returns: unknown[][]
+      }
       _ps_loose_key: {
         Args: { p_first: string; p_last: string }
         Returns: string
       }
+      _ps_mirror_window_start: {
+        Args: Record<PropertyKey, never>
+        Returns: string
+      }
       _ps_name_norm: { Args: { p: string }; Returns: string }
+      _ps_revenue_line_list: {
+        Args: { p_from: string; p_to: string }
+        Returns: unknown[][]
+      }
       _ps_revenue_lines: {
         Args: { p_from: string; p_to: string }
         Returns: {
@@ -7382,8 +7446,78 @@ export type Database = {
           survivor_id: string
         }[]
       }
+      _ps_sec_overlaps: {
+        Args: { p_lines: unknown[][] }
+        Returns: {
+          app_php: number
+          drm_id: string
+          patient_id: string
+          service_date: string
+          sheet_php: number
+        }[]
+      }
+      _ps_sec_referrers: {
+        Args: {
+          p_from: string
+          p_ids: unknown[][]
+          p_limit: number
+          p_to: string
+        }
+        Returns: {
+          doctor_label: string
+          new_confirmed: number
+          new_unconfirmed: number
+        }[]
+      }
+      _ps_sec_revenue: {
+        Args: { p_ids: unknown[][]; p_lines: unknown[][] }
+        Returns: {
+          channel: string
+          confirmed_php: number
+          unconfirmed_php: number
+        }[]
+      }
+      _ps_sec_series: {
+        Args: {
+          p_enc: unknown[][]
+          p_from: string
+          p_grain: string
+          p_ids: unknown[][]
+          p_mode: string
+          p_to: string
+        }
+        Returns: {
+          bucket_start: string
+          channel: string
+          confirmed: number
+          unconfirmed: number
+        }[]
+      }
+      _ps_sec_summary: {
+        Args: {
+          p_enc: unknown[][]
+          p_from: string
+          p_ids: unknown[][]
+          p_to: string
+        }
+        Returns: {
+          last_run_status: string
+          last_synced_at: string
+          new_confirmed: number
+          new_unconfirmed: number
+          returning_first_recorded: number
+          served_confirmed: number
+          served_unconfirmed: number
+          sheet_last_dates: Json
+          sheet_rows_present: boolean
+          source_recorded: number
+          source_total: number
+          sync_paused: boolean
+          undated_registrations: number
+        }[]
+      }
       _ps_survivors: {
-        Args: never
+        Args: Record<PropertyKey, never>
         Returns: {
           patient_id: string
           survivor_id: string
@@ -7402,7 +7536,7 @@ export type Database = {
         Returns: number
       }
       ad_spend_coverage: {
-        Args: never
+        Args: Record<PropertyKey, never>
         Returns: {
           days: number
           first_date: string
@@ -7426,6 +7560,22 @@ export type Database = {
       ad_spend_import: {
         Args: { p_rejected_count?: number; p_rows: Json; p_upload_id: string }
         Returns: Json
+      }
+      ad_spend_rows: {
+        Args: { p_from: string; p_to: string }
+        Returns: {
+          ad_key: string
+          ad_label: string
+          campaign_key: string
+          campaign_label: string
+          clicks: number
+          impressions: number
+          leads: number
+          platform: string
+          platform_bookings: number
+          spend_date: string
+          spend_php: number
+        }[]
       }
       admin_delete_result_template: {
         Args: { p_template_id: string }
@@ -7451,8 +7601,11 @@ export type Database = {
         Args: { p_actor_id: string; p_input: Json }
         Returns: Json
       }
-      ap_next_bill_number: { Args: never; Returns: string }
-      ap_next_payment_number: { Args: never; Returns: string }
+      ap_next_bill_number: { Args: Record<PropertyKey, never>; Returns: string }
+      ap_next_payment_number: {
+        Args: Record<PropertyKey, never>
+        Returns: string
+      }
       ap_post_recurring_template: {
         Args: { p_template_id: string }
         Returns: Json
@@ -7476,6 +7629,10 @@ export type Database = {
       ap_void_bill_with_guard: {
         Args: { p_actor_id: string; p_bill_id: string; p_reason: string }
         Returns: Json
+      }
+      api_request_guard: {
+        Args: Record<PropertyKey, never>
+        Returns: undefined
       }
       apply_leave_entitlements: {
         Args: { p_year: number }
@@ -7516,6 +7673,38 @@ export type Database = {
         Args: { p_test_request_ids: string[] }
         Returns: number
       }
+      claim_release_notice: {
+        Args: { p_id?: string; p_limit?: number }
+        Returns: {
+          attempts: number
+          audited_at: string | null
+          bulk_batch_id: string | null
+          created_at: string
+          email_provider_id: string | null
+          email_state: string
+          id: string
+          last_error: string | null
+          lease_expires_at: string | null
+          lease_token: string | null
+          next_attempt_at: string
+          release_medium: string | null
+          released_at: string
+          resolved_at: string | null
+          sent_at: string | null
+          skip_reason: string | null
+          sms_provider_id: string | null
+          sms_state: string
+          status: string
+          test_request_ids: string[]
+          visit_id: string
+        }[]
+        SetofOptions: {
+          from: "*"
+          to: "release_notices"
+          isOneToOne: false
+          isSetofReturn: true
+        }
+      }
       claim_statement_email: {
         Args: {
           p_recipient: string
@@ -7554,7 +7743,7 @@ export type Database = {
         }
         Returns: Json
       }
-      current_patient_id: { Args: never; Returns: string }
+      current_patient_id: { Args: Record<PropertyKey, never>; Returns: string }
       delete_patient: {
         Args: {
           p_actor: string
@@ -7574,13 +7763,58 @@ export type Database = {
         Returns: undefined
       }
       eod_unclosed_days: {
-        Args: { p_from: string | null; p_shift_id: string; p_to: string | null }
+        Args: { p_from: string; p_shift_id: string; p_to: string }
         Returns: string[]
       }
-      generate_drm_id: { Args: never; Returns: string }
-      generate_visit_number: { Args: never; Returns: string }
+      finish_release_notice: {
+        Args: {
+          p_email_provider_id?: string
+          p_email_state?: string
+          p_error?: string
+          p_final_status: string
+          p_id: string
+          p_lease_token: string
+          p_skip_reason?: string
+          p_sms_provider_id?: string
+          p_sms_state?: string
+        }
+        Returns: {
+          attempts: number
+          audited_at: string | null
+          bulk_batch_id: string | null
+          created_at: string
+          email_provider_id: string | null
+          email_state: string
+          id: string
+          last_error: string | null
+          lease_expires_at: string | null
+          lease_token: string | null
+          next_attempt_at: string
+          release_medium: string | null
+          released_at: string
+          resolved_at: string | null
+          sent_at: string | null
+          skip_reason: string | null
+          sms_provider_id: string | null
+          sms_state: string
+          status: string
+          test_request_ids: string[]
+          visit_id: string
+        }[]
+        SetofOptions: {
+          from: "*"
+          to: "release_notices"
+          isOneToOne: false
+          isSetofReturn: true
+        }
+      }
+      generate_drm_id: { Args: Record<PropertyKey, never>; Returns: string }
+      generate_visit_number: {
+        Args: Record<PropertyKey, never>
+        Returns: string
+      }
       has_role: { Args: { roles: string[] }; Returns: boolean }
-      is_staff: { Args: never; Returns: boolean }
+      is_staff: { Args: Record<PropertyKey, never>; Returns: boolean }
       je_next_number: { Args: { p_fiscal_year: number }; Returns: string }
       lab_search: {
         Args: { "": Database["public"]["Tables"]["test_requests"]["Row"] }
@@ -7649,12 +7883,22 @@ export type Database = {
         Args: { p_for_delete?: boolean; p_id: string; p_kind: string }
         Returns: string[]
       }
+      mark_release_notice_audited: { Args: { p_id: string }; Returns: boolean }
+      merge_patients_guarded: {
+        Args: {
+          p_actor: string
+          p_context?: Json
+          p_keep: string
+          p_source: string
+        }
+        Returns: Json
+      }
       next_pf_disbursement_batch_number: {
         Args: { p_year: number }
         Returns: number
       }
       notification_skip_summary: {
-        Args: never
+        Args: Record<PropertyKey, never>
         Returns: {
           reason: string
           sender: string
@@ -7663,7 +7907,7 @@ export type Database = {
         }[]
       }
       partner_labs: {
-        Args: never
+        Args: Record<PropertyKey, never>
         Returns: {
           id: string
           name: string
@@ -7717,6 +7961,17 @@ export type Database = {
           new_unconfirmed: number
         }[]
       }
+      patient_sources_report: {
+        Args: {
+          p_from: string
+          p_grain: string
+          p_mode: string
+          p_prev_from?: string
+          p_prev_to?: string
+          p_to: string
+        }
+        Returns: Json
+      }
       patient_sources_revenue: {
         Args: { p_from: string; p_to: string }
         Returns: {
@@ -7765,7 +8020,10 @@ export type Database = {
           test_request_id: string
         }[]
       }
-      recompute_clinic_fee_for_unreleased: { Args: never; Returns: Json }
+      recompute_clinic_fee_for_unreleased: {
+        Args: Record<PropertyKey, never>
+        Returns: Json
+      }
       recompute_hmo_batch_status: {
         Args: { p_batch_id: string }
         Returns: undefined
@@ -7776,6 +8034,10 @@ export type Database = {
       }
       recompute_hmo_item_resolution_amounts: {
         Args: { p_item_id: string }
+        Returns: undefined
+      }
+      recompute_patient_consent_cache: {
+        Args: { p_patient_id: string }
         Returns: undefined
       }
       record_hmo_settlement: {
@@ -7790,9 +8052,33 @@ export type Database = {
         }
         Returns: Json
       }
+      release_actor: {
+        Args: { p_actor: string }
+        Returns: {
+          actor_id: string
+          actor_role: string
+        }[]
+      }
+      release_audit_context: {
+        Args: { p_allowed: string[]; p_audit: Json }
+        Returns: {
+          extras: Json
+          ip: unknown
+          user_agent: string
+        }[]
+      }
+      release_notices_enabled: {
+        Args: Record<PropertyKey, never>
+        Returns: boolean
+      }
+      release_report_locks: {
+        Args: { p_deleted_message: string; p_ids: string[]; p_visit_id: string }
+        Returns: string[]
+      }
       release_visit_results: {
         Args: {
           p_actor?: string
+          p_audit?: Json
           p_medium: string
           p_test_request_ids: string[]
           p_visit_id: string
@@ -7841,18 +8127,6 @@ export type Database = {
       restore_patient: {
         Args: { p_actor: string; p_context: Json; p_patient_id: string }
         Returns: Json
-      }
-      result_create_linked: {
-        Args: {
-          p_actor: string
-          p_file_size_bytes?: number
-          p_generation_kind: string
-          p_notes?: string
-          p_report_group_id?: string
-          p_storage_path?: string
-          p_test_request_ids: string[]
-        }
-        Returns: string
       }
       result_amendment_remarks: {
         Args: { p_test_request_ids: string[] }
@@ -7916,6 +8190,18 @@ export type Database = {
           result_id: string
           visit_id: string
         }[]
+      }
+      result_create_linked: {
+        Args: {
+          p_actor: string
+          p_file_size_bytes?: number
+          p_generation_kind: string
+          p_notes?: string
+          p_report_group_id?: string
+          p_storage_path?: string
+          p_test_request_ids: string[]
+        }
+        Returns: string
       }
       result_edit_commit: {
         Args: {
@@ -7996,6 +8282,14 @@ export type Database = {
         Args: { p_result_id: string; p_values: Json }
         Returns: undefined
       }
+      result_view_counts: {
+        Args: { p_test_request_ids: string[] }
+        Returns: {
+          test_request_id: string
+          viewed_count: number
+        }[]
+      }
+      retry_release_notice: { Args: { p_id: string }; Returns: boolean }
       send_out_monthly_margin: {
         Args: { p_end?: string; p_start?: string }
         Returns: {
@@ -8057,7 +8351,7 @@ export type Database = {
         Returns: number
       }
       sheet_resort_candidates: {
-        Args: never
+        Args: Record<PropertyKey, never>
         Returns: {
           answer: string
           id: string
@@ -8117,21 +8411,27 @@ export type Database = {
         }
         Returns: Json
       }
-      show_limit: { Args: never; Returns: number }
+      show_limit: { Args: Record<PropertyKey, never>; Returns: number }
       show_trgm: { Args: { "": string }; Returns: string[] }
       staff_can_read_finished_result: {
         Args: { p_result_id: string }
         Returns: boolean
       }
-      staff_role: { Args: never; Returns: string }
+      staff_role: { Args: Record<PropertyKey, never>; Returns: string }
       unclaim_panel_members: {
         Args: { p_holders: string[]; p_test_request_ids: string[] }
         Returns: number
       }
+      undo_patient_merge_guarded: {
+        Args: { p_actor: string; p_context?: Json; p_merge_id: string }
+        Returns: Json
+      }
       undo_visit_release: {
         Args: {
           p_actor?: string
+          p_audit?: Json
           p_expected_released_at?: Json
+          p_reason?: string
           p_test_request_ids: string[]
           p_visit_id: string
         }
@@ -8226,7 +8526,32 @@ export type Database = {
       period_status: "open" | "closed"
     }
     CompositeTypes: {
-      [_ in never]: never
+      _ps_encounter: {
+        identity: string | null
+        survivor_id: string | null
+        loose_key: string | null
+        service_date: string | null
+        source: string | null
+      }
+      _ps_identity: {
+        identity: string | null
+        confirmed: boolean | null
+        survivor_id: string | null
+        loose_key: string | null
+        first_date: string | null
+        basis: string | null
+        is_returning: boolean | null
+        channel: string | null
+        referrer_raw: string | null
+      }
+      _ps_revenue_line: {
+        identity: string | null
+        survivor_id: string | null
+        service_date: string | null
+        source: string | null
+        php: number | null
+        overlap: boolean | null
+      }
     }
   }
 }
@@ -8239,12 +8564,12 @@ export type Tables<
   DefaultSchemaTableNameOrOptions extends
     | keyof (DefaultSchema["Tables"] & DefaultSchema["Views"])
     | { schema: keyof DatabaseWithoutInternals },
-  TableName extends DefaultSchemaTableNameOrOptions extends {
+  TableName extends (DefaultSchemaTableNameOrOptions extends {
     schema: keyof DatabaseWithoutInternals
   }
     ? keyof (DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Tables"] &
         DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Views"])
-    : never = never,
+    : never) = never,
 > = DefaultSchemaTableNameOrOptions extends {
   schema: keyof DatabaseWithoutInternals
 }
@@ -8266,13 +8591,12 @@ export type Tables<
 
 export type TablesInsert<
   DefaultSchemaTableNameOrOptions extends
-    | keyof DefaultSchema["Tables"]
-    | { schema: keyof DatabaseWithoutInternals },
-  TableName extends DefaultSchemaTableNameOrOptions extends {
+    keyof DefaultSchema["Tables"] | { schema: keyof DatabaseWithoutInternals },
+  TableName extends (DefaultSchemaTableNameOrOptions extends {
     schema: keyof DatabaseWithoutInternals
   }
     ? keyof DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Tables"]
-    : never = never,
+    : never) = never,
 > = DefaultSchemaTableNameOrOptions extends {
   schema: keyof DatabaseWithoutInternals
 }
@@ -8291,13 +8615,12 @@ export type TablesInsert<
 
 export type TablesUpdate<
   DefaultSchemaTableNameOrOptions extends
-    | keyof DefaultSchema["Tables"]
-    | { schema: keyof DatabaseWithoutInternals },
-  TableName extends DefaultSchemaTableNameOrOptions extends {
+    keyof DefaultSchema["Tables"] | { schema: keyof DatabaseWithoutInternals },
+  TableName extends (DefaultSchemaTableNameOrOptions extends {
     schema: keyof DatabaseWithoutInternals
   }
     ? keyof DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Tables"]
-    : never = never,
+    : never) = never,
 > = DefaultSchemaTableNameOrOptions extends {
   schema: keyof DatabaseWithoutInternals
 }
@@ -8316,13 +8639,12 @@ export type TablesUpdate<
 
 export type Enums<
   DefaultSchemaEnumNameOrOptions extends
-    | keyof DefaultSchema["Enums"]
-    | { schema: keyof DatabaseWithoutInternals },
-  EnumName extends DefaultSchemaEnumNameOrOptions extends {
+    keyof DefaultSchema["Enums"] | { schema: keyof DatabaseWithoutInternals },
+  EnumName extends (DefaultSchemaEnumNameOrOptions extends {
     schema: keyof DatabaseWithoutInternals
   }
     ? keyof DatabaseWithoutInternals[DefaultSchemaEnumNameOrOptions["schema"]]["Enums"]
-    : never = never,
+    : never) = never,
 > = DefaultSchemaEnumNameOrOptions extends {
   schema: keyof DatabaseWithoutInternals
 }
@@ -8335,11 +8657,11 @@ export type CompositeTypes<
   PublicCompositeTypeNameOrOptions extends
     | keyof DefaultSchema["CompositeTypes"]
     | { schema: keyof DatabaseWithoutInternals },
-  CompositeTypeName extends PublicCompositeTypeNameOrOptions extends {
+  CompositeTypeName extends (PublicCompositeTypeNameOrOptions extends {
     schema: keyof DatabaseWithoutInternals
   }
     ? keyof DatabaseWithoutInternals[PublicCompositeTypeNameOrOptions["schema"]]["CompositeTypes"]
-    : never = never,
+    : never) = never,
 > = PublicCompositeTypeNameOrOptions extends {
   schema: keyof DatabaseWithoutInternals
 }
@@ -8397,4 +8719,3 @@ export const Constants = {
     },
   },
 } as const
-

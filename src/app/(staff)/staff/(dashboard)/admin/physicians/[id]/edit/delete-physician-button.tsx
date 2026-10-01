@@ -50,7 +50,9 @@ export function DeletePhysicianButton({ physicianId, physicianName }: Props) {
           onClick={() =>
             startTransition(async () => {
               const result = await deletePhysicianAction(physicianId);
-              setState(result);
+              startTransition(() => {
+                setState(result);
+              });
               // Action redirects on success; we only land here on error.
             })
           }

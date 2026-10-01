@@ -83,7 +83,12 @@ begin
       -- apply step. Only the service-role sync RPCs read or write it (0170
       -- revokes anon/authenticated: "Staging: no policy"), and no admin page
       -- shows it, so any policy here would only widen access.
-      'sheet_mirror_staging'
+      'sheet_mirror_staging',
+      -- 0210: the release-notice outbox and its OFF-by-default switch. Only the
+      -- service-role client and the service_role-only claim/finish/retry
+      -- functions touch them; a policy would only widen access.
+      'release_notices',
+      'release_notice_settings'
     );
 
   if newly_unprotected is not null then
@@ -115,7 +120,13 @@ begin
   where n.nspname = 'public'
     and c.relkind = 'r'
     and c.relrowsecurity
-    and not exists (select 1 from pg_policy p where p.polrelid = c.oid)
+    and (not exists (select 1 from pg_policy p where p.polrelid = c.oid)
+         -- 0196: patient_merges and patient_consents now carry policies (merge
+         -- and undo run as the private patient_merge_writer role), but the
+         -- policies name only that writer — anon/authenticated must still hold
+         -- nothing, so they stay in this scan even though the "no policy"
+         -- half of the second assertion above no longer selects them.
+         or c.relname in ('patient_merges', 'patient_consents'))
     and (has_table_privilege(r.rolname, c.oid,
            'SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER,MAINTAIN')
          or has_any_column_privilege(r.rolname, c.oid, 'SELECT,INSERT,UPDATE,REFERENCES')

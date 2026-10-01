@@ -201,11 +201,11 @@ export function BulkActionBar({
       if (!result.ok) {
         // Nothing was released — keep the selection. #261's page-level
         // notice carries the reason; alert is the no-provider fallback.
-        if (releaseNotice) releaseNotice.show(result.error);
+        // Re-wrapped so the notice commits with the end of "Releasing…".
+        if (releaseNotice) startRelease(() => releaseNotice.show(result.error));
         else alert(result.error);
         return;
       }
-      clearIds(sentIds);
       // #261's outcome text (count, the tests a combined report pulled in,
       // each skipped reason, warnings) in this bar's own panel, with ↶ Undo.
       // The bar is not remounted by the refresh, so the panel survives it.
@@ -220,9 +220,12 @@ export function BulkActionBar({
       // Undo does not un-notify: say so only when a notice actually went out.
       const notified = (result.notifiedCount ?? 0) > 0;
       if (notified) lines.push(ALREADY_NOTIFIED);
-      setOutcome({
-        message: lines.filter(Boolean).join("\n"),
-        undo: result.batchId ? { batchId: result.batchId, doneAt: Date.now(), notified } : null,
+      startRelease(() => {
+        clearIds(sentIds);
+        setOutcome({
+          message: lines.filter(Boolean).join("\n"),
+          undo: result.batchId ? { batchId: result.batchId, doneAt: Date.now(), notified } : null,
+        });
       });
     });
   }
@@ -250,8 +253,10 @@ export function BulkActionBar({
           `Unreleased ${result.count} of ${sentIds.length} selected — the rest had already changed.`,
         );
       }
-      setReason("");
-      clearIds(sentIds);
+      startUnrelease(() => {
+        setReason("");
+        clearIds(sentIds);
+      });
     });
   }
 
@@ -262,7 +267,9 @@ export function BulkActionBar({
       const result = await undoReleaseBatchAction({ batchId: undo.batchId });
       if (!result.ok) {
         const gone = result.error === UNDO_EXPIRED || result.error === UNDO_ALREADY;
-        setOutcome({ message: result.error, undo: gone ? null : undo });
+        startUndo(() => {
+          setOutcome({ message: result.error, undo: gone ? null : undo });
+        });
         return;
       }
       const restored = result.restoredIds.length;
@@ -275,7 +282,9 @@ export function BulkActionBar({
           .map((n) => n.reason)
           .join("; ")}`;
       }
-      setOutcome({ message, undo: null });
+      startUndo(() => {
+        setOutcome({ message, undo: null });
+      });
     });
   }
 
