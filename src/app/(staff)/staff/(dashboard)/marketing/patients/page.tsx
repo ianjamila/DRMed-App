@@ -8,7 +8,7 @@ import { ipAndAgent } from "@/lib/server/action-helpers";
 import { manilaDate, manilaDateTime, todayManilaISODate } from "@/lib/dates/manila";
 import { firstParam, PATIENT_SOURCES_MIN_DATE, periodHref, resolvePeriod } from "@/lib/marketing/period";
 import {
-  GRAIN_LABEL, MODE_LABEL, capRows, channelTable, comparisonPeriod, formatNewCounts, chartData, costPerNewPatient, parseGrain, parseMode, previousPeriod,
+  GRAIN_LABEL, MODE_LABEL, asOfLabel, capRows, channelTable, comparisonPeriod, formatNewCounts, chartData, costPerNewPatient, parseGrain, parseMode, previousPeriod,
   sheetBanner, type Grain, type Mode,
 } from "@/lib/marketing/patient-sources";
 import { loadAdSpendCoverage, loadAdSpendTotals, loadPatientSourcesReport } from "@/lib/marketing/patient-sources.server";
@@ -50,6 +50,8 @@ export default async function PatientSourcesPage({
     loadAdSpendTotals(supabase, period.from, period.to),
     loadAdSpendCoverage(supabase),
   ]);
+  // Every card reads the report's one snapshot, so one stamp is true for the page.
+  const readAt = new Date();
 
   const header = (
     <PageHeader
@@ -152,6 +154,7 @@ export default async function PatientSourcesPage({
           ? ` Latest registration date in the sheet: ${manilaDate(registrationDate as string)}.`
           : ""}
         {s.last_synced_at ? ` Last sync: ${manilaDateTime(s.last_synced_at)}.` : ""}
+        {` ${asOfLabel(readAt)}.`}
       </p>
 
       <section className="mt-6">
