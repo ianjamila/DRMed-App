@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { act, cleanup, render, screen, within } from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -89,8 +89,9 @@ describe("MessagesBulkBar", () => {
     await userEvent.click(screen.getByLabelText("Select Ana Cruz"));
     await userEvent.click(screen.getByLabelText("Select Cy Ong"));
     await userEvent.click(screen.getByRole("button", { name: "Mark replied (1)" }));
+    // clearKeys runs in the post-await transition, after the click returns.
+    await waitFor(() => expect((screen.getByLabelText("Select Ana Cruz") as HTMLInputElement).checked).toBe(false));
     expect((screen.getByLabelText("Select Cy Ong") as HTMLInputElement).checked).toBe(true);
-    expect((screen.getByLabelText("Select Ana Cruz") as HTMLInputElement).checked).toBe(false);
   });
 
   it("a refused call keeps the selection and alerts", async () => {
@@ -99,7 +100,7 @@ describe("MessagesBulkBar", () => {
     render(<Harness />);
     await userEvent.click(screen.getByLabelText("Select Ana Cruz"));
     await userEvent.click(screen.getByRole("button", { name: "Mark closed (1)" }));
-    expect(alertSpy).toHaveBeenCalledWith("nope");
+    await waitFor(() => expect(alertSpy).toHaveBeenCalledWith("nope"));
     expect(router.refresh).toHaveBeenCalled();
     expect((screen.getByLabelText("Select Ana Cruz") as HTMLInputElement).checked).toBe(true);
     alertSpy.mockRestore();
@@ -141,7 +142,7 @@ describe("MessagesBulkBar", () => {
     await userEvent.click(screen.getByRole("button", { name: "Mark replied (1)" }));
     // Cy is still selected, so the bar is still up and the outcome sits INSIDE it.
     const region = screen.getByRole("region", { name: "Selected rows" });
-    expect(within(region).getByRole("status").textContent).toContain("Marked 1 message replied.");
+    expect((await within(region).findByRole("status")).textContent).toContain("Marked 1 message replied.");
     await userEvent.click(screen.getByLabelText("Select Ben Diaz"));
     expect(screen.queryByRole("status")).toBeNull();
   });
