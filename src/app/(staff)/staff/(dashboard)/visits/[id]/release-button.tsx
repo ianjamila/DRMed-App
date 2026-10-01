@@ -99,7 +99,7 @@ export function ReleaseButton({
                   })
                 : result.error;
               if (text) {
-                if (outcome) outcome.show(text);
+                if (outcome) start(() => outcome.show(text));
                 else alert(text);
               }
             })

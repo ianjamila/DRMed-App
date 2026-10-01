@@ -10,7 +10,7 @@ async function startCheckIn(key: CronKey): Promise<string | undefined> {
     const cron = CRON_HEARTBEATS.find((entry) => entry.key === key)!;
     checkInId = captureCheckIn({ monitorSlug: key, status: "in_progress" }, {
       schedule: { type: "crontab", value: cron.schedule },
-      checkinMargin: 60,
+      checkinMargin: "checkinMargin" in cron ? cron.checkinMargin : 60,
       maxRuntime: 10,
       timezone: "UTC",
     });

@@ -1,5 +1,6 @@
 import "server-only";
 import { SITE, CONTACT, GEO, SOCIAL } from "@/lib/marketing/site";
+import { hoursAllLabel } from "@/lib/marketing/nap";
 import { listActiveServices, listActivePackages } from "@/lib/marketing/services";
 import { listActivePhysiciansDetailed } from "@/lib/marketing/physicians";
 import { FAQ_ITEMS } from "@/lib/marketing/faq";
@@ -25,7 +26,7 @@ async function loadLlmsData(): Promise<LlmsData> {
       phoneMobile: CONTACT.phone.mobile,
       phoneLandline: CONTACT.phone.landline,
       email: CONTACT.email,
-      hours: CONTACT.hours,
+      hours: hoursAllLabel(),
       mapUrl: GEO.mapUrl,
       geo: { lat: GEO.lat ?? 0, lng: GEO.lng ?? 0 },
       social: {

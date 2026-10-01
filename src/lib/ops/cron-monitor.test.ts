@@ -25,7 +25,7 @@ describe("non-blocking cron check-ins", () => {
     expect(run).toHaveBeenCalledOnce();
     expect(captureCheckIn).toHaveBeenNthCalledWith(1,
       { monitorSlug: cron.key, status: "in_progress" },
-      { schedule: { type: "crontab", value: cron.schedule }, checkinMargin: 60, maxRuntime: 10, timezone: "UTC" },
+      { schedule: { type: "crontab", value: cron.schedule }, checkinMargin: "checkinMargin" in cron ? cron.checkinMargin : 60, maxRuntime: 10, timezone: "UTC" },
     );
     expect(captureCheckIn).toHaveBeenNthCalledWith(2, {
       monitorSlug: cron.key, checkInId: "check-in-id", status: "ok", duration: expect.any(Number),

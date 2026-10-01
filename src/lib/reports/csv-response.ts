@@ -24,6 +24,8 @@ export async function reportCsvResponse(args: {
   truncated: boolean;
   /** The filters the export ran under. */
   filters: Record<string, Json>;
+  /** "Numbers as of …" — written as the LAST line, never counted as a row. */
+  asOf?: string;
 }): Promise<NextResponse> {
   const body = [...args.rows];
   // A silently truncated export reads as "that's everything". Say so in-band —
@@ -33,6 +35,7 @@ export async function reportCsvResponse(args: {
       `TRUNCATED — more rows matched than the ${REPORT_EXPORT_MAX_ROWS} exported. Narrow the filters.`,
     ]);
   }
+  if (args.asOf) body.push([args.asOf]);
 
   const { ip, ua } = await ipAndAgent();
   await audit({

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   NOT_RECORDED, bucketLabel, capRows, channelLabel, comparisonPeriod, channelTable, newPatientsTile, chartData, classifyReportError,
   costPerNewPatient, parsePatientSourcesReport, formatNewToday, parseGrain, parseMode, previousPeriod, seriesCsvRows, sheetBanner,
+  asOfLabel, lastCompletedWeek, previousWeek, lastCompletedMonth, previousMonth, trendWeeks, trendCardData, todayRows,
   type SeriesRow, type SummaryRow,
 } from "./patient-sources";
 
@@ -212,5 +213,115 @@ describe("capRows", () => {
   });
   it("cuts at the ceiling and says so", () => {
     expect(capRows([1, 2, 3, 4], 3)).toEqual({ rows: [1, 2, 3], truncated: true });
+  });
+});
+
+describe("asOfLabel", () => {
+  it("uses the house date-time format", () => {
+    // 2026-10-01 01:14 UTC = 9:14 AM Manila
+    expect(asOfLabel(new Date("2026-10-01T01:14:00Z"))).toMatch(/^Numbers as of .*9:14 AM$/);
+  });
+});
+
+describe("periods", () => {
+  it("lastCompletedWeek is the Mon–Sun before the week containing today", () => {
+    expect(lastCompletedWeek("2026-10-05")).toEqual({ from: "2026-09-28", to: "2026-10-04" }); // Monday
+    expect(lastCompletedWeek("2026-10-04")).toEqual({ from: "2026-09-21", to: "2026-09-27" }); // Sunday
+    expect(lastCompletedWeek("2026-10-01")).toEqual({ from: "2026-09-21", to: "2026-09-27" }); // Thursday
+    expect(lastCompletedWeek("2027-01-01")).toEqual({ from: "2026-12-21", to: "2026-12-27" }); // year boundary
+  });
+  it("previousWeek is the Mon–Sun before a week", () => {
+    expect(previousWeek({ from: "2026-09-28", to: "2026-10-04" })).toEqual({ from: "2026-09-21", to: "2026-09-27" });
+  });
+  it("lastCompletedMonth / previousMonth are calendar months (leap-safe)", () => {
+    expect(lastCompletedMonth("2026-10-01")).toEqual({ from: "2026-09-01", to: "2026-09-30" });
+    expect(lastCompletedMonth("2024-03-15")).toEqual({ from: "2024-02-01", to: "2024-02-29" });
+    expect(lastCompletedMonth("2027-01-01")).toEqual({ from: "2026-12-01", to: "2026-12-31" });
+    expect(previousMonth({ from: "2026-09-01", to: "2026-09-30" })).toEqual({ from: "2026-08-01", to: "2026-08-31" });
+  });
+  it("trendWeeks returns n completed weeks, oldest first, ending last Sunday", () => {
+    const w = trendWeeks("2026-10-01", 8);
+    expect(w).toHaveLength(8);
+    expect(w[7]).toEqual({ from: "2026-09-21", to: "2026-09-27" });
+    expect(w[0]).toEqual({ from: "2026-08-03", to: "2026-08-09" });
+  });
+});
+
+describe("todayRows", () => {
+  it("gives the tile the same rows the single-day call would", () => {
+    const rows = [
+      { bucket_start: "2026-09-30", channel: "walk_in", confirmed: 1, unconfirmed: 0 },
+      { bucket_start: "2026-10-01", channel: "walk_in", confirmed: 2, unconfirmed: 1 },
+      { bucket_start: "2026-10-01", channel: "online_google", confirmed: 1, unconfirmed: 0 },
+    ];
+    expect(todayRows(rows, "2026-10-01")).toEqual(rows.slice(1));
+    expect(formatNewToday(todayRows(rows, "2026-10-01"))).toEqual(formatNewToday(rows.slice(1)));
+  });
+});
+
+describe("trendCardData", () => {
+  const weeks = trendWeeks("2026-10-01", 8); // W8 = 21–27 Sep, this week starts 28 Sep
+  const d = (bucket_start: string, channel: string, confirmed: number, unconfirmed = 0) => ({ bucket_start, channel, confirmed, unconfirmed });
+
+  it("keeps exactly topN channels without an Other bucket, ranking ties by channel key", () => {
+    const rows = ["e", "d", "c", "b", "a"].map((c) => d("2026-09-22", c, 2));
+    const t = trendCardData(rows, [], weeks);
+    expect(t.chart.channels.map((c) => c.key)).toEqual(["a", "b", "c", "d", "e"]);
+    expect(t.chart.rows[7]).not.toHaveProperty("__other__c");
+  });
+
+  it("marks a week with spend but no matching new patients as spend-bearing, with no cost point", () => {
+    const spend = [{ spend_date: "2026-09-22", platform: "meta" as const, spend_php: 500 }];
+    const t = trendCardData([d("2026-09-22", "walk_in", 3)], spend, weeks);
+    expect(t.hasSpend).toBe(true);
+    expect(t.chart.rows[7]).not.toHaveProperty("__cost");
+  });
+
+  it("refuses an empty week list", () => {
+    expect(() => trendCardData([], [], [])).toThrow(/at least one week/);
+  });
+
+  it("buckets days into the 8 weeks, keeps empty weeks, and computes the headline", () => {
+    const t = trendCardData([d("2026-09-21", "walk_in", 3), d("2026-09-27", "walk_in", 1, 1), d("2026-09-15", "walk_in", 2),
+      d("2026-09-29", "walk_in", 4)], [], weeks);
+    expect(t.chart.rows).toHaveLength(8);
+    expect(t.chart.rows[7]).toMatchObject({ bucket: "2026-09-21", walk_in__c: 4, walk_in__u: 1 });
+    expect(t.chart.rows[6]).toMatchObject({ bucket: "2026-09-14", walk_in__c: 2 });
+    expect(t.chart.rows[0]).toMatchObject({ bucket: "2026-08-03", walk_in__c: 0, walk_in__u: 0 });
+    expect(t.lastWeek).toBe(5);
+    expect(t.weekBefore).toBe(2);
+    expect(t.pct).toBe(150);
+    expect(t.thisWeekSoFar).toBe(4);
+    expect(t.hasSpend).toBe(false);
+  });
+
+  it("folds channels beyond the top 5 into Other, drawn last", () => {
+    const rows = ["a", "b", "c", "d", "e", "f", "g"].map((c, i) => d("2026-09-22", c, 10 - i));
+    const t = trendCardData(rows, [], weeks);
+    expect(t.chart.channels.map((c) => c.key)).toEqual(["a", "b", "c", "d", "e", "__other"]);
+    expect(t.chart.channels.at(-1)).toMatchObject({ label: "Other channels", color: "#94a3b8" });
+    expect(t.chart.rows[7]).toMatchObject({ __other__c: 5 + 4 }); // f=5, g=4
+  });
+
+  it("pct is null when the week before had nobody", () => {
+    const t = trendCardData([d("2026-09-22", "walk_in", 2)], [], weeks);
+    expect(t.weekBefore).toBe(0);
+    expect(t.pct).toBeNull();
+  });
+
+  it("adds a combined cost per new patient only for weeks with spend", () => {
+    const spend = [
+      { spend_date: "2026-09-22", platform: "meta" as const, spend_php: 300 },
+      { spend_date: "2026-09-23", platform: "google" as const, spend_php: 100 },
+    ];
+    const t = trendCardData([d("2026-09-22", "online_facebook", 2), d("2026-09-23", "online_google", 1, 1), d("2026-09-15", "online_facebook", 5)], spend, weeks);
+    expect(t.hasSpend).toBe(true);
+    expect(t.chart.rows[7].__cost).toBe(100); // (300+100) / (2+2)
+    expect(t.chart.rows[6]).not.toHaveProperty("__cost"); // no spend that week → a gap, not zero
+  });
+
+  it("describes itself for screen readers", () => {
+    const t = trendCardData([d("2026-09-22", "walk_in", 2), d("2026-09-15", "walk_in", 1)], [], weeks);
+    expect(t.ariaLabel).toBe("New patients per week for 8 weeks. Last week 2, up 100% on the week before.");
   });
 });

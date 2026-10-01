@@ -4,6 +4,7 @@ import {
   firstOfMonthISO,
   friendlyManilaDate,
   isoDateParts,
+  isoWeekday,
   lastOfMonthISO,
   isISODate,
   manilaISODate,
@@ -194,5 +195,15 @@ describe("daysBetweenISO", () => {
     expect(daysBetweenISO("2025-12-31", "2026-01-01")).toBe(1);
     expect(daysBetweenISO("2026-03-01", "2026-01-31")).toBe(-29);
     expect(daysBetweenISO("2024-02-28", "2024-03-01")).toBe(2);
+  });
+});
+
+describe("isoWeekday", () => {
+  it("returns 0=Sunday … 6=Saturday for a calendar date, independent of the host time zone", () => {
+    expect(isoWeekday("2026-10-04")).toBe(0); // Sunday
+    expect(isoWeekday("2026-10-05")).toBe(1); // Monday
+    expect(isoWeekday("2026-10-10")).toBe(6); // Saturday
+    expect(isoWeekday("2024-02-29")).toBe(4); // leap day, Thursday
+    expect(isoWeekday("2023-12-31")).toBe(0); // year end, Sunday
   });
 });

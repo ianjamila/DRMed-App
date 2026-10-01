@@ -173,8 +173,8 @@ export function BookingPausedNotice({
         <p className="flex items-start gap-2">
           <Clock className="mt-0.5 h-4 w-4 shrink-0 text-[color:var(--color-brand-navy)]" aria-hidden="true" />
           <span>
-            Reception is open {CONTACT.hours}. Walk-ins are always welcome — no
-            booking needed.
+            Reception is open {CONTACT.hours}, and {CONTACT.hoursSunday}. Walk-ins
+            are always welcome — no booking needed.
           </span>
         </p>
         <p className="flex items-start gap-2">

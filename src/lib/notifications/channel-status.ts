@@ -14,6 +14,9 @@ export type ChannelStatus =
   // not_configured: live, but the provider's key or sender is missing.
   | { ready: false; code: "not_live" | "not_configured"; reason: string };
 
+/** Upper bound on one provider call (Resend / Semaphore). A timeout is an ambiguous outcome. */
+export const PROVIDER_TIMEOUT_MS = 15_000;
+
 type Env = Record<string, string | undefined>;
 
 export function notificationsLive(env: Env = process.env): boolean {

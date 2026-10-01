@@ -3,7 +3,10 @@
 // record the real outcome instead of guessing from "something was announced".
 // Pure — no server-only imports.
 
-export type NoticeStatus = "sent" | "skipped" | "failed";
+// "retrying": the outbox (0210) could not finish the send on the first try and
+// the sweeper will retry it automatically — nothing has gone out yet, and it is
+// not a failure the operator has to act on.
+export type NoticeStatus = "sent" | "skipped" | "failed" | "retrying";
 
 export interface ReleaseNoticeOutcome {
   status: NoticeStatus;
@@ -15,6 +18,12 @@ export interface ReleaseNoticeOutcome {
 
 export function noticeSkipped(reason: string): ReleaseNoticeOutcome {
   return { status: "skipped", channels: [], reason };
+}
+
+export const NOTICE_RETRY_REASON = "will retry automatically";
+
+export function noticeRetrying(): ReleaseNoticeOutcome {
+  return { status: "retrying", channels: [], reason: NOTICE_RETRY_REASON };
 }
 
 export function noticeFromChannels(

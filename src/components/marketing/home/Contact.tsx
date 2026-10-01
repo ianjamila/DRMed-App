@@ -7,7 +7,7 @@ import { Eyebrow } from "@/components/marketing/ui/Eyebrow";
 import { ContactForm } from "@/app/(marketing)/contact/contact-form";
 import { OpenNowPill } from "./OpenNowPill";
 import { CONTACT, SOCIAL } from "@/lib/marketing/site";
-import { addressLines, hoursLabel, directionsHrefs } from "@/lib/marketing/nap";
+import { addressLines, hoursLines, directionsHrefs } from "@/lib/marketing/nap";
 import { TrackedTelLink } from "@/components/marketing/tracked-tel-link";
 
 const mapsHref = directionsHrefs().google;
@@ -102,8 +102,10 @@ export function Contact() {
                     Clinic Hours
                   </p>
                   <p className="mt-1 text-[14.5px] leading-relaxed text-white/[.82]">
-                    {hoursLabel()}
+                    {hoursLines()[0]}
                     <OpenNowPill />
+                    <br />
+                    {hoursLines()[1]}
                   </p>
                 </div>
               </div>

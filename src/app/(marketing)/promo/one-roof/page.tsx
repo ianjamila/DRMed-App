@@ -337,7 +337,7 @@ export default async function OneRoofPage() {
 
       <PromoClosingCta
         title="Test here. Treated here."
-        body="Book your checkup in 2 minutes or message us on Messenger — Mon–Sat, 8am–5pm. Congressional Ave, Quezon City."
+        body="Book your checkup in 2 minutes or message us on Messenger — Mon–Sat 8am–5pm, Sundays 8am–12nn for lab tests. Congressional Ave, Quezon City."
         primaryLabel="Book Your Checkup"
       />
     </>

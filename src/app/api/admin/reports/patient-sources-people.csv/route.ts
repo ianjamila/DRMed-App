@@ -4,7 +4,7 @@ import { createClient } from "@/lib/supabase/server";
 import { todayManilaISODate } from "@/lib/dates/manila";
 import { reportCsvResponse } from "@/lib/reports/csv-response";
 import { PATIENT_SOURCES_MIN_DATE, resolvePeriod } from "@/lib/marketing/period";
-import { channelLabel } from "@/lib/marketing/patient-sources";
+import { asOfLabel, channelLabel } from "@/lib/marketing/patient-sources";
 import { loadAllPeople, type PeopleQuery } from "@/lib/marketing/patient-sources.server";
 
 // Names ⇒ its own audit action (report.patient_sources_people.exported).
@@ -22,6 +22,7 @@ export async function GET(req: NextRequest) {
   const supabase = await createClient();
   const res = await loadAllPeople(supabase, { from: period.from, to: period.to, mode, channel });
   if (!res.ok) return new Response(res.message, { status: res.kind === "forbidden" ? 403 : 500 });
+  const readAt = new Date();
   return reportCsvResponse({
     staff,
     report: "patient_sources_people",
@@ -37,6 +38,7 @@ export async function GET(req: NextRequest) {
       ]),
     ],
     truncated: res.data.truncated,
+    asOf: asOfLabel(readAt),
     filters: { from: period.from, to: period.to, mode, channel },
   });
 }

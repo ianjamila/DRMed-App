@@ -74,6 +74,16 @@ export function shiftISODate(dateStr: string, days: number): string {
 }
 
 /**
+ * Day of the week of a YYYY-MM-DD calendar date: 0 = Sunday … 6 = Saturday.
+ * Built from UTC epoch days (the Manila usage guard bans `getUTCDay` in this
+ * file), so it never depends on the host time zone — the date already IS the Manila calendar day.
+ */
+export function isoWeekday(dateStr: string): number {
+  // 1970-01-01 was a Thursday (4); epoch days are whole because the input is UTC midnight.
+  return (Math.round(Date.parse(`${dateStr}T00:00:00Z`) / 86_400_000) + 4) % 7;
+}
+
+/**
  * UTC instants bounding an INCLUSIVE Manila calendar-day range, for filtering
  * `timestamptz` columns: `fromIso` is Manila midnight on `startDate`, `toIso`
  * is Manila midnight the day AFTER `endDate`. Filter with `gte(fromIso)` +
