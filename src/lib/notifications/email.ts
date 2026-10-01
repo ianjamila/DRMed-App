@@ -6,6 +6,9 @@ interface SendEmailInput {
   subject: string;
   text: string;
   html?: string;
+  // Resend `Idempotency-Key`: a retry of the SAME send with the same key inside
+  // Resend's 24 h window returns the first response instead of mailing again.
+  idempotencyKey?: string;
 }
 
 export type SendResult =
@@ -34,6 +37,7 @@ export async function sendEmail(input: SendEmailInput): Promise<SendResult> {
       headers: {
         Authorization: `Bearer ${apiKey}`,
         "Content-Type": "application/json",
+        ...(input.idempotencyKey ? { "Idempotency-Key": input.idempotencyKey } : {}),
       },
       body: JSON.stringify({
         from,

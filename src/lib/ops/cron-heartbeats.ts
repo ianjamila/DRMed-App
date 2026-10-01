@@ -100,6 +100,22 @@ export const CRON_HEARTBEATS = [
     maxAge: 30 * 60 * 60 * 1000,
     activeFrom: "2026-09-27",
   },
+  {
+    key: "release-notices",
+    label: "Result notice sender",
+    description: "Sends and retries the patients' result-ready messages that did not go out the first time, and records how each one ended. Runs every 5 minutes once it is switched on.",
+    path: "/api/cron/release-notices",
+    schedule: "*/5 * * * *",
+    actions: ["system.release_notices.sweep.completed"],
+    maxAge: 6 * 60 * 60 * 1000,
+    // Bootstrap guard (see cron-watchdog.yml): the expected merge day of the PR
+    // that added this route. The job does nothing until the owner sets the two
+    // Vault secrets AND switches release_notice_settings.enabled on, so move
+    // this date to the day after that switch-on if the watchdog goes red first.
+    activeFrom: "2026-10-02",
+    // Scheduled by a Supabase pg_cron job (0212), NOT by vercel.json.
+    scheduler: "pg_cron",
+  },
 ] as const;
 
 export type CronKey = (typeof CRON_HEARTBEATS)[number]["key"];

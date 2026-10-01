@@ -20,7 +20,7 @@ jobs:
         env:
           SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
         run: |
-          # Source: vercel.json (eight schedules across seven routes).
+          # Source: vercel.json (eight schedules across seven routes) plus release-notices (pg_cron, 0212).
           # Daily 30h / weekly 8d allow Vercel jitter and GitHub scheduling delay.
           # Add each scheduled leg as one row in this threshold table.
           # active_from is a one-time bootstrap guard; these initial dates will
@@ -40,7 +40,11 @@ jobs:
               -- 'system' (run.ts) — require_trigger keeps a manual/CLI run
               -- from masking a stopped Vercel cron here too.
               ('sheet-sync', ARRAY['sheet_sync.completed', 'sheet_sync.skipped'], interval '30 hours', date '2026-09-29', 'cron'),
-              ('stale-bookings', ARRAY['system.stale_bookings.completed'], interval '30 hours', date '2026-09-27', NULL::text)
+              ('stale-bookings', ARRAY['system.stale_bookings.completed'], interval '30 hours', date '2026-09-27', NULL::text),
+              -- release-notices is scheduled by a Supabase pg_cron job (0212),
+              -- not vercel.json, every 5 minutes; and it only runs once the Vault
+              -- secrets are set and the release-notice flag is on.
+              ('release-notices', ARRAY['system.release_notices.sweep.completed'], interval '6 hours', date '2026-10-02', NULL::text)
           ), heartbeats AS (
             SELECT w.route, w.max_age, w.active_from, latest.created_at AS last_seen,
                    now() - latest.created_at AS age

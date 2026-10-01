@@ -32,11 +32,22 @@ describe("cron drift guards", () => {
       crons: { path: string; schedule: string }[];
     };
     const identity = (cron: { path: string; schedule: string }) => `${cron.path}|${cron.schedule}`;
-    const expected = CRON_HEARTBEATS.map(identity).sort();
+    // A pg_cron-scheduled leg (0212) is deliberately NOT in vercel.json.
+    const vercelLegs = CRON_HEARTBEATS.filter((c) => !("scheduler" in c));
+    const expected = vercelLegs.map(identity).sort();
     expect(CRON_HEARTBEATS.length).toBeGreaterThan(0);
     expect(new Set(CRON_HEARTBEATS.map((c) => c.key)).size).toBe(CRON_HEARTBEATS.length);
     expect(new Set(expected).size).toBe(expected.length);
     expect(crons.map(identity).sort()).toEqual(expected);
+  });
+
+  it("only the release-notices sweeper is scheduled outside vercel.json (pg_cron), and its migration pins the same schedule", () => {
+    expect(CRON_HEARTBEATS.filter((c) => "scheduler" in c).map((c) => [c.key, c.schedule])).toEqual([
+      ["release-notices", "*/5 * * * *"],
+    ]);
+    const migration = readFileSync("supabase/migrations/0212_release_notice_sweep_cron.sql", "utf8");
+    expect(migration).toContain("cron.schedule('release-notice-sweep', '*/5 * * * *'");
+    expect(readFileSync("vercel.json", "utf8")).not.toContain("release-notices");
   });
 
   it("matches every SQL watcher to the canonical module", () => {

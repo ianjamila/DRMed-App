@@ -132,6 +132,12 @@ export type VisitBulkReleaseResult =
       batchId?: string;
       /** releaseSelectedAction only: released tests the patient was told about. */
       notifiedCount?: number;
+      /**
+       * releaseSelectedAction only, present (true) only when the outbox could not
+       * finish the patient's notice on the first try: nothing has gone out yet and
+       * it will retry automatically (0210). Never counted in notifiedCount.
+       */
+      noticeRetrying?: boolean;
     }
   | { ok: false; error: string };
 
@@ -479,13 +485,16 @@ export async function releaseSelectedAction(
     warnings: out.warnings,
     batchId,
     notifiedCount: out.notice?.status === "sent" ? out.announced.length : 0,
+    ...(out.notice?.status === "retrying" ? { noticeRetrying: true } : {}),
   };
 }
 
 // notifiedCount (the bar's "already notified" line) is the real outcome of the
 // patient notice: every announced test when a message actually went out, 0 for
 // a report withheld as unverified, a physical / pickup hand-off, a sample
-// visit, a patient with no contact details or a failed send.
+// visit, a patient with no contact details or a failed send — and for a notice
+// the outbox is retrying (status "retrying": nothing has gone out yet;
+// noticeRetrying tells the bar to say so).
 
 // Server-checked 10-minute Undo for releaseSelectedAction (owner 2026-09-28):
 // same window/same-staff/own-batch rules as every other bulk Undo
