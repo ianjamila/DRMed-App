@@ -37,7 +37,13 @@ export const CONTACT = {
     landlineE164: "+63283553517",
   },
   email: "info@drmed.ph",
+  // Mon–Sat: everything (consults, lab, imaging). This is the string used where
+  // the context is a booking or a consult (confirmations, physician pages).
   hours: "Monday – Saturday, 8:00 AM – 5:00 PM",
+  // Since Oct 2026 the clinic is also open Sunday mornings for walk-in lab tests
+  // ONLY (no consults, X-ray, ultrasound or ECG). Online booking stays Mon–Sat.
+  // Keep in step with HOURS.sunday below (nap.test.ts pins the two together).
+  hoursSunday: "Sunday, 8:00 AM – 12:00 NN (walk-in lab tests only)",
 } as const;
 
 // Clinic geo for the verified "DRMed Clinic and Laboratory" Google Business
@@ -58,6 +64,8 @@ export const HOURS = {
   opens: "08:00",
   closes: "17:00",
   lastRegistration: "16:30",
+  // Sunday: walk-in LAB TESTS ONLY, 08:00–12:00. Not bookable online.
+  sunday: { day: "Sunday", opens: "08:00", closes: "12:00" },
   timezone: "Asia/Manila",
 } as const;
 

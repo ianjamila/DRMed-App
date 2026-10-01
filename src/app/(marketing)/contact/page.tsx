@@ -4,7 +4,7 @@ import { PageHero } from "@/components/marketing/page-hero";
 import { SectionHeading, PillLink, pillLinkClassName } from "@/components/marketing/ui";
 import { Reveal } from "@/components/marketing/motion";
 import { CONTACT, SOCIAL, AREAS_SERVED } from "@/lib/marketing/site";
-import { addressLines, hoursLabel, telHref, directionsHrefs, mapEmbedSrc } from "@/lib/marketing/nap";
+import { addressLines, hoursLines, telHref, directionsHrefs, mapEmbedSrc } from "@/lib/marketing/nap";
 import { ContactForm } from "./contact-form";
 import { ContactFormWithPreset } from "./contact-form-with-preset";
 import { MapEmbed } from "@/components/marketing/map-embed";
@@ -21,7 +21,7 @@ import { BookingCtaLabel } from "@/components/marketing/online-booking-context";
 export const metadata = pageMetadata({
   title: "Contact & Location",
   description:
-    "Visit DRMed Clinic and Laboratory in Quezon City — address, directions, map, phone, and clinic hours. Open Monday to Saturday, 8:00 AM–5:00 PM.",
+    "Visit DRMed Clinic and Laboratory in Quezon City — address, directions, map, phone, and clinic hours. Open Monday to Saturday, 8:00 AM–5:00 PM; Sundays 8:00 AM–12:00 NN for lab tests.",
   path: "/contact",
 });
 
@@ -131,8 +131,10 @@ export default async function ContactPage() {
 
                 <DetailRow icon={<Clock className="h-5 w-5" />} label="Clinic Hours">
                   <p className="mt-1 text-[14.5px] leading-relaxed text-[color:var(--color-ink-mid)]">
-                    {hoursLabel()}
+                    {hoursLines()[0]}
                     <OpenNowPill />
+                    <br />
+                    {hoursLines()[1]}
                   </p>
                 </DetailRow>
 

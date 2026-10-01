@@ -1,39 +1,41 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { isOpenNow } from "@/lib/marketing/nap";
+import { clinicStatus, type ClinicStatus } from "@/lib/marketing/nap";
 
 /**
  * Inline pill showing whether the clinic is currently open (Asia/Manila,
- * Mon–Sat 08:00–17:00). Renders null until after mount to avoid hydration
+ * Mon–Sat 08:00–17:00; Sundays 08:00–12:00 for walk-in lab tests only, shown
+ * as "Open now · Lab only until 12nn" so it never over-promises). Renders null until after mount to avoid hydration
  * mismatch — the server can't know the client's Manila time, so we defer
  * entirely to the browser's first paint.
  */
 export function OpenNowPill() {
   // Combine mounted + open into one state update to satisfy the
   // react-hooks/set-state-in-effect rule (single setState per effect).
-  const [status, setStatus] = useState<"pending" | "open" | "closed">("pending");
+  const [status, setStatus] = useState<"pending" | ClinicStatus>("pending");
 
   useEffect(() => {
     // One-shot after mount to avoid hydration mismatch (Manila time is client-only).
     // eslint-disable-next-line react-hooks/set-state-in-effect
-    setStatus(isOpenNow(new Date()) ? "open" : "closed");
+    setStatus(clinicStatus(new Date()));
   }, []);
 
   if (status === "pending") return null;
 
-  if (status === "open") {
+  if (status === "open" || status === "lab-only") {
+    const labOnly = status === "lab-only";
     return (
       <span
         className="ml-2 inline-flex items-center gap-1.5 rounded-full bg-[rgba(5,150,105,0.18)] px-2.5 py-0.5 align-middle text-[11px] font-bold text-emerald-200"
-        aria-label="Clinic is open now"
+        aria-label={labOnly ? "Clinic is open now for lab tests only, until 12 noon" : "Clinic is open now"}
       >
         {/* Pulsing dot — static for prefers-reduced-motion */}
         <span
           className="h-1.5 w-1.5 rounded-full bg-emerald-400 motion-safe:animate-pulse"
           aria-hidden="true"
         />
-        Open now
+        {labOnly ? "Open now · Lab only until 12nn" : "Open now"}
       </span>
     );
   }

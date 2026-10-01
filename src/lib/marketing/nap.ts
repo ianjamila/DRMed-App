@@ -17,6 +17,36 @@ export function hoursLabel(): string {
   return CONTACT.hours;
 }
 
+/** Sunday walk-in lab-only hours display string. */
+export function hoursSundayLabel(): string {
+  return CONTACT.hoursSunday;
+}
+
+/** [Mon–Sat line, Sunday line] — for stacked displays (footer, contact). */
+export function hoursLines(): [string, string] {
+  return [CONTACT.hours, CONTACT.hoursSunday];
+}
+
+/** Every opening day on one line — for prose / plain-text surfaces (llms.txt). */
+export function hoursAllLabel(): string {
+  return `${CONTACT.hours}; ${CONTACT.hoursSunday}`;
+}
+
+const DAY_ABBR: Record<string, string> = {
+  Monday: "Mo", Tuesday: "Tu", Wednesday: "We", Thursday: "Th",
+  Friday: "Fr", Saturday: "Sa", Sunday: "Su",
+};
+
+/** schema.org `openingHours` strings, derived from HOURS ("Mo-Sa 08:00-17:00", "Su 08:00-12:00"). */
+export function openingHoursStrings(): string[] {
+  const first = HOURS.days[0];
+  const last = HOURS.days[HOURS.days.length - 1];
+  return [
+    `${DAY_ABBR[first]}-${DAY_ABBR[last]} ${HOURS.opens}-${HOURS.closes}`,
+    `${DAY_ABBR[HOURS.sunday.day]} ${HOURS.sunday.opens}-${HOURS.sunday.closes}`,
+  ];
+}
+
 /** Hours + the reception cut-off, for the booking form. */
 export function hoursWithLastRegistration(): string {
   return `${CONTACT.hours} (last registration ${to12h(HOURS.lastRegistration)})`;
@@ -61,8 +91,19 @@ export function mapEmbedSrc(): string {
   return `https://maps.google.com/maps?q=${encodeURIComponent(target)}&z=16&output=embed`;
 }
 
-/** Is the clinic open at `now`? Computed in Asia/Manila from HOURS. Pure (date passed in). */
-export function isOpenNow(now: Date): boolean {
+function toMinutes(hhmm: string): number {
+  const [h, m] = hhmm.split(":").map((n) => parseInt(n, 10));
+  return h * 60 + m;
+}
+
+export type ClinicStatus = "open" | "lab-only" | "closed";
+
+/**
+ * Open status at `now` in Asia/Manila: "open" Mon–Sat 08:00–17:00 (everything),
+ * "lab-only" Sunday 08:00–12:00 (walk-in lab tests only), otherwise "closed".
+ * Pure (date passed in).
+ */
+export function clinicStatus(now: Date): ClinicStatus {
   const fmt = new Intl.DateTimeFormat("en-US", {
     timeZone: HOURS.timezone,
     weekday: "long",
@@ -74,8 +115,26 @@ export function isOpenNow(now: Date): boolean {
   const weekday = parts.find((p) => p.type === "weekday")?.value ?? "";
   const hour = parseInt(parts.find((p) => p.type === "hour")?.value ?? "0", 10);
   const minute = parseInt(parts.find((p) => p.type === "minute")?.value ?? "0", 10);
-  const open = parseInt(HOURS.opens.split(":")[0], 10) * 60 + parseInt(HOURS.opens.split(":")[1], 10);
-  const close = parseInt(HOURS.closes.split(":")[0], 10) * 60 + parseInt(HOURS.closes.split(":")[1], 10);
-  const mins = hour * 60 + minute;
-  return (HOURS.days as readonly string[]).includes(weekday) && mins >= open && mins < close;
+  // en-US hour12:false can render midnight as "24"; normalise so 00:xx stays early.
+  const mins = (hour % 24) * 60 + minute;
+  if (
+    (HOURS.days as readonly string[]).includes(weekday) &&
+    mins >= toMinutes(HOURS.opens) &&
+    mins < toMinutes(HOURS.closes)
+  ) {
+    return "open";
+  }
+  if (
+    weekday === HOURS.sunday.day &&
+    mins >= toMinutes(HOURS.sunday.opens) &&
+    mins < toMinutes(HOURS.sunday.closes)
+  ) {
+    return "lab-only";
+  }
+  return "closed";
+}
+
+/** Is the clinic open at `now` (any service, incl. the Sunday lab-only window)? */
+export function isOpenNow(now: Date): boolean {
+  return clinicStatus(now) !== "closed";
 }
