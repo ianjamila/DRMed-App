@@ -1,10 +1,14 @@
-// Hand-run local CONCURRENCY proof for three claim/lock functions that shipped without one:
+// Hand-run local CONCURRENCY proof for four claim/lock functions that shipped without one:
 //   public.claim_statement_email        (0177) — advisory lock on visit + recipient, window check, insert
 //   public.result_claim_patient_notify  (0179) — compare-and-set UPDATE of patient_notified_at
 //   public.result_mark_copy_contacted   (0179) — amendment FOR UPDATE -> results FOR SHARE -> seq check -> stamp + audit
+//   public.result_retry_patient_notify  (0188) — compare-and-set UPDATE on the same amendment row (failed-send retry)
+//     NOTE: the guard scanner does NOT detect result_retry_patient_notify (no claim/lock name segment, no
+//     explicit lock), so it has no REGISTRY entry (a registry entry for an undetected function is STALE);
+//     it is raced here because the app calls it on the same row and columns as the claim.
 //
 // Each function is called the way the app calls it:
-//   claim_statement_email, result_claim_patient_notify -> service_role (the admin client,
+//   claim_statement_email, result_claim_patient_notify, result_retry_patient_notify -> service_role (the admin client,
 //     src/lib/visits/send-statement-email.ts and src/lib/notifications/notify-corrected.ts)
 //   result_mark_copy_contacted -> a reception user's JWT (role authenticated, sub = staff id),
 //     because the Server Action uses the user's own client and the function checks staff_role()
@@ -30,10 +34,11 @@
 //   M4 predicate without `patient_notified_at is null` (result_claim_patient_notify: N1)
 //   M5 no FOR UPDATE on the amendment          (result_mark_copy_contacted: C1)
 //   M6 no FOR SHARE on the results row         (result_mark_copy_contacted: C2a)
+//   M7 retry without its patient_notify_error conditions (result_retry_patient_notify: R1)
 //
-// concurrency-proof: claim_statement_email (S1-S4 and mutants M1-M3 race the real claim)
-// concurrency-proof: result_claim_patient_notify (N1-N3, C3 and mutant M4 race the real claim)
-// concurrency-proof: result_mark_copy_contacted (C1-C3 and mutants M5-M6 race the real mark)
+// Proves: claim_statement_email (S1-S4 and mutants M1-M3), result_claim_patient_notify (N1-N3, C3, RC1-RC2, R1,
+// mutant M4), result_mark_copy_contacted (C1-C3, mutants M5-M6). The guard reads the per-scenario
+// annotations further down, not this header.
 import "./lib/load-env";
 import { requireLocalOrExplicitProd } from "./lib/env-guard";
 import { randomBytes, randomUUID } from "node:crypto";
@@ -64,6 +69,9 @@ let monitor: Client;
 const open: Client[] = [];
 const made = { patients: [] as string[], results: [] as string[], lines: [] as string[] };
 let seq = 0;
+/** Set by a signal: no connection and no fixture may be created after it. */
+let stopping = false;
+let active: Promise<unknown> = Promise.resolve();
 
 /** Which schema each function resolves to - a mutant schema for the one under control. */
 let mutated: { name: string; schema: string } | null = null;
@@ -78,6 +86,7 @@ function expect(cond: boolean, msg: string): void {
 // Connections and actors
 // ---------------------------------------------------------------------------
 async function connect(): Promise<Client> {
+  if (stopping) throw new Fail("stopping: signal received");
   const c = new Client({ connectionString: DB_URL });
   await c.connect();
   await c.query("set statement_timeout = '20s'");
@@ -231,6 +240,7 @@ interface Amendment {
 }
 /** A finished (result_uploaded: still editable, no GL bridge) lab line with a finished result carrying ONE correction (amendment_seq 1 = amendment_count 1). */
 async function mkAmendment(): Promise<Amendment> {
+  if (stopping) throw new Fail("stopping: signal received");
   seq += 1;
   const q = async (sql: string, args: unknown[]) => (await monitor.query(sql, args)).rows[0]!.id as string;
   const patient = await q(
@@ -288,6 +298,8 @@ async function purge(): Promise<void> {
     "delete from public.results where id in (select result_id from public.result_test_requests where test_request_id = any($1::uuid[]))",
     [lines],
   );
+  // Orphans: a crash between the results insert and its result_test_requests link leaves a result keyed only by its path.
+  await monitor.query("delete from public.results where storage_path like 'ncp/ncp-%'");
   await monitor.query("delete from public.result_amendments where test_request_id = any($1::uuid[])", [lines]);
   await monitor.query("delete from public.test_requests where id = any($1::uuid[])", [lines]);
   await monitor.query("delete from public.visits where patient_id = any($1::uuid[])", [patients]);
@@ -306,7 +318,11 @@ async function leftovers(): Promise<number> {
      + (select count(*) from public.services where code like 'NCP-%-LAB')
      + (select count(*) from public.rate_limit_attempts where bucket = 'statement_email' and identifier like '%:ncp-%@example.test')
      + (select count(*) from auth.users where email like 'ncp-%@example.test')
+     + (select count(*) from public.results where storage_path like 'ncp/ncp-%')
+     + (select count(*) from public.audit_log where actor_id = any($1::uuid[])
+          or patient_id in (select id from public.patients where drm_id like 'NCP-%'))
      )::text as n`,
+    [[ADMIN, RECEPTION]],
   );
   return Number(rows[0]!.n);
 }
@@ -373,6 +389,19 @@ const claimNotify = (r: Racer, amendment: string) =>
       [amendment],
     ),
   );
+const retryNotify = (r: Racer, amendment: string) =>
+  launch(
+    r.c.query<{ result_id: string }>(`select * from ${F("result_retry_patient_notify")}($1)`, [amendment]),
+  );
+/** A correction whose notice already went out and FAILED ("send failed"): the only state a retry may claim. */
+async function mkFailedNotify(): Promise<Amendment> {
+  const am = await mkAmendment();
+  await monitor.query(
+    "update public.result_amendments set patient_notified_at = now() - interval '1 minute', patient_notify_error = 'send failed' where id = $1",
+    [am.amendment],
+  );
+  return am;
+}
 const markContacted = (r: Racer, amendment: string) =>
   launch(r.c.query<{ at: Date }>(`select ${F("result_mark_copy_contacted")}($1) as at`, [amendment]));
 const editCommit = (r: Racer, a: Amendment, expectedCount: number) =>
@@ -420,7 +449,8 @@ const scenarios: Record<string, Scenario> = {
   async S1b() {
     await sameKeyRace("S1b", `  ${rid("s1b").toUpperCase()}  `);
   },
-  // S2 - the first claim rolls back (its send failed): the waiting second claim then gets an id.
+  // S2 - the first claim rolls back: proves the advisory lock DROPS on rollback and the waiting second claim
+  //      then gets an id. (The app's real release is a committed row deleted by id - see S2b.)
   async S2() {
     const visit = randomUUID();
     const recipient = rid("s2");
@@ -432,6 +462,27 @@ const scenarios: Record<string, Scenario> = {
     expect(id2 !== null, "S2: the waiting claim was refused after the first rolled back");
     const rows = await stmtRows(visit, recipient);
     expect(rows === 1, `S2: expected exactly 1 row, found ${rows}`);
+  },
+  // S2b - the app's release path (send-statement-email.ts): the first claim COMMITS, its send fails, and it
+  //       deletes its own rate_limit_attempts row by id; a later claim for the same statement then succeeds.
+  async S2b() {
+    const visit = randomUUID();
+    const recipient = rid("s2b");
+    const [a, b] = [await racer(), await racer()];
+    await beginService(a);
+    const id1 = idOf(await claimStmt(a, visit, recipient).promise, "S2b first");
+    await a.c.query("commit");
+    expect(id1 !== null, "S2b: first claim refused");
+    await beginService(b);
+    const blocked = idOf(await claimStmt(b, visit, recipient).promise, "S2b repeat");
+    await b.c.query("commit");
+    expect(blocked === null, "S2b: a repeat inside the window was admitted before the release");
+    await monitor.query("delete from public.rate_limit_attempts where id = $1", [id1]);
+    const c = await racer();
+    await beginService(c);
+    const id2 = idOf(await claimStmt(c, visit, recipient).promise, "S2b after release");
+    await c.c.query("commit");
+    expect(id2 !== null && id2 !== id1, "S2b: the claim after the release was refused");
   },
   // S3a - a different recipient on the same visit never waits.
   async S3a() {
@@ -521,6 +572,48 @@ const scenarios: Record<string, Scenario> = {
     await a.c.query("commit");
     await b.c.query("commit");
     expect(rows2.length === 1, "N3: the other correction's claim lost");
+  },
+
+  // concurrency-proof: result_retry_patient_notify
+  // R1 - two retries of one failed notice: the second waits on the row, then finds the error cleared and gets nothing.
+  async R1() {
+    const am = await mkFailedNotify();
+    const [a, b] = [await racer(), await racer()];
+    await beginService(a);
+    expect(ok(await retryNotify(a, am.amendment).promise, "R1 first").rows.length === 1, "R1: first retry lost");
+    await beginService(b);
+    const second = retryNotify(b, am.amendment);
+    await mustWait(b, second, { row: "result_amendments" }, "R1");
+    await a.c.query("commit");
+    const rows2 = ok(await second.promise, "R1 second").rows;
+    await b.c.query("commit");
+    expect(rows2.length === 0, `R1: the second retry also won (${rows2.length} rows) - the notice would re-send twice`);
+  },
+  // RC1 - a fresh claim holds the row; a retry of the same correction does NOT queue (the retry predicate
+  //       patient_notified_at is not null is false on every snapshot) and gets nothing at once.
+  async RC1() {
+    const am = await mkAmendment();
+    const [c, r] = [await racer(), await racer()];
+    await beginService(c);
+    expect(ok(await claimNotify(c, am.amendment).promise, "RC1 claim").rows.length === 1, "RC1: claim lost");
+    await beginService(r);
+    const rows = ok(await mustNotWait(r, retryNotify(r, am.amendment), "RC1"), "RC1 retry").rows;
+    await c.c.query("commit");
+    await r.c.query("commit");
+    expect(rows.length === 0, `RC1: a retry won on a notice that never failed (${rows.length} rows)`);
+  },
+  // RC2 - a retry holds a failed row; a claim of the same correction does NOT queue (its predicate
+  //       patient_notified_at is null is false on every snapshot) and gets nothing at once.
+  async RC2() {
+    const am = await mkFailedNotify();
+    const [r, c] = [await racer(), await racer()];
+    await beginService(r);
+    expect(ok(await retryNotify(r, am.amendment).promise, "RC2 retry").rows.length === 1, "RC2: retry lost");
+    await beginService(c);
+    const rows = ok(await mustNotWait(c, claimNotify(c, am.amendment), "RC2"), "RC2 claim").rows;
+    await r.c.query("commit");
+    await c.c.query("commit");
+    expect(rows.length === 0, `RC2: a claim won a notice that already went out (${rows.length} rows)`);
   },
 
   // concurrency-proof: result_mark_copy_contacted
@@ -613,8 +706,10 @@ const scenarios: Record<string, Scenario> = {
 async function runAll(): Promise<Record<string, string | null>> {
   const result: Record<string, string | null> = {};
   for (const [name, fn] of Object.entries(scenarios)) {
+    if (stopping) break;
     try {
-      await fn();
+      active = fn();
+      await active;
       result[name] = null;
       console.log(`  ok   ${name}`);
     } catch (e) {
@@ -693,6 +788,15 @@ const MUTANTS: Mutant[] = [
     to: "where id = v_am.result_id;",
     mustFail: ["C2a"],
   },
+  {
+    id: "M7",
+    fn: "result_retry_patient_notify",
+    sig: "uuid",
+    note: "retry without its three `patient_notify_error` conditions (a cleared error no longer disqualifies the loser)",
+    from: "and ra.patient_notify_error is not null\n       and ra.patient_notify_error not like 'notices not set up%'\n       and ra.patient_notify_error <> 'no contact on file'",
+    to: "",
+    mustFail: ["R1"],
+  },
 ];
 
 async function makeMutant(schema: string, m: Mutant): Promise<void> {
@@ -715,20 +819,27 @@ async function main(): Promise<void> {
     process.exit(2);
   }
   let exit = 0;
-  let cleaned = false;
-  const cleanup = async () => {
-    if (cleaned) return;
-    cleaned = true;
-    await closeRacers();
-    await purge().catch((e) => console.error("cleanup error:", e instanceof Error ? e.message : e));
-    const left = await leftovers().catch(() => -1);
-    if (left !== 0) {
-      console.error(`FAIL: ${left} fixture rows left behind`);
-      exit = 1;
-    } else console.log("Fixtures deleted (0 left).");
+  let cleanupP: Promise<void> | undefined;
+  const cleanup = (): Promise<void> => {
+    cleanupP ??= (async () => {
+      stopping = true;
+      await closeRacers();
+      await active.catch(() => undefined); // let the running scenario fail out before purging
+      await closeRacers();
+      await purge().catch((e) => console.error("cleanup error:", e instanceof Error ? e.message : e));
+      const left = await leftovers().catch(() => -1);
+      if (left !== 0) {
+        console.error(`FAIL: ${left} fixture rows left behind`);
+        exit = 1;
+      } else console.log("Fixtures deleted (0 left).");
+    })();
+    return cleanupP;
   };
   for (const sig of ["SIGINT", "SIGTERM"] as const) {
-    process.once(sig, () => void cleanup().finally(() => process.exit(130)));
+    process.once(sig, () => {
+      stopping = true;
+      void cleanup().finally(() => process.exit(130));
+    });
   }
   try {
     await purge();

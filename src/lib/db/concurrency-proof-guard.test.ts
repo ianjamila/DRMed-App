@@ -189,9 +189,9 @@ describe("concurrency-proof guard (real migrations)", () => {
 
   it("proof files named in the registry are real concurrency proofs", () => {
     // checkGuard already asserts existence and the per-function annotation;
-    // this pins that REGISTRY is non-trivial.
+    // this pins only a floor (non-trivial), so parallel proof PRs do not conflict on an exact count.
     const proofs = Object.values(REGISTRY).filter((e) => "proof" in e);
-    expect(proofs.length).toBe(31);
+    expect(proofs.length).toBeGreaterThanOrEqual(31);
   });
 });
 
