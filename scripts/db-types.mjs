@@ -11,8 +11,9 @@
 //     Prettier (no semicolons — the style the file has always had), so the diff
 //     after a migration shows the schema change, not whitespace.
 //   - A function installed in `public` by an extension (dblink, left behind by
-//     supabase/tests/0183_waiver_race_smoke.sql before it moved to the
-//     `extensions` schema) is not part of the app schema; the run refuses and
+//     the old dblink race smoke (supabase/tests/0183_waiver_race_smoke.sql,
+//     since replaced by scripts/waiver-concurrency-proof.ts) before it moved to
+//     the `extensions` schema) is not part of the app schema; the run refuses and
 //     says how to move it rather than committing it into the types.
 //
 // Usage: node scripts/db-types.mjs            (local stack)
