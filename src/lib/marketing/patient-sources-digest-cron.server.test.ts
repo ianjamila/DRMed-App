@@ -57,7 +57,7 @@ function setup(over: Partial<DigestRunDeps> = {}, preset: Record<string, DigestR
       return recordError;
     },
   };
-  const build = vi.fn(async (_kind: string, _anchor: string) => ({
+  const build = vi.fn<DigestRunDeps["build"]>(async () => ({
     ok: true as const,
     kind: "email" as const,
     period: PERIOD,
@@ -236,6 +236,22 @@ describe("runPatientSourcesDigest", () => {
     expect(t.sends).toHaveLength(0);
     expect(sentMeta(t.audits)).toMatchObject({ already_sent: 1, in_flight: 1 });
     expect(out.failed).toBe(false);
+  });
+
+  it("an unreadable status after a NULL claim flags the monitor (an unknown row may hide behind it)", async () => {
+    const t = setup({}, { "owner@example.com": "sending", "ops@example.com": "sent" });
+    t.deps.store.statusOf = async () => null;
+    const out = await runPatientSourcesDigest(t.deps, { kind: "week" });
+    expect(t.sends).toHaveLength(0);
+    expect(out.failed).toBe(true);
+  });
+
+  it("the same inbox typed twice in the settings is one recipient and one email", async () => {
+    const t = setup();
+    t.resolveRecipients.mockResolvedValueOnce({ enabled: true, emails: ["Owner@Example.com", " owner@example.com", "ops@example.com"], staffOn: [], staffWithoutEmail: [], loadError: null });
+    await runPatientSourcesDigest(t.deps, { kind: "week" });
+    expect(t.sends).toHaveLength(2);
+    expect(sentMeta(t.audits)).toMatchObject({ recipients: 2, sent: 2 });
   });
 
   it("a record-write error after a send is reported and flags the monitor — never thrown", async () => {

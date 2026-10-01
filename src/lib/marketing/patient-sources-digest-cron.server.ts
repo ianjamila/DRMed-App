@@ -194,11 +194,13 @@ export async function runPatientSourcesDigest(deps: DigestRunDeps, opts: DigestR
     return finish(ZERO, "that period starts before Patient Sources' first date (1 December 2023)", built.period);
   }
 
-  const c: Counts = { ...ZERO, recipients: alert.emails.length };
+  // One claim per address, however it was typed: the same inbox twice in the settings is one recipient.
+  const emails = [...new Map(alert.emails.map((e) => [e.trim().toLowerCase(), e.trim()] as const)).values()];
+  const c: Counts = { ...ZERO, recipients: emails.length };
   let sendSkipReason: string | null = null;
 
-  for (const to of alert.emails) {
-    const recipient = to.trim().toLowerCase();
+  for (const to of emails) {
+    const recipient = to.toLowerCase();
     const claim = await deps.store.claim(key, built.period.from, built.period.to, recipient, includeUnknown);
     if (claim.error) {
       c.failed += 1;
@@ -211,7 +213,11 @@ export async function runPatientSourcesDigest(deps: DigestRunDeps, opts: DigestR
       const status = await deps.store.statusOf(key, built.period.from, recipient);
       if (status === "sent") c.alreadySent += 1;
       else if (status === "unknown") c.unknown += 1;
-      else c.inFlight += 1;
+      else {
+        c.inFlight += 1;
+        // No row after a NULL claim means the status read failed: an unknown row may be hiding behind it.
+        if (status === null) trouble = true;
+      }
       continue;
     }
 
@@ -222,6 +228,8 @@ export async function runPatientSourcesDigest(deps: DigestRunDeps, opts: DigestR
         subject: built.subject,
         text: built.text,
         html: built.html,
+        // The attempt number is deliberate: an operator re-send (include_unknown) rebuilds the email, and
+        // Resend refuses a reused key with a different payload — each attempt is its own request.
         idempotencyKey: `${key}:${built.period.from}:${recipient}:${claim.attempts}`,
       });
     } catch (e) {
