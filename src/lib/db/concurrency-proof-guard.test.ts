@@ -101,6 +101,14 @@ const REGISTRY: Record<string, RegistryEntry> = {
   sheet_review_resolve: { proof: ["scripts/sheet-sync-db-proof.ts"] },
   merge_patients_guarded: { proof: ["scripts/merge-concurrency-proof.ts"] },
   undo_patient_merge_guarded: { proof: ["scripts/merge-concurrency-proof.ts"] },
+  view_as_transition: { proof: ["scripts/view-as-restore-concurrency-proof.ts"] },
+  view_as_expire: { proof: ["scripts/view-as-restore-concurrency-proof.ts"] },
+  view_as_end_for: { proof: ["scripts/view-as-restore-concurrency-proof.ts"] },
+  restore_patient: { proof: ["scripts/view-as-restore-concurrency-proof.ts"] },
+  bridge_payment_delete: { proof: ["scripts/view-as-restore-concurrency-proof.ts"] },
+  claim_statement_email: { proof: ["scripts/notice-claims-concurrency-proof.ts"] },
+  result_claim_patient_notify: { proof: ["scripts/notice-claims-concurrency-proof.ts"] },
+  result_mark_copy_contacted: { proof: ["scripts/notice-claims-concurrency-proof.ts"] },
   queue_claim_remarks: {
     exempt:
       "false positive on the name: a read-only SECURITY DEFINER reader over audit_log that takes no lock and claims nothing",
@@ -109,8 +117,6 @@ const REGISTRY: Record<string, RegistryEntry> = {
 
 /** FROZEN pre-guard functions with no proof. May only shrink. Name -> definition file. */
 const BASELINE: Record<string, string> = {
-  bridge_payment_delete: "0141_manila_posting_dates_remainder.sql",
-  restore_patient: "0184_patient_lifecycle_locks.sql",
   _sheet_sync_fence: "0170_sheet_sync_foundation.sql",
   sheet_sync_acquire: "0170_sheet_sync_foundation.sql",
   sheet_sync_apply_customer_ops: "0193_sync_review_gaps.sql",
@@ -133,7 +139,6 @@ const BASELINE: Record<string, string> = {
   bridge_payment_void: "0140_manila_posting_dates.sql",
   bridge_test_request_cancelled: "0183_waived_balance_gl.sql",
   bridge_test_request_released: "0183_waived_balance_gl.sql",
-  claim_statement_email: "0177_statement_email_claim.sql",
   create_visit_encounter: "0184_patient_lifecycle_locks.sql",
   enforce_patient_activity: "0184_patient_lifecycle_locks.sql",
   guard_test_request_on_waived_visit: "0183_waived_balance_gl.sql",
@@ -141,15 +146,10 @@ const BASELINE: Record<string, string> = {
   lock_hmo_batch_before_items: "0184_patient_lifecycle_locks.sql",
   recalc_visit_payment: "0111_payment_void_recalc.sql",
   recompute_hmo_batch_status: "0184_patient_lifecycle_locks.sql",
-  result_claim_patient_notify: "0179_result_copy_followups.sql",
   result_create_linked: "0184_patient_lifecycle_locks.sql",
   result_finalise_commit: "0184_patient_lifecycle_locks.sql",
-  result_mark_copy_contacted: "0179_result_copy_followups.sql",
   result_save_draft: "0184_patient_lifecycle_locks.sql",
   test_requests_claim_holder_guard: "0190_claim_holder_guard_and_view_as_end_for.sql",
-  view_as_end_for: "0190_claim_holder_guard_and_view_as_end_for.sql",
-  view_as_expire: "0187_view_as_followups.sql",
-  view_as_transition: "0187_view_as_followups.sql",
 };
 
 function loadMigrations(): MigrationFile[] {
@@ -189,9 +189,9 @@ describe("concurrency-proof guard (real migrations)", () => {
 
   it("proof files named in the registry are real concurrency proofs", () => {
     // checkGuard already asserts existence and the per-function annotation;
-    // this pins that REGISTRY is non-trivial.
+    // this pins only a floor (non-trivial), so parallel proof PRs do not conflict on an exact count.
     const proofs = Object.values(REGISTRY).filter((e) => "proof" in e);
-    expect(proofs.length).toBe(28);
+    expect(proofs.length).toBeGreaterThanOrEqual(36);
   });
 });
 
