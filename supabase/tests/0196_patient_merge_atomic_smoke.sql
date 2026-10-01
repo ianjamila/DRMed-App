@@ -22,6 +22,10 @@
 --   s9  interrupted legacy undo completed by the function
 --   s10 attachment booking groups (empty, walk-in-only, split owners)
 --   s11 0196 rollback guard; ordinary edits and delete/restore unaffected
+-- 0197 (merge-marker enforcement) supersedes the s11 rollback guard: once it is
+-- installed, s1.9 checks its trigger instead, s1.12 holds trivially (the
+-- helper is dropped) and s11.6 expects the legacy direct un-merge refused.
+-- Every other check is the same with or without 0197.
 -- =============================================================================
 
 begin;
@@ -309,8 +313,10 @@ begin
     (select count(*) from information_schema.columns where table_schema = 'public' and table_name = 'patient_merges'
       and column_name in ('snapshot_version', 'fill_snapshot', 'rechained', 'context', 'undo_report'))::text || '|' ||
     (select count(*) from pg_indexes where indexname = 'uq_patient_merges_live_source')::text, '5|1');
-  perform pg_temp.expect('s1.9 rollback guard trigger enabled',
-    (select tgenabled::text from pg_trigger where tgname = 'trg_patients_live_merge_guard'), 'O');
+  perform pg_temp.expect('s1.9 rollback guard trigger enabled (0197: its merge-marker guard)',
+    (select tgenabled::text from pg_trigger
+      where tgname = case when to_regprocedure('public.enforce_merge_marker()') is null
+                          then 'trg_patients_live_merge_guard' else 'trg_patients_merge_marker_guard' end), 'O');
   perform pg_temp.expect('s1.11 0202 still holds: merge-ledger/consent policies name only the writer; anon/authenticated hold nothing',
     ((select bool_and(p.polroles = array['patient_merge_writer'::regrole::oid])
         from pg_policy p where p.polrelid in ('public.patient_merges'::regclass, 'public.patient_consents'::regclass))
@@ -322,7 +328,8 @@ begin
     pg_temp.state_as('patient_merge_writer', format(
       'update public.patients set deleted_at = now() where id = %L', pg_temp.mk_patient('S1D'))), '42501');
   perform pg_temp.expect('s1.12 writer has no EXECUTE on patient_has_live_v2_merge (F4: nested IFs, no extra grant)',
-    has_function_privilege('patient_merge_writer', 'public.patient_has_live_v2_merge(uuid)', 'execute')::text, 'false');
+    (to_regprocedure('public.patient_has_live_v2_merge(uuid)') is not null
+     and has_function_privilege('patient_merge_writer', 'public.patient_has_live_v2_merge(uuid)', 'execute'))::text, 'false');
 end
 $s1$;
 
@@ -419,9 +426,9 @@ begin
   perform pg_temp.mark_merged(ls, lk);
   insert into public.patient_merges (keep_id, source_id, moved, filled_from_source)
   values (lk, ls, '{}'::jsonb, '{}');
-  perform pg_temp.expect('s11.6 legacy live merge marker can still be cleared by service_role (old app undo)',
+  perform pg_temp.expect('s11.6 legacy live merge marker can still be cleared by service_role (old app undo) — refused once 0197 is in',
     pg_temp.state_as('service_role', format('update public.patients set merged_into_id = null, merged_at = null where id = %L', ls)),
-    'ok');
+    case when to_regprocedure('public.enforce_merge_marker()') is null then 'ok' else 'P0080' end);
 
   -- ordinary edits and delete/restore are unaffected
   perform pg_temp.expect('s11.7 staff edit of an active patient',
