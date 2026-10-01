@@ -14,6 +14,8 @@ const fx = vi.hoisted(() => ({
   notifyOne: [] as unknown[],
   notifyBulk: [] as Array<{ testRequestIds: string[] }>,
   alerts: [] as Array<[string, number]>,
+  notifyOneResult: undefined as unknown,
+  notifyBulkResult: undefined as unknown,
 }));
 vi.mock("next/cache", () => ({
   revalidatePath: (p: string, t?: string) => void fx.revalidate.push([p, t]),
@@ -29,10 +31,16 @@ vi.mock("@/lib/consent/gate", () => ({
 }));
 vi.mock("@/lib/audit/log", () => ({ audit: async (e: Record<string, unknown>) => void fx.audits.push(e) }));
 vi.mock("@/lib/notifications/notify-released", () => ({
-  notifyResultReleased: async (a: unknown) => void fx.notifyOne.push(a),
+  notifyResultReleased: async (a: unknown) => {
+    fx.notifyOne.push(a);
+    return fx.notifyOneResult;
+  },
 }));
 vi.mock("@/lib/notifications/notify-released-bulk", () => ({
-  notifyResultsReleasedBulk: async (a: { testRequestIds: string[] }) => void fx.notifyBulk.push(a),
+  notifyResultsReleasedBulk: async (a: { testRequestIds: string[] }) => {
+    fx.notifyBulk.push(a);
+    return fx.notifyBulkResult;
+  },
 }));
 vi.mock("@/lib/notifications/release-staff-alert", () => ({
   scheduleReleaseStaffAlert: (v: string, n: number) => void fx.alerts.push([v, n]),
@@ -50,6 +58,7 @@ const { releaseTestsAction } = await import("./actions");
 
 const u = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
 const [A, B, C, D, E] = [u(1), u(2), u(3), u(4), u(5)];
+const UUID_RE = /^[0-9a-f-]{36}$/;
 const BAD_INPUT = "Could not read the selection — refresh the queue and try again.";
 
 function setup(rows: FakeTestRow[], links: FakeLink[] = [], staff?: Record<string, string>) {
@@ -71,6 +80,8 @@ beforeEach(() => {
   fx.notifyOne.length = 0;
   fx.notifyBulk.length = 0;
   fx.alerts.length = 0;
+  fx.notifyOneResult = undefined;
+  fx.notifyBulkResult = undefined;
 });
 
 /** Every id sent lands in exactly one of changedIds / skipped. */
@@ -122,10 +133,11 @@ describe("releaseTestsAction — eligibility and the per-visit write", () => {
     expect(writes(fake)).toHaveLength(2);
     expect(writes(fake).map((c) => c.args.p_visit_id).sort()).toEqual(["v1", "v2"]);
     expect(writes(fake).every((c) => c.args.p_actor === "u1" && c.args.p_medium === "email")).toBe(true);
-    // Each visit's write hands the database the queue's extras + the request's ip / user agent (0205).
+    // Each visit's write hands the database the queue's extras + the call's Undo batch id + the request's ip / user agent (0205).
+    if (!res.ok) throw new Error(res.error);
     expect(writes(fake).map((c) => c.args.p_audit)).toEqual([
-      { metadata: { source: "queue" }, ip: "1.2.3.4", user_agent: "ua" },
-      { metadata: { source: "queue" }, ip: "1.2.3.4", user_agent: "ua" },
+      { metadata: { source: "queue", bulk_batch_id: res.batchId }, ip: "1.2.3.4", user_agent: "ua" },
+      { metadata: { source: "queue", bulk_batch_id: res.batchId }, ip: "1.2.3.4", user_agent: "ua" },
     ]);
     expect(fx.audits.filter((a) => a.action === "test_request.released")).toEqual([]);
     expect(fx.alerts.sort()).toEqual([["v1", 1], ["v2", 1]]);
@@ -323,17 +335,61 @@ describe("releaseTestsAction — fail closed", () => {
     expect(fx.audits).toHaveLength(0);
   });
 
-  it("the queue sends only {source: queue} in p_audit (no Undo batch); the database's rows carry the RPC's exact released_at", async () => {
-    const fake = setup([{ id: A }, { id: B }], report("r1", A, B));
-    await releaseTestsAction({ testRequestIds: [A], medium: "email" });
-    expect(writes(fake).map((c) => c.args.p_audit)).toEqual([{ metadata: { source: "queue" }, ip: "1.2.3.4", user_agent: "ua" }]);
+  it("one call mints ONE batch id: every visit's p_audit carries it, and it is returned", async () => {
+    const fake = setup([
+      { id: A, visitId: "v1" },
+      { id: B, visitId: "v2" },
+    ]);
+    const res = await releaseTestsAction({ testRequestIds: [A, B], medium: "email" });
+    if (!res.ok) throw new Error(res.error);
+    expect(res.batchId).toMatch(UUID_RE);
+    const metas = writes(fake).map((w) => (w.args.p_audit as { metadata: Record<string, unknown> }).metadata);
+    expect(metas).toHaveLength(2);
+    expect(metas.every((m) => m.source === "queue" && m.bulk_batch_id === res.batchId)).toBe(true);
+    // The database's own audit rows (0205) carry it on every released line, with the exact released_at.
+    const released = fake.dbAudits.filter((a) => a.action === "test_request.released");
+    expect(released.map((a) => a.metadata.bulk_batch_id)).toEqual([res.batchId, res.batchId]);
+    expect(released.every((a) => a.metadata.released_at === FAKE_RELEASED_AT)).toBe(true);
     expect(fx.audits.filter((a) => a.action === "test_request.released")).toEqual([]);
-    expect(fake.dbAudits.map((a) => a.resource_id).sort()).toEqual([A, B]);
-    for (const a of fake.dbAudits) {
-      expect(a.metadata).toMatchObject({ released_at: FAKE_RELEASED_AT, source: "queue" });
-      expect(a.metadata).not.toHaveProperty("bulk_batch_id");
-    }
-    expect((fx.notifyBulk[0] as { bulkBatchId?: string }).bulkBatchId).toBeUndefined();
+  });
+
+  it("a report-mate pulled in carries the batch id too", async () => {
+    const fake = setup([{ id: A }, { id: B }], report("r1", A, B));
+    const res = await releaseTestsAction({ testRequestIds: [A], medium: "email" });
+    if (!res.ok) throw new Error(res.error);
+    expect(res.alsoReleasedIds).toEqual([B]);
+    const ids = fake.dbAudits.filter((a) => a.metadata.bulk_batch_id === res.batchId).map((a) => a.resource_id).sort();
+    expect(ids).toEqual([A, B].sort());
+    expect((fx.notifyBulk[0] as { bulkBatchId?: string }).bulkBatchId).toBe(res.batchId);
+  });
+
+  it("returns no batch id when nothing was released", async () => {
+    setup([{ id: A, status: "requested" }]);
+    const res = await releaseTestsAction({ testRequestIds: [A], medium: "email" });
+    if (!res.ok) throw new Error(res.error);
+    expect(res.changedIds).toEqual([]);
+    expect(res.batchId).toBeUndefined();
+    expect(res.notifiedCount).toBe(0);
+  });
+
+  it("notifiedCount counts only the visits whose notice was SENT", async () => {
+    setup([{ id: A, visitId: "v1" }, { id: B, visitId: "v1" }, { id: C, visitId: "v2" }]);
+    // v1's bulk notice went out; v2's single notice was skipped (no contact).
+    fx.notifyBulkResult = { status: "sent", channels: ["email"], reason: null };
+    fx.notifyOneResult = { status: "skipped", channels: [], reason: "no email or phone on file" };
+    const res = await releaseTestsAction({ testRequestIds: [A, B, C], medium: "email" });
+    if (!res.ok) throw new Error(res.error);
+    expect(res.notifiedCount).toBe(2);
+    expect(res.noticeRetrying).toBeUndefined();
+  });
+
+  it("noticeRetrying is set when any visit's notice is retrying, and never counted as notified", async () => {
+    setup([{ id: A }]);
+    fx.notifyOneResult = { status: "retrying", channels: [], reason: "will retry automatically" };
+    const res = await releaseTestsAction({ testRequestIds: [A], medium: "email" });
+    if (!res.ok) throw new Error(res.error);
+    expect(res.notifiedCount).toBe(0);
+    expect(res.noticeRetrying).toBe(true);
   });
 
   it("plain rows are still announced when no report is involved", async () => {

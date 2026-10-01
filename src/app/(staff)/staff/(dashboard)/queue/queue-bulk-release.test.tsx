@@ -75,6 +75,7 @@ describe("QueueBulkBar release", () => {
       skipped: [],
       alsoReleasedIds: [],
       warnings: [],
+      notifiedCount: 0,
     });
     const user = await selectBoth();
     await user.click(screen.getByRole("button", { name: "Release 3 tests" }));
@@ -96,6 +97,7 @@ describe("QueueBulkBar release", () => {
       skipped: [],
       alsoReleasedIds: [],
       warnings: [],
+      notifiedCount: 0,
     });
     const user = await selectBoth();
     await user.selectOptions(screen.getByLabelText("Release medium"), "email");
@@ -115,6 +117,7 @@ describe("QueueBulkBar release", () => {
       skipped: [{ id: "c2", reason: "Part of this combined report isn't finished — 1 test is still awaiting a result or sign-off." }],
       alsoReleasedIds: [],
       warnings: ["Ana Reyes has no consent on file."],
+      notifiedCount: 0,
     });
     const user = await selectBoth();
     await user.click(screen.getByRole("button", { name: "Release 3 tests" }));
