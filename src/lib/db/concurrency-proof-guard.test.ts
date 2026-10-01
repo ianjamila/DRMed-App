@@ -73,6 +73,7 @@ const REGISTRY: Record<string, RegistryEntry> = {
   undo_visit_release: { proof: ["scripts/report-release-concurrency-proof.ts"] },
   release_report_locks: { proof: ["scripts/report-release-concurrency-proof.ts"] },
   correct_payment: { proof: ["scripts/report-release-concurrency-proof.ts"] },
+  _ps_digest_claim: { proof: ["scripts/ps-digest-claim-concurrency-proof.ts"] },
   waive_visit_balance: { proof: ["scripts/waiver-concurrency-proof.ts"] },
   waiver_unrecognise_line: { proof: ["scripts/waiver-concurrency-proof.ts"] },
   waiver_post_allocation: {
@@ -182,7 +183,7 @@ describe("concurrency-proof guard (real migrations)", () => {
     // checkGuard already asserts existence and the per-function annotation;
     // this pins that REGISTRY is non-trivial.
     const proofs = Object.values(REGISTRY).filter((e) => "proof" in e);
-    expect(proofs.length).toBe(23);
+    expect(proofs.length).toBe(24);
   });
 });
 

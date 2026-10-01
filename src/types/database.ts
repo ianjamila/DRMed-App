@@ -3465,6 +3465,42 @@ export type Database = {
           },
         ]
       }
+      patient_sources_digest_sends: {
+        Row: {
+          alert_key: string
+          attempts: number
+          last_error: string | null
+          period_from: string
+          period_to: string
+          provider_id: string | null
+          recipient: string
+          status: string
+          updated_at: string
+        }
+        Insert: {
+          alert_key: string
+          attempts?: number
+          last_error?: string | null
+          period_from: string
+          period_to: string
+          provider_id?: string | null
+          recipient: string
+          status: string
+          updated_at?: string
+        }
+        Update: {
+          alert_key?: string
+          attempts?: number
+          last_error?: string | null
+          period_from?: string
+          period_to?: string
+          provider_id?: string | null
+          recipient?: string
+          status?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
       patients: {
         Row: {
           address: string | null
@@ -7311,6 +7347,16 @@ export type Database = {
       _ps_check_period: {
         Args: { p_from: string; p_to: string }
         Returns: undefined
+      }
+      _ps_digest_claim: {
+        Args: {
+          p_from: string
+          p_include_unknown?: boolean
+          p_key: string
+          p_recipient: string
+          p_to: string
+        }
+        Returns: number
       }
       _ps_doctor_norm: { Args: { p: string }; Returns: string }
       _ps_encounter_list: {

@@ -68,6 +68,9 @@ alter table public.patient_sources_digest_sends enable row level security;
 -- No policy on purpose: server code (service_role) only.
 -- Literal revokes (not format() in a do block): seed-grant-parity.test.ts regex-scans for them.
 revoke all on public.patient_sources_digest_sends from public, anon, authenticated;
+-- Supabase default privileges hand service_role ALL on a new table; the cron only
+-- ever reads, inserts and updates claims, so take the rest back (never DELETE).
+revoke all on public.patient_sources_digest_sends from service_role;
 grant select, insert, update on public.patient_sources_digest_sends to service_role;
 
 -- (3) The atomic claim. Returns the new attempt number, or NULL when this call
