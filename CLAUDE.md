@@ -42,6 +42,8 @@ history: **0160** (`queue_claim_remarks`, #214) and **0151** (`rls_initplan_and_
 
 **0167** (`patient_soft_delete`, PR 2 of the patient-delete rollout, #234) is applied and merged.
 
+**0211** (`claim_unclaim_lock_order`, no P-code, `test/release-lock-interleave`) — NOT on prod until its PR merges: `claim_panel_members` / `unclaim_panel_members` pre-lock the rows they will update `ORDER BY id`, closing a proven 40P01 deadlock against `release_visit_results` / `undo_visit_release` (proof: `scripts/report-release-concurrency-proof.ts` L2x/L3x). Same bodies and ACLs as 0191.
+
 **Rule — claim a number before you use it: `npm run claim -- migration` / `npm run claim -- pcode <n>`.**
 Several sessions work here at once, each in its own worktree, and picking "the next number" by
 looking around is a race: on 2026-09-15 two branches took 0147 and P0050; on 2026-09-24 two took

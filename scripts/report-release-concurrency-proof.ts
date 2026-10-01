@@ -73,10 +73,12 @@
 //              release/undo (id order) queues on it, then a claim / unclaim whose
 //              lines are stored in the REVERSE heap order arrives. If it locks in
 //              plan (physical) order it holds H while waiting on L: when the third
-//              writer lets go it is a deadlock (40P01). The scenario OBSERVES
-//              which row the writer holds and demands the matching outcome; a
-//              reproduced deadlock is a KNOWN_BUG (printed, not counted, unless
-//              --strict) - see the report for the proposed fix.
+//              writer lets go it is a deadlock (40P01) - the bug 0211 fixes
+//              (claim / unclaim now pre-lock their rows ORDER BY id). The scenario
+//              OBSERVES which row the writer holds and demands the matching
+//              outcome: nothing held -> both finish serially. A reproduced
+//              deadlock would be a KNOWN_BUG (printed, not counted, unless
+//              --strict); none is expected now.
 //   D1  payment void holds -> release WAITS (visit FOR SHARE vs the recalc's
 //       FOR UPDATE) -> void commits -> release fails the payment gate (23514).
 //   D2  release holds -> void WAITS -> both commit: released, one release
@@ -140,11 +142,10 @@
 // M9 locks the lines in DESC id order (L1a, L3a), M10 never takes the visit row
 // FOR SHARE (caught MID-SET by L1a), M11 drops the lock statement's ORDER BY
 // (L1a, L3a: heap order is reversed there), M12 / M13 remove the ORDER BY from
-// the PROPOSED-FIX claim / unclaim pre-lock (L2x-claim + L3x, L2x-unclaim +
+// 0211's claim / unclaim pre-lock (L2x-claim + L3x, L2x-unclaim +
 // L3x-unclaim: the deadlock comes back). Rounds M9-M13 also check the failure
 // DETAIL, so each is caught for the right reason. Round B0 is the BASELINE: the
-// unmutated release copies plus the proposed-fix claim / unclaim must pass EVERY
-// forced scenario, so a broken copy cannot make every mutant look caught.
+// unmutated copies of all six live functions must pass EVERY forced scenario, so a broken copy cannot make every mutant look caught.
 // Dev switches: RRC_ONLY=L1a,L2x-claim (just those forced scenarios),
 // RRC_CONTROL=B0,M9 (just those rounds), --strict (a KNOWN_BUG fails the run).
 // The control rounds do NOT cover the
@@ -210,7 +211,7 @@ type Mode = "seq" | "indexed";
 // Where the functions under test live: public, or a --control mutant schema.
 let fnSchema = "public";
 // Same for claim_panel_members / unclaim_panel_members (a control round can swap
-// in the proposed-fix copy or a mutant of it without touching release's copy).
+// in a copy of them (every control round) without touching public's).
 let claimSchema = "public";
 
 interface Actor {
@@ -1572,7 +1573,7 @@ async function forcedScenarios(mode: Mode): Promise<void> {
   //              id order).
   // The scenario OBSERVES which row the claim holds while it waits, then demands
   // the matching outcome: claim already holds H -> the deadlock must happen
-  // (a KNOWN_BUG until claim locks in id order); claim holds nothing -> both must
+  // (the 0211 bug: a KNOWN_BUG while claim locked in plan order); claim holds nothing -> both must
   // finish serially with no error.
   const lockOrderRace = async (o: {
     contender: "release" | "undo";
@@ -1614,7 +1615,7 @@ async function forcedScenarios(mode: Mode): Promise<void> {
         throw new KnownBug(
           `${o.writer} (${o.plan} plan, ${order}) vs ${o.contender} (id order) DEADLOCKED, victim = ${victim} (40P01): ` +
             `${o.contender} holds L and wants H, ${o.writer} holds H and wants L. ${w1}; ${w2}. ` +
-            `Fix: ${o.writer} must take its rows in id order (SELECT ... ORDER BY id FOR NO KEY UPDATE before the UPDATE).`,
+            `0211 makes ${o.writer} lock its rows ORDER BY id before the UPDATE.`,
         );
       }
       throw new Fail(
@@ -2108,8 +2109,6 @@ interface Mutant {
   // [from, to] replacements applied in order; each must match exactly once-or-more (first is replaced).
   edits: Array<[string, string]>;
   mustFail: string[];
-  // Build the round on the proposed-fix claim/unclaim (the mutant removes part of the fix).
-  claimFix?: boolean;
   // The failure detail every caught scenario must show (caught for the right reason).
   reason?: RegExp;
 }
@@ -2207,20 +2206,18 @@ const MUTANTS: Mutant[] = [
   },
   {
     key: "M12",
-    what: "claim without a deterministic order (the proposed fix's pre-lock loses its ORDER BY id)",
+    what: "claim without a deterministic order (0211's pre-lock loses its ORDER BY id)",
     fn: "claim_panel_members",
-    edits: [[" order by t0.id for no key update", " for no key update"]],
+    edits: [["   order by t0.id\n     for no key update;", "     for no key update;"]],
     mustFail: ["L2x-claim", "L3x"],
-    claimFix: true,
     reason: /DEADLOCKED, victim = \w+ \(40P01\)/,
   },
   {
     key: "M13",
-    what: "unclaim without a deterministic order (the proposed fix's pre-lock loses its ORDER BY id)",
+    what: "unclaim without a deterministic order (0211's pre-lock loses its ORDER BY id)",
     fn: "unclaim_panel_members",
-    edits: [[" order by t0.id for no key update", " for no key update"]],
+    edits: [["   order by t0.id\n     for no key update of t0;", "     for no key update of t0;"]],
     mustFail: ["L2x-unclaim", "L3x-unclaim"],
-    claimFix: true,
     reason: /DEADLOCKED, victim = \w+ \(40P01\)/,
   },
 ];
@@ -2234,29 +2231,9 @@ const FN_SIGS: Record<FnName, string> = {
   unclaim_panel_members: "uuid[], uuid[]",
 };
 
-// The proposed fix for the lock-order deadlock (L2x / L3x): claim and unclaim
-// take their rows in id order BEFORE the UPDATE - the same discipline
-// release_report_locks uses - so every writer of these lines locks them
-// ascending. FOR NO KEY UPDATE is what the UPDATE itself takes (no key column
-// changes), so it blocks exactly what the UPDATE would have blocked on.
-const PRELOCK = (alias: string) =>
-  `  -- proposed fix: lock the rows in id order before the UPDATE\n` +
-  `  perform 1 from public.test_requests ${alias} where ${alias}.id = any (p_test_request_ids) order by ${alias}.id for no key update;\n\n`;
-const CLAIM_FIX: Record<"claim_panel_members" | "unclaim_panel_members", [string, string]> = {
-  claim_panel_members: [
-    "  update public.test_requests\n     set status      = 'in_progress',",
-    `${PRELOCK("t0")}  update public.test_requests\n     set status      = 'in_progress',`,
-  ],
-  unclaim_panel_members: [
-    "  update public.test_requests t\n     set status      = 'requested',",
-    `${PRELOCK("t0")}  update public.test_requests t\n     set status      = 'requested',`,
-  ],
-};
-
 interface Round {
   key: string;
   what: string;
-  claimFix: boolean; // install the proposed-fix claim/unclaim copies (else the live ones keep serving)
   fn?: FnName; // the function to mutate (none = the unmutated baseline)
   edits?: Array<[string, string]>;
   mustFail: string[] | null; // null = every forced scenario must PASS (the baseline)
@@ -2276,24 +2253,16 @@ async function controlRounds(): Promise<void> {
     for (const other of names) d = d.split(`public.${other}(`).join(`${schema}.${other}(`);
     defs[fn] = d;
   }
-  const fixed = { ...defs };
-  for (const fn of ["claim_panel_members", "unclaim_panel_members"] as const) {
-    const [from, to] = CLAIM_FIX[fn];
-    if (!fixed[fn].includes(from)) throw new Error(`control: the proposed-fix anchor was not found in ${fn}`);
-    fixed[fn] = fixed[fn].replace(from, () => to);
-  }
 
   const rounds: Round[] = [
     {
       key: "B0",
-      what: "BASELINE: unmutated copies of the four release functions + the proposed-fix claim/unclaim pass EVERY forced scenario (so a broken copy cannot make every mutant look caught)",
-      claimFix: true,
+      what: "BASELINE: unmutated copies of all six live functions (release, undo, claim, unclaim and helpers) pass EVERY forced scenario (so a broken copy cannot make every mutant look caught)",
       mustFail: null,
     },
     ...MUTANTS.map((m): Round => ({
       key: m.key,
       what: m.what,
-      claimFix: m.claimFix ?? false,
       fn: m.fn,
       edits: m.edits,
       mustFail: m.mustFail,
@@ -2305,8 +2274,7 @@ async function controlRounds(): Promise<void> {
   const pick = process.env.RRC_CONTROL ? process.env.RRC_CONTROL.split(",") : null;
   for (const m of rounds) {
     if (pick && !pick.includes(m.key)) continue;
-    const set = m.claimFix ? fixed : defs;
-    const mutated = { ...set };
+    const mutated = { ...defs };
     if (m.fn) {
       let d = mutated[m.fn];
       for (const [from, to] of m.edits ?? []) {
@@ -2326,7 +2294,7 @@ async function controlRounds(): Promise<void> {
       const caught: Result[] = [];
       sink = caught;
       fnSchema = schema;
-      claimSchema = m.claimFix ? schema : "public";
+      claimSchema = schema;
       only = m.mustFail;
       quietPass = m.mustFail === null;
       for (const mode of ["seq", "indexed"] as Mode[]) await forcedScenarios(mode);
