@@ -1,7 +1,7 @@
 import { createHash, timingSafeEqual } from "node:crypto";
 import { withCronMonitor } from "@/lib/ops/cron-monitor";
 import { reportError } from "@/lib/observability/report-error";
-import { audit } from "@/lib/audit/log";
+import { writeSweepHeartbeat } from "@/lib/notifications/release-notice-heartbeat";
 import { runReleaseNoticeSweep } from "@/lib/notifications/release-notice-sweep";
 
 export const dynamic = "force-dynamic";
@@ -15,7 +15,8 @@ export const maxDuration = 60;
 // Claims the due notices and sends each (bounded concurrency), then audits any
 // terminal notice still missing its audit row. While the strict flag
 // (release_notice_settings.enabled) is off it does nothing — but still writes
-// its heartbeat, so a quiet run is distinguishable from a dead scheduler.
+// its heartbeat (at most hourly when quiet), so a quiet run is distinguishable
+// from a dead scheduler.
 
 // Constant-time: both sides are hashed to equal length first.
 function bearerMatches(header: string, secret: string): boolean {
@@ -42,13 +43,9 @@ async function handle(request: Request) {
       return Response.json({ error: "sweep failed" }, { status: 500 });
     }
 
-    // Run heartbeat, including quiet runs with nothing due and runs while off.
-    await audit({
-      actor_id: null,
-      actor_type: "system",
-      action: "system.release_notices.sweep.completed",
-      metadata: { ...summary },
-    });
+    // Run heartbeat: always when the run did work or failed, and otherwise (a quiet
+    // run, or one while the flag is off) at most once an hour.
+    await writeSweepHeartbeat(summary);
 
     if (summary.failures > 0) markFailed();
     return Response.json(summary);
