@@ -418,7 +418,7 @@ export function trendCardData(newByDay: readonly SeriesRow[], spend: readonly Sp
   const thisWeekSoFar = newByDay
     .filter((r) => r.bucket_start > last)
     .reduce((a, r) => a + Number(r.confirmed) + Number(r.unconfirmed), 0);
-  const change = pct === null ? "nobody the week before" : pct === 0 ? "the same as the week before"
+  const change = pct === null ? "none the week before" : pct === 0 ? "the same as the week before"
     : `${pct > 0 ? "up" : "down"} ${Math.abs(pct)}% on the week before`;
   return {
     chart: { rows, channels }, lastWeek, weekBefore, pct, thisWeekSoFar, hasSpend,

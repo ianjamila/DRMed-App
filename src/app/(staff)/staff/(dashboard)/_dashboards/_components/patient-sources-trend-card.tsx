@@ -7,7 +7,7 @@ import { PatientSourcesTrendChartLoader } from "./patient-sources-trend-chart-lo
 const LABEL = "New patients — last 8 weeks";
 
 export function PatientSourcesTrendCard({ trend }: { trend: ReportResult<PatientSourcesTrend> }) {
-  if (!trend.ok) return <StatCard label={LABEL} value={0} error />;
+  if (!trend.ok) return <div className="sm:col-span-2"><StatCard label={LABEL} value={0} error /></div>;
   const { weeks, newByDay, spend, readAt } = trend.data;
   const t = trendCardData(newByDay, spend.ok ? spend.rows : [], weeks);
   const href = `/staff/marketing/patients?from=${weeks[0].from}&to=${weeks[weeks.length - 1].to}&grain=week&mode=new`;
