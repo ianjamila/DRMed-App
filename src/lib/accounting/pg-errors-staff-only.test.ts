@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, join, relative, resolve, sep } from "node:path";
+import ts from "typescript";
 
 // translatePgError passes a hand-written 23514 message through verbatim (0184's
 // "a result can only hold one patient's tests", "a critical alert's patient
@@ -51,15 +52,69 @@ function resolveSpecifier(from: string, spec: string): string | null {
   return null;
 }
 
-// Static imports, re-exports, side-effect imports and dynamic import(). Type-only
-// imports are skipped: they are erased at build time and carry no runtime code.
-const IMPORT_RE =
-  /(?:^|[\s;])(?:import|export)\s+(?!type\s)(?:[^'"`;]*?\sfrom\s+)?["']([^"']+)["']|import\(\s*["']([^"']+)["']\s*\)/g;
+// Module specifiers read with the TypeScript parser, not a regex: it accepts every
+// form the compiler does (compact `import{x}from"m"`, backtick and comment-laden
+// import(), `import x = require()`, `export * from`) and ignores text inside
+// strings and comments. Type-only imports/exports (`import type`, `export type`)
+// are skipped: they are erased at build time and carry no runtime code. An inline
+// `import { type X }` is still counted — conservative, the guard errs toward flagging.
+// The parser follows the FILE's own kind: a `.ts` generic arrow `<T>(x: T) => x`
+// read as TSX is a JSX tag, and everything after it — an import() included — was
+// lost (Codex recheck of #268). A file that does not parse fails the guard
+// instead of quietly yielding fewer imports.
+function scriptKindOf(file: string): ts.ScriptKind {
+  if (file.endsWith(".tsx")) return ts.ScriptKind.TSX;
+  if (file.endsWith(".jsx")) return ts.ScriptKind.JSX;
+  if (/\.[mc]?js$/.test(file)) return ts.ScriptKind.JS;
+  return ts.ScriptKind.TS;
+}
 
-function importsOf(file: string, text = readFileSync(file, "utf8")): string[] {
+function specifiersOf(file: string, text: string): string[] {
+  const sf = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true, scriptKindOf(file));
+  // parseDiagnostics is not in the public typings but has been on every
+  // SourceFile for years; if a TypeScript upgrade drops it, fail loudly.
+  const diagnostics = (sf as unknown as { parseDiagnostics?: readonly ts.Diagnostic[] }).parseDiagnostics;
+  if (!diagnostics) throw new Error("TypeScript no longer exposes parseDiagnostics — update specifiersOf");
+  if (diagnostics.length > 0) {
+    const first = ts.flattenDiagnosticMessageText(diagnostics[0].messageText, " ");
+    throw new Error(`${rel(file)} does not parse as ${ts.ScriptKind[scriptKindOf(file)]}: ${first}`);
+  }
   const out: string[] = [];
-  for (const m of text.matchAll(IMPORT_RE)) {
-    const r = resolveSpecifier(file, (m[1] ?? m[2])!);
+  const literal = (n: ts.Node | undefined) => {
+    if (n && (ts.isStringLiteral(n) || ts.isNoSubstitutionTemplateLiteral(n))) out.push(n.text);
+  };
+  const visit = (n: ts.Node): void => {
+    if (ts.isImportDeclaration(n)) {
+      if (!n.importClause?.isTypeOnly) literal(n.moduleSpecifier);
+    } else if (ts.isExportDeclaration(n)) {
+      if (!n.isTypeOnly) literal(n.moduleSpecifier);
+    } else if (ts.isImportEqualsDeclaration(n)) {
+      if (!n.isTypeOnly && ts.isExternalModuleReference(n.moduleReference)) {
+        literal(n.moduleReference.expression);
+      }
+    } else if (ts.isCallExpression(n)) {
+      const callee = n.expression;
+      if (
+        callee.kind === ts.SyntaxKind.ImportKeyword ||
+        (ts.isIdentifier(callee) && callee.text === "require")
+      ) {
+        literal(n.arguments[0]);
+      }
+    }
+    ts.forEachChild(n, visit);
+  };
+  visit(sf);
+  return out;
+}
+
+function importsOf(file: string, text?: string): string[] {
+  // A stylesheet, JSON or image reached through an import carries no imports
+  // of its own; only code files are parsed (and a code file must parse).
+  if (!/\.[mc]?[jt]sx?$/.test(file)) return [];
+  text ??= readFileSync(file, "utf8");
+  const out: string[] = [];
+  for (const spec of specifiersOf(file, text)) {
+    const r = resolveSpecifier(file, spec);
     if (r) out.push(r);
   }
   return out;
@@ -129,5 +184,41 @@ describe("translatePgError stays staff-only", () => {
     expect(found(`export { translatePgError } from "@/lib/accounting/pg-errors";`)).toEqual([target]);
     expect(found(`const m = await import("@/lib/accounting/pg-errors");`)).toEqual([target]);
     expect(found(`import type { X } from "@/lib/accounting/pg-errors";`)).toEqual([]);
+  });
+
+  it("mutation proof: compact, backtick, commented and re-export forms are all read", () => {
+    const from = join(APP, "(patient)", "portal", "x.ts");
+    const found = (src: string) => importsOf(from, src).map(rel);
+    const target = "src/lib/accounting/pg-errors.ts";
+    expect(found(`import{translatePgError}from"@/lib/accounting/pg-errors"`)).toEqual([target]);
+    expect(found("const m = await import(`@/lib/accounting/pg-errors`);")).toEqual([target]);
+    expect(
+      found(`const m = import(/* webpackChunkName: "x" */ "@/lib/accounting/pg-errors");`),
+    ).toEqual([target]);
+    expect(found(`import "@/lib/accounting/pg-errors";`)).toEqual([target]);
+    expect(found(`export * from "@/lib/accounting/pg-errors";`)).toEqual([target]);
+    expect(found(`export * as pg from "@/lib/accounting/pg-errors";`)).toEqual([target]);
+    expect(found(`const m = require("@/lib/accounting/pg-errors");`)).toEqual([target]);
+    expect(found(`import pg = require("@/lib/accounting/pg-errors");`)).toEqual([target]);
+    expect(found(`import { type X, translatePgError } from "@/lib/accounting/pg-errors";`)).toEqual([target]);
+    // Type-only forms are erased at build time: no runtime code, so not a leak.
+    expect(found(`export type { X } from "@/lib/accounting/pg-errors";`)).toEqual([]);
+    // Text that merely looks like an import (string / comment) is not one.
+    expect(found(`const s = 'import x from "@/lib/accounting/pg-errors"';`)).toEqual([]);
+    expect(found(`// import x from "@/lib/accounting/pg-errors"\nconst a = 1;`)).toEqual([]);
+  });
+
+  it("mutation proof: a .ts file is parsed as TS, a .tsx file as TSX, and a file that does not parse fails", () => {
+    const target = "src/lib/accounting/pg-errors.ts";
+    const ts_ = join(APP, "(patient)", "portal", "x.ts");
+    const tsx = join(APP, "(patient)", "portal", "x.tsx");
+    // Read as TSX, `<T>` opens a JSX tag and the import() after it was lost.
+    expect(
+      importsOf(ts_, `const identity = <T>(x: T) => x;\nconst load = () => import("@/lib/accounting/pg-errors");`).map(rel),
+    ).toEqual([target]);
+    expect(
+      importsOf(tsx, `const el = <div />;\nconst load = () => import("@/lib/accounting/pg-errors");`).map(rel),
+    ).toEqual([target]);
+    expect(() => importsOf(ts_, `const el = <div />;`)).toThrow(/does not parse as TS/);
   });
 });
