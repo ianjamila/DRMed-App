@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseStressArgs, tallyRuns } from "./test-stress-tally.mjs";
+import { parseStressArgs, runFailureReason, tallyRuns } from "./test-stress-tally.mjs";
 
 describe("parseStressArgs", () => {
   it("defaults to 5 runs, 1 process, no filters", () => {
@@ -18,6 +18,7 @@ describe("parseStressArgs", () => {
     expect(() => parseStressArgs(["--parallel", "x"])).toThrow(/positive/);
     expect(() => parseStressArgs(["--runs"])).toThrow(/needs a value/);
     expect(() => parseStressArgs(["--nope"])).toThrow(/Unknown option/);
+    expect(() => parseStressArgs(["-t", "x"])).toThrow(/Unknown option -t/);
   });
 });
 
@@ -55,5 +56,22 @@ describe("tallyRuns", () => {
     ]);
     expect(tests).toEqual([{ key: "src/b.test.ts :: (file failed to run)", failures: 1, total: 1 }]);
     expect(perRun[1]).toEqual({ label: "r2", passed: 0, failed: 0 });
+  });
+});
+
+describe("runFailureReason", () => {
+  const ok = { numTotalTests: 3, numFailedTestSuites: 0, success: true };
+  it("is null for a clean run", () => {
+    expect(runFailureReason({ code: 0, signal: null, report: ok })).toBeNull();
+  });
+  it("flags zero tests as a failure, never green", () => {
+    expect(runFailureReason({ code: 0, signal: null, report: { ...ok, numTotalTests: 0 } })).toBe("no tests ran");
+  });
+  it("flags a non-zero exit, a kill, a missing report, and a file that failed to load", () => {
+    expect(runFailureReason({ code: 1, signal: null, report: ok })).toBe("vitest exited 1");
+    expect(runFailureReason({ code: null, signal: "SIGKILL", report: ok })).toBe("killed by SIGKILL");
+    expect(runFailureReason({ code: 0, signal: null, report: null })).toBe("no readable report");
+    expect(runFailureReason({ code: 0, signal: null, report: { ...ok, numFailedTestSuites: 1 } })).toMatch(/failed to run/);
+    expect(runFailureReason({ code: 0, signal: null, report: { ...ok, success: false } })).toBe("vitest reported failure");
   });
 });

@@ -9,6 +9,9 @@
 // resolve LATE_MOCKS_MS late turns that load-dependent flake into a
 // deterministic failure, so such races are found without needing a loaded box.
 //
+// NOT delayed: vi.spyOn, automocks (vi.mock without a factory), and
+// mockReturnValue(Promise...) - only vi.fn()'s mockResolvedValue/Once are.
+//
 // Tests that drive fake timers (vi.useFakeTimers) may hang or fail with this
 // on, because the delay is a real setTimeout - run those with it off.
 import { vi } from "vitest";

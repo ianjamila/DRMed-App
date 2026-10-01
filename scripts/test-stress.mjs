@@ -10,7 +10,7 @@ import { spawn } from "node:child_process";
 import { mkdtempSync, readFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { parseStressArgs, tallyRuns } from "./lib/test-stress-tally.mjs";
+import { parseStressArgs, runFailureReason, tallyRuns } from "./lib/test-stress-tally.mjs";
 
 let opts;
 try {
@@ -41,15 +41,17 @@ function runOne(round, k) {
         env: { ...process.env, ...(opts.lateMocks ? { LATE_MOCKS_MS: String(opts.lateMocks) } : {}) },
       },
     );
-    child.on("error", () => resolve({ label: `run ${round}.${k}`, report: null }));
-    child.on("close", () => {
+    const label = `run ${round}.${k}`;
+    const done = (report, code, signal) => resolve({ label, report, code, signal, reason: runFailureReason({ code, signal, report }) });
+    child.on("error", () => done(null, 1, null));
+    child.on("close", (code, signal) => {
       let report = null;
       if (existsSync(out)) {
         try {
           report = JSON.parse(readFileSync(out, "utf8"));
         } catch {}
       }
-      resolve({ label: `run ${round}.${k}`, report });
+      done(report, code, signal);
     });
   });
 }
@@ -58,8 +60,11 @@ const all = [];
 for (let round = 1; round <= opts.runs; round++) {
   const batch = await Promise.all(Array.from({ length: opts.parallel }, (_, k) => runOne(round, k + 1)));
   all.push(...batch);
-  const failed = batch.reduce((n, r) => n + (r.report?.numFailedTests ?? 0) + (r.report ? 0 : 1), 0);
-  console.log(`round ${round}/${opts.runs}: ${failed === 0 ? "green" : `${failed} failure(s)`}`);
+  const bad = batch.filter((r) => r.reason || (r.report?.numFailedTests ?? 0) > 0);
+  const failedTests = batch.reduce((n, r) => n + (r.report?.numFailedTests ?? 0), 0);
+  console.log(
+    `round ${round}/${opts.runs}: ${bad.length === 0 ? "green" : `${bad.length} run(s) failed (${failedTests} failed test(s))`}`,
+  );
 }
 
 const { tests, perRun } = tallyRuns(all);
@@ -71,6 +76,9 @@ console.log("\nTests that failed (failures/total runs):");
 if (flaky.length === 0) console.log("  none");
 for (const t of flaky) console.log(`  ${t.failures}/${t.total}  ${t.key}`);
 
-const unreadable = all.filter((r) => !r.report).length;
-if (unreadable) console.log(`\n${unreadable} run(s) produced no readable report - counted as failures.`);
-process.exit(flaky.length > 0 || unreadable > 0 ? 1 : 0);
+const badRuns = all.filter((r) => r.reason);
+if (badRuns.length) {
+  console.log("\nRuns that failed as a whole:");
+  for (const r of badRuns) console.log(`  ${r.label}: ${r.reason}`);
+}
+process.exit(flaky.length > 0 || badRuns.length > 0 ? 1 : 0);

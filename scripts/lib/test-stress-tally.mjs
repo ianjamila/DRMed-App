@@ -16,8 +16,8 @@ export function parseStressArgs(argv) {
       const v = m[2] ?? argv[++i];
       if (v === undefined) throw new Error(`--${m[1]} needs a value`);
       out[m[1] === "late-mocks" ? "lateMocks" : m[1]] = num(`--${m[1]}`, v);
-    } else if (a.startsWith("--")) {
-      throw new Error(`Unknown option ${a}`);
+    } else if (a.startsWith("-")) {
+      throw new Error(`Unknown option ${a} (only --runs, --parallel, --late-mocks and file filters are accepted)`);
     } else {
       out.filters.push(a);
     }
@@ -62,4 +62,23 @@ export function tallyRuns(runs) {
   }
   const tests = [...byKey.values()].sort((a, b) => b.failures - a.failures || a.key.localeCompare(b.key));
   return { tests, perRun };
+}
+
+/**
+ * Why a whole vitest process counts as failed, or null when it is clean.
+ * Catches what per-test tallies cannot: a crash, a kill, a file that failed to
+ * load, or a filter that matched nothing (zero tests is never "green").
+ * @param {{ code?: number | null, signal?: string | null, report: any }} run
+ * @returns {string | null}
+ */
+export function runFailureReason({ code, signal, report }) {
+  if (signal) return `killed by ${signal}`;
+  // Checked before the exit code: vitest exits 1 when a filter matches nothing.
+  if (report && report.numTotalTests === 0) return "no tests ran";
+  if (code !== 0 && code !== undefined) return `vitest exited ${code}`;
+  if (!report) return "no readable report";
+  if (report.success === false) return "vitest reported failure";
+  if ((report.numFailedTestSuites ?? 0) > 0) return `${report.numFailedTestSuites} test file(s) failed to run`;
+  if (!(report.numTotalTests > 0)) return "no tests ran";
+  return null;
 }
