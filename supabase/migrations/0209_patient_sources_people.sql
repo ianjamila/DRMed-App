@@ -35,6 +35,10 @@ returns table (
 language plpgsql
 stable
 set search_path = ''
+-- plpgsql switches to a generic plan after five calls on a connection; with the
+-- arrays as bare parameters that plan picks a nested loop over unnest() (about
+-- 5x slower at 3,000 patients). Custom plans see the real array sizes.
+set plan_cache_mode = force_custom_plan
 as $$
 #variable_conflict use_column
 begin

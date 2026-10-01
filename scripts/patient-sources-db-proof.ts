@@ -26,6 +26,7 @@
 // named FAIL, then revert and re-apply before moving to the next letter (they
 // touch different functions/lines so do not need separate rounds):
 //
+//   NOTE: PS_STACK_IMAGE is enforced ONLY by the 5c denial-probe check; every other check ignores it.
 //   PSQL=/opt/homebrew/opt/libpq/bin/psql
 //   PS_STACK_IMAGE=17.6.1.167   (required by the 5c denial probes; .106/.111 segfault on a refused call)
 //   DB=postgresql://postgres:postgres@127.0.0.1:54322/postgres
@@ -658,7 +659,7 @@ async function main() {
   const P_NONE = { from: "2024-03-01", to: "2024-03-05" }; // nothing seeded
   const PEOPLE_PERIODS = [P_ONE, P_MIN, P_NONE, P_EARLY, P_JUNE, P_LONG];
   const PEOPLE_MODES = ["new", "returning", "served"] as const;
-  const PEOPLE_CHANNELS: (string | null)[] = [null, "walk_in", "online_facebook", "online_google", "not_recorded", "no_such_channel"];
+  const PEOPLE_CHANNELS: (string | null)[] = [null, "", "walk_in", "WALK_IN", "online_facebook", "online_google", "not_recorded", "no_such_channel"];
   type PeopleArgs = [string | null, string | null, string | null, string | null, number | null, number | null];
   const PAGING: [number | null, number | null][] = [[50, 0], [3, 0], [3, 3], [3, 1000000], [1, 0], [1, 1], [null, null], [0, 0], [-5, -5], [100000, 0], [null, 2]];
 
@@ -696,7 +697,8 @@ async function main() {
     const [from, , mode, channel, , offset] = a;
     if (!(from === P_JUNE.from || from === P_LONG.from) || (offset ?? 0) !== 0) return false;
     if (mode === "returning") return channel === null || channel === "online_google";
-    return channel !== "no_such_channel";
+    // '' and case variants match nothing (parity only, not a non-empty guarantee).
+    return channel !== "no_such_channel" && channel !== "" && channel !== "WALK_IN";
   };
   const PEOPLE_Q = (fn: string) =>
     `select to_jsonb(t) as j from (select * from ${fn}($1::date,$2::date,$3::text,$4::text,$5::int,$6::int)) t`;
@@ -2563,9 +2565,13 @@ async function main() {
                  from generate_series(1, 3000) g`);
       await q(`insert into public.visits (patient_id, visit_date)
                select p.id, (p.created_at at time zone 'Asia/Manila')::date from public.patients p where p.last_name like 'Perf%'`);
+      // Fresh statistics for the seeded world (inside the transaction), so timings do not depend on autovacuum.
+      await q(`analyze public.patients, public.visits, public.test_requests, public.sheet_encounter_lines, public.sheet_customer_rows, public.sheet_patient_links, public.sheet_sync_runs, public.sheet_sync_settings`);
       await asAdmin();
       const time = async (fn: string, mode: string) => {
         const runs: number[] = [];
+        // plpgsql flips to a generic plan after 5 calls on a connection: burn those first so the timed runs would show it.
+        for (let i = 0; i < 6; i++) await q(`select count(*) from ${fn}($1::date,$2::date,$3::text,null,50,0)`, [P_JUNE.from, P_JUNE.to, mode]);
         for (let i = 0; i < 5; i++) {
           const t0 = performance.now();
           await q(`select count(*) from ${fn}($1::date,$2::date,$3::text,null,50,0)`, [P_JUNE.from, P_JUNE.to, mode]);
@@ -2577,7 +2583,7 @@ async function main() {
         const oldMs = await time("ps_old.patient_sources_people", mode);
         const newMs = await time("public.patient_sources_people", mode);
         console.log(`   5c timing ${mode} (3,000-patient world): old=${oldMs.toFixed(0)}ms new=${newMs.toFixed(0)}ms`);
-        assert(newMs <= oldMs * 3 + 300, `${mode}: new ${newMs.toFixed(0)}ms vs old ${oldMs.toFixed(0)}ms — a planner regression (nested loop over unnest?)`);
+        assert(newMs <= oldMs * 1.5 + 200, `${mode}: new ${newMs.toFixed(0)}ms vs old ${oldMs.toFixed(0)}ms — a planner regression (nested loop over unnest?)`);
       }
     }));
   } finally {
