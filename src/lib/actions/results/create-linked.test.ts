@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 
 vi.mock("server-only", () => ({}));
 
-import { racedStructuredDraftOutcome } from "./create-linked";
+import { racedStructuredDraftOutcome, sharedReportVerdict } from "./create-linked";
 
 const draft = { generation_kind: "structured", finalised_at: null, report_group_id: null };
 
@@ -40,5 +40,30 @@ describe("racedStructuredDraftOutcome", () => {
   it("refuses when no link was found at all (e.g. the race was on a test that no longer exists)", () => {
     expect(racedStructuredDraftOutcome(null, 0)).toBe("refuse");
     expect(racedStructuredDraftOutcome(undefined, 0)).toBe("refuse");
+  });
+
+  // Codex review of #268: a failed membership count used to read as 0 and let
+  // the single-test path write over a shared report.
+  it("asks for a retry when the membership count could not be read, or is not a verified one", () => {
+    expect(racedStructuredDraftOutcome(draft, null)).toBe("retry");
+    expect(racedStructuredDraftOutcome(draft, 0)).toBe("retry");
+  });
+
+  it("still names the combined report when the group is known, whatever the count read did", () => {
+    expect(racedStructuredDraftOutcome({ ...draft, report_group_id: "rg-chem" }, null)).toBe("combined_report");
+  });
+});
+
+describe("sharedReportVerdict", () => {
+  it("is single only on a verified count of exactly one", () => {
+    expect(sharedReportVerdict(false, 1)).toBe("single");
+    expect(sharedReportVerdict(false, 0)).toBe("unknown");
+    expect(sharedReportVerdict(false, null)).toBe("unknown");
+  });
+
+  it("is shared for a report group or more than one linked test", () => {
+    expect(sharedReportVerdict(true, null)).toBe("shared");
+    expect(sharedReportVerdict(true, 1)).toBe("shared");
+    expect(sharedReportVerdict(false, 2)).toBe("shared");
   });
 });
