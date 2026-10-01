@@ -5,11 +5,11 @@ import { PageHeader } from "@/components/staff/page-header";
 import { createClient } from "@/lib/supabase/server";
 import { audit } from "@/lib/audit/log";
 import { ipAndAgent } from "@/lib/server/action-helpers";
-import { manilaDate, manilaDateTime, todayManilaISODate } from "@/lib/dates/manila";
+import { manilaDateTime, todayManilaISODate } from "@/lib/dates/manila";
 import { firstParam, PATIENT_SOURCES_MIN_DATE, periodHref, resolvePeriod } from "@/lib/marketing/period";
 import {
   GRAIN_LABEL, MODE_LABEL, asOfLabel, capRows, channelTable, comparisonPeriod, formatNewCounts, chartData, costPerNewPatient, parseGrain, parseMode, previousPeriod,
-  sheetBanner, type Grain, type Mode,
+  sheetBanner, sheetDatesText, type Grain, type Mode,
 } from "@/lib/marketing/patient-sources";
 import { loadAdSpendCoverage, loadAdSpendTotals, loadPatientSourcesReport } from "@/lib/marketing/patient-sources.server";
 import { REPORT_EXPORT_MAX_ROWS } from "@/lib/reports/paging";
@@ -22,7 +22,6 @@ export const metadata = { title: ROUTE_NAME["/staff/marketing/patients"] };
 export const dynamic = "force-dynamic";
 
 const PATHNAME = "/staff/marketing/patients";
-const SHEET_TABS: Record<string, string> = { lab: "Lab", consult: "Consultations", customers: "Customers" };
 
 export default async function PatientSourcesPage({
   searchParams,
@@ -90,11 +89,6 @@ export default async function PatientSourcesPage({
   }
   const s = r.summary;
   const banner = sheetBanner(s);
-  // "customers" is the latest REGISTRATION date, not a sync or upload time (0189
-  // names it sheet_last_dates.customers); lab/consult are the latest service dates.
-  const lastDates = Object.entries(s.sheet_last_dates ?? {}).filter(([, d]) => d);
-  const serviceDates = lastDates.filter(([tab]) => tab !== "customers");
-  const registrationDate = lastDates.find(([tab]) => tab === "customers")?.[1];
   const toggle = (patch: Record<string, string>, label: string, on: boolean) => (
     <Link
       key={label}
@@ -147,12 +141,7 @@ export default async function PatientSourcesPage({
       </div>
       <p className="mt-2 text-xs text-[color:var(--color-brand-text-soft)]">
         {s.undated_registrations.toLocaleString("en-PH")} people registered with no date and no recorded visit — not on any day.
-        {serviceDates.length > 0
-          ? ` Latest service date in the sheet: ${serviceDates.map(([tab, d]) => `${SHEET_TABS[tab] ?? tab} ${manilaDate(d as string)}`).join(" · ")}.`
-          : ""}
-        {registrationDate
-          ? ` Latest registration date in the sheet: ${manilaDate(registrationDate as string)}.`
-          : ""}
+        {sheetDatesText(s)}
         {s.last_synced_at ? ` Last sync: ${manilaDateTime(s.last_synced_at)}.` : ""}
         {` ${asOfLabel(readAt)}.`}
       </p>
