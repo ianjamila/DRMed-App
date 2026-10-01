@@ -274,7 +274,7 @@ export function channelTable(current: readonly SeriesRow[], previous: readonly S
     .sort((a, b) => b.total - a.total || a.label.localeCompare(b.label) || a.channel.localeCompare(b.channel));
 }
 
-const PALETTE = [
+export const CHANNEL_PALETTE = [
   "#1d4ed8", "#0891b2", "#16a34a", "#ca8a04", "#dc2626", "#7c3aed",
   "#db2777", "#0d9488", "#ea580c", "#4f46e5", "#65a30d", "#64748b",
 ];
@@ -285,7 +285,7 @@ export function chartData(rows: readonly SeriesRow[], grain: Grain): { rows: Cha
   const totals = totalsByChannel(rows);
   const channels = [...totals.entries()]
     .sort((a, b) => b[1].confirmed + b[1].unconfirmed - (a[1].confirmed + a[1].unconfirmed) || a[0].localeCompare(b[0]))
-    .map(([key], i) => ({ key, label: channelLabel(key), color: PALETTE[i % PALETTE.length] }));
+    .map(([key], i) => ({ key, label: channelLabel(key), color: CHANNEL_PALETTE[i % CHANNEL_PALETTE.length] }));
   const buckets = [...new Set(rows.map((r) => r.bucket_start))].sort();
   const byKey = new Map(rows.map((r) => [`${r.bucket_start}|${r.channel}`, r]));
   return {
@@ -346,6 +346,83 @@ export function costPerNewPatient(spend: readonly SpendTotalRow[], newByDay: rea
       costPerNewPhp: people > 0 ? Math.round((spendPhp / people) * 100) / 100 : null,
     };
   });
+}
+
+export const OTHER_CHANNELS = { key: "__other", label: "Other channels", color: "#94a3b8" } as const;
+
+export interface TrendCard {
+  chart: { rows: ChartDatum[]; channels: ChartChannel[] };
+  lastWeek: number;
+  weekBefore: number;
+  /** Whole-number % change last week vs the week before; null when the week before had nobody. */
+  pct: number | null;
+  thisWeekSoFar: number;
+  hasSpend: boolean;
+  ariaLabel: string;
+}
+
+/**
+ * The admin dashboard's 8-week trend (spec §3.2): new patients per completed
+ * Mon–Sun week from the report's `new_by_day`, top 5 channels + "Other", and a
+ * combined cost per new patient for weeks that have saved ad spend.
+ */
+export function trendCardData(newByDay: readonly SeriesRow[], spend: readonly SpendTotalRow[], weeks: readonly Period[], topN = 5): TrendCard {
+  const first = weeks[0].from;
+  const last = weeks[weeks.length - 1].to;
+  const weekOf = (day: string) => weeks.find((w) => day >= w.from && day <= w.to)?.from ?? null;
+  const inWindow = newByDay.filter((r) => r.bucket_start >= first && r.bucket_start <= last);
+  const ranked = [...totalsByChannel(inWindow).entries()]
+    .map(([key, t]) => ({ key, n: t.confirmed + t.unconfirmed }))
+    .sort((a, b) => b.n - a.n || a.key.localeCompare(b.key));
+  const kept = new Set(ranked.slice(0, topN).map((c) => c.key));
+  const channels: ChartChannel[] = ranked
+    .filter((c) => kept.has(c.key))
+    .map((c, i) => ({ key: c.key, label: channelLabel(c.key), color: CHANNEL_PALETTE[i % CHANNEL_PALETTE.length] }));
+  if (ranked.length > topN) channels.push({ ...OTHER_CHANNELS });
+
+  const rows: ChartDatum[] = weeks.map((w) => {
+    const datum: ChartDatum = { bucket: w.from, label: bucketLabel("week", w.from) };
+    for (const c of channels) { datum[`${c.key}__c`] = 0; datum[`${c.key}__u`] = 0; }
+    return datum;
+  });
+  const byWeek = new Map(rows.map((r) => [r.bucket, r]));
+  for (const r of inWindow) {
+    const wk = weekOf(r.bucket_start);
+    const datum = wk ? byWeek.get(wk) : undefined;
+    if (!datum) continue;
+    const key = kept.has(r.channel) ? r.channel : OTHER_CHANNELS.key;
+    datum[`${key}__c`] = Number(datum[`${key}__c`]) + Number(r.confirmed);
+    datum[`${key}__u`] = Number(datum[`${key}__u`]) + Number(r.unconfirmed);
+  }
+
+  let hasSpend = false;
+  for (const w of weeks) {
+    const wSpend = spend.filter((s) => s.spend_date >= w.from && s.spend_date <= w.to);
+    const wNew = inWindow.filter((r) => r.bucket_start >= w.from && r.bucket_start <= w.to);
+    const per = costPerNewPatient(wSpend, wNew);
+    const spendPhp = per.reduce((a, p) => a + p.spendPhp, 0);
+    const people = per.reduce((a, p) => a + p.newConfirmed + p.newUnconfirmed, 0);
+    if (spendPhp > 0) {
+      hasSpend = true;
+      if (people > 0) byWeek.get(w.from)!.__cost = Math.round((spendPhp / people) * 100) / 100;
+    }
+  }
+
+  const total = (wk: Period) => inWindow
+    .filter((r) => r.bucket_start >= wk.from && r.bucket_start <= wk.to)
+    .reduce((a, r) => a + Number(r.confirmed) + Number(r.unconfirmed), 0);
+  const lastWeek = total(weeks[weeks.length - 1]);
+  const weekBefore = weeks.length > 1 ? total(weeks[weeks.length - 2]) : 0;
+  const pct = weekBefore > 0 ? Math.round(((lastWeek - weekBefore) / weekBefore) * 100) : null;
+  const thisWeekSoFar = newByDay
+    .filter((r) => r.bucket_start > last)
+    .reduce((a, r) => a + Number(r.confirmed) + Number(r.unconfirmed), 0);
+  const change = pct === null ? "nobody the week before" : pct === 0 ? "the same as the week before"
+    : `${pct > 0 ? "up" : "down"} ${Math.abs(pct)}% on the week before`;
+  return {
+    chart: { rows, channels }, lastWeek, weekBefore, pct, thisWeekSoFar, hasSpend,
+    ariaLabel: `New patients per week for ${weeks.length} weeks. Last week ${lastWeek}, ${change}.`,
+  };
 }
 
 /** P19: what the page says about sheet data — null when it is included and current. */
