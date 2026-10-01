@@ -20,7 +20,7 @@ import { scopeToAllowedSections } from "@/lib/visits/bulk-selection";
 import { readInChunks } from "@/lib/supabase/in-chunks";
 import { withLifecycleRetry } from "@/lib/patients/lifecycle-retry";
 
-export type PanelOutcome = { ok: true } | { ok: false; error: string };
+export type PanelOutcome = { ok: true; batchId?: string } | { ok: false; error: string };
 type Supabase = Awaited<ReturnType<typeof createClient>>;
 // The service-role client (restore_panel_members is service_role only).
 type AdminClient = ReturnType<typeof createAdminClient>;

@@ -22,6 +22,7 @@ import { hasRecentAudit, ipAndAgent } from "@/lib/server/action-helpers";
 import { ConsolidatedForm } from "./consolidated-form";
 import { ReportCards, type ReportCardData } from "./report-cards";
 import { ReportEditForm } from "./report-edit-form";
+import { ClaimUndoNotice } from "./claim-undo-notice";
 import type { ValueCells } from "./consolidated-values-table";
 import { normalisePatientSex } from "@/lib/results/types";
 import { claimRemarks, type ClaimEvent } from "@/lib/queue/claim-remarks";
@@ -173,11 +174,21 @@ export default async function ConsolidatedQueuePage({
   searchParams,
 }: {
   params: Promise<{ visitId: string; groupId: string }>;
-  searchParams: Promise<{ edit?: string | string[] }>;
+  searchParams: Promise<{ edit?: string | string[]; claimed?: string | string[]; at?: string | string[] }>;
 }) {
   const { visitId, groupId } = await params;
-  const editParam = (await searchParams).edit;
+  const sp = await searchParams;
+  const editParam = sp.edit;
   const editResultId = typeof editParam === "string" ? editParam : null;
+  // ?claimed=<batch>&at=<ms> — set by the queue row's panel Claim (item 3).
+  const claimedParam =
+    typeof sp.claimed === "string" && /^[0-9a-f-]{36}$/i.test(sp.claimed) ? sp.claimed : null;
+  const atParam = typeof sp.at === "string" ? Number(sp.at) : NaN;
+  // A missing, malformed or future stamp counts as "just now": the window is
+  // re-proved server-side from the audit rows, so this only paces the button.
+  // eslint-disable-next-line react-hooks/purity -- per-request snapshot, passed down as a number prop
+  const nowMs = Date.now();
+  const claimedAt = Number.isFinite(atParam) && atParam <= nowMs ? atParam : nowMs;
   const { session, supabase, group, rows, partition, visit } = await loadConsolidatedDetail(
     visitId,
     groupId,
@@ -652,6 +663,9 @@ export default async function ConsolidatedQueuePage({
       >
         Open visit →
       </Link>
+      {claimedParam ? (
+        <ClaimUndoNotice batchId={claimedParam} doneAt={claimedAt} reportName={group.name} />
+      ) : null}
       </ReleaseOutcomeProvider>
     </div>
   );
