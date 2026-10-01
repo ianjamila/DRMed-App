@@ -401,7 +401,7 @@ export async function releaseTestsAction(input: unknown): Promise<BulkReleaseRes
   const changedIds: string[] = [];
   const alsoReleasedIds: string[] = [];
   const warnings: string[] = [];
-  // Undo (PR C item 1): ONE server-minted batch id for the whole call, across
+  // Undo: ONE server-minted batch id for the whole call, across
   // every visit — releaseVisitSelection hands it to release_visit_results,
   // whose audit rows (0205) stamp it, with the exact released_at, on EVERY
   // line it releases (report-mates included) and on the patient notice, so

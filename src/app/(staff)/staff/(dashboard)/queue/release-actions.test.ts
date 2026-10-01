@@ -58,7 +58,7 @@ const { releaseTestsAction } = await import("./actions");
 
 const u = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
 const [A, B, C, D, E] = [u(1), u(2), u(3), u(4), u(5)];
-const UUID_RE = /^[0-9a-f-]{36}$/;
+const UUID_RE = /^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$/;
 const BAD_INPUT = "Could not read the selection — refresh the queue and try again.";
 
 function setup(rows: FakeTestRow[], links: FakeLink[] = [], staff?: Record<string, string>) {
