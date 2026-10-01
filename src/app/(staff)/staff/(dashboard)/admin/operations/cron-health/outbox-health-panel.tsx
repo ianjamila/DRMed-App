@@ -5,6 +5,15 @@ import { evaluateOutboxHealth, type OutboxCounts, type OutboxStatus } from "@/li
 // only — never a patient's name, phone or email (RA 10173). The status words and
 // colours mirror the scheduled-task table above it.
 
+/**
+ * The counts the panel may show. If the flag read FAILED the panel cannot tell
+ * "switched off" from "on", so it must say Unavailable (null), never a false
+ * all-clear over a real backlog.
+ */
+export function outboxPanelCounts(flagReadFailed: boolean, outbox: { ok: true; counts: OutboxCounts } | { ok: false }): OutboxCounts | null {
+  return flagReadFailed || !outbox.ok ? null : outbox.counts;
+}
+
 const PILL: Record<OutboxStatus | "unavailable", { label: string; className: string }> = {
   ok: { label: "Healthy", className: "bg-emerald-100 text-emerald-900" },
   warning: { label: "Warning", className: "bg-amber-100 text-amber-900" },

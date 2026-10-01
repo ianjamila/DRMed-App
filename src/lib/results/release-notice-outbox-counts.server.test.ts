@@ -14,14 +14,14 @@ vi.mock("@/lib/supabase/admin", () => ({
       fx.chains.push(calls);
       const idx = fx.chains.length - 1;
       const b: Record<string, unknown> = {};
-      for (const m of ["select", "eq", "is", "in", "lte", "lt", "gte", "order", "limit"]) b[m] = (...a: unknown[]) => (calls.push([m, ...a]), b);
+      for (const m of ["select", "eq", "is", "gt", "in", "lte", "lt", "gte", "order", "limit"]) b[m] = (...a: unknown[]) => (calls.push([m, ...a]), b);
       b.then = (resolve: (v: unknown) => unknown) => resolve(fx.results[idx]);
       return b;
     },
   }),
 }));
 
-import { LIVE_ABANDONED_FILTERS, fetchAbandonedNoticeCount, fetchOutboxCounts, fetchStuckNotices } from "./release-notice-followups.server";
+import { LIVE_ABANDONED_FILTERS, countLiveAbandonedSince, fetchAbandonedNoticeCount, fetchOutboxCounts, fetchStuckNotices } from "./release-notice-followups.server";
 
 const ok = (count: number, data: unknown[] = []): R => ({ count, data, error: null });
 
@@ -72,6 +72,17 @@ describe("fetchOutboxCounts", () => {
     fx.results = [{ count: null, error: { message: "boom" } }];
     const r = await fetchAbandonedNoticeCount();
     expect(r.ok).toBe(false);
+  });
+
+  it("counts live abandoned notices resolved after a time, with the shared filter", async () => {
+    fx.results = [ok(2)];
+    expect(await countLiveAbandonedSince("2026-10-01T11:00:00Z")).toEqual({ ok: true, count: 2 });
+    expect(fx.chains[0]).toContainEqual(["gt", "resolved_at", "2026-10-01T11:00:00Z"]);
+    expect(fx.chains[0]).toContainEqual(["eq", "status", "abandoned"]);
+    for (const [col, val] of LIVE_ABANDONED_FILTERS) expect(fx.chains[0]).toContainEqual(["is", col, val]);
+    fx.chains.length = 0;
+    fx.results = [{ count: null, error: { message: "x" } }];
+    expect(await countLiveAbandonedSince("t")).toEqual({ ok: false });
   });
 
   it("reads no patient columns", async () => {

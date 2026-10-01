@@ -152,3 +152,12 @@ export async function fetchAbandonedNoticeCount(): Promise<{ ok: true; count: nu
   if (r.error) return { ok: false, error: new Error(r.error.message) };
   return { ok: true, count: r.count ?? 0 };
 }
+
+/** Live abandoned notices (same filter as the list) that were given up on after `sinceIso`. Counts only. */
+export async function countLiveAbandonedSince(sinceIso: string): Promise<{ ok: true; count: number } | { ok: false }> {
+  const r = await onlyLiveAbandoned(
+    createAdminClient().from("release_notices").select(COUNT_EMBED, { count: "exact", head: true }),
+  ).gt("resolved_at", sinceIso);
+  if (r.error) return { ok: false };
+  return { ok: true, count: r.count ?? 0 };
+}

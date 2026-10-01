@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
-import { OutboxHealthPanel } from "./outbox-health-panel";
+import { OutboxHealthPanel, outboxPanelCounts } from "./outbox-health-panel";
 import type { OutboxCounts } from "@/lib/results/release-notice-health";
 
 const NOW = Date.parse("2026-10-01T12:00:00Z");
@@ -49,5 +49,15 @@ describe("OutboxHealthPanel", () => {
 
   it("carries no patient contact detail", () => {
     expect(render(true, counts())).not.toMatch(/@|phone|\+63|09\d{9}/i);
+  });
+
+  it("a failed flag read gives no counts, so the panel says Unavailable rather than Switched off", () => {
+    const c = counts({ overdue: 4, oldestOverdueAt: new Date(NOW - 600 * 60_000).toISOString() });
+    expect(outboxPanelCounts(true, { ok: true, counts: c })).toBeNull();
+    expect(outboxPanelCounts(false, { ok: false })).toBeNull();
+    expect(outboxPanelCounts(false, { ok: true, counts: c })).toBe(c);
+    const html = render(false, outboxPanelCounts(true, { ok: true, counts: c }));
+    expect(html).toMatch(/>Unavailable</);
+    expect(html).not.toMatch(/>Switched off</);
   });
 });
