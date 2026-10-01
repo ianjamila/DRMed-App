@@ -140,7 +140,12 @@ select * from (
 insert into contact_messages (name, phone, message, status, kind) values
   ('BSQ Sender One', '09170000011', 'bsq-fixture: price of CBC?', 'new', 'general'),
   ('BSQ Sender Two', '09170000012', 'bsq-fixture: corporate APE for 40 staff', 'new', 'corporate'),
-  ('BSQ Sender Three', '09170000013', 'bsq-fixture: thanks!', 'replied', 'general');
+  ('BSQ Sender Three', '09170000013', 'bsq-fixture: thanks!', 'replied', 'general'),
+  -- Every source status exists. Four is 'booked' but links to no appointment
+  -- (linked_appointment_id stays null): the inbox bulk bar's Reopen of it is
+  -- the check. Five is already 'closed'.
+  ('BSQ Sender Four', '09170000014', 'bsq-fixture: booked already', 'booked', 'general'),
+  ('BSQ Sender Five', '09170000015', 'bsq-fixture: done', 'closed', 'general');
 
 -- ---- historic HMO claims (Undo end-to-end checks: Mark billed / Mark paid /
 -- Write off, each followed by Undo). Marked by patient_name like 'BSQ Hist %'.

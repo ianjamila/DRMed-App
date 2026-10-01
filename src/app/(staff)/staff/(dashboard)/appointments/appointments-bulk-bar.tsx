@@ -153,10 +153,10 @@ export function AppointmentsBulkBar({ groupsByKey, isAdmin }: Props) {
           edits: selectionEdits,
           undo,
         });
+        // Pruning wins (spec §4): clear everything sent — and the inactive ones the
+        // button left out, which the message now names — the panel is the record.
+        clearKeys([...keys, ...notSent]);
       });
-      // Pruning wins (spec §4): clear everything sent — and the inactive ones the
-      // button left out, which the message now names — the panel is the record.
-      clearKeys([...keys, ...notSent]);
       router.refresh();
     });
   }
