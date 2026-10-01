@@ -42,7 +42,9 @@ export function ClaimUndoNotice({
           setMessage(`Undone — ${reportName} is back in the queue, unclaimed.`);
           router.refresh();
         } else {
-          setMessage(`Not undone — ${r.notRestored[0]?.reason ?? "it changed since"}.`);
+          // A passed-through database reason already ends in a full stop.
+          const reason = (r.notRestored[0]?.reason ?? "it changed since").replace(/\.$/, "");
+          setMessage(`Not undone — ${reason}.`);
         }
       });
     });

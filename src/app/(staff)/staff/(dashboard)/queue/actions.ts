@@ -561,8 +561,11 @@ export async function reassignTestAction(
 //   claimed   → unclaim  (still in progress, held by the caller, at the exact
 //                         started_at the claim stamped)
 //   unclaimed → reclaim  (still requested and unheld; the old holder is still
-//                         an active lab worker allowed that section)
-//   deleted   → restore  (restoreTestRequestsForVisit — same rules as Restore)
+//                         an active lab worker allowed that section; a panel
+//                         via reclaimPanelMembers / reclaim_panel_members, 0200)
+//   deleted   → restore  (a single test: restoreTestRequestsForVisit — same
+//                         rules as Restore; a panel: restorePanelMembers /
+//                         restore_panel_members, 0200)
 // A batch's rows are all one action (each write action stamps ONE
 // bulk_batch_id, one action verb), so planQueueUndo's steps for a batch are
 // all one `kind` — read once from the first group rather than re-checked per

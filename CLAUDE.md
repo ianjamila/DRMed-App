@@ -42,7 +42,7 @@ history: **0160** (`queue_claim_remarks`, #214) and **0151** (`rls_initplan_and_
 
 **0167** (`patient_soft_delete`, PR 2 of the patient-delete rollout, #234) is applied and merged.
 
-**0200** (`panel_undo_all_or_nothing`, P0082 — `reclaim_panel_members` / `restore_panel_members`) is on branch `feat/queue-undo-atomic`, not yet on prod; it is below prod head 0202, so its push needs `--include-all`.
+**0200** (`panel_undo_all_or_nothing`, P0082 — `reclaim_panel_members` / `restore_panel_members`) is on branch `feat/queue-undo-atomic`, not yet on prod; it is below prod head 0208, so its push needs `--include-all`.
 
 **Rule — claim a number before you use it: `npm run claim -- migration` / `npm run claim -- pcode <n>`.**
 Several sessions work here at once, each in its own worktree, and picking "the next number" by

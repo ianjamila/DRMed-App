@@ -1224,8 +1224,27 @@ async function sectionVisitRelease(c: CheckContext, admin: Page): Promise<void> 
       await esrBox.check();
       await admin.waitForSelector(VISIT_BAR, { timeout: 10_000 });
       await admin.locator(VISIT_BAR).locator('select[title="Release medium"]').selectOption(medium);
+      const [{ now: clickedAt }] = await c.sql("select clock_timestamp() as now");
       await admin.locator(VISIT_BAR).locator("button", { hasText: /^Release selected/ }).click();
-      await sleep(900);
+      // The release (and its notice audit row) has finished once its outcome
+      // panel is up — read the notice outcome only after that.
+      await admin.waitForSelector(OUTCOME, { timeout: 30_000 }).catch(() => {});
+      await sleep(300);
+
+      // Since #280 the "already notified" line reflects the notice's REAL
+      // outcome (sent, not merely attempted). On the local stack email/SMS are
+      // usually skipped (no provider), so read what actually happened from the
+      // result.notified audit row(s) this release wrote instead of assuming.
+      const noticeRows = await c.sql(
+        `select metadata from audit_log
+          where action = 'result.notified' and metadata->>'visit_id' = $1 and created_at >= $2`,
+        [v.id, clickedAt],
+      );
+      const noticeSent = noticeRows.some((r) => {
+        const m = r.metadata as { email?: { ok?: boolean }; sms?: { ok?: boolean } } | null;
+        return m?.email?.ok === true || m?.sms?.ok === true;
+      });
+      const expectNotified = notified && noticeSent;
 
       const afterRelease = await c.sql(
         `select tr.status from test_requests tr join services s on s.id = tr.service_id
@@ -1252,17 +1271,20 @@ async function sectionVisitRelease(c: CheckContext, admin: Page): Promise<void> 
         afterRelease.length === 2 &&
         afterRelease.every((r) => r.status === "released") &&
         !!outcomeAfterRelease &&
-        outcomeAfterRelease.includes("already notified") === notified &&
+        // Email must at least attempt a notice (a Physical hand-off may still
+        // record a skipped one, so only the Email side is pinned).
+        (!notified || noticeRows.length > 0) &&
+        outcomeAfterRelease.includes("already notified") === expectNotified &&
         hadUndo &&
         afterUndo.length === 2 &&
         afterUndo.every((r) => r.status === "ready_for_release") &&
         !!outcomeAfterUndo &&
         outcomeAfterUndo.includes("back to Ready for release") &&
-        outcomeAfterUndo.includes("already notified") === notified &&
+        outcomeAfterUndo.includes("already notified") === expectNotified &&
         auditCount > 0;
       return {
         ok,
-        detail: { afterRelease, afterUndo, outcomeAfterRelease, outcomeAfterUndo, batchId, auditCount },
+        detail: { afterRelease, afterUndo, outcomeAfterRelease, outcomeAfterUndo, batchId, auditCount, notices: noticeRows.length, noticeSent },
       };
     });
   }
