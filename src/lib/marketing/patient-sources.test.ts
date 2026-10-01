@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  NOT_RECORDED, bucketLabel, channelLabel, channelTable, newPatientsTile, chartData, classifyReportError,
+  NOT_RECORDED, bucketLabel, capRows, channelLabel, comparisonPeriod, channelTable, newPatientsTile, chartData, classifyReportError,
   costPerNewPatient, parsePatientSourcesReport, formatNewToday, parseGrain, parseMode, previousPeriod, seriesCsvRows, sheetBanner,
   type SeriesRow, type SummaryRow,
 } from "./patient-sources";
@@ -194,5 +194,23 @@ describe("parsePatientSourcesReport", () => {
     ["a series row without a bucket", { ...good, series: [{ channel: "walk_in", confirmed: 1, unconfirmed: 0 }] }],
   ])("returns null for a malformed reply (%s)", (_label, raw) => {
     expect(parsePatientSourcesReport(raw)).toBeNull();
+  });
+});
+
+describe("comparisonPeriod", () => {
+  it("keeps a previous period that starts on or after the first date", () => {
+    expect(comparisonPeriod({ from: "2023-12-01", to: "2023-12-31" }, "2023-12-01")).toEqual({ from: "2023-12-01", to: "2023-12-31" });
+  });
+  it("drops one that starts before it (the database would refuse it)", () => {
+    expect(comparisonPeriod({ from: "2023-11-30", to: "2023-12-29" }, "2023-12-01")).toBeNull();
+  });
+});
+
+describe("capRows", () => {
+  it("keeps everything under the ceiling", () => {
+    expect(capRows([1, 2, 3], 3)).toEqual({ rows: [1, 2, 3], truncated: false });
+  });
+  it("cuts at the ceiling and says so", () => {
+    expect(capRows([1, 2, 3, 4], 3)).toEqual({ rows: [1, 2, 3], truncated: true });
   });
 });

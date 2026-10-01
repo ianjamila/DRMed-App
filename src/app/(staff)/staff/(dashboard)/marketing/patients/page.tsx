@@ -8,7 +8,7 @@ import { ipAndAgent } from "@/lib/server/action-helpers";
 import { manilaDate, manilaDateTime, todayManilaISODate } from "@/lib/dates/manila";
 import { firstParam, PATIENT_SOURCES_MIN_DATE, periodHref, resolvePeriod } from "@/lib/marketing/period";
 import {
-  GRAIN_LABEL, MODE_LABEL, channelTable, formatNewCounts, chartData, costPerNewPatient, parseGrain, parseMode, previousPeriod,
+  GRAIN_LABEL, MODE_LABEL, capRows, channelTable, comparisonPeriod, formatNewCounts, chartData, costPerNewPatient, parseGrain, parseMode, previousPeriod,
   sheetBanner, type Grain, type Mode,
 } from "@/lib/marketing/patient-sources";
 import { loadAdSpendCoverage, loadAdSpendTotals, loadPatientSourcesReport } from "@/lib/marketing/patient-sources.server";
@@ -45,7 +45,7 @@ export default async function PatientSourcesPage({
   const [report, spend, coverage] = await Promise.all([
     loadPatientSourcesReport(supabase, {
       from: period.from, to: period.to, grain, mode,
-      prev: prev.from < PATIENT_SOURCES_MIN_DATE ? null : prev,
+      prev: comparisonPeriod(prev, PATIENT_SOURCES_MIN_DATE),
     }),
     loadAdSpendTotals(supabase, period.from, period.to),
     loadAdSpendCoverage(supabase),
@@ -71,10 +71,7 @@ export default async function PatientSourcesPage({
   }
   const r = report.data;
   // The overlaps list keeps the export ceiling the paged loader applied.
-  const overlaps = {
-    rows: r.overlaps.slice(0, REPORT_EXPORT_MAX_ROWS),
-    truncated: r.overlaps.length > REPORT_EXPORT_MAX_ROWS,
-  };
+  const overlaps = capRows(r.overlaps, REPORT_EXPORT_MAX_ROWS);
   if (overlaps.rows.length > 0) {
     // P20 / RA 10173: the double-entry panel sends DRM-IDs, dates and amounts to
     // the browser even while collapsed. Audit the disclosure — counts only.

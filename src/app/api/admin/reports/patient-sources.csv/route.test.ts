@@ -19,6 +19,8 @@ vi.mock("@/lib/dates/manila", async (orig) => ({ ...(await orig<typeof import("@
 vi.mock("@/lib/reports/csv-response", () => ({ reportCsvResponse: csv }));
 vi.mock("@/lib/marketing/patient-sources.server", () => loaders);
 
+import { REPORT_EXPORT_MAX_ROWS } from "@/lib/reports/paging";
+import { seriesCsvRows, type SummaryRow } from "@/lib/marketing/patient-sources";
 import { GET as seriesGet } from "./route";
 import { GET as peopleGet } from "../patient-sources-people.csv/route";
 
@@ -89,6 +91,19 @@ describe("patient-sources.csv reads one report", () => {
     expect(loaders.loadPatientSourcesSummary).not.toHaveBeenCalled();
     expect(loaders.loadPatientSourcesSeries).not.toHaveBeenCalled();
     expect(csv.mock.calls[0][0]).toMatchObject({ truncated: false });
+  });
+  it("keeps the export ceiling: at most REPORT_EXPORT_MAX_ROWS series rows, flagged truncated", async () => {
+    const many = Array.from({ length: REPORT_EXPORT_MAX_ROWS + 1 }, (_, i) =>
+      ({ bucket_start: "2026-08-01", channel: `c${i}`, confirmed: 1, unconfirmed: 0 }));
+    const summary = { new_confirmed: 1 } as unknown as SummaryRow;
+    loaders.loadPatientSourcesReport.mockResolvedValueOnce({ ok: true, data: {
+      summary, series: many, current: [], previous: null, new_by_day: [], revenue: [], overlaps: [], referrers: [],
+    } });
+    const res = await seriesGet(req("patient-sources.csv", "from=2026-08-01&to=2026-08-31"));
+    expect(res.status).toBe(200);
+    const sent = csv.mock.calls[0][0];
+    expect(sent.truncated).toBe(true);
+    expect(sent.rows).toEqual(seriesCsvRows({ from: "2026-08-01", to: "2026-08-31", mode: "new", grain: "day" }, summary, many.slice(0, REPORT_EXPORT_MAX_ROWS)));
   });
   it.each([["forbidden", 403], ["invalid", 500], ["error", 500]] as const)("answers %s with %i", async (kind, status) => {
     loaders.loadPatientSourcesReport.mockResolvedValueOnce({ ok: false, kind, message: "m" });

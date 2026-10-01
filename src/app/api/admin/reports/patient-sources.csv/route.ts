@@ -4,7 +4,7 @@ import { createClient } from "@/lib/supabase/server";
 import { todayManilaISODate } from "@/lib/dates/manila";
 import { reportCsvResponse } from "@/lib/reports/csv-response";
 import { PATIENT_SOURCES_MIN_DATE, resolvePeriod } from "@/lib/marketing/period";
-import { parseGrain, parseMode, seriesCsvRows } from "@/lib/marketing/patient-sources";
+import { capRows, parseGrain, parseMode, seriesCsvRows } from "@/lib/marketing/patient-sources";
 import { loadPatientSourcesReport } from "@/lib/marketing/patient-sources.server";
 import { REPORT_EXPORT_MAX_ROWS } from "@/lib/reports/paging";
 
@@ -25,13 +25,14 @@ export async function GET(req: NextRequest) {
   // One report call (0206): the summary and the rows come from the same snapshot.
   const report = await loadPatientSourcesReport(supabase, { from: period.from, to: period.to, grain, mode, prev: null });
   if (!report.ok) return new Response(report.message, { status: report.kind === "forbidden" ? 403 : 500 });
-  const series = report.data.series;
+  // The report also computes the page's other sections; one admin-only export, so not worth a second RPC.
+  const series = capRows(report.data.series, REPORT_EXPORT_MAX_ROWS);
   return reportCsvResponse({
     staff,
     report: "patient_sources",
     filename: `patient-sources-${period.from}-to-${period.to}-${mode}-${grain}.csv`,
-    rows: seriesCsvRows({ from: period.from, to: period.to, mode, grain }, report.data.summary, series.slice(0, REPORT_EXPORT_MAX_ROWS)),
-    truncated: series.length > REPORT_EXPORT_MAX_ROWS,
+    rows: seriesCsvRows({ from: period.from, to: period.to, mode, grain }, report.data.summary, series.rows),
+    truncated: series.truncated,
     filters: { from: period.from, to: period.to, mode, grain },
   });
 }

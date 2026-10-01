@@ -174,6 +174,16 @@ export function bucketLabel(grain: Grain, iso: string): string {
   return grain === "week" ? `Wk of ${d}` : d;
 }
 
+/** The comparison period, or null when it would start before Patient Sources' first date (the database refuses that). */
+export function comparisonPeriod(prev: { from: string; to: string }, minDate: string): { from: string; to: string } | null {
+  return prev.from < minDate ? null : prev;
+}
+
+/** An export ceiling over an in-memory list: the first `max` rows, and whether any were left out. */
+export function capRows<T>(rows: readonly T[], max: number): { rows: T[]; truncated: boolean } {
+  return { rows: rows.slice(0, max), truncated: rows.length > max };
+}
+
 export function previousPeriod(from: string, to: string): { from: string; to: string } {
   const len = daysBetweenISO(from, to);
   const prevTo = shiftISODate(from, -1);
