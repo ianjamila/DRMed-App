@@ -2523,6 +2523,8 @@ async function main() {
                 pg_get_functiondef($1::regprocedure) as d`, [PEOPLE_HELPER])).rows[0];
       assert(!h.a && !h.u && !h.s, `_ps_sec_people must be closed to anon/authenticated/service_role: ${JSON.stringify({ a: h.a, u: h.u, s: h.s })}`);
       assert(!h.sd, "_ps_sec_people must not be SECURITY DEFINER (0206 pattern)");
+      const cfg = (await q<{ c: string }>(`select coalesce(proconfig::text, '') as c from pg_proc where oid = $1::regprocedure`, [PEOPLE_HELPER])).rows[0].c;
+      assert(cfg.includes("plan_cache_mode=force_custom_plan"), `_ps_sec_people must pin plan_cache_mode=force_custom_plan (generic plan after 5 calls is ~5x slower): ${cfg}`);
       assert(!h.d.includes("service_role"), "_ps_sec_people must not contain a service_role literal");
       assert(h.d.includes("unnest(p_ids)") && h.d.includes("unnest(p_enc) e"), "_ps_sec_people must read the arrays");
       assert(!h.d.includes("_patient_sources_identities") && !h.d.includes("_patient_sources_encounters"), "_ps_sec_people must not call the core directly");
