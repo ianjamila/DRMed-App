@@ -40,9 +40,10 @@
 -- behind it, removing the row-order deadlock with 0198. NO KEY UPDATE keeps
 -- FK child inserts (a new result link) unblocked. The UPDATE's own predicates,
 -- re-evaluated after the locks, still decide all-or-nothing. Two cycles
--- remain by design, each ending ONE side as 40P01 with nothing half-done,
--- and restorePanelMembers / reclaimPanelMembers retry it once
--- (withLifecycleRetry):
+-- remain by design, each ending ONE side as 40P01 with nothing half-done.
+-- Only the PANEL side retries it (restorePanelMembers / reclaimPanelMembers,
+-- once, via withLifecycleRetry); a manual Restore that loses the cycle is not
+-- retried and sees the generic 40P01 "try again" message:
 --   * a queued EXCLUSIVE patient lifecycle lock (0184, patient
 --     delete/restore) — the class 0184 accepts;
 --   * a manual queue Restore on the same visit: its UPDATE locks the line

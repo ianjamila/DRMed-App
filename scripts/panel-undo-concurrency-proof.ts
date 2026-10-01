@@ -38,16 +38,24 @@
 //   seq      the local default. The stack holds a handful of rows, so the
 //            reclaim UPDATE is Hash Join over a Seq Scan (heap order) and the
 //            restore UPDATE a Hash Join probing in array order.
-//   indexed  `set local enable_seqscan = off, enable_bitmapscan = off` in every
-//            actor's transaction, plus `enable_nestloop = off` for the
-//            service_role session (the panel restore). Locally that reproduces
-//            BOTH prod plans: the reclaim UPDATE is Nested Loop -> Hash Join
-//            (t.id = x.id) [Index Scan using idx_test_requests_status; Hash <-
-//            Function Scan x] -> Memoize -> Index Scan visits_pkey, the restore
-//            UPDATE Merge Join (t.deleted_at = x.deleted_at) over
-//            test_requests_deleted_idx + Sort x.deleted_at, and the reclaim
-//            pre-lock the pkey Index Scan. The startup banner prints "prod shape
-//            reproduced: reclaim yes, restore yes" for it.
+//   indexed  `set local enable_seqscan / enable_bitmapscan = off` in every
+//            actor's transaction, and the join method FORCED per role (see
+//            gucsFor): the staff reclaim gets nested loops + merge joins off, the
+//            service_role panel restore nested loops + hash joins off. Left to
+//            the planner a few-row local table flips from run to run (heap bloat
+//            and statistics decide), so the shapes are forced and then ASSERTED
+//            at startup (a failing result row if either is not reproduced):
+//              reclaim UPDATE  Hash Join (t.id = x.id) [Index Scan using
+//                              idx_test_requests_status; Hash <- Function Scan
+//                              x] under a Hash Join to visits_pkey - the prod
+//                              plan's table-driven core; prod nests the visits
+//                              lookup as a Nested Loop, which only reads the
+//                              visits row and does not touch the lock order
+//              restore UPDATE  Merge Join (t.deleted_at = x.deleted_at) over
+//                              test_requests_deleted_idx + Sort x.deleted_at
+//              reclaim pre-lock  the test_requests_pkey Index Scan
+//            VACUUM (ANALYZE) of the two tables runs after seeding, so the
+//            statistics match the data the run really has.
 // Plans are taken AS THE ROLE THE CALL RUNS UNDER. The staff session's plan
 // carries the RLS policy's own InitPlans/SubPlans, and planning as postgres
 // (which an earlier version of this runner did) picked a different join order
@@ -61,6 +69,17 @@
 // test_requests - so the UPDATE afterwards only ever touches rows this
 // transaction already holds. Mutant E drops that pre-lock from reclaim and the
 // control round reports, per mode, which scenarios then fail (see CONTROL).
+//
+// SELF-CHECKS at startup: the four probe statements (the two UPDATEs and the two
+// pre-lock selects) are hand-copied from 0200 and are compared with the live
+// pg_get_functiondef text - a drift refuses the run - and indexed mode ASSERTS
+// that it reproduces prod's two plan shapes (a failing result row otherwise).
+//
+// NOT PROVEN SEPARATELY: a MULTI-member queue Delete (deleteTestRequestsForVisit
+// with several ids) racing a reclaim. Its UPDATE visits rows in whatever order
+// its plan gives (pkey-ordered on prod, so id order, which is the pre-lock's
+// order); only single-member deletes (R4) and the three-way claim race (F1) are
+// exercised against a reclaim here.
 //
 // FIXTURES. Two connections cannot see each other's uncommitted rows, so the
 // fixtures are COMMITTED: four staff (auth.users + staff_profiles: admin A1,
@@ -139,8 +158,9 @@
 //       reverse of restore_panel_members (visit, then lines). Forced with both
 //       queued on one gated member, the cycle forms: exactly one side ends
 //       40P01 (still all-or-nothing: the panel restore lands whole or restores
-//       nothing) and the state is consistent. 0200's header lists only the
-//       patient-lifecycle cycle as remaining.
+//       nothing) and the state is consistent. 0200's header lists this cycle
+//       (and the patient-lifecycle one) as remaining by design; only the PANEL
+//       side retries it.
 //   F1  PUC_ROUNDS free rounds: reclaim vs a three-way single-claim race on one
 //       panel - never split.
 //   F2  PUC_ROUNDS free rounds: panel restore vs a manual Restore of a random
@@ -151,7 +171,12 @@
 // CONTROL ROUNDS (--control) prove the proof can fail: each copies the two live
 // functions into a throwaway schema (puc_ctl_<hex>, never public - the stack is
 // shared) with ONE guard removed, reruns the forced scenarios against the copy
-// and passes only if the named scenarios FAIL in both modes:
+// and passes only if the named scenarios FAIL in both modes FOR THE EXPECTED
+// REASON (a regex over the failure text: "expected P0082, but it succeeded" for
+// the dropped row-count / predicate guards, the cycle's 40P01 for the dropped
+// visit lock). A scenario that fails because its interleaving was not reached,
+// a wait never happened or a statement timed out is infrastructure: it counts as
+// NOT caught and fails the round, as does any such failure elsewhere in it.
 //   A drops reclaim's row-count check          -> R1, R4, R13 must fail
 //   B drops reclaim's `status = 'requested'`   -> R13 must fail. (The plan named
 //     R3/R5; they cannot discriminate: `assigned_to is null` already refuses a
@@ -168,19 +193,20 @@
 //     waived-visit guard) takes the visit FOR UPDATE on every restored line
 //     anyway, so a restore queues at the visit with or without its own lock.
 //   E drops reclaim's id-ordered pre-lock      -> INFORMATIONAL, reported per mode.
-//     RESULT (this stack, 2026-10-01, four --control runs): R9 and R10 caught it
-//     in BOTH modes every time; R1 caught it in seq in three of the four runs and
-//     never in indexed. R6, R7 and R8 did NOT catch it in either mode, ever: R6
-//     needs two reclaims to visit the members in OPPOSITE order, which one plan
-//     never does; R7/R8 are single-conflict queues, which cannot form a cycle.
-//     R1 is not an outcome check - it notices the missing pre-lock through its
-//     own "reclaim holds the two earlier members while blocked" observation, so
-//     it only fires when the plan happens to lock a member before it blocks.
-//     What catches the mutant as an OUTCOME is the lock-order race R9/R10 (a
+//     RESULT (this stack, 2026-10-01, three --control runs with the forced
+//     indexed plans, identical each time): R9 and R10 caught it as a real
+//     40P01 deadlock in BOTH modes; R1 also tripped in both, but only through
+//     its own "the id-ordered pre-lock is not in effect (held 1/2 earlier
+//     members)" observation - a check of the lock, not an outcome - so it is
+//     reported as "tripped, not an outcome". R6, R7 and R8 did NOT catch it in
+//     either mode: R6 needs two reclaims to visit the members in OPPOSITE order,
+//     which one table-driven plan never does (an ARRAY-driven reclaim plan - one
+//     earlier unforced run of the indexed mode produced one - makes R6 deadlock
+//     under this mutant, which is why the pre-lock exists); R7/R8 are
+//     single-conflict queues, which cannot form a cycle. What catches the mutant
+//     as an OUTCOME under the prod plan shape is the lock-order race R9/R10 (a
 //     release that locks in id order vs a reclaim whose plan was first ARRANGED
-//     to visit the members in descending id order): a real 40P01. Without that
-//     arrangement the pre-lock is belt-and-braces under whatever plan the stack
-//     happens to choose.
+//     to visit the members in descending id order).
 // The control rounds do NOT cover the guards that live in triggers on public
 // tables (the holder guard 0190, the payment gate, the lifecycle lock): a
 // trigger on a public table fires for every session, so a mutant of it cannot
@@ -339,16 +365,24 @@ const MODE_GUCS: Record<Mode, string[]> = {
   indexed: ["set local enable_seqscan = off", "set local enable_bitmapscan = off"],
 };
 
-// The service_role session (the queue's admin client: the panel restore) also
-// turns nested loops off in indexed mode: that is what makes the local restore
-// UPDATE the prod Merge Join over test_requests_deleted_idx (with nested loops
-// on it is a Nested Loop over the same index - also table-driven, but not
-// prod's shape). The staff (authenticated) session keeps nested loops on, which
-// is what gives the prod reclaim shape.
+// Left to the planner, a few-row local table gives a different plan from one
+// run to the next (heap bloat and statistics decide): the reclaim UPDATE
+// flipped between prod's table-driven Hash Join and an ARRAY-driven Nested Loop
+// of pkey lookups. Indexed mode therefore FORCES the prod join method for each
+// call, per role:
+//   authenticated (the staff reclaim): nested loops and merge joins off, so the
+//     array is always the hashed side of a Hash Join (t.id = x.id) whose table
+//     side is an index scan - table-driven like prod. (Prod also nests a
+//     visits_pkey lookup above it; locally that join is a Hash Join too. It
+//     only reads the visits row, so it does not touch the lock order.)
+//   service_role (the queue's admin client: the panel restore): nested loops and
+//     hash joins off, so the plan is a Merge Join - prod's, on deleted_at over
+//     test_requests_deleted_idx with only the array sorted.
 function gucsFor(mode: Mode, role: "authenticated" | "service_role"): string[] {
-  return mode === "indexed" && role === "service_role"
-    ? [...MODE_GUCS[mode], "set local enable_nestloop = off"]
-    : MODE_GUCS[mode];
+  if (mode !== "indexed") return MODE_GUCS[mode];
+  return role === "service_role"
+    ? [...MODE_GUCS[mode], "set local enable_nestloop = off", "set local enable_hashjoin = off"]
+    : [...MODE_GUCS[mode], "set local enable_nestloop = off", "set local enable_mergejoin = off"];
 }
 
 // BEGIN as a staff member (JWT sub, role authenticated), or as service_role.
@@ -559,7 +593,7 @@ async function mustWait(a: Actor, why: string, rel?: string): Promise<string[]> 
   }
   throw new Fail(
     rel && seen.length
-      ? `interleaving not reached: ${a.name} waited on a row of [${seen.join(",")}], not ${rel} (${why})`
+      ? `unexpected wait: ${a.name} waited on a row of [${seen.join(",")}], not ${rel} (${why})`
       : `interleaving not reached: ${a.name} never waited on a row lock (${why})`,
   );
 }
@@ -708,8 +742,8 @@ const flat = (lines: string[]) =>
 // Does this mode's plan have prod's shape? (Printed, not asserted: the local
 // planner's choice moves with table statistics.)
 const prodReclaimShape = (lines: string[]) =>
-  /Nested Loop/.test(flat(lines)) &&
   /Hash Join/.test(flat(lines)) &&
+  lines.some((l) => /Hash Cond: \(t\.id = x\.id\)/.test(l)) &&
   /Index Scan using idx_test_requests_status/.test(flat(lines)) &&
   drivenBy(lines) === "table";
 const prodRestoreShape = (lines: string[]) =>
@@ -909,9 +943,31 @@ function expectOk(label: string, o: N, n: number): void {
   if (o.v !== n) throw new Fail(`${label}: expected ${n} rows, got ${o.v}`);
 }
 
-function expectCode(label: string, o: Out<unknown>, code: string): void {
+// With `msg`, the refusal must also carry that message: P0082 is raised for
+// several reasons, and the reason is part of what each scenario proves.
+function expectCode(label: string, o: Out<unknown>, code: string, msg?: RegExp): void {
   if (o.ok) throw new Fail(`${label}: expected ${code}, but it succeeded`);
   if (o.code !== code) throw new Fail(`${label}: expected ${code}, got ${o.code} ${o.message}`);
+  if (msg && !msg.test(o.message)) throw new Fail(`${label}: ${code} carried the wrong message: ${o.message}`);
+}
+
+// The row-count refusals of the two functions (0200).
+const RECLAIM_REFUSED = /claimed or changed part/;
+const RESTORE_REFUSED = /already restored or changed/;
+
+// fn_queue_delete_cascade keeps visits.total_php in step with the live priced
+// lines (100 each in the P / Q / R fixtures): a delete / restore that landed
+// half-way, or one a refused call rolled back unevenly, shows up here.
+async function expectTotal(label: string, visit: string): Promise<void> {
+  const { rows } = await monitor.query<{ t: string; n: string }>(
+    `select v.total_php::text as t,
+            (select count(*) from public.test_requests l where l.visit_id = v.id and l.deleted_at is null)::text as n
+       from public.visits v where v.id = $1`,
+    [visit],
+  );
+  const t = Number(rows[0].t);
+  const n = Number(rows[0].n);
+  if (t !== 100 * n) throw new Fail(`${label}: visits.total_php is ${t}, expected 100 x ${n} live lines`);
 }
 
 // A release that released exactly `released` and refused `refused` (id -> code).
@@ -1175,10 +1231,10 @@ async function forcedScenarios(mode: Mode): Promise<void> {
     // holding the two earlier members (and has written nothing) while blocked.
     const held = await lockedBySomeoneElse([p0, p1]);
     if (held.length !== 2) {
-      throw new Fail(`interleaving not reached: M1 held ${held.length}/2 earlier members while blocked`);
+      throw new Fail(`the reclaim's id-ordered pre-lock is not in effect: M1 held ${held.length}/2 earlier members while blocked`);
     }
     await c.c.query("commit");
-    expectCode("M1 reclaim", await pr, "P0082");
+    expectCode("M1 reclaim", await pr, "P0082", RECLAIM_REFUSED);
     await r.c.query("rollback");
     await expectState("after", P, ["req:-", "req:-", "ip:M2"]);
     return `M1 held ${held.length}/2 earlier members while blocked; all released`;
@@ -1191,7 +1247,7 @@ async function forcedScenarios(mode: Mode): Promise<void> {
     expectOk("M2 single claim of p1", await claimOne(c, p1), 1);
     await begin(a, mode);
     const pa = reclaim(a, P, [fx.med1, fx.med2, fx.med1], STARTED);
-    await mustWait(a, "A1's reclaim reaches the member M2 is claiming");
+    await mustWait(a, "A1's reclaim reaches the member M2 is claiming", "test_requests");
     await c.c.query("rollback");
     expectOk("A1 reclaim", await pa, 3);
     await a.c.query("commit");
@@ -1206,7 +1262,7 @@ async function forcedScenarios(mode: Mode): Promise<void> {
     expectOk("M1 reclaim", await reclaim(r, P, x3(fx.med1), STARTED), 3);
     await begin(c, mode);
     const pc = claimPanel(c, P);
-    await mustWait(c, "M2's panel claim queues behind the reclaim");
+    await mustWait(c, "M2's panel claim queues behind the reclaim", "test_requests");
     await r.c.query("commit");
     expectCode("M2 claim", await pc, "P0077");
     await c.c.query("rollback");
@@ -1223,7 +1279,7 @@ async function forcedScenarios(mode: Mode): Promise<void> {
     const pr = reclaim(r, P, x3(fx.med1), STARTED);
     await mustWait(r, "M1's reclaim reaches the member being deleted", "test_requests");
     await del.c.query("commit");
-    expectCode("M1 reclaim", await pr, "P0082");
+    expectCode("M1 reclaim", await pr, "P0082", RECLAIM_REFUSED);
     await r.c.query("rollback");
     await expectState("after", P, ["req:-", "del/req:-", "req:-"]);
   });
@@ -1239,8 +1295,8 @@ async function forcedScenarios(mode: Mode): Promise<void> {
       await begin(b, mode);
       const pa = andEnd(a, reclaim(a, P, x3(fx.med1), STARTED));
       const pb = andEnd(b, reclaim(b, P, x3(fx.med1), STARTED));
-      await mustWait(a, "tab 1 lined up behind the gate");
-      await mustWait(b, "tab 2 lined up behind the gate");
+      await mustWait(a, "tab 1 lined up behind the gate", "test_requests");
+      await mustWait(b, "tab 2 lined up behind the gate", "test_requests");
       await gate.query("rollback");
       [ra, rb] = await Promise.all([pa, pb]);
     } finally {
@@ -1251,6 +1307,7 @@ async function forcedScenarios(mode: Mode): Promise<void> {
     if (oks.length !== 1 || errs.length !== 1 || errs[0].code !== "P0082") {
       throw new Fail(`expected one success + one P0082, got tab1=${tally([ra])} tab2=${tally([rb])}`);
     }
+    if (!RECLAIM_REFUSED.test(errs[0].message)) throw new Fail(`loser's P0082 carried the wrong message: ${errs[0].message}`);
     await expectState("after", P, x3("ip:M1"));
   });
 
@@ -1267,8 +1324,8 @@ async function forcedScenarios(mode: Mode): Promise<void> {
       await begin(b, mode);
       const pa = andEnd(a, reclaim(a, [...P, ...Q], x3(fx.med1).concat(x3(fx.med1)), nulls(6)));
       const pb = andEnd(b, reclaim(b, [...rev(Q), ...rev(P)], x3(fx.med2).concat(x3(fx.med2)), nulls(6)));
-      await mustWait(a, "M1 lined up behind the gate");
-      await mustWait(b, "M2 lined up behind the gate");
+      await mustWait(a, "M1 lined up behind the gate", "test_requests");
+      await mustWait(b, "M2 lined up behind the gate", "test_requests");
       await gate.query("rollback");
       [ra, rb] = await Promise.all([pa, pb]);
     } finally {
@@ -1279,6 +1336,7 @@ async function forcedScenarios(mode: Mode): Promise<void> {
     if (oks.length !== 1 || errs.length !== 1 || errs[0].code !== "P0082") {
       throw new Fail(`expected one success (6) + one P0082, got M1=${tally([ra])} M2=${tally([rb])}`);
     }
+    if (!RECLAIM_REFUSED.test(errs[0].message)) throw new Fail(`loser's P0082 carried the wrong message: ${errs[0].message}`);
     const winner = ra.ok ? "M1" : "M2";
     await expectState("P", P, x3(`ip:${winner}`));
     await expectState("Q", Q, x3(`ip:${winner}`));
@@ -1369,9 +1427,9 @@ async function forcedScenarios(mode: Mode): Promise<void> {
     expectOk("cancel p1", await cancelMember(mv, p1), 1);
     await begin(r, mode);
     const pr = reclaim(r, P, x3(fx.med1), STARTED);
-    await mustWait(r, "M1's reclaim reaches the member being moved");
+    await mustWait(r, "M1's reclaim reaches the member being moved", "test_requests");
     await mv.c.query("commit");
-    expectCode("M1 reclaim", await pr, "P0082");
+    expectCode("M1 reclaim", await pr, "P0082", RECLAIM_REFUSED);
     await r.c.query("rollback");
     await expectState("after", P, ["req:-", "cancelled:-", "req:-"]);
   });
@@ -1387,9 +1445,10 @@ async function forcedScenarios(mode: Mode): Promise<void> {
     const pp = restore(pan, fx.visits.P, P, stamps);
     await mustWait(pan, "the panel restore queues behind the manual Restore", "visits");
     await man.c.query("commit");
-    expectCode("panel restore", await pp, "P0082");
+    expectCode("panel restore", await pp, "P0082", RESTORE_REFUSED);
     await pan.c.query("rollback");
     await expectStamps("after", P, [stamps[0], null, stamps[2]]);
+    await expectTotal("after", fx.visits.P);
   });
 
   await scenario(s("S2", "manual Restore rolls back -> panel restore lands whole"), async () => {
@@ -1405,6 +1464,7 @@ async function forcedScenarios(mode: Mode): Promise<void> {
     expectOk("panel restore", await pp, 3);
     await pan.c.query("commit");
     await expectStamps("after", P, [null, null, null]);
+    await expectTotal("after", fx.visits.P);
   });
 
   await scenario(s("S3", "two panel restores, released together -> one lands, the other P0082"), async () => {
@@ -1419,8 +1479,16 @@ async function forcedScenarios(mode: Mode): Promise<void> {
       await begin(b, mode);
       const pa = andEnd(a, restore(a, fx.visits.P, P, stamps));
       const pb = andEnd(b, restore(b, fx.visits.P, P, stamps));
-      await mustWait(a, "tab 1 lined up behind the gate");
-      await mustWait(b, "tab 2 lined up behind the visit lock / gate");
+      // Which tab wins the visit lock is a race between two statements fired
+      // together: one must be waiting on a line (gate), the other on the visit.
+      await mustWait(a, "tab 1 lined up behind the visit lock or the gate");
+      await mustWait(b, "tab 2 lined up behind the visit lock or the gate");
+      const ar = await waitRelations(a.pid);
+      const br = await waitRelations(b.pid);
+      const split = (ar.includes("visits") && br.includes("test_requests")) || (br.includes("visits") && ar.includes("test_requests"));
+      if (!split) {
+        throw new Fail(`unexpected wait: expected one tab on the visit and one on a line, got tab 1 [${ar.join(",")}] tab 2 [${br.join(",")}]`);
+      }
       await gate.query("rollback");
       [ra, rb] = await Promise.all([pa, pb]);
     } finally {
@@ -1431,7 +1499,9 @@ async function forcedScenarios(mode: Mode): Promise<void> {
     if (oks.length !== 1 || errs.length !== 1 || errs[0].code !== "P0082") {
       throw new Fail(`expected one success + one P0082, got tab1=${tally([ra])} tab2=${tally([rb])}`);
     }
+    if (!RESTORE_REFUSED.test(errs[0].message)) throw new Fail(`loser's P0082 carried the wrong message: ${errs[0].message}`);
     await expectStamps("after", P, [null, null, null]);
+    await expectTotal("after", fx.visits.P);
   });
 
   await scenario(s("S4", "restore-then-re-delete of one member commits first (new deleted_at) -> panel restore P0082, nothing restored"), async () => {
@@ -1445,11 +1515,12 @@ async function forcedScenarios(mode: Mode): Promise<void> {
     const pp = restore(pan, fx.visits.P, P, stamps);
     await mustWait(pan, "the panel restore queues behind the restore-and-re-delete", "visits");
     await other.c.query("commit");
-    expectCode("panel restore", await pp, "P0082");
+    expectCode("panel restore", await pp, "P0082", RESTORE_REFUSED);
     await pan.c.query("rollback");
     const got = await stampsOf(P);
     if (got[0] !== stamps[0] || got[2] !== stamps[2]) throw new Fail(`p0/p2 lost their original deleted_at: [${got.join(" | ")}]`);
     if (!got[1] || got[1] === stamps[1]) throw new Fail("p1 should be deleted at a NEW deleted_at");
+    await expectTotal("after", fx.visits.P);
   });
 
   await scenario(s("S5", "visit soft-delete commits first, panel restore queued -> P0082 with the visit message"), async () => {
@@ -1467,6 +1538,7 @@ async function forcedScenarios(mode: Mode): Promise<void> {
     if (!o.ok && !/visit itself is deleted/i.test(o.message)) throw new Fail(`wrong P0082 message: ${o.message}`);
     await pan.c.query("rollback");
     await expectStamps("after", P, stamps);
+    await expectTotal("after", fx.visits.P);
   });
 
   await scenario(s("S6a", "release holds first: panel restore waits on the visit lock, then lands whole; no 40P01"), async () => {
@@ -1519,9 +1591,9 @@ async function forcedScenarios(mode: Mode): Promise<void> {
       await begin(man, mode);
       await begin(pan, mode);
       const pm = andEnd(man, manualRestore(man, [p1], fx.visits.P));
-      await mustWait(man, "the manual Restore queues on the gated member");
+      await mustWait(man, "the manual Restore queues on the gated member", "test_requests");
       const pp = andEnd(pan, restore(pan, fx.visits.P, P, stamps));
-      await mustWait(pan, "the panel restore holds the visit + p0 and queues on the gated member");
+      await mustWait(pan, "the panel restore holds the visit + p0 and queues on the gated member", "test_requests");
       await gate.query("rollback");
       [rm, rp] = await Promise.all([pm, pp]);
     } finally {
@@ -1631,6 +1703,7 @@ async function freeRaces(mode: Mode, rounds: number): Promise<void> {
           if (g !== want) throw new Fail(`round ${i}: after a refused panel restore member ${j} is ${g ?? "live"} (expected ${want ?? "live"})`);
         }
       }
+      await expectTotal(`round ${i}`, fx.visits.P);
       const key = rp.ok ? "panel landed" : rp.code === "40P01" ? "panel 40P01" : "panel P0082";
       t[key] = (t[key] ?? 0) + 1;
       await closeActors();
@@ -1780,6 +1853,47 @@ async function seed(): Promise<void> {
   }
 }
 
+// The probe statements above are hand-copied from 0200's function bodies. If a
+// later migration changes the live text, the plans and the arrangement would be
+// measured on a statement the function no longer runs: compare them with
+// pg_get_functiondef (whitespace-normalised, parameters mapped back to the
+// function's own names) and refuse to run on a mismatch.
+function normSql(sql: string): string {
+  return sql
+    .replace(/::(?:uuid\[\]|timestamptz\[\]|uuid)/g, "")
+    .replace(/\s+/g, " ")
+    .replace(/\s*([(),=])\s*/g, "$1")
+    .trim()
+    .toLowerCase();
+}
+
+async function assertProbesMatchLiveSql(): Promise<void> {
+  const defs: Record<string, string> = {};
+  for (const [fn, sig] of [
+    ["reclaim_panel_members", "uuid[], uuid[], timestamptz[]"],
+    ["restore_panel_members", "uuid, uuid[], timestamptz[]"],
+  ]) {
+    const { rows } = await monitor.query<{ d: string }>(`select pg_get_functiondef('public.${fn}(${sig})'::regprocedure) as d`);
+    defs[fn] = normSql(rows[0].d);
+  }
+  const checks: Array<[string, string, string, Record<string, string>]> = [
+    ["RECLAIM_UPDATE", RECLAIM_UPDATE, "reclaim_panel_members", { $1: "p_test_request_ids", $2: "p_holders", $3: "p_started_at" }],
+    ["RECLAIM_PRELOCK", RECLAIM_PRELOCK.replace(/^select /, "perform "), "reclaim_panel_members", { $1: "p_test_request_ids" }],
+    ["RESTORE_UPDATE", RESTORE_UPDATE, "restore_panel_members", { $1: "p_visit_id", $2: "p_test_request_ids", $3: "p_deleted_at" }],
+    ["RESTORE_PRELOCK", RESTORE_PRELOCK.replace(/^select /, "perform "), "restore_panel_members", { $1: "p_test_request_ids", $2: "p_visit_id" }],
+  ];
+  for (const [name, sql, fn, map] of checks) {
+    let probe = normSql(sql);
+    for (const [k, v] of Object.entries(map)) probe = probe.split(k.toLowerCase()).join(v);
+    if (!defs[fn].includes(probe)) {
+      throw new Error(
+        `probe statement ${name} is no longer part of the live public.${fn} (pg_get_functiondef) - the plans and lock-order arrangement would be measured on SQL the function does not run. Update the probe, then re-check the header.`,
+      );
+    }
+  }
+  console.log("  probe statements match the live function text (4/4)");
+}
+
 // Print the plan each mode gives the statements inside the functions, and fail
 // a mode whose pre-lock is not LockRows over an id-ordered input.
 async function printPlans(): Promise<void> {
@@ -1797,9 +1911,21 @@ async function printPlans(): Promise<void> {
     console.log(`  plan [${tag}] reclaim UPDATE:    ${flat(rp)}   (${drivenBy(rp)}-driven)`);
     console.log(`  plan [${tag}] restore pre-lock:  ${flat(pr)}`);
     console.log(`  plan [${tag}] restore UPDATE:    ${flat(rs)}   (${drivenBy(rs)}-driven)`);
-    console.log(
-      `  plan [${tag}] prod shape reproduced: reclaim ${prodReclaimShape(rp) ? "yes" : "no"}, restore ${prodRestoreShape(rs) ? "yes" : "no"}`,
-    );
+    const shapeRc = prodReclaimShape(rp);
+    const shapeRs = prodRestoreShape(rs);
+    console.log(`  plan [${tag}] prod shape reproduced: reclaim ${shapeRc ? "yes" : "no"}, restore ${shapeRs ? "yes" : "no"}`);
+    if (mode === "indexed") {
+      // Indexed mode exists to stand in for prod's plans: if the local planner
+      // stops producing them, say so instead of quietly proving less.
+      const ok = shapeRc && shapeRs;
+      const name = "plan [indexed] reproduces prod's reclaim and restore plan shapes";
+      results.push({
+        name,
+        ok,
+        detail: ok ? "" : `reclaim ${shapeRc ? "yes" : "NO"}, restore ${shapeRs ? "yes" : "NO"} - re-check the header's prod plans and this mode's GUCs`,
+      });
+      console.log(`  ${ok ? "PASS" : "FAIL"}  ${name}${ok ? "" : " - re-check the header's prod plans and this mode's GUCs"}`);
+    }
     for (const [what, lines] of [
       ["reclaim", pl],
       ["restore", pr],
@@ -1825,15 +1951,30 @@ async function printPlans(): Promise<void> {
 
 type FnName = "reclaim_panel_members" | "restore_panel_members";
 
+// A mutant is CAUGHT by a scenario only when that scenario fails for the
+// expected reason (a regex over its Fail text). Anything else - a scenario that
+// failed because the interleaving was not reached, a wait that never happened,
+// a timeout - is infrastructure, not detection, and fails the round.
+interface Catch {
+  id: string;
+  reason: RegExp;
+}
+
 interface Mutant {
   key: string;
   what: string;
   fn: FnName;
   from: string;
   to: string;
-  mustFail: string[]; // empty = informational
+  mustFail: Catch[]; // empty = informational
   modes: Mode[];
 }
+
+const INFRA =
+  /interleaving not reached|never waited|did not answer|connection cap|could not make|blocked on a row lock but should|plan shape changed|canceling statement|lock timeout|terminating connection|connection error|Connection terminated|ECONN|fixture:/i;
+// The mutant's guard let a refused call through.
+const SUCCEEDED = /expected P0082, but it succeeded/;
+const DEADLOCK = /deadlock \(40P01\)/;
 
 const MUTANTS: Mutant[] = [
   {
@@ -1842,7 +1983,11 @@ const MUTANTS: Mutant[] = [
     fn: "reclaim_panel_members",
     from: "if v_reclaimed <> v_wanted then",
     to: "if false then",
-    mustFail: ["R1", "R4", "R13"],
+    mustFail: [
+      { id: "R1", reason: SUCCEEDED },
+      { id: "R4", reason: SUCCEEDED },
+      { id: "R13", reason: SUCCEEDED },
+    ],
     modes: REAL_MODES,
   },
   {
@@ -1851,7 +1996,7 @@ const MUTANTS: Mutant[] = [
     fn: "reclaim_panel_members",
     from: "and t.status = 'requested'",
     to: "",
-    mustFail: ["R13"],
+    mustFail: [{ id: "R13", reason: SUCCEEDED }],
     modes: REAL_MODES,
   },
   {
@@ -1860,7 +2005,10 @@ const MUTANTS: Mutant[] = [
     fn: "restore_panel_members",
     from: "if v_restored <> v_wanted then",
     to: "if false then",
-    mustFail: ["S1", "S4"],
+    mustFail: [
+      { id: "S1", reason: SUCCEEDED },
+      { id: "S4", reason: SUCCEEDED },
+    ],
     modes: REAL_MODES,
   },
   {
@@ -1869,7 +2017,7 @@ const MUTANTS: Mutant[] = [
     fn: "restore_panel_members",
     from: "and t.deleted_at = x.deleted_at",
     to: "",
-    mustFail: ["S4"],
+    mustFail: [{ id: "S4", reason: SUCCEEDED }],
     modes: REAL_MODES,
   },
   {
@@ -1878,7 +2026,10 @@ const MUTANTS: Mutant[] = [
     fn: "restore_panel_members",
     from: "perform 1 from public.visits v where v.id = p_visit_id for no key update;",
     to: "",
-    mustFail: ["S7", "S8"],
+    mustFail: [
+      { id: "S7", reason: /expected the cycle to end exactly one side with 40P01/ },
+      { id: "S8", reason: DEADLOCK },
+    ],
     modes: REAL_MODES,
   },
   {
@@ -1927,35 +2078,43 @@ async function controlRounds(): Promise<void> {
       sink = caught;
       fnSchema = schema;
       for (const mode of m.modes) await forcedScenarios(mode);
-      const failedIds = caught.filter((r) => !r.ok).map((r) => r.name);
+      const failedRes = caught.filter((r) => !r.ok);
+      const idOf = (n: string) => n.split(" ")[1];
       const failedIn = (mode: Mode) =>
-        failedIds
-          .filter((n) => n.startsWith(`[${mode}] `))
-          .map((n) => n.split(" ")[1]);
+        failedRes.filter((r) => r.name.startsWith(`[${mode}] `)).map((r) => ({ id: idOf(r.name), detail: r.detail }));
+      // Any scenario that failed for an infrastructure reason makes the round
+      // untrustworthy, named or not.
+      const infra = failedRes.filter((r) => INFRA.test(r.detail)).map((r) => `${r.name.split(" ").slice(0, 2).join(" ")}: ${r.detail.slice(0, 120)}`);
 
       if (m.mustFail.length === 0) {
-        // Informational: report per mode, never fake a failure.
+        // Informational: report per mode what caught it AS AN OUTCOME (a real
+        // deadlock) and what merely tripped, and never fake a failure.
         const lines = m.modes.map((mode) => {
           const f = failedIn(mode);
-          return `${mode}: ${f.length ? `caught by ${f.join(", ")}` : "NOT caught"}`;
+          const outcome = f.filter((x) => DEADLOCK.test(x.detail) && !INFRA.test(x.detail)).map((x) => x.id);
+          const other = f.filter((x) => !outcome.includes(x.id)).map((x) => x.id);
+          return `${mode}: ${outcome.length ? `caught as a deadlock by ${outcome.join(", ")}` : "NOT caught as an outcome"}${other.length ? ` (also tripped, not an outcome: ${other.join(", ")})` : ""}`;
         });
-        const any = m.modes.some((mode) => failedIn(mode).length > 0);
-        const detail = `${lines.join("; ")}${
-          any ? "" : " - the pre-lock is belt-and-braces under every plan tried"
-        }`;
-        results.push({ name: `control ${m.key} (${m.what})`, ok: true, detail });
-        console.log(`  INFO  control ${m.key} - ${detail}`);
+        const any = m.modes.some((mode) => failedIn(mode).some((x) => DEADLOCK.test(x.detail) && !INFRA.test(x.detail)));
+        const ok = infra.length === 0;
+        const detail = `${lines.join("; ")}${any ? "" : " - the pre-lock is belt-and-braces under every plan tried"}${ok ? "" : ` - INFRASTRUCTURE FAILURES: ${infra.join(" | ")}`}`;
+        results.push({ name: `control ${m.key} (${m.what})`, ok, detail });
+        console.log(`  ${ok ? "INFO" : "FAIL"}  control ${m.key} - ${detail}`);
         continue;
       }
       const missed = m.modes.flatMap((mode) =>
-        m.mustFail
-          .filter((id) => !failedIds.some((n) => n.startsWith(`[${mode}] ${id} `)))
-          .map((id) => `[${mode}] ${id}`),
+        m.mustFail.flatMap((c) => {
+          const hit = caught.find((r) => r.name.startsWith(`[${mode}] ${c.id} `));
+          if (!hit || hit.ok) return [`[${mode}] ${c.id} did not fail`];
+          if (INFRA.test(hit.detail)) return [`[${mode}] ${c.id} failed for an infrastructure reason (${hit.detail.slice(0, 100)})`];
+          if (!c.reason.test(hit.detail)) return [`[${mode}] ${c.id} failed for the wrong reason (${hit.detail.slice(0, 100)})`];
+          return [];
+        }),
       );
-      const ok = missed.length === 0;
+      const ok = missed.length === 0 && infra.length === 0;
       const detail = ok
-        ? `caught by ${m.mustFail.join(", ")} in ${m.modes.join(" + ")} (${failedIds.length} scenario failure(s) in all)`
-        : `NOT caught by ${missed.join(", ")}`;
+        ? `caught by ${m.mustFail.map((c) => `${c.id} [${c.reason.source}]`).join(", ")} in ${m.modes.join(" + ")} (${failedRes.length} scenario failure(s) in all)`
+        : [...missed, ...infra.map((i) => `infrastructure failure ${i}`)].join("; ");
       results.push({ name: `control ${m.key} (${m.what})`, ok, detail });
       console.log(`  ${ok ? "PASS" : "FAIL"}  control ${m.key} - ${detail}`);
     } finally {
@@ -1985,7 +2144,12 @@ async function teardown(): Promise<void> {
 }
 
 async function main(): Promise<void> {
-  const rounds = Number(process.env.PUC_ROUNDS ?? 25);
+  const rawRounds = process.env.PUC_ROUNDS ?? "25";
+  if (!/^[1-9]\d*$/.test(rawRounds)) {
+    console.error(`[panel-undo:concurrency-proof] PUC_ROUNDS must be an integer >= 1 (got "${rawRounds}").`);
+    process.exit(2);
+  }
+  const rounds = Number(rawRounds);
   monitor = await connect();
 
   // One run at a time on the shared stack: the startup sweep below removes
@@ -2016,6 +2180,7 @@ async function main(): Promise<void> {
       "select count(*) as n from pg_proc where proname in ('reclaim_panel_members', 'restore_panel_members', 'release_visit_results', 'claim_panel_members')",
     );
     if (Number(fn[0].n) !== 4) throw new Error("0191 / 0198 / 0200 are not all applied to the local stack");
+    await assertProbesMatchLiveSql();
 
     await sweepTagged("puc-");
     // Control-round schemas a crashed run left behind (always puc_ctl_<hex>).
@@ -2026,6 +2191,14 @@ async function main(): Promise<void> {
     console.log(`panel-undo concurrency proof - fixtures tagged ${TAG}`);
     await seed();
     seeded = true;
+    // The plans below depend on table statistics AND on the heap's size, and on
+    // this stack (a few rows, churned by every run) autovacuum lags the sweep +
+    // seed above by arbitrary amounts: a bloated heap from the previous run
+    // flipped the reclaim UPDATE between prod's table-driven shape and an
+    // array-driven Nested Loop. VACUUM (ANALYZE) first, so the plan the run
+    // measures is the plan for the data it actually has. It writes no rows and
+    // blocks no DML.
+    await monitor.query("vacuum (analyze) public.test_requests, public.visits");
     await printPlans();
 
     for (const mode of REAL_MODES) {

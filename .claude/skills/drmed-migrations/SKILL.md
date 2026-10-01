@@ -180,7 +180,7 @@ same rows at the same moment:
 
 A `supabase/tests/00NN_*_smoke.sql` file proves each refusal one statement after another in
 ONE transaction — it can never prove a race, because a transaction never waits on itself. Ship
-both. Models: `scripts/panel-claim-concurrency-proof.ts` (`npm run panel-claim:concurrency-proof -- --control`, #258, 0191), `scripts/report-release-concurrency-proof.ts` (`npm run report-release:concurrency-proof -- --control`, 0198 — release vs release / undo / claim / unclaim / payment void, package siblings, and a legacy-path reproduction of the split it fixes) and the older dblink `supabase/tests/0183_waiver_race_smoke.sql`.
+both. Models: `scripts/panel-claim-concurrency-proof.ts` (`npm run panel-claim:concurrency-proof -- --control`, #258, 0191), `scripts/report-release-concurrency-proof.ts` (`npm run report-release:concurrency-proof -- --control`, 0198 — release vs release / undo / claim / unclaim / payment void, package siblings, and a legacy-path reproduction of the split it fixes) `scripts/panel-undo-concurrency-proof.ts` (`npm run panel-undo:concurrency-proof -- --control`, 0200 — panel re-claim / restore vs single claim, queue delete, manual Restore, visit delete and 0198's release, with control mutants that must fail for the right reason, an asserted prod plan shape, and a startup check that its probe SQL is still the live function text) and the older dblink `supabase/tests/0183_waiver_race_smoke.sql`.
 
 **`pg` runner or dblink?** Default to the `pg` runner.
 
