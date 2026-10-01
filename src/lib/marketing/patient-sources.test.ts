@@ -3,8 +3,10 @@ import {
   NOT_RECORDED, bucketLabel, capRows, channelLabel, comparisonPeriod, channelTable, newPatientsTile, chartData, classifyReportError,
   costPerNewPatient, parsePatientSourcesReport, formatNewToday, parseGrain, parseMode, previousPeriod, seriesCsvRows, sheetBanner,
   asOfLabel, lastCompletedWeek, previousWeek, lastCompletedMonth, previousMonth, trendWeeks, trendCardData, todayRows,
+  channelDeltas, biggestMover, sundayObservation, sheetDatesText, type ChannelDelta,
   type SeriesRow, type SummaryRow,
 } from "./patient-sources";
+import { manilaDate } from "@/lib/dates/manila";
 
 const row = (bucket_start: string, channel: string, confirmed: number, unconfirmed = 0): SeriesRow =>
   ({ bucket_start, channel, confirmed, unconfirmed });
@@ -323,5 +325,101 @@ describe("trendCardData", () => {
   it("describes itself for screen readers", () => {
     const t = trendCardData([d("2026-09-22", "walk_in", 2), d("2026-09-15", "walk_in", 1)], [], weeks);
     expect(t.ariaLabel).toBe("New patients per week for 8 weeks. Last week 2, up 100% on the week before.");
+  });
+});
+
+const srow = (bucket_start: string, channel: string, confirmed: number, unconfirmed = 0): SeriesRow => ({
+  bucket_start, channel, confirmed, unconfirmed,
+});
+
+describe("channelDeltas", () => {
+  it("adds confirmed + unconfirmed and keeps a channel that fell to zero", () => {
+    const cur = [srow("2026-10-01", "walk_in", 5, 1), srow("2026-10-02", "walk_in", 2)];
+    const prev = [srow("2026-09-24", "walk_in", 3), srow("2026-09-24", "online_google", 4)];
+    expect(
+      channelDeltas(cur, prev).map(({ channel, now, before, change, pct }) => ({ channel, now, before, change, pct })),
+    ).toEqual([
+      { channel: "walk_in", now: 8, before: 3, change: 5, pct: 5 / 3 },
+      { channel: "online_google", now: 0, before: 4, change: -4, pct: -1 },
+    ]);
+  });
+
+  it("has a null pct when there was nothing before, and a channel new this period is included", () => {
+    const [d] = channelDeltas([srow("2026-10-01", "walk_in", 3)], []);
+    expect(d).toMatchObject({ channel: "walk_in", now: 3, before: 0, change: 3, pct: null });
+  });
+
+  it("returns nothing when there is no comparison period", () => {
+    expect(channelDeltas([srow("2026-10-01", "walk_in", 3)], null)).toEqual([]);
+  });
+
+  it("orders like the channel table: this period's total, then label", () => {
+    const cur = [srow("2026-10-01", "online_google", 2), srow("2026-10-01", "walk_in", 2)];
+    const out = channelDeltas(cur, []).map((d) => d.label);
+    expect(out).toEqual([...out].sort((a, b) => a.localeCompare(b)));
+  });
+});
+
+describe("biggestMover", () => {
+  const d = (channel: string, now: number, before: number): ChannelDelta => ({
+    channel, label: channelLabel(channel), now, before, change: now - before,
+    pct: before === 0 ? null : (now - before) / before,
+  });
+
+  it("is null when no channel moved by 3 or more", () => {
+    expect(biggestMover([d("a", 5, 3), d("b", 1, 3)])).toBeNull(); // +2 and -2
+    expect(biggestMover([])).toBeNull();
+  });
+  it("accepts a move of exactly 3 up or down", () => {
+    expect(biggestMover([d("a", 6, 3)])?.channel).toBe("a");
+    expect(biggestMover([d("b", 0, 3)])?.channel).toBe("b");
+  });
+  it("picks the largest absolute change", () => {
+    expect(biggestMover([d("a", 8, 3), d("b", 0, 6)])?.channel).toBe("b"); // +5 vs -6
+  });
+  it("breaks a tie on |change| by the larger |pct|, with null ranking last", () => {
+    expect(biggestMover([d("a", 10, 6), d("b", 4, 0)])?.channel).toBe("a"); // +4 (67%) vs +4 (null)
+    expect(biggestMover([d("a", 4, 0), d("b", 10, 6)])?.channel).toBe("b");
+    expect(biggestMover([d("a", 7, 3), d("b", 3, 7)])?.channel).toBe("a"); // +4 (133%) vs -4 (57%)
+  });
+  it("breaks a full tie by list order (the channel-table order)", () => {
+    expect(biggestMover([d("a", 6, 3), d("b", 0, 3)])?.channel).toBe("a"); // +3 (100%) vs -3 (100%)
+    expect(biggestMover([d("b", 0, 3), d("a", 6, 3)])?.channel).toBe("b");
+  });
+});
+
+describe("sundayObservation", () => {
+  // 2026-10-04 and 2026-09-27 are Sundays.
+  const cur = [srow("2026-10-04", "walk_in", 2, 1), srow("2026-10-01", "walk_in", 9)];
+  it("reports Sunday activity this period when the period before recorded none", () => {
+    expect(sundayObservation(cur, [srow("2026-09-29", "walk_in", 4)], "week")).toBe(
+      "Sunday activity was recorded this week (3 served); none was recorded on Sunday the week before.",
+    );
+    expect(sundayObservation(cur, [], "month")).toBe(
+      "Sunday activity was recorded this month (3 served); none was recorded on Sunday the month before.",
+    );
+  });
+  it("says nothing when the period before also had Sunday activity", () => {
+    expect(sundayObservation(cur, [srow("2026-09-27", "walk_in", 1)], "week")).toBeNull();
+  });
+  it("says nothing when this period had none, or when there is no comparison", () => {
+    expect(sundayObservation([srow("2026-10-01", "walk_in", 9)], [], "week")).toBeNull();
+    expect(sundayObservation(cur, null, "week")).toBeNull();
+    expect(sundayObservation([], [], "week")).toBeNull();
+  });
+});
+
+describe("sheetDatesText", () => {
+  it("is the page's wording: service dates per tab, then the registration date", () => {
+    expect(
+      sheetDatesText({ sheet_last_dates: { lab: "2026-09-30", consult: "2026-09-29", customers: "2026-09-28" } }),
+    ).toBe(
+      ` Latest service date in the sheet: Lab ${manilaDate("2026-09-30")} · Consultations ${manilaDate("2026-09-29")}. ` +
+        `Latest registration date in the sheet: ${manilaDate("2026-09-28")}.`,
+    );
+  });
+  it("skips tabs with no date and is empty when there are none", () => {
+    expect(sheetDatesText({ sheet_last_dates: { lab: null, customers: null } })).toBe("");
+    expect(sheetDatesText({ sheet_last_dates: {} })).toBe("");
   });
 });
