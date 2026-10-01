@@ -11,10 +11,8 @@ import {
   GRAIN_LABEL, MODE_LABEL, channelTable, formatNewCounts, chartData, costPerNewPatient, parseGrain, parseMode, previousPeriod,
   sheetBanner, type Grain, type Mode,
 } from "@/lib/marketing/patient-sources";
-import {
-  loadAdSpendCoverage, loadAdSpendTotals, loadPatientSourcesOverlaps, loadPatientSourcesReferrers,
-  loadPatientSourcesRevenue, loadPatientSourcesSeries, loadPatientSourcesSummary,
-} from "@/lib/marketing/patient-sources.server";
+import { loadAdSpendCoverage, loadAdSpendTotals, loadPatientSourcesReport } from "@/lib/marketing/patient-sources.server";
+import { REPORT_EXPORT_MAX_ROWS } from "@/lib/reports/paging";
 import { StatCard } from "../../_dashboards/_components/stat-card";
 import { PeriodControls } from "../_components/period-controls";
 import { ChannelChartLoader } from "./_components/channel-chart-loader";
@@ -41,19 +39,14 @@ export default async function PatientSourcesPage({
   const prev = previousPeriod(period.from, period.to);
   const supabase = await createClient();
 
-  const [summary, series, current, previous, newByDay, revenue, overlaps, referrers, spend, coverage] = await Promise.all([
-    loadPatientSourcesSummary(supabase, period.from, period.to),
-    loadPatientSourcesSeries(supabase, period.from, period.to, grain, mode),
-    loadPatientSourcesSeries(supabase, period.from, period.to, "period", mode),
-    // The previous period may start before Patient Sources' first date (the
-    // database refuses that): skip the query, the table shows no comparison.
-    prev.from < PATIENT_SOURCES_MIN_DATE
-      ? Promise.resolve(null)
-      : loadPatientSourcesSeries(supabase, prev.from, prev.to, "period", mode),
-    loadPatientSourcesSeries(supabase, period.from, period.to, "day", "new"),
-    loadPatientSourcesRevenue(supabase, period.from, period.to),
-    loadPatientSourcesOverlaps(supabase, period.from, period.to),
-    loadPatientSourcesReferrers(supabase, period.from, period.to),
+  // One report call (0206): the database builds who-is-who once and every
+  // card below reads the same snapshot. The previous period may start before
+  // Patient Sources' first date (the database refuses that): no comparison.
+  const [report, spend, coverage] = await Promise.all([
+    loadPatientSourcesReport(supabase, {
+      from: period.from, to: period.to, grain, mode,
+      prev: prev.from < PATIENT_SOURCES_MIN_DATE ? null : prev,
+    }),
     loadAdSpendTotals(supabase, period.from, period.to),
     loadAdSpendCoverage(supabase),
   ]);
@@ -66,17 +59,23 @@ export default async function PatientSourcesPage({
     />
   );
 
-  if (!summary.ok) {
+  if (!report.ok) {
     return (
       <div>
         {header}
         <p className="rounded border border-amber-300 bg-amber-50 p-4 text-sm text-amber-900" role="alert">
-          {summary.message}
+          {report.message}
         </p>
       </div>
     );
   }
-  if (overlaps.ok && overlaps.data.rows.length > 0) {
+  const r = report.data;
+  // The overlaps list keeps the export ceiling the paged loader applied.
+  const overlaps = {
+    rows: r.overlaps.slice(0, REPORT_EXPORT_MAX_ROWS),
+    truncated: r.overlaps.length > REPORT_EXPORT_MAX_ROWS,
+  };
+  if (overlaps.rows.length > 0) {
     // P20 / RA 10173: the double-entry panel sends DRM-IDs, dates and amounts to
     // the browser even while collapsed. Audit the disclosure — counts only.
     const { ip, ua } = await ipAndAgent();
@@ -85,12 +84,12 @@ export default async function PatientSourcesPage({
       actor_type: "staff",
       action: "patient_sources.overlaps_viewed",
       resource_type: "report",
-      metadata: { from: period.from, to: period.to, count: overlaps.data.rows.length, truncated: overlaps.data.truncated },
+      metadata: { from: period.from, to: period.to, count: overlaps.rows.length, truncated: overlaps.truncated },
       ip_address: ip,
       user_agent: ua,
     });
   }
-  const s = summary.data;
+  const s = r.summary;
   const banner = sheetBanner(s);
   // "customers" is the latest REGISTRATION date, not a sync or upload time (0189
   // names it sheet_last_dates.customers); lab/consult are the latest service dates.
@@ -111,11 +110,9 @@ export default async function PatientSourcesPage({
   );
   const peopleHref = (m: "new" | "returning" | "served", channel?: string) =>
     periodHref(`${PATHNAME}/people`, { from: period.from, to: period.to }, { mode: m, channel });
-  const chart = series.ok ? chartData(series.data.rows, grain) : null;
-  const table = current.ok && (previous === null || previous.ok)
-    ? channelTable(current.data.rows, previous === null ? null : previous.data.rows)
-    : null;
-  const costs = spend.ok && newByDay.ok ? costPerNewPatient(spend.data.rows, newByDay.data.rows) : null;
+  const chart = chartData(r.series, grain);
+  const table = channelTable(r.current, r.previous);
+  const costs = spend.ok ? costPerNewPatient(spend.data.rows, r.new_by_day) : null;
 
   return (
     <div>
@@ -164,9 +161,7 @@ export default async function PatientSourcesPage({
         <h2 className="mb-2 font-heading text-lg font-extrabold text-[color:var(--color-brand-navy)]">
           {MODE_LABEL[mode]} per {GRAIN_LABEL[grain].toLowerCase()}
         </h2>
-        {chart === null ? (
-          <p className="text-sm text-amber-700">Couldn&apos;t load the chart — reload the page.</p>
-        ) : chart.rows.length === 0 ? (
+        {chart.rows.length === 0 ? (
           <p className="text-sm text-[color:var(--color-brand-text-soft)]">Nobody in this period.</p>
         ) : (
           <ChannelChartLoader rows={chart.rows} channels={chart.channels} />
@@ -176,15 +171,11 @@ export default async function PatientSourcesPage({
         </p>
       </section>
 
-      {table === null ? (
-        <p className="mt-6 text-sm text-amber-700">Couldn&apos;t load the channel table — reload the page.</p>
-      ) : (
-        <ChannelTableSection rows={table} modeLabel={MODE_LABEL[mode]}
-          peopleHref={(channel) => peopleHref(mode === "served" ? "served" : "new", channel)} />
-      )}
+      <ChannelTableSection rows={table} modeLabel={MODE_LABEL[mode]}
+        peopleHref={(channel) => peopleHref(mode === "served" ? "served" : "new", channel)} />
       <CostSection costs={costs} coverage={coverage.ok ? coverage.data : null} from={period.from} to={period.to} />
-      <RevenueSection revenue={revenue.ok ? revenue.data : null} overlaps={overlaps.ok ? overlaps.data : null} />
-      <ReferrersSection rows={referrers.ok ? referrers.data : null} />
+      <RevenueSection revenue={r.revenue} overlaps={overlaps} />
+      <ReferrersSection rows={r.referrers} />
 
       <section className="mt-8 text-sm text-[color:var(--color-brand-text-soft)]">
         <h2 className="mb-1 font-bold text-[color:var(--color-brand-navy)]">How these numbers work</h2>

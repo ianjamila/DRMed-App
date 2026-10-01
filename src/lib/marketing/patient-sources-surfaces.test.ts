@@ -20,10 +20,10 @@ const CALLERS: Record<string, string> = {
 };
 const S = "src/app/(staff)/staff/(dashboard)";
 const SURFACES: Record<string, string> = {
-  [`${S}/marketing/patients/page.tsx`]: "loadPatientSourcesSummary",
+  [`${S}/marketing/patients/page.tsx`]: "loadPatientSourcesReport",
   [`${S}/marketing/sources/page.tsx`]: "loadPatientSourcesSummary",
   [`${S}/_dashboards/admin-dashboard.tsx`]: "loadNewPatientsToday",
-  ["src/app/api/admin/reports/patient-sources.csv/route.ts"]: "loadPatientSourcesSummary",
+  ["src/app/api/admin/reports/patient-sources.csv/route.ts"]: "loadPatientSourcesReport",
   ["src/app/api/admin/reports/patient-sources-people.csv/route.ts"]: "loadAllPeople",
   [`${S}/marketing/patients/people/page.tsx`]: "loadPeoplePage",
   [`${S}/marketing/page.tsx`]: "loadAdSpendRows",
@@ -67,6 +67,15 @@ describe("Patient Sources has one definition and one caller", () => {
       const src = readFileSync(join(ROOT, file), "utf8");
       expect(src, file).toContain("@/lib/marketing/patient-sources.server");
       expect(src, file).toContain(`${loader}(`);
+    }
+  });
+  it("the Patient Sources page and its CSV read the identity sections through the ONE report call", () => {
+    const SINGLE = ["loadPatientSourcesSummary", "loadPatientSourcesSeries", "loadPatientSourcesRevenue",
+      "loadPatientSourcesOverlaps", "loadPatientSourcesReferrers"];
+    for (const file of [`${S}/marketing/patients/page.tsx`, "src/app/api/admin/reports/patient-sources.csv/route.ts"]) {
+      const src = readFileSync(join(ROOT, file), "utf8");
+      expect(src.match(/loadPatientSourcesReport\(/g) ?? [], file).toHaveLength(1);
+      for (const l of SINGLE) expect(src, `${file} still calls ${l}`).not.toContain(`${l}(`);
     }
   });
   it("guards itself: the loader really calls the summary RPC", () => {
