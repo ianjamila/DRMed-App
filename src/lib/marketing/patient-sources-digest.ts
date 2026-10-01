@@ -95,7 +95,10 @@ export function aggregateSpend(rows: readonly RawSpendRow[]): SpendTotalRow[] {
     if (r.platform !== "meta" && r.platform !== "google") throw new Error(`ad spend: unknown platform "${r.platform}"`);
     const key = `${r.spend_date}|${r.platform}`;
     const t = totals.get(key) ?? { spend_date: r.spend_date, platform: r.platform, cents: 0 };
-    t.cents += Math.round(Number(r.spend_php) * 100);
+    const cents = Math.round(Number(r.spend_php) * 100);
+    // A non-numeric amount would print as ₱NaN; fail the digest instead (nothing is sent).
+    if (!Number.isFinite(cents)) throw new Error(`ad spend: bad amount on ${r.spend_date} ${r.platform}`);
+    t.cents += cents;
     totals.set(key, t);
   }
   return [...totals.values()]

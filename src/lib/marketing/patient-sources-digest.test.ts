@@ -98,6 +98,9 @@ describe("aggregateSpend", () => {
       { spend_date: "2026-09-29", platform: "meta", spend_php: 7.5 },
     ]);
   });
+  it("refuses a non-numeric amount rather than printing ₱NaN", () => {
+    expect(() => aggregateSpend([{ spend_date: "2026-09-28", platform: "meta", spend_php: "abc" }])).toThrow(/bad amount/);
+  });
   it("refuses a platform it does not know rather than dropping its spend", () => {
     expect(() => aggregateSpend([{ spend_date: "2026-09-28", platform: "tiktok", spend_php: 1 }])).toThrow(/platform/);
   });
