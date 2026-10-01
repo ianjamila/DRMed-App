@@ -486,7 +486,17 @@ const made = { tests: [] as string[], payments: [] as string[], visits: [] as st
 // doctor PF 60 and the zero-clinic-cut physician attending, i.e. ELIGIBLE for
 // recompute), paid by one payment unless paid=false. `physical: "desc"` stores the
 // lines in DESCENDING id order, so heap order is the reverse of lock-by-id order.
-async function mkVisit(spec: {
+async function mkVisit(spec: Parameters<typeof mkVisitOnce>[0]): Promise<Fix> {
+  // Heap placement follows free space, so a "reversed" fixture can land in id order: rebuild (up to 8 times) until it is truly reversed.
+  for (let i = 0; i < 8; i++) {
+    const fix = await mkVisitOnce(spec);
+    if (spec.physical !== "desc" || fix.ids.length < 2) return fix;
+    if (await storedBefore(fix.ids[fix.ids.length - 1], fix.ids[fix.ids.length - 2])) return fix;
+  }
+  throw new Fail("fixture: could not store the lines in reverse heap order after 8 tries");
+}
+
+async function mkVisitOnce(spec: {
   states: St[];
   paid?: boolean;
   hmo?: boolean;
@@ -1086,6 +1096,58 @@ async function recomputeScenarios(): Promise<void> {
     if (!rm.ok) throw new Fail(`release failed: ${fmtOut(rm)}`);
     return `no deadlock - ${held}; ${w1.text}; ${w2}`;
   });
+
+  // R6: ONE all-patients statement must not be aborted by a line it must not touch.
+  // A waived visit's lines are frozen (0183 guard, P0070). Same class as 0184's inactive
+  // patients: the scrub skips them, so every other doctor's line still gets scrubbed.
+  // concurrency-proof: recompute_clinic_fee_for_unreleased
+  await scenario("R6", "recompute with an eligible line on a WAIVED visit and one on a normal visit: succeeds, scrubs only the normal one", async () => {
+    const w = await mkVisit({ states: ["requested"], paid: false, fee: true });
+    const n = await mkVisit({ states: ["requested"], paid: false, fee: true });
+    await monitor.query("begin");
+    try {
+      await monitor.query("set local session_replication_role = replica"); // fixture surgery on this run's own visit only
+      await monitor.query("update public.visits set payment_status = 'waived' where id = $1", [w.visit]);
+      await monitor.query("commit");
+    } catch (e) {
+      await monitor.query("rollback").catch(() => undefined);
+      throw e;
+    }
+    // Every other fixture line of this run that is still eligible is scrubbed too: count them.
+    const { rows: el } = await monitor.query<{ n: number }>(
+      `select count(*)::int as n
+         from public.test_requests tr
+         join public.visits v on v.id = tr.visit_id
+         join public.patients pt on pt.id = v.patient_id
+         left join public.physicians p on p.id = coalesce(tr.attending_physician_id, v.attending_physician_id)
+         left join public.physician_compensation pc on pc.physician_id = p.id
+        where coalesce(pc.clinic_cut_php, case when pc.compensation_arrangement in ('rent_paying','shareholder') then 0 else 100 end) = 0
+          and tr.clinic_fee_php > 0 and pt.deleted_at is null and pt.merged_into_id is null
+          and v.payment_status is distinct from 'waived'
+          and not exists (select 1 from public.journal_entries je where je.source_kind = 'test_request' and je.source_id = tr.id and je.status = 'posted')`,
+    );
+    const rec = await actor("recompute", null);
+    await begin(rec, PHYSICAL_PLAN);
+    const out = await recompute(rec);
+    let seen: Array<{ id: string; clinic: string; pf: string }> = [];
+    if (out.ok) {
+      const r = await rec.c.query<{ id: string; clinic: string; pf: string }>(
+        "select id, clinic_fee_php as clinic, doctor_pf_php as pf from public.test_requests where id = any($1::uuid[])",
+        [[w.ids[0], n.ids[0]]],
+      );
+      seen = r.rows;
+    }
+    await rec.c.query("rollback").catch(() => undefined);
+    if (!out.ok) throw new Fail(`recompute aborted (${out.code}): ${out.message.split("\n")[0]} - one waived line stops the whole scrub`);
+    const byId = new Map(seen.map((x) => [x.id, x]));
+    const wl = byId.get(w.ids[0]);
+    const nl = byId.get(n.ids[0]);
+    if (!wl || !nl) throw new Fail("could not read the lines from inside the recompute transaction");
+    if (Number(nl.clinic) !== 0 || Number(nl.pf) !== 100) throw new Fail(`the normal line was not scrubbed: clinic ${nl.clinic}, pf ${nl.pf}`);
+    if (Number(wl.clinic) !== FEE.clinic || Number(wl.pf) !== FEE.pf) throw new Fail(`the waived line was changed: clinic ${wl.clinic}, pf ${wl.pf}`);
+    if (out.v.rows_affected !== el[0].n) throw new Fail(`rows_affected ${out.v.rows_affected}, expected ${el[0].n} (every eligible non-waived line)`);
+    return `waived line untouched, normal line scrubbed, rows_affected ${out.v.rows_affected} = ${el[0].n} eligible non-waived lines`;
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -1416,6 +1478,7 @@ async function headerReleaseScenarios(): Promise<void> {
 //   M2  no visit pre-lock (b): lines are locked first, the 0183 guard then takes the visit
 //   M3  no line pre-lock (c): the UPDATE locks the lines in plan order
 //   M4  no predicate re-check in (d): updates every line collected in (a)
+//   M5  no waived-visit filter (a, d): one waived line aborts the whole scrub (P0070)
 // NOT covered: the guards that live in triggers on public tables
 // (guard_test_request_on_waived_visit) - a trigger on a public table fires for
 // every session, so a mutant of it cannot be isolated.
@@ -1440,7 +1503,7 @@ const MUTANTS: Mutant[] = [
     what: "the pre-0215 body (one UPDATE over a CTE, no pre-lock)",
     edits: [],
     replaceWhole: true,
-    mustFail: ["R1", "R2a", "R3-claim", "R3-unclaim", "R4", "R5", "P3"],
+    mustFail: ["R1", "R2a", "R3-claim", "R3-unclaim", "R4", "R5", "R6", "P3"],
   },
   {
     key: "M2",
@@ -1462,6 +1525,15 @@ const MUTANTS: Mutant[] = [
       ["            )\n       )\n    returning tr2.id", "            )\n       ))\n    returning tr2.id"],
     ],
     mustFail: ["R2a"],
+  },
+  {
+    key: "M5",
+    what: "no waived-visit filter (0184-style) in (a) and (d)",
+    edits: [
+      ["        and v.payment_status is distinct from 'waived'   -- 0215\n", ""],
+      ["            and v.payment_status is distinct from 'waived'   -- 0215\n", ""],
+    ],
+    mustFail: ["R6"],
   },
 ];
 
@@ -1486,7 +1558,7 @@ async function installCopy(m: Mutant | null): Promise<void> {
   await monitor.query(`grant execute on function ${CTL_SCHEMA}.recompute_clinic_fee_for_unreleased() to service_role`);
 }
 
-const CONTROL_SCENARIOS = ["R1", "R2a", "R3-claim", "R3-unclaim", "R4", "R5", "P3"];
+const CONTROL_SCENARIOS = ["R1", "R2a", "R3-claim", "R3-unclaim", "R4", "R5", "R6", "P3"];
 
 async function controlRounds(): Promise<void> {
   console.log("\ncontrol rounds (a mutant must make its scenarios FAIL):");

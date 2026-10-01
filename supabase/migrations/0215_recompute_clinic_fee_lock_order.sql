@@ -59,9 +59,16 @@
 -- time the button is pressed. A line that stopped being eligible is handled by
 -- (d). The other direction is deliberately not chased.
 --
+-- 0215 ALSO LEAVES A WAIVED VISIT'S LINES ALONE, the same class of bug 0184 fixed for
+-- inactive patients: this is one all-patients statement, and guard_test_request_on_waived_visit
+-- (0183) refuses any fee change on a waived visit (P0070), so ONE such line aborted the
+-- whole scrub and left every other doctor's line un-scrubbed. A waived visit's lines are
+-- fixed by design, so the scrub skips them (payment_status is distinct from 'waived', in
+-- both (a) and (d)); the visit FOR UPDATE in (b) keeps that status stable for the re-check.
+--
 -- Eligibility is written twice (a, d) and must stay identical: the
 -- 0136 rule (clinic cut 0, or rent_paying / shareholder with no explicit cut),
--- clinic_fee_php > 0, an ACTIVE patient (0184), and NO posted test_request
+-- clinic_fee_php > 0, an ACTIVE patient (0184), a NON-waived visit (0215), and NO posted test_request
 -- journal entry. Posted-only on purpose (0180): a reversed entry means the line
 -- is unreleased again.
 --
@@ -100,6 +107,7 @@ begin
              ) = 0
          and tr.clinic_fee_php > 0
          and pt.deleted_at is null and pt.merged_into_id is null   -- 0184
+         and v.payment_status is distinct from 'waived'   -- 0215
          and not exists (
            select 1 from public.journal_entries je
             where je.source_kind = 'test_request'
@@ -145,6 +153,7 @@ begin
                 ) = 0
             and tr.clinic_fee_php > 0
             and pt.deleted_at is null and pt.merged_into_id is null   -- 0184
+            and v.payment_status is distinct from 'waived'   -- 0215
             and not exists (
               select 1 from public.journal_entries je
                where je.source_kind = 'test_request'
