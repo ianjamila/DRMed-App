@@ -3,7 +3,7 @@
 
 /** @param {string[]} argv */
 export function parseStressArgs(argv) {
-  const out = { runs: 5, parallel: 1, filters: [] };
+  const out = { runs: 5, parallel: 1, lateMocks: 0, filters: [] };
   const num = (flag, v) => {
     const n = Number(v);
     if (!Number.isInteger(n) || n < 1) throw new Error(`${flag} needs a positive whole number, got "${v}"`);
@@ -11,11 +11,11 @@ export function parseStressArgs(argv) {
   };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
-    const m = /^--(runs|parallel)(?:=(.*))?$/.exec(a);
+    const m = /^--(runs|parallel|late-mocks)(?:=(.*))?$/.exec(a);
     if (m) {
       const v = m[2] ?? argv[++i];
       if (v === undefined) throw new Error(`--${m[1]} needs a value`);
-      out[m[1]] = num(`--${m[1]}`, v);
+      out[m[1] === "late-mocks" ? "lateMocks" : m[1]] = num(`--${m[1]}`, v);
     } else if (a.startsWith("--")) {
       throw new Error(`Unknown option ${a}`);
     } else {

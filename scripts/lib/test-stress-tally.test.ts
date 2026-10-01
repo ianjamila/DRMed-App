@@ -3,12 +3,13 @@ import { parseStressArgs, tallyRuns } from "./test-stress-tally.mjs";
 
 describe("parseStressArgs", () => {
   it("defaults to 5 runs, 1 process, no filters", () => {
-    expect(parseStressArgs([])).toEqual({ runs: 5, parallel: 1, filters: [] });
+    expect(parseStressArgs([])).toEqual({ runs: 5, parallel: 1, lateMocks: 0, filters: [] });
   });
   it("reads spaced and = forms and passes the rest through as filters", () => {
-    expect(parseStressArgs(["--runs", "3", "--parallel=2", "messages-bulk-bar", "edit-payment"])).toEqual({
+    expect(parseStressArgs(["--runs", "3", "--parallel=2", "--late-mocks", "50", "messages-bulk-bar", "edit-payment"])).toEqual({
       runs: 3,
       parallel: 2,
+      lateMocks: 50,
       filters: ["messages-bulk-bar", "edit-payment"],
     });
   });

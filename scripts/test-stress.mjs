@@ -1,7 +1,10 @@
 #!/usr/bin/env node
 // Flake hunter: repeat the vitest suite (optionally K copies at once to load
 // the CPU) and report which tests failed in how many runs.
-//   npm run test:stress -- --runs 5 --parallel 2 [file filters...]
+//   npm run test:stress -- --runs 5 --parallel 2 [--late-mocks 50] [file filters...]
+// --late-mocks MS makes every vi.fn mockResolvedValue(Once) resolve MS late
+// (scripts/lib/late-mocks-setup.ts), turning sync-assert-after-await races into
+// deterministic failures. Off by default; fake-timer tests may need it off.
 // Reports are written under os.tmpdir(), never the repo. Exit 1 on any failure.
 import { spawn } from "node:child_process";
 import { mkdtempSync, readFileSync, existsSync } from "node:fs";
@@ -14,7 +17,7 @@ try {
   opts = parseStressArgs(process.argv.slice(2));
 } catch (e) {
   console.error(e.message);
-  console.error("Usage: npm run test:stress -- [--runs N] [--parallel K] [vitest file filters...]");
+  console.error("Usage: npm run test:stress -- [--runs N] [--parallel K] [--late-mocks MS] [vitest file filters...]");
   process.exit(2);
 }
 
@@ -26,8 +29,17 @@ function runOne(round, k) {
   return new Promise((resolve) => {
     const child = spawn(
       vitestBin,
-      ["run", "--reporter=json", `--outputFile=${out}`, ...opts.filters],
-      { stdio: ["ignore", "ignore", "ignore"] },
+      [
+        "run",
+        ...(opts.lateMocks ? ["-c", "scripts/lib/vitest.late-mocks.config.ts"] : []),
+        "--reporter=json",
+        `--outputFile=${out}`,
+        ...opts.filters,
+      ],
+      {
+        stdio: ["ignore", "ignore", "ignore"],
+        env: { ...process.env, ...(opts.lateMocks ? { LATE_MOCKS_MS: String(opts.lateMocks) } : {}) },
+      },
     );
     child.on("error", () => resolve({ label: `run ${round}.${k}`, report: null }));
     child.on("close", () => {
