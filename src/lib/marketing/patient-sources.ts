@@ -311,6 +311,8 @@ export function channelDeltas(current: readonly SeriesRow[], previous: readonly 
         pct: before === 0 ? null : (now - before) / before,
       };
     })
+    // A channel with rows but nobody in either period says nothing (spec §4.5 item 7).
+    .filter((d) => d.now > 0 || d.before > 0)
     .sort((a, b) => b.now - a.now || a.label.localeCompare(b.label) || a.channel.localeCompare(b.channel));
 }
 

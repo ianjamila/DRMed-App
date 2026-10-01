@@ -333,6 +333,11 @@ const srow = (bucket_start: string, channel: string, confirmed: number, unconfir
 });
 
 describe("channelDeltas", () => {
+  it("drops a channel that has rows but nobody in either period", () => {
+    const z = { bucket_start: "2026-09-28", channel: "walk_in", confirmed: 0, unconfirmed: 0 };
+    const g = { bucket_start: "2026-09-28", channel: "online_google", confirmed: 1, unconfirmed: 0 };
+    expect(channelDeltas([z, g], [{ ...z, bucket_start: "2026-09-21" }]).map((d) => d.channel)).toEqual(["online_google"]);
+  });
   it("adds confirmed + unconfirmed and keeps a channel that fell to zero", () => {
     const cur = [srow("2026-10-01", "walk_in", 5, 1), srow("2026-10-02", "walk_in", 2)];
     const prev = [srow("2026-09-24", "walk_in", 3), srow("2026-09-24", "online_google", 4)];
