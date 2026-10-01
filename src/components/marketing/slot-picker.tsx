@@ -151,7 +151,7 @@ export function SlotPicker({
           Pick a day
         </p>
         <p className="mt-1 text-xs text-[color:var(--color-ink-soft)]">
-          Mon–Sat only. Closed days are dimmed and not selectable.
+          Online booking is Mon–Sat. Sundays 8am–12nn are walk-in, lab tests only. Closed days are dimmed and not selectable.
         </p>
         <div className="mt-3 grid gap-4">
           {monthGroups.map((group) => (
@@ -183,7 +183,7 @@ export function SlotPicker({
                   const title = day.closure
                     ? `Closed — ${day.closure.reason}`
                     : day.isSunday
-                      ? "Closed on Sundays"
+                      ? "Sun: walk-in lab only"
                       : physicianClosed
                         ? window?.reason === "full_day_override"
                           ? "Doctor unavailable this day"

@@ -40,6 +40,13 @@ describe("medicalClinicLd", () => {
     expect(ohs.closes).toBe("17:00");
     expect(ohs.dayOfWeek).toContain("Saturday");
     expect(ohs.dayOfWeek).not.toContain("Sunday");
+    // Sunday is a second spec: 08:00–12:00 (walk-in lab tests only)
+    const sunSpec = ohsList[1];
+    expect(sunSpec["@type"]).toBe("OpeningHoursSpecification");
+    expect(sunSpec.dayOfWeek).toBe("Sunday");
+    expect(sunSpec.opens).toBe("08:00");
+    expect(sunSpec.closes).toBe("12:00");
+    expect(ld.openingHours).toEqual(["Mo-Sa 08:00-17:00", "Su 08:00-12:00"]);
     // contactPoint carries BOTH phones
     const cps = ld.contactPoint as Array<Record<string, unknown>>;
     expect(cps).toHaveLength(2);
