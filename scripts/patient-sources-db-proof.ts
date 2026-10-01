@@ -244,8 +244,11 @@ async function main() {
   // right after the one statement.
   async function markMerged(srcId: string, keepId: string): Promise<void> {
     await q(`set role patient_merge_writer`);
-    await q(`update public.patients set merged_into_id = $1, merged_at = now() where id = $2`, [keepId, srcId]);
-    await q(`reset role`);
+    try {
+      await q(`update public.patients set merged_into_id = $1, merged_at = now() where id = $2`, [keepId, srcId]);
+    } finally {
+      await q(`reset role`);
+    }
   }
 
   function describeError(err: unknown): string {
@@ -598,7 +601,7 @@ async function main() {
     const surv = await patient("WorldMerge", "Sam", { source: "walk_in", createdAt: "2026-06-02T10:00:00+08:00" });
     const dup = await patient("WorldMerge", "Samuel", { source: "online_facebook", createdAt: "2026-06-04T10:00:00+08:00" });
     await visit(dup, "2026-06-06", 250);
-    await q(`update public.patients set merged_into_id = $1 where id = $2`, [surv, dup]);
+    await markMerged(dup, surv);
     // Deleted patient: must drop out everywhere.
     const del = await patient("WorldDeleted", "Dee", { source: "walk_in", createdAt: "2026-06-08T10:00:00+08:00" });
     await visit(del, "2026-06-08", 999);
