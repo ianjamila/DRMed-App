@@ -1,5 +1,6 @@
 import "server-only";
 import { createAdminClient } from "@/lib/supabase/admin";
+import type { OutboxCounts } from "./release-notice-health";
 import { formatPatientName } from "@/lib/patients/format-name";
 
 // Result Follow-ups' "result-ready messages that did not go out" (0210/0212):
@@ -73,4 +74,52 @@ export async function fetchStuckNotices(): Promise<StuckNotices> {
     };
   });
   return { ok: true, abandoned: mapped, waitingForRetry: waiting.count ?? 0, capped: rows.length > STUCK_NOTICE_LIMIT };
+}
+
+// Cron Health / sweep-alert counts (counts and timestamps only — no patient data).
+// Same admin-client rule as above: call only after an admin gate or from the
+// CRON_SECRET-authorised sweep route. Any failed read returns { ok: false } so
+// the caller shows "unavailable" rather than a false all-clear.
+export type OutboxCountsResult = { ok: true; counts: OutboxCounts } | { ok: false };
+
+export async function fetchOutboxCounts(now: number = Date.now()): Promise<OutboxCountsResult> {
+  const admin = createAdminClient();
+  const nowIso = new Date(now).toISOString();
+  const since = (ms: number) => new Date(now - ms).toISOString();
+  const DAY = 24 * 60 * 60 * 1000;
+
+  const [queued, overdue, leases, ab24, ab7, sent] = await Promise.all([
+    admin.from("release_notices").select("id", { count: "exact", head: true }).in("status", ["pending", "retry"]),
+    admin
+      .from("release_notices")
+      .select("next_attempt_at", { count: "exact" })
+      .in("status", ["pending", "retry"])
+      .lte("next_attempt_at", nowIso)
+      .order("next_attempt_at", { ascending: true })
+      .limit(1),
+    admin
+      .from("release_notices")
+      .select("lease_expires_at", { count: "exact" })
+      .eq("status", "sending")
+      .lt("lease_expires_at", nowIso)
+      .order("lease_expires_at", { ascending: true })
+      .limit(1),
+    admin.from("release_notices").select("id", { count: "exact", head: true }).eq("status", "abandoned").gte("resolved_at", since(DAY)),
+    admin.from("release_notices").select("id", { count: "exact", head: true }).eq("status", "abandoned").gte("resolved_at", since(7 * DAY)),
+    admin.from("release_notices").select("id", { count: "exact", head: true }).eq("status", "sent").gte("sent_at", since(DAY)),
+  ]);
+  if (queued.error || overdue.error || leases.error || ab24.error || ab7.error || sent.error) return { ok: false };
+  return {
+    ok: true,
+    counts: {
+      queued: queued.count ?? 0,
+      overdue: overdue.count ?? 0,
+      oldestOverdueAt: overdue.data?.[0]?.next_attempt_at ?? null,
+      expiredLeases: leases.count ?? 0,
+      oldestExpiredLeaseAt: leases.data?.[0]?.lease_expires_at ?? null,
+      abandoned24h: ab24.count ?? 0,
+      abandoned7d: ab7.count ?? 0,
+      sent24h: sent.count ?? 0,
+    },
+  };
 }

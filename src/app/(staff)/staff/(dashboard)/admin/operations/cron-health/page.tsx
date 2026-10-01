@@ -7,6 +7,8 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { CRON_HEARTBEATS, deriveCronStatus, isNoticeSweepWatched } from "@/lib/ops/cron-heartbeats";
 import { describeCronSchedule } from "@/lib/ops/cron-schedule";
 import { ROUTE_NAME } from "@/lib/staff/route-names";
+import { fetchOutboxCounts } from "@/lib/results/release-notice-followups.server";
+import { OutboxHealthPanel } from "./outbox-health-panel";
 import { skipReasonLabel, skipSenderLabel } from "@/lib/notifications/skip-labels";
 
 export const metadata = { title: ROUTE_NAME["/staff/admin/operations/cron-health"] };
@@ -48,6 +50,7 @@ export default async function CronHealthPage() {
     .select("enabled, updated_at")
     .eq("id", true)
     .maybeSingle();
+  const outbox = await fetchOutboxCounts(now);
   const noticeWatched = isNoticeSweepWatched(noticeFlag?.enabled === true, noticeFlag?.updated_at ?? null, now);
 
   // Function is SECURITY INVOKER: audit_log's RLS (admin-only SELECT) decides
@@ -113,6 +116,7 @@ export default async function CronHealthPage() {
           </tbody>
         </table>
       </div>
+      <OutboxHealthPanel enabled={noticeFlag?.enabled === true} counts={outbox.ok ? outbox.counts : null} now={now} />
       <section className="mt-10" aria-labelledby="skipped-messages-heading">
         <h2 id="skipped-messages-heading" className="text-lg font-bold text-[color:var(--color-brand-navy)]">
           Patient messages not sent
