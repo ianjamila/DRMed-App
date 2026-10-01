@@ -1573,7 +1573,7 @@ async function sectionQueueRelease(c: CheckContext, admin: Page): Promise<void> 
       // One test per visit, both on PAID fixture visits (release is unblocked).
       // Every BSQ fixture test starts at "requested"; the Pending-release tab
       // only lists ready_for_release rows. Restored in `finally` below.
-      const pick = (visitId: string, code: string) =>
+      const pick = (visitId: unknown, code: string) =>
         c.sql(
           `update test_requests set status = 'ready_for_release'
            where visit_id = $1 and service_id = (select id from services where code = $2)`,
