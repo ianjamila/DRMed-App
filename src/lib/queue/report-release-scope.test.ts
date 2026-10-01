@@ -6,6 +6,7 @@ import {
   reportReleaseBlock,
   REPORT_REFUSAL,
   type FullMember,
+  visitReportBlocks,
 } from "./report-release-scope";
 
 describe("reportReleaseBlock", () => {
@@ -202,5 +203,39 @@ describe("panelReleaseScope", () => {
       m("b", "ready_for_release", null),
     ]);
     expect(out.readyIds).toEqual(["c", "a", "b"]);
+  });
+});
+
+describe("visitReportBlocks", () => {
+  it("blocks a result with ONE local line whose second link is on another visit", () => {
+    const out = visitReportBlocks(
+      new Map([["R1", ["a"]]]),
+      new Map([["R1", [full("a", "ready_for_release"), full("x", "ready_for_release", { visitId: "v2" })]]]),
+      ctx,
+    );
+    expect(out.get("a")).toBe(REPORT_REFUSAL.other_visit);
+  });
+  it("blocks a one-local-line result whose other link is a deleted unreleased test", () => {
+    const out = visitReportBlocks(
+      new Map([["R1", ["a"]]]),
+      new Map([["R1", [full("a", "ready_for_release"), full("x", "in_progress", { deleted: true })]]]),
+      ctx,
+    );
+    expect(out.get("a")).toBe(REPORT_REFUSAL.deletedMember);
+  });
+  it("blocks every local member of a blocked report and leaves a plain row alone", () => {
+    const out = visitReportBlocks(
+      new Map([["R1", ["a", "b"]], ["R2", ["c"]]]),
+      new Map([
+        ["R1", [full("a", "ready_for_release"), full("b", "in_progress")]],
+        ["R2", [full("c", "ready_for_release")]],
+      ]),
+      ctx,
+    );
+    expect([...out.keys()]).toEqual(["a", "b"]);
+  });
+  it("fails closed when the read failed or a result is missing", () => {
+    expect(visitReportBlocks(new Map([["R1", ["a"]]]), null, ctx).get("a")).toBe(PANEL_UNREADABLE);
+    expect(visitReportBlocks(new Map([["R1", ["a"]]]), new Map(), ctx).get("a")).toBe(PANEL_UNREADABLE);
   });
 });

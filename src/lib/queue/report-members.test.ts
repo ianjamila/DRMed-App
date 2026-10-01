@@ -65,4 +65,23 @@ describe("fetchReportMembers", () => {
     const { client } = fakeClient({ data: [{ result_id: "R1", test_requests: null }], error: null });
     expect(await fetchReportMembers(client, ["R1"])).toEqual({ ok: false });
   });
+
+  it("pages past PostgREST's 1000-row cap: 1000 then 2 rows are all returned", async () => {
+    const pages = [
+      Array.from({ length: 1000 }, (_, i) => ({ result_id: "R1", test_requests: tr(`t${i}`) })),
+      [{ result_id: "R1", test_requests: tr("t1000") }, { result_id: "R1", test_requests: tr("t1001") }],
+    ];
+    const ranges: string[] = [];
+    let n = 0;
+    const builder: Record<string, unknown> = {
+      then: (resolve: (v: unknown) => unknown) => resolve({ data: pages[n++] ?? [], error: null }),
+    };
+    for (const fn of ["select", "in", "order"]) builder[fn] = () => builder;
+    builder.range = (from: number, to: number) => (ranges.push(`${from}-${to}`), builder);
+    const client = { from: () => builder } as unknown as SupabaseClient<Database>;
+    const out = await fetchReportMembers(client, ["R1"]);
+    expect(out.ok).toBe(true);
+    if (out.ok) expect(out.byResult.get("R1")).toHaveLength(1002);
+    expect(ranges).toEqual(["0-999", "1000-1999"]);
+  });
 });

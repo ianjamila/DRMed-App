@@ -16,7 +16,7 @@ import {
 } from "@/lib/visits/line-visibility";
 import { ReleaseButton } from "./release-button";
 import { ReleaseOutcomeProvider } from "@/components/staff/release/release-outcome";
-import { PANEL_UNREADABLE, fullReportReleaseBlock } from "@/lib/queue/report-release-scope";
+import { visitReportBlocks } from "@/lib/queue/report-release-scope";
 import { fetchReportMembers } from "@/lib/queue/report-members";
 import { sectionsForRole } from "@/lib/auth/role-sections";
 import { fetchSharedReportTestIds } from "@/lib/visits/shared-report-links";
@@ -379,27 +379,19 @@ export default async function VisitDetailPage({ params, searchParams }: Props) {
   // ready member or none, so a report that release_visit_results would refuse
   // (an unfinished or deleted-unreleased member, or one in another group or on
   // another visit) disables Release (and the bulk checkbox) with the same
-  // message the action would refuse with. Judged on the FULL membership — the
-  // visit's own rows can't see a member on another visit — read through the
-  // admin client so RLS can't hide one the database counts. Display only —
-  // releaseVisitSelection re-proves it; an unreadable report fails closed.
-  const combinedResultIds = [...membersByResultId.entries()].filter(([, ms]) => ms.length > 1).map(([id]) => id);
-  const fullReports = await fetchReportMembers(createAdminClient(), combinedResultIds);
-  const releaseSections = sectionsForRole(session.role);
-  const reportBlockByTrId: Record<string, string> = {};
-  const blockByScope = new Map<object, string | null>();
-  for (const [trId, scope] of Object.entries(reportScopeByTrId)) {
-    if (!blockByScope.has(scope)) {
-      const resultId = resultIdByTrId.get(trId);
-      const full = fullReports.ok && resultId ? fullReports.byResult.get(resultId) : undefined;
-      blockByScope.set(
-        scope,
-        full ? fullReportReleaseBlock(full, { visitId: visit.id, sections: releaseSections }) : PANEL_UNREADABLE,
-      );
-    }
-    const block = blockByScope.get(scope);
-    if (block) reportBlockByTrId[trId] = block;
-  }
+  // message the action would refuse with. Judged ONLY on the FULL membership of
+  // EVERY result linked to this visit's tests: a result with one local line can
+  // still be combined (a link on another visit, or a deleted test), which the
+  // visit's own rows can't see. Admin client so RLS can't hide a member the
+  // database counts. Display only — releaseVisitSelection re-proves it; an
+  // unreadable report fails closed.
+  const fullReports = await fetchReportMembers(createAdminClient(), [...membersByResultId.keys()]);
+  const reportBlockByTrId: Record<string, string> = Object.fromEntries(
+    visitReportBlocks(membersByResultId, fullReports.ok ? fullReports.byResult : null, {
+      visitId: visit.id,
+      sections: sectionsForRole(session.role),
+    }),
+  );
   // Live ready members, for the bulk bar's "also releases N more" preview.
   const readyTrIds = (tests ?? [])
     .filter((t) => t.deleted_at === null && t.status === "ready_for_release")

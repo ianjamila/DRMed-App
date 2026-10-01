@@ -108,3 +108,28 @@ export function panelReleaseScope(
     .map((m) => m.id);
   return { readyIds, reportBlock: readyIds.length === 0 ? firstBlock : null };
 }
+
+/**
+ * The visit page's per-test Release blocks. `local` is each result's members
+ * ON THIS VISIT (what the page can see); `reports` is the FULL membership
+ * read for every one of those results, or null when the read failed. The full
+ * membership is the only judge: a result with one local line can still be a
+ * combined report (a second link on another visit, or a deleted test), which
+ * the database refuses. Every local member of a blocked report gets the
+ * block; a result missing from `reports` could not be read, so it is blocked
+ * with PANEL_UNREADABLE (fail closed). Pure.
+ */
+export function visitReportBlocks(
+  local: ReadonlyMap<string, readonly string[]>,
+  reports: ReadonlyMap<string, ReadonlyArray<FullMember>> | null,
+  ctx: { visitId: string; sections: readonly string[] | null },
+): Map<string, string> {
+  const out = new Map<string, string>();
+  for (const [resultId, trIds] of local) {
+    const full = reports?.get(resultId);
+    const block = full ? fullReportReleaseBlock(full, ctx) : PANEL_UNREADABLE;
+    if (block === null) continue;
+    for (const id of trIds) out.set(id, block);
+  }
+  return out;
+}
