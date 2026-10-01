@@ -5,8 +5,9 @@
  * carry a weekly run onto the next weekday ("0 23 * * 1" is Tuesday morning
  * in Manila, not Monday).
  *
- * Only the two shapes the clinic uses are read: daily ("M H * * *") and weekly
- * on one weekday ("M H * * D"). Anything else says so rather than guessing.
+ * Only the three shapes the clinic uses are read: daily ("M H * * *"), weekly
+ * on one weekday ("M H * * D") and monthly on one day, 1-28 ("M H D * *").
+ * Anything else says so rather than guessing.
  */
 
 const MANILA_OFFSET_MINUTES = 8 * 60;
@@ -17,6 +18,12 @@ function inRange(field: string, max: number): number | null {
   if (!/^\d{1,2}$/.test(field)) return null;
   const n = Number(field);
   return n <= max ? n : null;
+}
+
+function ordinal(n: number): string {
+  const v = n % 100;
+  if (v >= 11 && v <= 13) return `${n}th`;
+  return `${n}${["th", "st", "nd", "rd"][n % 10] ?? "th"}`;
 }
 
 function clockTime(minutesOfDay: number): string {
@@ -33,12 +40,18 @@ export function describeCronSchedule(schedule: string): string {
   const [min, hour, dayOfMonth, month, dayOfWeek] = fields;
   const minute = inRange(min, 59);
   const hourUtc = inRange(hour, 23);
-  if (minute === null || hourUtc === null || dayOfMonth !== "*" || month !== "*") return fallback;
+  if (minute === null || hourUtc === null || month !== "*") return fallback;
 
   const manila = hourUtc * 60 + minute + MANILA_OFFSET_MINUTES;
   const dayShift = Math.floor(manila / MINUTES_PER_DAY);
   const at = clockTime(manila % MINUTES_PER_DAY);
 
+  if (dayOfMonth !== "*") {
+    // Monthly on one day. Days 29-31 are not read: a short month would skip the run.
+    const day = inRange(dayOfMonth, 28);
+    if (day === null || day < 1 || dayOfWeek !== "*") return fallback;
+    return `On the ${ordinal(day + dayShift)} of every month at ${at}`;
+  }
   if (dayOfWeek === "*") return `Every day at ${at}`;
   // Cron allows both 0 and 7 for Sunday.
   const weekday = inRange(dayOfWeek, 7);
