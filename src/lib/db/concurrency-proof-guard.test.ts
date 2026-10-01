@@ -101,6 +101,11 @@ const REGISTRY: Record<string, RegistryEntry> = {
   sheet_review_resolve: { proof: ["scripts/sheet-sync-db-proof.ts"] },
   merge_patients_guarded: { proof: ["scripts/merge-concurrency-proof.ts"] },
   undo_patient_merge_guarded: { proof: ["scripts/merge-concurrency-proof.ts"] },
+  view_as_transition: { proof: ["scripts/view-as-restore-concurrency-proof.ts"] },
+  view_as_expire: { proof: ["scripts/view-as-restore-concurrency-proof.ts"] },
+  view_as_end_for: { proof: ["scripts/view-as-restore-concurrency-proof.ts"] },
+  restore_patient: { proof: ["scripts/view-as-restore-concurrency-proof.ts"] },
+  bridge_payment_delete: { proof: ["scripts/view-as-restore-concurrency-proof.ts"] },
   claim_statement_email: { proof: ["scripts/notice-claims-concurrency-proof.ts"] },
   result_claim_patient_notify: { proof: ["scripts/notice-claims-concurrency-proof.ts"] },
   result_mark_copy_contacted: { proof: ["scripts/notice-claims-concurrency-proof.ts"] },
@@ -112,8 +117,6 @@ const REGISTRY: Record<string, RegistryEntry> = {
 
 /** FROZEN pre-guard functions with no proof. May only shrink. Name -> definition file. */
 const BASELINE: Record<string, string> = {
-  bridge_payment_delete: "0141_manila_posting_dates_remainder.sql",
-  restore_patient: "0184_patient_lifecycle_locks.sql",
   _sheet_sync_fence: "0170_sheet_sync_foundation.sql",
   sheet_sync_acquire: "0170_sheet_sync_foundation.sql",
   sheet_sync_apply_customer_ops: "0193_sync_review_gaps.sql",
@@ -147,9 +150,6 @@ const BASELINE: Record<string, string> = {
   result_finalise_commit: "0184_patient_lifecycle_locks.sql",
   result_save_draft: "0184_patient_lifecycle_locks.sql",
   test_requests_claim_holder_guard: "0190_claim_holder_guard_and_view_as_end_for.sql",
-  view_as_end_for: "0190_claim_holder_guard_and_view_as_end_for.sql",
-  view_as_expire: "0187_view_as_followups.sql",
-  view_as_transition: "0187_view_as_followups.sql",
 };
 
 function loadMigrations(): MigrationFile[] {
@@ -191,7 +191,7 @@ describe("concurrency-proof guard (real migrations)", () => {
     // checkGuard already asserts existence and the per-function annotation;
     // this pins only a floor (non-trivial), so parallel proof PRs do not conflict on an exact count.
     const proofs = Object.values(REGISTRY).filter((e) => "proof" in e);
-    expect(proofs.length).toBeGreaterThanOrEqual(31);
+    expect(proofs.length).toBeGreaterThanOrEqual(36);
   });
 });
 
