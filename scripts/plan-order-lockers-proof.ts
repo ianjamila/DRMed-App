@@ -3,7 +3,7 @@
 // release / undo (0198) and claim / unclaim (0211) lock visit -> lines in id order.
 // Design: docs/superpowers/specs/2026-10-01-plan-order-lockers-audit.md.
 //
-//   recompute_clinic_fee_for_unreleased()  (0215)             scenarios R1-R7
+//   recompute_clinic_fee_for_unreleased()  (0215)             scenarios R1-R8
 //   delete_test_request_lines / restore_test_request_lines /
 //   restore_panel_members (0216) + fn_queue_delete_cascade (0125)  scenarios Q1-Q11
 //   fn_release_headers_on_visit_paid()     (0138)             scenarios P1-P3
@@ -12,7 +12,7 @@
 // (shared) -> the visit row -> the lines ORDER BY id -> the write. The assertions
 // describe the CORRECT behaviour (no 40P01, no fee change on a line that has a
 // posted journal entry, both sides finish); --control proves each guard matters by
-// running the named scenarios against mutant copies (M1-M10) that must FAIL.
+// running the named scenarios against mutant copies (M1-M11) that must FAIL.
 //
 // DETERMINISTIC, NOT LUCKY. Same method as report-release-concurrency-proof.ts:
 // every forced scenario holds one side's locks in an open transaction, starts the
@@ -313,6 +313,15 @@ function merge(a: Actor, keep: string, source: string): Promise<Out<unknown>> {
     a.c.query("select public.merge_patients_guarded($1, $2, $3, $4::jsonb) as r", [keep, source, fx.admin1, JSON.stringify({ source: "admin" })]),
     (r) => r.rows[0].r as unknown,
   );
+}
+
+// R8's mover: another session moves a line to a different visit (a service-role UPDATE of
+// test_requests.visit_id). Nothing in the app does this to a line today (only PAYMENTS move
+// between visits - payments/[id]/move, correct_payment - and a merge re-points visits.patient_id,
+// never a line's visit_id), so this is the defence-in-depth case 0215's re-check exists for; the
+// 0183 guard still treats a visit_id change as a fee-class change (locks old + new visit FOR UPDATE).
+function moveLine(a: Actor, id: string, toVisit: string): Promise<Out<number>> {
+  return settle(a.c.query("update public.test_requests set visit_id = $2 where id = $1", [id, toVisit]), (r) => r.rowCount ?? 0);
 }
 
 // Commit on success, roll back on refusal, the moment the call answers - the way
@@ -1300,6 +1309,72 @@ async function recomputeScenarios(): Promise<void> {
     if (!rm.ok) throw new Fail(`merge failed: ${fmtOut(rm)}`);
     return `no deadlock - ${w1.text}; ${w2}`;
   });
+
+  // R8: 0215's re-check `and tr.visit_id = any (v_visits)`. recompute collects its candidate lines
+  // AND their visits in step (a), then locks patients -> visits -> lines and re-decides in (d). A line
+  // MOVED to a visit recompute did not collect (so did not lock) while it waits must be left for the
+  // next run: its new visit is unlocked, so nothing stops that visit going waived / merged under the
+  // UPDATE. Nothing in the app moves a test_request between visits (only payments move; see
+  // moveLine) - the re-check is defence-in-depth against a service-role UPDATE or a future feature.
+  // Forced: W holds V1 FOR UPDATE; the mover UPDATEs A.visit_id -> V2 and queues on V1 (the 0183
+  // guard locks old + new visit FOR UPDATE) holding A's row lock; recompute then collects A in V1
+  // (the move is uncommitted), and queues on V1 behind the mover. W commits: the mover finishes and
+  // commits, THEN recompute gets V1, locks its lines and re-checks: A now sits in V2 (not in
+  // v_visits), B is still eligible. Same patient on both visits, so the 0184 lifecycle guard is
+  // satisfied; V2 carries no eligible line, so recompute never collected (or locked) it.
+  // concurrency-proof: recompute_clinic_fee_for_unreleased
+  await scenario("R8", "a candidate line moved to an unlocked visit while recompute waits (committed): not rewritten, the others are", async () => {
+    const f1 = await mkVisit({ states: ["requested", "requested"], paid: false, fee: true });
+    const f2 = await mkVisit({ states: ["requested"], paid: false, fee: false }); // no eligible line: not in v_visits
+    const [moved, stay] = f1.ids;
+    const A: Row = { table: "test_requests", id: moved, label: "A" };
+    const V1: Row = { table: "visits", id: f1.visit, label: "V1" };
+    const g = await actor("W", null);
+    await beginRaw(g);
+    await g.c.query("select 1 from public.visits where id = $1 for update", [f1.visit]);
+    const mv = await actor("mover", null);
+    await begin(mv);
+    const pmv = andEnd(mv, moveLine(mv, moved, f2.visit));
+    const w1 = await mustBlockOn(mv, V1, g, "the mover's 0183 guard wants V1 FOR UPDATE (old visit) behind W, holding A's row lock");
+    if (!(await rowLocked("test_requests", moved))) throw new Fail("fixture: the mover should hold A's row lock while queued on V1");
+    const rec = await actor("recompute", null);
+    await begin(rec);
+    const prec = andRollback(rec, recompute(rec), async () => {
+      const { rows } = await rec.c.query<{ id: string; visit_id: string; clinic: string; pf: string }>(
+        "select id, visit_id, clinic_fee_php as clinic, doctor_pf_php as pf from public.test_requests where id = any($1::uuid[])",
+        [[moved, stay]],
+      );
+      return rows;
+    });
+    const w2 = await mustBlockOn(rec, V1, null, "recompute collected A in V1 (the move is uncommitted) and queues on V1 behind the mover");
+    await g.c.query("commit");
+    const cycle = await (async () => {
+      await sleep(300);
+      return describeWaits([mv, rec], [A, V1]);
+    })();
+    const [rm, rr] = await raceResult(["mover", "recompute"], pmv, prec.then((x) => x.out));
+    const victim = deadlockVictim(["mover", "recompute"], rm, rr);
+    if (victim) throw new Fail(`40P01 deadlock (victim: ${victim}): mover vs recompute. ${w1.text}; ${w2.text}; after W commits: ${cycle}`);
+    if (!rm.ok) throw new Fail(`mover failed: ${fmtOut(rm)}`);
+    if (rm.v !== 1) throw new Fail(`mover: expected to move 1 line, moved ${rm.v}`);
+    if (!rr.ok) throw new Fail(`recompute failed: ${fmtOut(rr)}`);
+    const { seen } = await prec;
+    if (!seen) throw new Fail("could not read the lines from inside the recompute transaction");
+    const a = seen.find((x) => x.id === moved);
+    const b = seen.find((x) => x.id === stay);
+    if (!a || !b) throw new Fail("could not find both lines from inside the recompute transaction");
+    if (a.visit_id !== f2.visit) throw new Fail(`fixture: recompute did not see A in V2 after the mover committed (visit ${a.visit_id}). ${w1.text}; ${w2.text}`);
+    if (Number(a.clinic) !== FEE.clinic || Number(a.pf) !== FEE.pf) {
+      throw new Fail(
+        `moved line rewritten: recompute (rows_affected ${rr.v.rows_affected}) rewrote A after it moved to a visit it never locked - ` +
+          `clinic_fee ${FEE.clinic} -> ${a.clinic}, doctor_pf ${FEE.pf} -> ${a.pf}. ${w1.text}; ${w2.text}`,
+      );
+    }
+    if (Number(b.clinic) !== 0 || Number(b.pf) !== 100) throw new Fail(`the other line was not recomputed: clinic ${b.clinic}, pf ${b.pf} (expected 0 / 100)`);
+    const { rows: now } = await monitor.query<{ visit_id: string }>("select visit_id from public.test_requests where id = $1", [moved]);
+    if (now[0]?.visit_id !== f2.visit) throw new Fail("after both: the mover's commit should leave A in V2");
+    return `A left alone in V2 (clinic ${a.clinic}, pf ${a.pf}), B recomputed (0 / 100); ${w1.text}; ${w2.text}`;
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -1879,6 +1954,7 @@ async function headerReleaseScenarios(): Promise<void> {
 //       Q6 (restore), Q8 (delete), Q11 (restore_panel_members)
 //   M9  no line pre-lock in delete_test_request_lines (the UPDATE + cascade lock in plan order)
 //   M10 no patient lifecycle lock first in the three line functions (a merge closes a cycle)
+//   M11 no `tr.visit_id = any (v_visits)` re-check in (d): a line moved to an unlocked visit is rewritten (R8)
 // NOT separately provable: restore_test_request_lines' / restore_panel_members' line
 // pre-lock, incl. its reach to a header's components. Every writer that can lock a
 // DELETED line takes the visit first (release / undo FOR SHARE, recompute FOR UPDATE)
@@ -1943,6 +2019,7 @@ interface Catch {
 const DEADLOCK = /^40P01 deadlock \(victim: /;
 const LOST_UPDATE = /^lost update: /;
 const P0070_ABORT = /^recompute aborted \(P0070\)/;
+const MOVED_REWRITTEN = /^moved line rewritten: /;
 const dl = (...ids: string[]): Catch[] => ids.map((id) => ({ id, reason: DEADLOCK }));
 
 interface Mutant {
@@ -1993,8 +2070,9 @@ const MUTANTS: Mutant[] = [
     key: "M5",
     what: "no waived-visit filter (0184-style) in (a) and (d)",
     edits: [
-      ["recompute", "        and v.payment_status is distinct from 'waived'   -- 0215\n", ""],
-      ["recompute", "            and v.payment_status is distinct from 'waived'   -- 0215\n", ""],
+      // Anchored on the whole line incl. its leading newline: the 9-space line of (a) and the 12-space line of (d) differ only by indentation.
+      ["recompute", "\n         and v.payment_status is distinct from 'waived'   -- 0215", ""],
+      ["recompute", "\n            and v.payment_status is distinct from 'waived'   -- 0215", ""],
     ],
     mustFail: [{ id: "R6", reason: P0070_ABORT }],
   },
@@ -2033,6 +2111,13 @@ const MUTANTS: Mutant[] = [
     edits: (["delete", "restore", "panel"] as const).map((c) => [c, "  perform public.lifecycle_lock_and_assert(array[v_patient], false);\n", ""]),
     mustFail: dl("Q7", "Q9", "Q10"),
   },
+  {
+    key: "M11",
+    what: "no visit re-check in (d) - a candidate line moved to a visit that was not locked is rewritten",
+    // The whole line incl. its leading newline (the text occurs once; the applier asserts it).
+    edits: [["recompute", "\n            and tr.visit_id = any (v_visits)      -- 0215: a line moved to a visit we did not lock waits for the next run", ""]],
+    mustFail: [{ id: "R8", reason: MOVED_REWRITTEN }],
+  },
 ];
 
 async function installCopies(m: Mutant | null): Promise<void> {
@@ -2047,8 +2132,10 @@ async function installCopies(m: Mutant | null): Promise<void> {
     }
     for (const [target, from, to] of m?.edits ?? []) {
       if (target !== copy) continue;
-      if (!def.includes(from)) throw new Error(`mutant ${m?.key}: text to replace not found in the live ${copy} body`);
-      def = def.replace(from, to);
+      // Exactly once: a `from` that is a substring of another line (or repeated) would mutate the wrong place by luck.
+      const hits = def.split(from).length - 1;
+      if (hits !== 1) throw new Error(`mutant ${m?.key}: the text to replace occurs ${hits} times (expected exactly 1) in the live ${copy} body: ${JSON.stringify(from.slice(0, 90))}`);
+      def = def.replace(from, () => to);
     }
     const name = sig.slice(0, sig.indexOf("("));
     if (!def.includes(`public.${name}(`)) throw new Error(`${copy}: definition header not found`);
@@ -2059,7 +2146,7 @@ async function installCopies(m: Mutant | null): Promise<void> {
 }
 
 const CONTROL_SCENARIOS = [
-  "R1", "R2a", "R3-claim", "R3-unclaim", "R4", "R5", "R6", "R7", "P3",
+  "R1", "R2a", "R3-claim", "R3-unclaim", "R4", "R5", "R6", "R7", "R8", "P3",
   "Q1", "Q2", "Q3", "Q4", "Q5", "Q6", "Q7", "Q8", "Q9", "Q10", "Q11",
 ];
 

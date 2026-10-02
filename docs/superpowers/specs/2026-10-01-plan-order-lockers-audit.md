@@ -135,6 +135,11 @@ P1/P2/Q4 are clean (report-only, no fix).
        next run (an on-demand scrub). The 0184 active-patient filter is kept.
    Controls: mutants M1 (pre-fix body), M2 (no visit pre-lock), M3 (no line
    pre-lock), M4 (no predicate re-check) are each caught; B0 passes.
+   Follow-up (3a review nits): R8 forces the `tr.visit_id = any (v_visits)` re-check - a
+   candidate line moved to a visit recompute never locked is left alone (nothing in the app
+   moves a line between visits, so this is defence-in-depth); mutant M11 drops that predicate
+   and only R8 catches it. Every mutant edit must now match its function text exactly once
+   (M5 had matched a 9-space line through an 8-space substring).
 
 ### PR 3b - package header delete / restore (0216, `fix/plan-order-deletes`)
 
