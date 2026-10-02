@@ -17,6 +17,7 @@ const fx = vi.hoisted(() => ({
   tableTouches: [] as string[],
   audits: [] as Array<Record<string, unknown>>,
   voided: [] as Array<Record<string, unknown>>,
+  voidResults: [] as Array<{ ok: boolean; error?: string } | "throw">,
 }));
 
 vi.mock("server-only", () => ({}));
@@ -31,7 +32,9 @@ vi.mock("@/lib/audit/log", () => ({
 vi.mock("@/lib/accounting/pf-disbursement-void", () => ({
   voidPfDisbursementAndUnlink: async (_admin: unknown, input: Record<string, unknown>) => {
     fx.voided.push(input);
-    return { ok: true };
+    const next = fx.voidResults.shift();
+    if (next === "throw") throw new Error("audit write failed");
+    return next ?? { ok: true };
   },
 }));
 vi.mock("@/lib/supabase/admin", () => ({
@@ -67,6 +70,7 @@ beforeEach(() => {
   fx.tableTouches = [];
   fx.audits = [];
   fx.voided = [];
+  fx.voidResults = [];
 });
 
 describe("createPfDisbursement — one RPC", () => {
@@ -197,12 +201,49 @@ describe("createBulkPfPayoutCash — one RPC per doctor, earlier payouts voided 
     expect(fx.rpcCalls).toHaveLength(1);
   });
 
-  it("an unreadable confirmation stops the batch and rolls back what was created", async () => {
+  it("an unreadable confirmation stops the batch, rolls back what was created and says one more payout may exist", async () => {
     fx.rpcResults.push(ok(D1, 1), { data: null, error: null });
     const res = await createBulkPfPayoutCash(input);
     expect(res.ok).toBe(false);
     expect(fx.voided.map((v) => v.disbursementId)).toEqual([D1]);
     expect(fx.audits).toEqual([]);
+    const msg = !res.ok ? res.error : "";
+    expect(msg).toMatch(/confirmation couldn't be read/);
+    expect(msg).toMatch(/one more payout may have been recorded — check Pay Doctors › Already paid/);
+    expect(msg).not.toMatch(/nothing was left half-done/);
+  });
+
+  it("an unreadable confirmation on the FIRST doctor still warns that a payout may exist (nothing to roll back)", async () => {
+    fx.rpcResults.push({ data: { batch_number: 1 }, error: null });
+    const res = await createBulkPfPayoutCash(input);
+    expect(!res.ok && res.error).toMatch(/one more payout may have been recorded/);
+    expect(!res.ok && res.error).not.toMatch(/nothing was left half-done/);
+    expect(fx.voided).toEqual([]);
+  });
+
+  it("when voiding an earlier payout FAILS the message names its batch and does not claim a clean rollback", async () => {
+    fx.voidResults.push({ ok: false, error: "journal entry is locked" });
+    fx.rpcResults.push(ok(D1, 41), refuse("One or more PF entries are not open for disbursement"));
+    const res = await createBulkPfPayoutCash(input);
+    expect(res.ok).toBe(false);
+    const msg = !res.ok ? res.error : "";
+    expect(msg).toMatch(/^One or more PF entries are not open for disbursement/);
+    expect(msg).toMatch(/PF-41 could not be voided again \(journal entry is locked\) and still stands — void it from Pay Doctors › Already paid/);
+    expect(msg).not.toMatch(/nothing was left half-done/);
+    expect(msg).not.toMatch(/have been rolled back/);
+  });
+
+  it("a void that throws is reported the same way, and the other payouts are still voided", async () => {
+    fx.voidResults.push("throw", { ok: true });
+    fx.rpcResults.push(ok(D1, 41), ok(D2, 42), refuse("Total mismatch: expected 1, got 2"));
+    const res = await createBulkPfPayoutCash({
+      posted_date: "2026-10-02",
+      by_physician: [...input.by_physician, { physician_id: PHYS, entry_ids: [E3], total_php: 1 }],
+    });
+    const msg = !res.ok ? res.error : "";
+    expect(fx.voided.map((v) => v.disbursementId)).toEqual([D1, D2]);
+    expect(msg).toMatch(/1 of 3 payouts in this batch were already created and have been rolled back/);
+    expect(msg).toMatch(/PF-41 could not be voided again/);
   });
 });
 

@@ -24,30 +24,59 @@ export async function createBulkPfPayoutCash(
   const data = parsed.data;
   const admin = createAdminClient();
 
-  const created: string[] = [];
+  const created: Array<{ id: string; batch: number }> = [];
   const total = data.by_physician.length;
 
   // Rolls back every disbursement created so far in this batch via the SAME
   // path a manual void uses (JE reversal + soft-void + doctor_pf_entries
   // unlink + audit row — see M12), so a failed batch never strands PF entries
-  // pointing at a voided-but-still-linked disbursement.
-  async function rollbackCreated(reason: string): Promise<void> {
-    for (const id of created) {
-      await voidPfDisbursementAndUnlink(admin, {
-        disbursementId: id,
-        voidedBy: staff.user_id,
-        voidReason: "bulk_failed",
-        auditContext: { bulk_rollback: true, batch_failure_reason: reason },
-      });
+  // pointing at a voided-but-still-linked disbursement. Returns the payouts it
+  // could NOT void, so the message never claims a clean rollback it did not do.
+  async function rollbackCreated(reason: string): Promise<Array<{ batch: number; error: string }>> {
+    const failed: Array<{ batch: number; error: string }> = [];
+    for (const c of created) {
+      try {
+        const res = await voidPfDisbursementAndUnlink(admin, {
+          disbursementId: c.id,
+          voidedBy: staff.user_id,
+          voidReason: "bulk_failed",
+          auditContext: { bulk_rollback: true, batch_failure_reason: reason },
+        });
+        if (!res.ok) failed.push({ batch: c.batch, error: res.error });
+      } catch (e) {
+        failed.push({ batch: c.batch, error: e instanceof Error ? e.message : "unexpected error" });
+      }
     }
+    return failed;
   }
 
-  // M12: give a partial failure a clear message — today it fails silently
-  // about how far the batch got before rolling back.
-  function partialFailureMessage(cause: string): string {
-    if (created.length === 0) return cause;
+  // M12: give a partial failure a clear message — how far the batch got, what
+  // was rolled back, and (0224) what could NOT be: a payout that failed to void
+  // still stands, and an unreadable confirmation may have committed a payout
+  // this call has no id for. "Nothing was left half-done" is said only when true.
+  function partialFailureMessage(
+    cause: string,
+    failed: Array<{ batch: number; error: string }>,
+    uncertain = false,
+  ): string {
     const noun = total === 1 ? "payout" : "payouts";
-    return `${cause} (${created.length} of ${total} ${noun} in this batch were already created and have been rolled back — nothing was left half-done.)`;
+    const rolledBack = created.length - failed.length;
+    const notes: string[] = [];
+    if (rolledBack > 0) {
+      notes.push(`${rolledBack} of ${total} ${noun} in this batch were already created and have been rolled back`);
+    }
+    if (failed.length > 0) {
+      const names = failed.map((f) => `PF-${f.batch}`).join(", ");
+      notes.push(
+        `${names} could not be voided again (${failed[0]!.error}) and still ${failed.length === 1 ? "stands" : "stand"} — void ${failed.length === 1 ? "it" : "them"} from Pay Doctors › Already paid`,
+      );
+    }
+    if (uncertain) {
+      notes.push("one more payout may have been recorded — check Pay Doctors › Already paid before trying again");
+    }
+    if (notes.length === 0) return cause;
+    const clean = failed.length === 0 && !uncertain;
+    return `${cause} (${notes.join("; ")}${clean ? " — nothing was left half-done." : "."})`;
   }
 
   // Each doctor's payout is ONE SQL transaction (0224 pf_disburse_entries: lock + validate +
@@ -66,19 +95,20 @@ export async function createBulkPfPayoutCash(
     });
     if (rpcErr) {
       const message = translatePgError(rpcErr);
-      await rollbackCreated(message);
-      return { ok: false, error: partialFailureMessage(message) };
+      const failed = await rollbackCreated(message);
+      return { ok: false, error: partialFailureMessage(message, failed) };
     }
     const disb = parsePayoutResult(res);
     if (!disb) {
-      // Unreadable confirmation: the call may have committed, so it cannot be told apart from
-      // success — undo what this batch created and report it.
+      // The call returned without an error but its result is unreadable: it may have
+      // committed a payout whose id this call does not have, so that one cannot be voided
+      // here. Void what this batch DID create and say that one more may exist.
       const message =
-        "A payout's confirmation couldn't be read, so the batch was stopped. Check Pay Doctors › Already paid before trying again.";
-      await rollbackCreated(message);
-      return { ok: false, error: partialFailureMessage(message) };
+        "A payout's confirmation couldn't be read, so the batch was stopped.";
+      const failed = await rollbackCreated(message);
+      return { ok: false, error: partialFailureMessage(message, failed, true) };
     }
-    created.push(disb.id);
+    created.push({ id: disb.id, batch: disb.batch_number });
   }
 
   await audit({
@@ -90,5 +120,5 @@ export async function createBulkPfPayoutCash(
     metadata: { bulk: true, count: created.length, posted_date: data.posted_date },
   });
 
-  return { ok: true, data: { disbursement_ids: created } };
+  return { ok: true, data: { disbursement_ids: created.map((c) => c.id) } };
 }

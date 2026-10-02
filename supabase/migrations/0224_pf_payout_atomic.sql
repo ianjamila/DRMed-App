@@ -69,6 +69,21 @@
 --     WAIT and then refuse them (K1a).
 --     The two bodies are 0183's VERBATIM except the lines marked `-- 0224`.
 --
+--  B2. The bridge lock alone is NOT enough for a multi-line Undo. undo_visit_release writes ONE multi-row
+--     UPDATE of test_requests; the bridge fires per row, and a firing that reverses a release JE holds the
+--     journal-entry number counter (je_next_number) until commit. For [lab line L1 with a release JE, doctor
+--     line L2] the L1 firing holds the counter, then the L2 firing asks for its PF entry E - which a payout
+--     already holds while it waits for the same counter (bridge_pf_disbursement_post): a 40P01 the one-line
+--     scenarios cannot show. So undo_visit_release (0214 body VERBATIM + one hunk marked `-- 0224`) first
+--     locks the PF entries of EVERY candidate line (and of the package header a component's undo cascades
+--     to) ORDER BY id, before the line UPDATE and after the line locks release_report_locks already took -
+--     the payout's own id order, so the two can only queue behind each other. ACL restated as 0198 / 0205 /
+--     0214 left it: EXECUTE authenticated + service_role. release_visit_results needs nothing (its bridge only
+--     INSERTS a PF entry). The cancel bridge has no app writer (only an operator's UPDATE and the package
+--     cascade, whose components return before the PF code and whose header is one row): a multi-row operator
+--     cancel of several doctor lines is the same shape and is NOT pre-locked - there is no statement to hook a
+--     pre-lock into short of a statement-level trigger, and the app never issues one.
+--
 --  C. THE OTHER WRITERS THAT VOID / TOUCH PF ENTRIES (checked; decision per writer):
 --       bridge_pf_at_hmo_writeoff     voids only entries with recognized_at IS NULL (a
 --                                     pending HMO fee, nothing accrued) - a payout
@@ -92,10 +107,17 @@
 --     and both are fixed here. (Deleting a line is refused once it is released - P0043 -
 --     and the delete path never voids PF entries.)
 --
--- LOCK ORDER. The bridges now take  PF entries (id order)  ->  journal entry  for the line
--- they were called for, AFTER the line (and, for the undo RPC, the patient lock and visit)
--- the caller already holds. The old UPDATE of the same entries sat later in the same
--- transaction, so no new edge exists: a line is never locked while a PF entry is held.
+-- LOCK ORDER. The bridges take  PF entries (id order)  ->  journal entry  for the line they were
+-- called for, AFTER the line (and, for the undo RPC, the patient lock and visit) the caller already
+-- holds; undo_visit_release takes ALL its candidates' PF entries up front (B2), so the per-row bridge
+-- firings never meet a PF entry they have not locked yet while holding the JE counter. A line is never
+-- locked while a PF entry is held.
+--
+-- KNOWN, RARE, HARMLESS: voidPfDisbursementAndUnlink unlinks with one `update ... where disbursement_id = X`
+-- (scan order, not id order; the Supabase client cannot lock first). Against a STALE payout of entries
+-- that are still linked, the two can close a 40P01 between the unlink and the payout's id-ordered entry
+-- locks. One side is aborted and retries; nothing is corrupted - and the payout refuses a still-linked
+-- entry after its lock anyway (P0085).
 -- The payout takes entries (id order) -> pf_disbursement_year_counters; it never touches a
 -- line, a visit or a patient lock (the link is guard-exempt), so it cannot close a cycle
 -- with release / undo / cancel / merge. Proof: npm run gl-bridge:concurrency-proof -- --control
@@ -449,3 +471,286 @@ $function$;
 
 revoke execute on function public.bridge_test_request_cancelled() from public, anon, authenticated;
 grant  execute on function public.bridge_test_request_cancelled() to service_role;
+
+-- ---- Undo-release RPC: pre-lock the PF entries of every candidate line -------------
+-- undo_visit_release() from 0214 (line 279), VERBATIM except the hunk marked -- 0224.
+create or replace function public.undo_visit_release(
+  p_visit_id             uuid,
+  p_test_request_ids     uuid[],
+  p_actor                uuid  default null,
+  -- The 10-minute batch Undo (undoReleaseBatchAction): {test_request_id:
+  -- released_at} of the EXACT release that batch made. When given, a line is
+  -- undone only while it still carries that release, and a combined report
+  -- only when EVERY member does — otherwise it is skipped (changed_since),
+  -- never undone in part and never raised. Every value must be a timestamp
+  -- string (0205). Null for every other caller.
+  p_expected_released_at jsonb default null,
+  -- Why the release is undone — required, written on every audit row (0205).
+  p_reason               text  default null,
+  -- {metadata: {...caller extras}, ip, user_agent} for the audit rows (0205).
+  p_audit                jsonb default null
+)
+returns jsonb
+language plpgsql
+volatile
+security definer
+set search_path = pg_catalog, public, pg_temp
+as $$
+declare
+  v_actor    uuid;
+  v_role     text;
+  v_sections text[];
+  v_ids      uuid[];
+  v_reports  uuid[];
+  v_expanded uuid[];
+  v_ok       uuid[] := '{}';
+  v_cands    uuid[];
+  v_undone   jsonb;
+  v_count    int;
+  v_batch    boolean := p_expected_released_at is not null
+                         and jsonb_typeof(p_expected_released_at) <> 'null';
+  v_refused  uuid[]  := '{}';  -- members of reports a batch Undo must leave alone
+  v_skipped  jsonb;
+  v_why      text    := btrim(p_reason);
+  v_extras   jsonb;
+  v_ip       inet;
+  v_ua       text;
+  r          record;
+begin
+  select a.actor_id, a.actor_role into v_actor, v_role from public.release_actor(p_actor) a;
+  v_sections := public.lab_sections_for_role(v_role);
+  -- via / undo_of_batch mark the 10-minute batch Undo: accepted only with its map.
+  select c.extras, c.ip, c.user_agent into v_extras, v_ip, v_ua
+    from public.release_audit_context(p_audit,
+           array['bulk', 'bulk_batch_id', 'sample_visit_delete']
+           || case when v_batch then array['via', 'undo_of_batch'] else '{}'::text[] end) c;
+
+  if v_why is null or v_why = '' then
+    raise exception 'Give a reason for undoing the release.' using errcode = 'P0081';
+  end if;
+  if length(v_why) > 2000 then
+    raise exception 'The reason is too long — keep it under 2,000 characters.' using errcode = 'P0081';
+  end if;
+
+  if v_batch then
+    begin
+      if jsonb_typeof(p_expected_released_at) <> 'object' then
+        raise exception using errcode = '22023';
+      end if;
+      -- 0205: every value a timestamp STRING — a JSON null (or number, …)
+      -- would make the report check below unknown rather than false.
+      if exists (select 1 from jsonb_each(p_expected_released_at) e
+                  where jsonb_typeof(e.value) <> 'string') then
+        raise exception using errcode = '22023';
+      end if;
+      perform (e.key)::uuid, (e.value)::timestamptz from jsonb_each_text(p_expected_released_at) e;
+    exception when others then
+      raise exception 'Couldn''t read which release to undo — try again.' using errcode = 'P0081';
+    end;
+  end if;
+
+  v_ids := array(
+    select distinct x from unnest(coalesce(p_test_request_ids, '{}'::uuid[])) x
+     where x is not null order by x);
+  if cardinality(v_ids) = 0 then
+    raise exception 'No tests selected.' using errcode = 'P0081';
+  end if;
+  if cardinality(v_ids) > 500 then
+    raise exception 'Too many tests selected — select fewer.' using errcode = 'P0081';
+  end if;
+
+  v_reports := public.release_report_locks(
+    p_visit_id, v_ids, 'This visit was deleted from the queue. Restore it before undoing a release.');
+
+  -- Whole-report expansion (0172, expandUndoReleaseScope): every member of a
+  -- touched combined report is undone with it, whatever its own status; the
+  -- WHOLE request is refused when any member (deleted ones included) is
+  -- outside the caller's sections, a package header, or on another visit.
+  v_expanded := v_ids;
+  for r in
+    select rtr.result_id,
+           array_agg(tr.id) as member_ids,
+           bool_or(v_sections is not null
+                   and (s.section is null or not (s.section = any (v_sections)))) as outside,
+           bool_or(tr.is_package_header) as has_header,
+           bool_or(tr.visit_id <> p_visit_id) as other_visit
+      from public.result_test_requests rtr
+      join public.test_requests tr on tr.id = rtr.test_request_id
+      left join public.services s on s.id = tr.service_id
+     where rtr.result_id = any (v_reports)
+     group by rtr.result_id
+    having count(*) > 1
+     order by rtr.result_id
+  loop
+    if r.outside then
+      raise exception 'This report has tests outside the sections you can act on, so it can''t be undone from here — ask an admin.'
+        using errcode = 'P0081';
+    elsif r.has_header then
+      raise exception 'This report includes a package header, which shouldn''t happen — ask an admin to check it.'
+        using errcode = 'P0081';
+    elsif r.other_visit then
+      raise exception 'This report spans more than one visit, which shouldn''t happen — ask an admin to check it.'
+        using errcode = 'P0081';
+    end if;
+    -- Batch Undo: the report comes back only if every member (deleted ones
+    -- included) is still exactly the release this batch made. `is not true`
+    -- (0205): an unknown answer — a released member with no released_at —
+    -- counts as changed, so the report is skipped whole, never split.
+    if v_batch and exists (
+         select 1
+           from unnest(r.member_ids) m
+           join public.test_requests tr on tr.id = m
+          where (p_expected_released_at ? m::text
+                 and tr.status = 'released'
+                 and tr.deleted_at is null
+                 and tr.released_at = (p_expected_released_at ->> m::text)::timestamptz) is not true) then
+      v_refused := v_refused || r.member_ids;
+      continue;
+    end if;
+    v_ok := v_ok || r.result_id;
+    v_expanded := v_expanded || r.member_ids;
+  end loop;
+
+  -- The released, live, non-header lines among them this role may act on.
+  -- Headers only ever flip through the 0110 cascade (fn_undo_release_bridge),
+  -- never directly: a header back at ready with its components released
+  -- would re-release (with a fresh journal entry) on the next payment change.
+  v_cands := array(
+    select tr.id
+      from public.test_requests tr
+      left join public.services s on s.id = tr.service_id
+     where tr.id = any (v_expanded)
+       and tr.visit_id = p_visit_id
+       and tr.status = 'released'
+       and not tr.is_package_header
+       and tr.deleted_at is null
+       and (v_sections is null or s.section = any (v_sections))
+       and not (tr.id = any (v_refused))
+       and (not v_batch
+            or (p_expected_released_at ? tr.id::text
+                and tr.released_at = (p_expected_released_at ->> tr.id::text)::timestamptz))
+     order by tr.id);
+  if cardinality(v_cands) = 0 and not v_batch then
+    raise exception 'None of the selected tests can be unreleased.' using errcode = 'P0081';
+  end if;
+
+  -- 0224: pre-lock the doctor PF entries of EVERY line this call is about to undo (and of the header a
+  -- package component's undo cascades to), ORDER BY id, BEFORE the line UPDATE. The UPDATE below is ONE
+  -- multi-row statement: fn_undo_release_bridge fires per row, and each firing that reverses a release
+  -- JE holds the journal-entry number counter (je_next_number) until commit. Without this, the firing
+  -- for a later doctor line would only then ask for its PF entry - while a payout (pf_disburse_entries)
+  -- already holds that entry and waits for the same counter in bridge_pf_disbursement_post: a 40P01.
+  -- Taken after the lines (release_report_locks) and in the payout's own id order, so the payout and this
+  -- call can only queue behind each other. The bridge's own lock then finds the rows already held.
+  perform 1
+     from public.doctor_pf_entries e
+    where e.voided_at is null
+      and (e.test_request_id = any (v_cands)
+           or e.test_request_id in (select t.parent_id from public.test_requests t
+                                     where t.id = any (v_cands) and t.parent_id is not null))
+    order by e.id
+      for update;
+
+  -- The prior release medium/time and the patient's view count are read under
+  -- the row lock, so the audit rows (0205: written here, in this transaction)
+  -- describe the release actually undone.
+  with prior as (
+    select tr.id, tr.release_medium, tr.released_at, coalesce(vc.viewed_count, 0) as viewed_count
+      from public.test_requests tr
+      left join public.result_view_counts(v_cands) vc on vc.test_request_id = tr.id
+     where tr.id = any (v_cands)
+  ),
+  upd as (
+    update public.test_requests t
+       set status         = 'ready_for_release',
+           released_at    = null,
+           released_by    = null,
+           release_medium = null
+     where t.id = any (v_cands)
+       and t.status = 'released'
+    returning t.id
+  ),
+  done as (
+    select upd.id, prior.release_medium, prior.released_at, prior.viewed_count, rtr.result_id as report_id
+      from upd
+      join prior on prior.id = upd.id
+      left join public.result_test_requests rtr
+        on rtr.test_request_id = upd.id and rtr.result_id = any (v_ok)
+  ),
+  aud as (
+    insert into public.audit_log
+      (actor_id, actor_type, action, resource_type, resource_id, metadata, ip_address, user_agent, created_at)
+    select v_actor, 'staff', 'test_request.release_undone', 'test_request', done.id,
+           v_extras
+             || jsonb_build_object(
+                  'visit_id', p_visit_id,
+                  'reason', v_why,
+                  'prior_release_medium', done.release_medium,
+                  'prior_released_at', done.released_at,
+                  -- RA 10173: undoing does not un-see a result the patient opened.
+                  'viewed_count', done.viewed_count,
+                  -- Set only when reverted as part of a whole-report undo (0172).
+                  'report_result_id', done.report_id),
+           v_ip, v_ua, clock_timestamp()
+      from done
+    returning 1
+  )
+  select count(*),
+         coalesce(jsonb_agg(jsonb_build_object(
+           'id', done.id,
+           'prior_release_medium', done.release_medium,
+           'prior_released_at', done.released_at,
+           'report_id', done.report_id) order by done.id), '[]'::jsonb)
+    into v_count, v_undone
+    from done;
+  if v_count <> cardinality(v_cands) then
+    raise exception 'These tests changed while undoing — nothing was changed. Try again.'
+      using errcode = '40001';
+  end if;
+
+  -- 0214: cancel this visit's release notices that have nothing left to announce.
+  -- A notice is spent when NONE of its tests is still released with the release
+  -- that stamped it (undone in this call, or earlier). A partly undone notice is
+  -- left alone: the sender's re-check trims it to what is still released. Only
+  -- pending / retry rows: a 'sending' row has a live lease and belongs to its
+  -- sender (which re-checks), and terminal rows are history. Runs whatever the
+  -- flag says: a stale pending row must not outlive its release because the flag
+  -- was flipped off. Locked after every line, so no new lock-order edge; a claimer
+  -- holding the row makes this wait for the claim (SKIP LOCKED never waits on us),
+  -- and the WHERE is re-checked on the row it left, so a row just leased ('sending')
+  -- is skipped, never cancelled. audited_at is stamped: this undo already wrote its
+  -- own release_undone audit rows, and a later result.notice_cancelled row carrying
+  -- the old bulk_batch_id would read as an unrelated change to a re-release's Undo.
+  update public.release_notices n
+     set status           = 'cancelled',
+         resolved_at      = clock_timestamp(),
+         audited_at       = clock_timestamp(),
+         lease_token      = null,
+         lease_expires_at = null,
+         skip_reason      = 'release undone'
+   where n.visit_id = p_visit_id
+     and n.status in ('pending', 'retry')
+     and not exists (
+           select 1
+             from unnest(n.test_request_ids) m(id)
+             join public.test_requests tr on tr.id = m.id
+            where tr.status = 'released'
+              and tr.released_at = n.released_at);
+
+  -- Selected lines not undone: no longer released (or, for a batch Undo, no
+  -- longer this batch's release, or on a report that is not).
+  v_skipped := coalesce((
+    select jsonb_agg(jsonb_build_object(
+             'id', x, 'code', case when v_batch then 'changed_since' else 'not_released' end) order by x)
+      from unnest(v_ids) x
+     where not (x = any (v_cands))), '[]'::jsonb);
+
+  return jsonb_build_object('undone', v_undone, 'skipped', v_skipped);
+end;
+$$;
+
+comment on function public.undo_visit_release(uuid, uuid[], uuid, jsonb, text, jsonb) is
+  'Undoes the release of the selected tests of one visit (0198), expanded to every member of each touched combined report (0172), under the same locks as release_visit_results, with one test_request.release_undone audit row per undone row in the same transaction (0205; p_reason required, p_audit = {metadata, ip, user_agent}). In the same transaction (0214) it cancels this visit''s pending / retry release notices none of whose tests is still released with that release (partly undone and sending rows are left alone). 0224: before the line UPDATE it locks the doctor PF entries of every candidate line ORDER BY id (a payout in flight makes it wait, then the bridge refuses a paid-out line with P0084). Returns {undone: [{id, prior_release_medium, prior_released_at, report_id}], skipped: [{id, code: not_released|changed_since}]}. p_expected_released_at (batch Undo; every value a timestamp string) limits it to lines — and whole reports — still carrying that exact release, and then never raises for nothing-to-undo. Raises P0081 (whole request refused, message passes through), P0084 (a line whose doctor fee was already paid out — nothing changes), 40001/P0072 (retry), P0058 (patient inactive), 42501.';
+
+revoke all on function public.undo_visit_release(uuid, uuid[], uuid, jsonb, text, jsonb) from public, anon, authenticated, service_role;
+grant execute on function public.undo_visit_release(uuid, uuid[], uuid, jsonb, text, jsonb) to authenticated, service_role;

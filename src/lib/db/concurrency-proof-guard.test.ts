@@ -81,7 +81,8 @@ const REGISTRY: Record<string, RegistryEntry> = {
   reclaim_panel_members: { proof: ["scripts/panel-undo-concurrency-proof.ts"] },
   restore_panel_members: { proof: ["scripts/panel-undo-concurrency-proof.ts", "scripts/plan-order-lockers-proof.ts"] },
   release_visit_results: { proof: ["scripts/report-release-concurrency-proof.ts"] },
-  undo_visit_release: { proof: ["scripts/report-release-concurrency-proof.ts"] },
+  // 0224 re-created it (pre-locks every candidate line's PF entries): the two-line Undo x payout cycle is raced in the GL-bridge proof (K1e).
+  undo_visit_release: { proof: ["scripts/report-release-concurrency-proof.ts", "scripts/gl-bridge-concurrency-proof.ts"] },
   release_report_locks: { proof: ["scripts/report-release-concurrency-proof.ts"] },
   correct_payment: { proof: ["scripts/report-release-concurrency-proof.ts"] },
   _ps_digest_claim: { proof: ["scripts/ps-digest-claim-concurrency-proof.ts"] },

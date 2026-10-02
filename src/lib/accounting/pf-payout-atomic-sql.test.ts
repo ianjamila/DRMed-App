@@ -102,6 +102,34 @@ describe("0224 cancel / undo bridges refuse a disbursed entry", () => {
   });
 });
 
+describe("0224 undo_visit_release pre-locks every candidate line's PF entries", () => {
+  const prev = readFileSync(join(process.cwd(), "supabase/migrations/0214_release_notice_enqueue.sql"), "utf8");
+  const body = fnBody(sql, "undo_visit_release");
+  const was = fnBody(prev, "undo_visit_release");
+
+  it("is 0214's body VERBATIM except the marked -- 0224 hunk", () => {
+    const stripped = body.replace(/  -- 0224: pre-lock the doctor PF entries[\s\S]*?      for update;\n\n/, "");
+    expect(stripped).not.toContain("0224");
+    expect(stripped).toBe(was);
+  });
+
+  it("locks the entries by id AFTER the candidate lines are known and BEFORE the line UPDATE", () => {
+    const cands = body.indexOf("v_cands := array(");
+    const lock = body.search(/perform 1\s+from public\.doctor_pf_entries e[\s\S]*?order by e\.id\s+for update;/);
+    const upd = body.indexOf("update public.test_requests t");
+    expect(cands).toBeGreaterThan(-1);
+    expect(lock).toBeGreaterThan(cands);
+    expect(upd).toBeGreaterThan(lock);
+    expect(body).toMatch(/t\.parent_id from public\.test_requests t/);
+  });
+
+  it("keeps EXECUTE for authenticated + service_role only (0198 / 0205 / 0214)", () => {
+    const sig = "public.undo_visit_release(uuid, uuid[], uuid, jsonb, text, jsonb)";
+    expect(sql).toContain(`revoke all on function ${sig} from public, anon, authenticated, service_role;`);
+    expect(sql).toContain(`grant execute on function ${sig} to authenticated, service_role;`);
+  });
+});
+
 describe("staff wording of the new codes", () => {
   it("P0084 is always the paid-out message", () => {
     const msg = "This doctor's fee was already paid out — void the payout first.";

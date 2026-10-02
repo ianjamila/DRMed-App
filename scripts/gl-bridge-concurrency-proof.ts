@@ -67,6 +67,7 @@
 //   T8 free race: release / undo / cancel soup on one line, lab and doctor, invariants only
 //   X1 free race: every bridge at once (payment insert/void, cash adj, HMO resolution, release/undo), no 40P01
 //   K1a cancel x PF payout   K1b PF payout x cancel   K1c PF payout x Undo release   K1d Undo release x PF payout  (0224, see below)
+//   K1e a TWO-line Undo [lab line, doctor line] x a payout of the doctor entry (no 40P01)   K1f a raw status flip to ready_for_release x a payout
 //   PD1 pay, then cancel / undo (refused with no race), void the payout, then cancel / undo (works)
 //   PD2 every payout refusal rolls everything back (incl. the burned batch number)    PD3 payout x payout of OVERLAPPING entries
 //   PD3b payout x payout of disjoint entries (the batch counter serialises them)    PD5 free race: payout / cancel / undo soup on one paid line
@@ -80,8 +81,9 @@
 //      void / insert, TC test request cancelled: 14 mutants; the L / S of a void or cancel die in P2 C2 H2 T5 on
 //      the duplicate reversal, those of an insert in P5 C4 H4 on the missing re-posting)
 //   MRA     bridge_test_request_released without the waiver-allocation FOR UPDATE (T6)
-//   MTCP / MUDP   the cancel / undo bridge without the PF-entry FOR UPDATE (K1b / K1c: a payout in flight is invisible, the later UPDATE voids the paid entry)
-//   MTCR / MUDR   the cancel / undo bridge without the paid-out refusal (K1b / K1c and the sequential PD1)
+//   MTCP / MUDP   the cancel / undo bridge without the PF-entry FOR UPDATE (K1b / K1f - K1c goes through undo_visit_release's pre-lock, a second line of defence: a payout in flight is invisible, the later UPDATE voids the paid entry)
+//   MTCR / MUDR   the cancel / undo bridge without the paid-out refusal (K1b / K1c / K1f and the sequential PD1)
+//   MUDL    undo_visit_release without the pre-lock of every candidate line's PF entries (K1e: a two-line Undo x a payout closes a REAL 40P01 through the journal-entry counter)
 //   MPD     pf_disburse_entries without the entry lock AND the link's filters + row-count check (PD3 pays one entry twice, K1a links a voided entry). Each of the
 //           two is a second line of defence for the other, so removing only one is NOT caught - and not a bug.
 // The payout function is an ordinary function, so MPD is a copy of the live definition in a throwaway schema (glb_mut_<hex>) that the payout calls
@@ -1258,6 +1260,25 @@ const scenarios: Record<string, Scenario> = {
     eq("the refused undo wrote no release_undone audit row", await num("select count(*)::int as n from public.audit_log where action = 'test_request.release_undone' and resource_id = $1", [l.id]), 0);
     queued();
   },
+  // concurrency-proof: fn_undo_release_bridge (K1f: a PF payout in flight x a RAW status flip back to ready_for_release, as an operator's UPDATE issues it - no RPC pre-lock, so the BRIDGE's own PF lock is what makes it wait and refuse)
+  // K1c goes through undo_visit_release, whose 0224 pre-lock now makes the bridge's lock a second line of defence for that caller; the bridge fires for every writer of the line.
+  async K1f() {
+    const l = await mkLine({ doc: true, release: true });
+    const entry = await pfEntryOf(l);
+    const { o1, o2, queued } = await forcedLate({
+      whoA: "svc",
+      whoB: "svc",
+      first: (a) => payoutRpc(a, [entry], 600),
+      second: (b) =>
+        call(b, "update public.test_requests set status = 'ready_for_release', released_at = null, released_by = null, release_medium = null where id = $1 and status = 'released' returning id", [l.id]),
+      rel: "doctor_pf_entries",
+      why: "the undo bridge's PF lock queues on the entry the payout holds",
+    });
+    expectOk(o1, "payout");
+    refused(o2, "P0084", /already paid out/, "raw undo behind a payout: expected P0084 (already paid out)");
+    await assertPaidAndUntouched(l, entry, payoutIdOf(o1), "K1f");
+    queued();
+  },
   // concurrency-proof: fn_undo_release_bridge (K1d: an Undo release in flight x a PF payout of its entry - the payout waits on the entry, then refuses it)
   async K1d() {
     const l = await mkLine({ doc: true, release: true });
@@ -1277,6 +1298,39 @@ const scenarios: Record<string, Scenario> = {
     eq("line", await lineInvariants(l, "K1d"), "ready_for_release");
     eq("the un-released line's 2110 accounts net to zero", await net2110(l), 0);
     queued();
+  },
+
+  // concurrency-proof: undo_visit_release (K1e: a TWO-line Undo [lab line with a release JE, doctor line] x a payout of the doctor entry - no 40P01, the payout wins, the whole undo is refused P0084)
+  // concurrency-proof: fn_undo_release_bridge (K1e: the per-row bridge firings of the one multi-row UPDATE)
+  // concurrency-proof: pf_disburse_entries (K1e: the payout holds its entry while waiting for the batch counter, then for the journal-entry counter)
+  // The cycle needs the Undo to hold the journal-entry counter (its lab line's reversal) while the payout, which already holds the doctor entry, asks for that same counter.
+  // A gate on the BATCH counter parks the payout after its entry lock and before its header insert; the Undo then runs; releasing the gate lets the payout reach the JE counter.
+  // Without the Undo's pre-lock: the lab firing takes the JE counter, the doctor firing waits on the entry, the payout wakes and waits on the JE counter: 40P01.
+  async K1e() {
+    const { visit, lab, doc } = await mkLabAndDoctor();
+    const entry = await pfEntryOf(doc);
+    const year = "extract(year from (now() at time zone 'Asia/Manila'))::smallint";
+    const g = await actor("batch-counter-gate", "raw");
+    await g.c.query("begin");
+    if ((await g.c.query(`select 1 from public.pf_disbursement_year_counters where year = ${year} for update`)).rowCount === 0) {
+      await g.c.query(`select public.next_pf_disbursement_batch_number(${year}) as n`); // the year's row, created (and held) by the gate itself
+    }
+    const [p, u] = [await actor("payout", "svc"), await actor("undo", "staff")];
+    await begin(p);
+    const pOut = andEnd(p, payoutRpc(p, [entry], 600));
+    await mustWait(p, "the payout holds its entry and queues on the batch counter the gate holds");
+    await begin(u);
+    const uOut = andEnd(u, undoRpc(u, visit, [lab.id, doc.id]));
+    await mustWait(u, "the Undo queues on the doctor entry the payout holds");
+    await g.c.query("rollback");
+    const [op, ou] = await Promise.all([pOut, uOut]);
+    for (const [who, o] of [["payout", op], ["undo", ou]] as const) {
+      expect(o.ok || o.code !== "40P01", `multi-line Undo x payout: deadlock (40P01) - the ${who} was the victim: ${JSON.stringify(o)}`);
+    }
+    expectOk(op, "payout");
+    refused(ou, "P0084", /already paid out/, "two-line undo behind a payout: expected P0084 (already paid out)");
+    await assertPaidAndUntouched(doc, entry, payoutIdOf(op), "K1e doctor line");
+    eq("K1e lab line: still released, its release entry untouched (the whole undo rolled back)", [await lineStatus(lab.id), (await jeState("test_request", lab.id)).reversals], ["released", 0]);
   },
 
   // PD1 sequential: pay, then cancel / undo of the paid line are refused (no race at all); void the payout and they work
@@ -1537,6 +1591,35 @@ const scenarios: Record<string, Scenario> = {
   },
 };
 
+/** One visit, paid in full and released: a LAB line (release JE, no PF) and a DOCTOR line (PF 600), the lab line's id the smaller (and inserted first), so a row-by-row UPDATE meets the lab line first. */
+async function mkLabAndDoctor(): Promise<{ visit: string; lab: Line; doc: Line }> {
+  const visit = await mkVisit(2000, "lab + doctor line");
+  const [labId, docId] = [mint(), mint()].sort() as [string, string];
+  await q("begin");
+  try {
+    await q(
+      `insert into public.test_requests (id, visit_id, service_id, status, requested_by, base_price_php, final_price_php)
+       values ($1, $2, $3, 'requested', $4, 1000, 1000)`,
+      [labId, visit, fx.svcLab, fx.admin],
+    );
+    await q(
+      `insert into public.test_requests (id, visit_id, service_id, status, requested_by, base_price_php, final_price_php, clinic_fee_php, doctor_pf_php, attending_physician_id)
+       values ($1, $2, $3, 'requested', $4, 1000, 1000, 400, 600, $5)`,
+      [docId, visit, fx.svcDoc, fx.admin, fx.physician],
+    );
+    await mkPaymentOn(visit, 2000);
+    for (const id of [labId, docId]) {
+      await q("update public.test_requests set status = 'ready_for_release' where id = $1", [id]);
+      await q("update public.test_requests set status = 'released', released_at = now(), released_by = $2, release_medium = 'other' where id = $1", [id, fx.admin]);
+    }
+    await q("commit");
+  } catch (e) {
+    await q("rollback").catch(() => undefined);
+    throw e;
+  }
+  return { visit, lab: { id: labId, visit, doc: false }, doc: { id: docId, visit, doc: true } };
+}
+
 // ---- the PF payout, as the app calls it (0224) --------------------------------
 /** The function the payout calls go through; the control round points it at a throwaway-schema mutant copy. */
 let payoutFn = "public.pf_disburse_entries";
@@ -1664,11 +1747,12 @@ const FUNCS: Fn[] = [
   { name: "bridge_test_request_released", migration: "0183_waived_balance_gl.sql" },
   { name: "bridge_test_request_cancelled", migration: "0224_pf_payout_atomic.sql" },
   { name: "fn_undo_release_bridge", migration: "0224_pf_payout_atomic.sql" },
+  { name: "undo_visit_release", migration: "0224_pf_payout_atomic.sql" },
 ];
-const sigOf = (name: string) => `public.${name}()`;
+const sigOf = (name: string) => (name === "undo_visit_release" ? "public.undo_visit_release(uuid, uuid[], uuid, jsonb, text, jsonb)" : `public.${name}()`);
 
 /** nolock / nostatus: the journal-entry (or waiver-allocation) lock-and-read of a bridge; nopflock / norefuse: the 0224 PF-entry lock / the disbursed refusal of the cancel and undo bridges; rpcnoguard: the 0224 payout function's entry lock AND its link guards (a throwaway-schema copy). */
-type MutKind = "nolock" | "nostatus" | "nopflock" | "norefuse" | "rpcnoguard";
+type MutKind = "nolock" | "nostatus" | "nopflock" | "norefuse" | "rpcnoguard" | "nopreplock";
 interface Mutant {
   id: string;
   fn: string;
@@ -1689,6 +1773,8 @@ const DOUBLE_REVERSAL = /no second reversal of an entry the writer already rever
 const NO_REPOSTING = /posted JEs for the re-inserted source \(the writer reversed the old one\)/;
 /** The cancel / undo bridge let a paid-out line through. */
 const EXPECT_P0084 = /expected P0084/;
+/** A two-line Undo and a payout closed a lock cycle. */
+const DEADLOCK = /multi-line Undo x payout: deadlock/;
 /** The payout function paid an entry that was already paid or voided. */
 const PAYOUT_NOT_REFUSED = /second payout of overlapping entries was not refused|payout behind a cancel: expected P0085/;
 const NOPFLOCK = "the PF-entry FOR UPDATE removed (the refusal still reads the committed row)";
@@ -1714,8 +1800,12 @@ const MUTANTS: Mutant[] = [
   // committed, unlinked row and the later UPDATE wakes up and voids the paid entry); without the refusal even a sequential cancel / undo voids it.
   { id: "MTCP", fn: "bridge_test_request_cancelled", kind: "nopflock", note: NOPFLOCK, mustFail: ["K1b"], reason: EXPECT_P0084, mustPass: ["K1a", "PD1"] },
   { id: "MTCR", fn: "bridge_test_request_cancelled", kind: "norefuse", note: NOREFUSE, mustFail: ["K1b", "PD1"], reason: EXPECT_P0084 },
-  { id: "MUDP", fn: "fn_undo_release_bridge", kind: "nopflock", note: NOPFLOCK, mustFail: ["K1c"], reason: EXPECT_P0084, mustPass: ["K1d", "PD1"] },
-  { id: "MUDR", fn: "fn_undo_release_bridge", kind: "norefuse", note: NOREFUSE, mustFail: ["K1c", "PD1"], reason: EXPECT_P0084 },
+  // K1c (the RPC path) still passes against MUDP: undo_visit_release's pre-lock holds the entries first. A raw status flip has no pre-lock (K1f).
+  { id: "MUDP", fn: "fn_undo_release_bridge", kind: "nopflock", note: NOPFLOCK, mustFail: ["K1f"], reason: EXPECT_P0084, mustPass: ["K1c", "K1d", "PD1"] },
+  { id: "MUDR", fn: "fn_undo_release_bridge", kind: "norefuse", note: NOREFUSE, mustFail: ["K1c", "K1f", "PD1"], reason: EXPECT_P0084 },
+  // 0224 B2: the Undo RPC's pre-lock of EVERY candidate line's PF entries. Without it a two-line Undo holds the journal-entry counter after its first
+  // line's reversal and only then asks for the doctor line's entry a payout holds while it waits for the same counter: a real 40P01 (K1e).
+  { id: "MUDL", fn: "undo_visit_release", kind: "nopreplock", note: "the pre-lock of the candidate lines' PF entries removed", mustFail: ["K1e"], reason: DEADLOCK, mustPass: ["K1c", "K1d"] },
   // 0224: the payout function itself. The entry lock and the link's filters + row-count check are each a SECOND line of defence for the other
   // (a payout that read stale rows is stopped by the filtered link and vice versa), so only removing BOTH lets an overlapping or voided entry
   // be paid: two payouts of one entry both succeed (PD3), a payout links an entry a cancel voided (K1a).
@@ -1740,6 +1830,7 @@ const TARGET = /select [^;]*? into [^;]*?from public\.(?:journal_entries|visit_w
 /** The live definition with `kind` applied ONLY inside a transaction that set glb.tag = this run's tag. */
 function mutate(def: string, m: Mutant): string {
   if (m.kind === "nopflock" || m.kind === "norefuse") return mutatePf(def, m);
+  if (m.kind === "nopreplock") return mutatePreLock(def, m);
   const hit = TARGET.exec(def);
   if (!hit) throw new Error(`${m.id}: the live ${m.fn} no longer holds a lock-and-read statement this runner knows - update TARGET`);
   const orig = hit[0];
@@ -1758,6 +1849,17 @@ function mutatePf(def: string, m: Mutant): string {
   const orig = hit[0];
   const variant = m.kind === "nopflock" ? replaceOnce(orig, /\s+for update(\s+loop)/, "$1", m.id) : replaceOnce(orig, /raise exception [^;]*;/, "null;", m.id);
   const wrapped = `if current_setting('glb.tag', true) = '${TAG}' then\n    ${variant}\n  else\n    ${orig}\n  end if;`;
+  const out = def.replace(orig, () => wrapped).replace("AS $function$", () => `AS $function$ ${MARK}`);
+  if (!out.includes(MARK) || out === def) throw new Error(`${m.id}: could not build the mutant`);
+  return out;
+}
+/** 0224's pre-lock of every candidate line's PF entries in undo_visit_release (`perform 1 from public.doctor_pf_entries e ... for update;`). */
+const PRELOCK_TARGET = /perform 1\s+from public\.doctor_pf_entries e[\s\S]*?for update;/;
+function mutatePreLock(def: string, m: Mutant): string {
+  const hit = PRELOCK_TARGET.exec(def);
+  if (!hit) throw new Error(`${m.id}: the live ${m.fn} no longer holds the 0224 PF pre-lock - update PRELOCK_TARGET`);
+  const orig = hit[0];
+  const wrapped = `if current_setting('glb.tag', true) = '${TAG}' then\n    null;\n  else\n    ${orig}\n  end if;`;
   const out = def.replace(orig, () => wrapped).replace("AS $function$", () => `AS $function$ ${MARK}`);
   if (!out.includes(MARK) || out === def) throw new Error(`${m.id}: could not build the mutant`);
   return out;
@@ -1810,7 +1912,7 @@ async function swapIn(m: Mutant): Promise<void> {
 /** The statement from the migration that holds the function's latest definition (fallback when the backup is gone). */
 function fromMigration(f: Fn): string {
   const sql = readFileSync(join(process.cwd(), "supabase/migrations", f.migration), "utf8");
-  const start = sql.indexOf(`create or replace function public.${f.name}()`);
+  const start = sql.indexOf(`create or replace function public.${f.name}(`);
   if (start < 0) throw new Error(`${f.migration} no longer defines ${f.name}`);
   const open = /\bas\s+(\$[a-z_]*\$)/i.exec(sql.slice(start));
   if (!open) throw new Error(`could not find the body of ${f.name} in ${f.migration}`);
