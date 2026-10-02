@@ -1,19 +1,25 @@
-// Hand-run local CONCURRENCY proof for the six AP-subledger lock functions of 0049 that had none:
+// Hand-run local CONCURRENCY proof for the AP-subledger lock functions of 0049 (and, since 0222, the recompute trigger and
+// the payment-create function, which now take the bill locks in the global order):
 //   ap_void_bill_payment_cascade   void a bill payment (reversal JE + voided_at + allocation cascade)
 //   ap_reallocate_bill_payment     delete-then-insert a payment's allocations (deferred P0030-P0033 check at commit)
 //   ap_void_bill_with_guard        void a posted bill (reversal JE + the P0029 trigger guard)
 //   ap_update_bill_draft           replace a draft bill's header + lines
 //   ap_post_recurring_template     the cron's "create a draft bill from a due template + advance next_run_date"
 //   ap_reverse_je_for_source       the shared "reverse the posted journal entry of a source" helper
+//   0222 adds: ap_recompute_bill_paid_and_status (the per-row allocation trigger: bill lock BEFORE the sum) and
+//   ap_create_bill_payment_with_allocations (target bills locked before the payment posts its journal entry)
+//
+// THE GLOBAL LOCK ORDER (0222), which D1 / D2 / O1 / F4 / F5 prove:
+//   payment row(s) -> every affected bill ORDER BY id FOR NO KEY UPDATE -> journal (JE row, then the entry counter) -> writes
 //
 // The sequential smoke (scripts/smoke-12.4.sql) cannot prove a race (a transaction never waits on itself), so this
 // runner uses separate `pg` connections. DETERMINISTIC, NOT LUCKY: a forced scenario holds the first caller's
 // transaction open, starts the second, and does not move on until pg_locks shows THAT backend queued on the expected
 // lock (a row lock, on the expected relation). If the interleaving is not reached the scenario FAILS - it never
-// degrades into a sequential run. Only the free-race rounds (F1-F4) rely on timing, and they assert invariants only.
+// degrades into a sequential run. Only the free-race rounds (F1-F5) rely on timing, and they assert invariants only.
 //
 // HOW EACH FUNCTION IS CALLED (as the app does)
-//   all six        service_role, through the admin client (src/lib/actions/accounting/{bills,bill-payments}.ts and
+//   all of them    service_role, through the admin client (src/lib/actions/accounting/{bills,bill-payments}.ts and
 //                  src/app/api/cron/recurring-bills/route.ts). They are SECURITY DEFINER, owned by postgres.
 //   posting a draft   the app has NO function for it: postBillAction is a direct service_role UPDATE
 //                  (wt_amount, status='posted', posted_at, posted_by ... where status = 'draft'), copied verbatim in B6/B7.
@@ -34,10 +40,14 @@
 //   J1 reverse x reverse (direct)         J2 a direct journal-entry writer, then reverse
 //   F1 free race on one payment (void/void/reallocate)   F2 free race: three cron runs on one template
 //   F3 free race on one bill (void/void/allocate)        F4 two payments reallocating over the same two bills in opposite order
-//   KNOWN (reported, not asserted; a KNOWN scenario that stops reproducing or breaks exits 1):
-//   D1 void a bill x void its payment: bill-row -> journal-entry-counter vs counter -> bill-row lock-order cycle (40P01)
-//   K2 two payments reallocated onto one bill with room for both: the recompute trigger's stale sum overwrites paid_amount
-//   K3 void one payment of a bill while a reallocation puts another on it: the same stale-sum overwrite, through the void cascade
+//   K2 two payments reallocated onto one bill with room for both: paid_amount / status follow the allocations (was the KNOWN lost update)
+//   K3 void one payment of a bill while a reallocation puts another on it: the same, through the void cascade (was KNOWN)
+//   K4 the same race with two DIRECT allocation writers (no function pre-lock): the recompute trigger's own bill lock
+//   D1 void a bill x void its payment: no 40P01 any more - the payment void now waits on the bill BEFORE the journal counter (was KNOWN)
+//   D2 create a payment onto a bill x void that bill: the same cycle through ap_create_bill_payment_with_allocations (new in 0222)
+//   O1 two payments reallocated over the same two bills in OPPOSITE order, FORCED: ordered pre-lock, no 40P01 (F4's cycle, deterministic)
+//   F5 free race on one bill: create a payment / void / void, invariants + zero deadlocks
+//   (KNOWN is empty now. The runner still reports a KNOWN scenario and fails the run when one stops reproducing, for the next one.)
 //
 // CONTROL ROUNDS (--control) prove the proof can fail. Each mutant removes ONE guard and the named scenarios must
 // FAIL against it (a copy in a throwaway schema aps_ctl_<hex>, never public), for the mutant's stated REASON (a regexp over the
@@ -52,8 +62,16 @@
 //   MUD ap_update_bill_draft without the bill FOR UPDATE                  (B6 B8)
 //   MPR ap_post_recurring_template without the template FOR UPDATE        (T1 T2 T3)
 //   MRJ ap_reverse_je_for_source without the journal-entry FOR UPDATE     (J1 J2)
-// The mutants cover the six functions' own row locks. They do NOT cover ap_recompute_bill_paid_and_status (the K2/K3 defect: it is
-// a trigger on bill_payment_allocations, fired for every session, and a trigger body cannot be isolated in a copy schema).
+//   0222 mutants (each strips exactly the `-- 0222 lock begin .. end` block the migration marks):
+//   MK  ap_recompute_bill_paid_and_status without the bill lock             (K4; K2 and K3 still pass - see below)
+//   MKK the recompute lock AND the reallocate / void-cascade bill pre-locks  (K2 K3: the lost update of paid_amount)
+//   MD  ap_void_bill_payment_cascade without the bill pre-lock              (D1: a real 40P01)
+//   MCP ap_create_bill_payment_with_allocations without the bill pre-lock   (D2: a real 40P01)
+//   MRO ap_reallocate_bill_payment without the ordered bill pre-lock        (O1: a real 40P01)
+// A trigger function cannot be copied into another schema, so MK / MKK TEMPORARILY swap public.ap_recompute_bill_paid_and_status for
+// a variant whose lock is skipped only inside a transaction that ran set_config('aps.tag', '<run tag>', true) - which only this
+// runner's actors do, so every other session behaves exactly as before. The original is restored in finally / SIGINT / SIGTERM,
+// verified byte-for-byte, and a crashed run's swap is restored from 0222 at the next start.
 //
 // Redundancy, stated honestly (the scenarios that STILL pass against a mutant check shared behaviour, not the dropped
 // guard; they are asserted as mustPass so a later change that makes the lock matter shows up):
@@ -66,6 +84,9 @@
 //   - ap_void_bill_payment_cascade against a reallocate that committed first (P3): the cascade UPDATE waits on the
 //     payment row and its trigger reads the allocations with a fresh snapshot; the lock is what makes void-vs-void
 //     idempotent (P1).
+//   - the recompute trigger's bill lock against the real reallocate / void functions (K2, K3 against MK): the functions'
+//     own bill pre-lock already serialises two writers on a bill before either touches an allocation, so the trigger lock is
+//     defence in depth for a writer that does NOT pre-lock (K4, MK) - and K2 / K3 only fail when BOTH are removed (MKK).
 //
 // FIXTURES are committed (two connections cannot see each other's uncommitted rows), tagged aps-<hex> (vendor names,
 // template descriptions, one throwaway admin), swept at start, deleted in finally + SIGINT/SIGTERM (incl. the journal
@@ -81,11 +102,13 @@
 import "./lib/load-env";
 import { requireLocalOrExplicitProd } from "./lib/env-guard";
 import { randomBytes } from "node:crypto";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { Client } from "pg";
 
 requireLocalOrExplicitProd("ap-subledger:concurrency-proof", {
   writes:
-    "a throwaway admin (auth.users + staff_profiles), vendors, bills, bill payments, recurring templates and the journal entries / audit rows they post, tagged aps-<hex>, committed so two connections can race on them, then deleted; during --control it creates (and drops) copies of six functions in a schema aps_ctl_<hex>",
+    "a throwaway admin (auth.users + staff_profiles), vendors, bills, bill payments, recurring templates and the journal entries / audit rows they post, tagged aps-<hex>, committed so two connections can race on them, then deleted; during --control it creates (and drops) copies of up to eight functions in a schema aps_ctl_<hex> and briefly swaps public.ap_recompute_bill_paid_and_status for a variant that deviates only inside transactions carrying this run's tag",
 });
 
 const DB_URL = process.env.SUPABASE_DB_URL ?? "postgresql://postgres:postgres@127.0.0.1:54322/postgres";
@@ -104,12 +127,15 @@ const APP_NAME = `ap-subledger:${TAG}`;
 /** During a mutant round the forced scenarios only require the second caller to be BLOCKED BY the first (not queued on the real
  *  guard's relation), so what fails against a mutant is the OUTCOME the guard protects, not merely where the waiter queued. */
 let relaxedWait = false;
-const FN = { voidPay: "public", realloc: "public", voidBill: "public", updDraft: "public", postTpl: "public", revJe: "public" };
+const FN = { voidPay: "public", realloc: "public", voidBill: "public", updDraft: "public", postTpl: "public", revJe: "public", createPay: "public" };
 type Slot = keyof typeof FN;
 
 let monitor: Client;
 const open: Client[] = [];
 let seq = 0;
+/** Set while a trigger-swap mutant is installed: every actor transaction then carries set_config('aps.tag', TAG, true), the only
+ *  thing that switches the swapped public.ap_recompute_bill_paid_and_status to its mutated branch (nobody else's session sets it). */
+let mutantTag = false;
 /** Every id this run minted (vendors, bills, payments, templates): the leftover check looks them up by primary key as well as by tag. */
 const madeIds: string[] = [];
 const made = (id: string): string => {
@@ -158,11 +184,13 @@ async function actor(name: string): Promise<Actor> {
 /** begin + act as service_role, like the admin client. */
 async function begin(a: Actor): Promise<void> {
   await a.c.query("begin");
+  if (mutantTag) await a.c.query("select set_config('aps.tag', $1, true)", [TAG]);
   await a.c.query("set local role service_role");
 }
 /** begin as the test owner: a plain direct writer (no app role). */
 async function beginPlain(a: Actor): Promise<void> {
   await a.c.query("begin");
+  if (mutantTag) await a.c.query("select set_config('aps.tag', $1, true)", [TAG]);
 }
 function settle(p: Promise<{ rows: unknown[]; rowCount: number | null }>): Promise<Out> {
   return p.then(
@@ -250,6 +278,21 @@ async function mustBeBlockedBy(a: Actor, by: Actor, why: string): Promise<void> 
     await sleep(25);
   }
   throw new Fail(`interleaving not reached: ${a.name} was never blocked by ${by.name} (${why})`);
+}
+
+/** The actor's in-flight call must be seen blocked BY one of `by` within ~5s and not answered (a mutant round), or - in a normal run - queued on a
+ *  row of `rel`. For a waiter that may queue behind the first waiter rather than the lock holder itself. */
+async function waitQueued(a: Actor, by: Actor, rel: string, why: string, alsoBy: Actor[] = []): Promise<void> {
+  if (!relaxedWait) return mustWait(a, rel, why);
+  const pids = [by, ...alsoBy].map((x) => x.pid);
+  const deadline = Date.now() + 5000;
+  while (Date.now() < deadline) {
+    if (a.settled) throw new Fail(`interleaving not reached: ${a.name} answered without waiting (${why})`);
+    const r = await monitor.query<{ b: boolean }>("select pg_blocking_pids($1) && $2::int[] as b", [a.pid, pids]);
+    if (r.rows[0]!.b) return;
+    await sleep(25);
+  }
+  throw new Fail(`interleaving not reached: ${a.name} was never blocked by ${[by, ...alsoBy].map((x) => x.name).join(" / ")} (${why})`);
 }
 
 /** First caller runs (its transaction stays open); second starts and must queue on `rel` (null: simply be blocked by the first); first ends; second ends. */
@@ -439,6 +482,19 @@ const voidBill = (a: Actor, id: string, reason = "aps proof") =>
 const updateDraft = (a: Actor, id: string, vendor: string, lines: number[], note: string) =>
   call(a, `select ${FN.updDraft}.ap_update_bill_draft($1::uuid, $2::jsonb, $3::uuid) as r`, [id, JSON.stringify({ ...JSON.parse(billInput(vendor, lines)), description: note }), ADMIN]);
 const postTemplate = (a: Actor, id: string) => call(a, `select ${FN.postTpl}.ap_post_recurring_template($1::uuid) as r`, [id]);
+const createPayment = (a: Actor, vendor: string, allocs: { bill_id: string; allocated_amount: number }[], reference = TAG) =>
+  call(a, `select ${FN.createPay}.ap_create_bill_payment_with_allocations($1::jsonb, $2::uuid) as r`, [
+    JSON.stringify({
+      vendor_id: vendor,
+      payment_date: TODAY,
+      method: "bank_transfer",
+      cash_account_id: BANK,
+      amount_php: allocs.reduce((t, x) => t + x.allocated_amount, 0),
+      reference,
+      allocations: allocs,
+    }),
+    ADMIN,
+  ]);
 const reverseJe = (a: Actor, kind: string, id: string) => call(a, `select ${FN.revJe}.ap_reverse_je_for_source($1::text, $2::uuid, $3::uuid) as r`, [kind, id, ADMIN]);
 // postBillAction (src/lib/actions/accounting/bills.ts), verbatim WHERE guards; the fixtures are wt-exempt so wt = 0.
 const postDraftDirect = (a: Actor, id: string) =>
@@ -463,7 +519,17 @@ const show = (o: Out) => (o.ok ? `ok ${JSON.stringify(o.rows[0] ?? {})}` : `${o.
 // ---------------------------------------------------------------------------
 type Verdict = void | "reproduced" | "not-reproduced";
 type Scenario = () => Promise<Verdict>;
-const KNOWN = new Set(["D1", "K2", "K3"]);
+/** The bill must show EXACTLY what is allocated on it (paid_amount and status follow): a stale recompute sum is the LOST UPDATE. */
+async function lostUpdateCheck(label: string, billId: string, wantActive: number): Promise<void> {
+  const b = await bill(billId);
+  const active = Number((await q(`select coalesce(sum(allocated_amount), 0) as s from public.bill_payment_allocations where bill_id = $1 and voided_at is null`, [billId]))[0]!.s);
+  console.log(`    ${label}: bill has ${active} actively allocated, paid_amount ${b.paid}, status ${b.status} (net ${b.net})`);
+  expect(active === wantActive, `${label}: ${wantActive} should be actively allocated, got ${active}`);
+  const want = b.paid >= b.net && b.net > 0 ? "paid" : b.paid > 0 ? "partially_paid" : "posted";
+  expect(b.paid === active && b.status === want, `${label}: lost update - ${active} actively allocated but paid_amount ${b.paid} / status ${b.status} (want ${active} / ${want})`);
+}
+/** Reported, not asserted: empty since 0222 fixed K2 / K3 / D1. A KNOWN scenario that stops reproducing or breaks fails the run. */
+const KNOWN = new Set<string>([]);
 const scenarios: Record<string, Scenario> = {
   // concurrency-proof: ap_void_bill_payment_cascade (P1 void x void: the second queues on the payment row, re-reads voided_at, returns already_voided)
   // P1 - two admins void the same payment: one reversal JE, one audit row, the second is told it is already voided.
@@ -840,14 +906,14 @@ const scenarios: Record<string, Scenario> = {
     await checkBill(b3, "P6 b3");
     await checkBill(b2, "P6 b2");
   },
-  // K2 (KNOWN) - two DIFFERENT payments reallocated onto one bill that has room for both. ap_recompute_bill_paid_and_status (the
-  //      per-row allocation trigger) SUMS the active allocations in one statement and only then UPDATEs the bill: the second writer
-  //      summed before the first committed (it saw only its own 50), waits on the bill row, and then writes paid_amount = 50 over
-  //      the first writer's committed row. Final: 100 allocated, paid_amount 50, status partially_paid. (The deferred P0031 check
-  //      only bounds the sum from above, so nothing refuses it; the next allocation change on the bill repairs the figure.) The
-  //      void / create paths do not show it because each posts a journal entry and is serialised globally on the journal-entry
-  //      counter (je_next_number); a reallocation posts none.
-  // concurrency-proof: ap_reallocate_bill_payment (K2 - KNOWN: two payments onto one bill, the recompute trigger's stale sum overwrites paid_amount)
+  // K2 - two DIFFERENT payments reallocated onto one bill that has room for both. Before 0222 the per-row allocation trigger
+  //      (ap_recompute_bill_paid_and_status) SUMMED the active allocations in one statement and only then UPDATEd the bill: the
+  //      second writer summed before the first committed (it saw only its own 50), waited on the bill row, and wrote
+  //      paid_amount = 50 over the first writer's committed row (100 allocated, paid_amount 50, 'partially_paid'). Now the
+  //      reallocate pre-locks the bill before touching an allocation AND the trigger locks it before summing, so the second writer
+  //      queues, then sums 100: paid_amount 100, 'paid'.
+  // concurrency-proof: ap_reallocate_bill_payment (K2: two payments onto one bill, paid_amount follows the allocations - the former KNOWN lost update)
+  // concurrency-proof: ap_recompute_bill_paid_and_status (K2 / K3 / K4: the recompute under concurrent allocation writers - K4 isolates the trigger's own bill lock)
   async K2() {
     const v = await mkVendor();
     const [b1, b2, b3] = [await mkBill(v), await mkBill(v), await mkBill(v)];
@@ -855,23 +921,22 @@ const scenarios: Record<string, Scenario> = {
     const { o1, o2 } = await forced({
       first: (a) => reallocate(a, p, [alloc(b3, 50)]),
       second: (b) => reallocate(b, r, [alloc(b3, 50)]),
-      rel: null,
-      why: "the second allocation waits on the first's uncommitted update of the shared bill row",
+      rel: "bills",
+      why: "the second reallocate queues on the bill row the first holds (its pre-lock; the trigger lock behind it)",
     });
     expectOk(o1, "first reallocate");
     expectOk(o2, "second reallocate");
-    const b = await bill(b3);
-    const active = Number((await q(`select coalesce(sum(allocated_amount), 0) as s from public.bill_payment_allocations where bill_id = $1 and voided_at is null`, [b3]))[0]!.s);
-    console.log(`    evidence K2: bill has ${active} actively allocated, paid_amount ${b.paid}, status ${b.status} (net ${b.net})`);
-    expect(active === 100, `both allocations should be on the bill, got ${active}`);
-    return b.paid === 100 && b.status === "paid" ? "not-reproduced" : "reproduced";
+    await lostUpdateCheck("K2", b3, 100);
+    await checkBill(b3, "K2 b3");
+    await checkPayment(p, "K2 first payment");
+    await checkPayment(r, "K2 second payment");
   },
 
-  // K3 (KNOWN) - the same lost update through the VOID path: a reallocation puts a second payment on a bill while another payment of
-  //      that bill is being voided. The cascade's allocation UPDATE fires the recompute trigger, which sums the allocations in its
-  //      snapshot (the reallocation's new row is invisible), waits on the bill row, and then writes paid_amount = 0 / 'posted' over
-  //      the reallocation's committed 100 / 'paid'. Final: one active 50 allocation, paid_amount 0.
-  // concurrency-proof: ap_void_bill_payment_cascade (K3 - KNOWN: void of one payment x a reallocation onto the same bill, the recompute trigger's stale sum overwrites paid_amount)
+  // K3 - the same lost update through the VOID path: a reallocation puts a second payment on a bill while another payment of that
+  //      bill is being voided. Before 0222 the cascade's allocation UPDATE fired the recompute trigger, which summed in its
+  //      snapshot (the reallocation's new row invisible), waited on the bill row and wrote paid_amount = 0 / 'posted' over the
+  //      reallocation's committed 50 / 'partially_paid'. Now the void pre-locks the bill before posting anything.
+  // concurrency-proof: ap_void_bill_payment_cascade (K3: void of one payment x a reallocation onto the same bill, paid_amount follows the allocations - the former KNOWN lost update)
   async K3() {
     const v = await mkVendor();
     const [b1, b3] = [await mkBill(v), await mkBill(v)];
@@ -879,18 +944,44 @@ const scenarios: Record<string, Scenario> = {
     const { o1, o2 } = await forced({
       first: (a) => reallocate(a, p, [alloc(b3, 50)]),
       second: (b) => voidPay(b, qy),
-      rel: null,
-      why: "the void's allocation recompute waits on the first's uncommitted update of the shared bill row",
+      rel: "bills",
+      why: "the void's bill pre-lock queues on the bill row the reallocation holds",
     });
     expectOk(o1, "reallocate");
     expectOk(o2, "void");
     await checkPayment(p, "K3 reallocated payment");
     await checkPayment(qy, "K3 voided payment");
-    const b = await bill(b3);
-    const active = Number((await q(`select coalesce(sum(allocated_amount), 0) as s from public.bill_payment_allocations where bill_id = $1 and voided_at is null`, [b3]))[0]!.s);
-    console.log(`    evidence K3: bill has ${active} actively allocated, paid_amount ${b.paid}, status ${b.status} (net ${b.net})`);
-    expect(active === 50, `the reallocated payment's 50 should be the only active allocation, got ${active}`);
-    return b.paid === 50 && b.status === "partially_paid" ? "not-reproduced" : "reproduced";
+    await lostUpdateCheck("K3", b3, 50);
+    await checkBill(b3, "K3 b3");
+  },
+
+  // K4 - the recompute trigger ALONE: two DIRECT writers (no function, so no pre-lock) each move a payment's allocation onto one bill
+  //      that has room for both (one statement each: delete the old allocation + insert the new one). The second writer's insert
+  //      fires the recompute, which must queue on the bill row BEFORE summing and then see the first writer's committed 50.
+  //      Without the trigger's bill lock (MK) it sums its own 50, waits on the UPDATE, and overwrites paid_amount with 50.
+  // concurrency-proof: ap_recompute_bill_paid_and_status (K4: two direct allocation writers onto one bill; the trigger's own lock before the sum)
+  async K4() {
+    const v = await mkVendor();
+    const [b1, b2, b3] = [await mkBill(v), await mkBill(v), await mkBill(v)];
+    const [p, r] = [await mkPayment(v, [{ bill: b1, amount: 50 }]), await mkPayment(v, [{ bill: b2, amount: 50 }])];
+    const move = (a: Actor, payment: string) =>
+      call(
+        a,
+        `with d as (delete from public.bill_payment_allocations where payment_id = $1 and voided_at is null)
+         insert into public.bill_payment_allocations (payment_id, bill_id, allocated_amount) values ($1, $2, 50) returning id`,
+        [payment, b3],
+      );
+    const { o1, o2 } = await forced({
+      first: (a) => move(a, p),
+      firstPlain: true,
+      second: (b) => move(b, r),
+      rel: null,
+      why: "the second insert waits on the first writer's uncommitted update of the shared bill row",
+    });
+    expectOk(o1, "first direct move");
+    expectOk(o2, "second direct move");
+    await lostUpdateCheck("K4", b3, 100);
+    await checkBill(b3, "K4 b3");
   },
 
   // F1 - free race on ONE payment: void / void / reallocate to a second bill, in random order, ROUNDS times. Whatever commits, the
@@ -924,10 +1015,10 @@ const scenarios: Record<string, Scenario> = {
       await checkBill(b2, `round ${i} b2`);
       await closeAll();
     }
-    // No KNOWN cycle can form here: D1 needs a bill void AND a payment void, and F1 races payment voids / a reallocation only (all take the
-    // payment row first). A 40P01 is therefore an unexplained deadlock, not an accepted abort.
-    console.log(`    F1: ${deadlocks} of ${ROUNDS} rounds ended one side as a 40P01 abort (expected 0: no KNOWN cycle applies)`);
-    expect(deadlocks === 0, `F1: ${deadlocks} unexplained 40P01 deadlock(s) - the only KNOWN cycle (D1) needs a bill void next to a payment void, which F1 never races`);
+    // Since 0222 no lock-order cycle can form here (every writer takes the payment row first, then its bills in id order). A 40P01 is an
+    // unexplained deadlock, not an accepted abort.
+    console.log(`    F1: ${deadlocks} of ${ROUNDS} rounds ended one side as a 40P01 abort (expected 0: no lock-order cycle applies)`);
+    expect(deadlocks === 0, `F1: ${deadlocks} unexplained 40P01 deadlock(s) - F1 races payment voids and a reallocation, which all take the payment row first and their bills in id order`);
   },
   // F2 - free race: three overlapping cron runs on a template due once, ROUNDS times: exactly one bill, one advance, two skips.
   // concurrency-proof: ap_post_recurring_template (F2 free race: three overlapping runs on one template, invariants only)
@@ -979,18 +1070,17 @@ const scenarios: Record<string, Scenario> = {
       await checkPayment(p, `round ${i} payment`);
       await closeAll();
     }
-    // D1 (bill row -> journal-entry counter against payment row -> counter -> bill row) needs a PAYMENT VOID. F3 races bill voids and a
-    // reallocation (which posts no journal entry), so no KNOWN cycle explains a 40P01 here.
-    console.log(`    F3: ${deadlocks} of ${ROUNDS} rounds ended one side as a 40P01 abort (expected 0: D1 needs a payment void, which F3 never races)`);
-    expect(deadlocks === 0, `F3: ${deadlocks} unexplained 40P01 deadlock(s) - D1 needs a payment void next to a bill void, which F3 never races`);
+    // F3 races bill voids and a reallocation (which posts no journal entry; it pre-locks its bills in id order), so nothing explains a 40P01 here.
+    console.log(`    F3: ${deadlocks} of ${ROUNDS} rounds ended one side as a 40P01 abort (expected 0: no lock-order cycle applies)`);
+    expect(deadlocks === 0, `F3: ${deadlocks} unexplained 40P01 deadlock(s) - F3 races bill voids and a reallocation, which never hold the journal counter while waiting for a bill`);
   },
-  // F4 - free race: two payments reallocating over the same two bills in OPPOSITE order (each insert's recompute updates a bill
-  //      row, so the order of the caller's array is the lock order). A cycle, if it forms, must end as a clean 40P01 abort with
-  //      every invariant intact - never a half-applied reallocation. The number of aborts seen is reported, not asserted.
+  // F4 - free race: two payments reallocating over the same two bills in OPPOSITE order (before 0222 each insert's recompute
+  //      UPDATEd a bill row, so the order of the caller's array was the lock order and a cycle ended one side in 40P01). Now both
+  //      pre-lock the bills in id order: EVERY round must succeed, with no 40P01 and paid_amount exactly the allocations. (The cycle
+  //      itself is forced deterministically in O1; this is the unforced race.)
+  // concurrency-proof: ap_reallocate_bill_payment (F4 free race: two payments over the same two bills in opposite order, zero 40P01 and no drift)
   async F4() {
     const v = await mkVendor();
-    let deadlocks = 0;
-    let drift = 0;
     for (let i = 0; i < ROUNDS; i++) {
       if (aborting) break;
       const [b1, b2, b3, b4] = [await mkBill(v), await mkBill(v), await mkBill(v), await mkBill(v)];
@@ -1001,34 +1091,87 @@ const scenarios: Record<string, Scenario> = {
         (async () => (await begin(a1), andEnd(a1, reallocate(a1, p, [alloc(b3, 50), alloc(b4, 50)]))))(),
         (async () => (await begin(a2), andEnd(a2, reallocate(a2, r, [alloc(b4, 50), alloc(b3, 50)]))))(),
       ]);
-      for (const o of outs) {
-        if (!o.ok) {
-          expect(o.code === "40P01", `round ${i}: unexpected refusal ${show(o)}`);
-          deadlocks += 1;
-        }
-      }
-      // The payments and the ledger must agree whatever happened; a bill's paid_amount may drift only the K2 way (reported).
+      outs.forEach((o, k) => expectOk(o, `F4 round ${i} racer ${k}`));
       for (const pp of [p, r]) await checkPayment(pp, `round ${i} payment`);
-      for (const x of [b1, b2, b3, b4]) {
-        const bs = await bill(x);
-        const act = Number((await q(`select coalesce(sum(allocated_amount), 0) as s from public.bill_payment_allocations where bill_id = $1 and voided_at is null`, [x]))[0]!.s);
-        expect(bs.paid <= act && !bs.voided, `round ${i}: bill paid_amount ${bs.paid} against ${act} actively allocated (voided ${bs.voided})`);
-        if (bs.paid !== act) drift += 1;
-      }
+      for (const x of [b1, b2, b3, b4]) await checkBill(x, `round ${i} bill`);
+      eq(`round ${i}: both bills fully paid`, [(await bill(b3)).status, (await bill(b4)).status], ["paid", "paid"]);
       await closeAll();
     }
-    console.log(`    F4: ${deadlocks} of ${ROUNDS} rounds ended one side as a clean 40P01 abort (accepted: atomic, retryable); ${drift} bill paid_amount drift(s) (the K2 lost update)`);
   },
 
-  // D1 (KNOWN) - void a bill x void its payment. ap_void_bill_with_guard takes the BILL row, then the journal-entry counter (the
-  //      reversal's number, je_next_number); ap_void_bill_payment_cascade takes the PAYMENT row, the same counter, then the BILL row
-  //      (its allocation recompute updates the bill). Opposite order -> a cycle. A direct writer parks the bill void on the bill_post
-  //      entry AFTER it holds the bill row, so the payment void can run to its own wait on the bill row (holding the counter);
-  //      releasing the writer then closes the cycle. Both callers are the real functions. Postgres breaks it with 40P01: atomic and
-  //      retryable, but a void that could have succeeded is aborted. Reproduced = a 40P01 observed (every ledger invariant must
-  //      hold and re-running the loser must converge).
-  // concurrency-proof: ap_void_bill_with_guard (D1 - KNOWN: bill row -> journal-entry counter, against the payment cascade's counter -> bill row)
-  // concurrency-proof: ap_void_bill_payment_cascade (D1 - KNOWN: payment row -> journal-entry counter -> bill row, against the bill void's bill row -> counter)
+  // O1 - the F4 cycle FORCED. A direct writer H holds bill b3. A reallocates p onto [b3, b4] and queues on b3; B reallocates r onto
+  //      [b4, b3]. Before 0222 B inserted its first allocation (taking b4) and queued on b3 behind A; H commits, A takes b3 and wants
+  //      b4, B holds b4 and wants b3: a cycle, one side dies with 40P01. Now both pre-lock in id order, so the one that arrives second
+  //      queues on the first shared bill without holding anything the other needs: both succeed, no 40P01.
+  // concurrency-proof: ap_reallocate_bill_payment (O1 forced: two reallocations over the same two bills in opposite order behind a parked writer)
+  async O1() {
+    const v = await mkVendor();
+    const [b1, b2, b3, b4] = [await mkBill(v), await mkBill(v), await mkBill(v), await mkBill(v)];
+    const p = await mkPayment(v, [{ bill: b1, amount: 100 }]);
+    const r = await mkPayment(v, [{ bill: b2, amount: 100 }]);
+    const [h, a, b] = [await actor("writer"), await actor("reallocate-p"), await actor("reallocate-r")];
+    await beginPlain(h);
+    expectOk(await call(h, `select 1 from public.bills where id = $1 for no key update`, [b3]), "writer");
+    await begin(a);
+    const pa = andEnd(a, reallocate(a, p, [alloc(b3, 50), alloc(b4, 50)]));
+    await waitQueued(a, h, "bills", "the first reallocation queues on the bill the writer holds");
+    await begin(b);
+    const pb = andEnd(b, reallocate(b, r, [alloc(b4, 50), alloc(b3, 50)]));
+    await waitQueued(b, h, "bills", "the second reallocation queues behind the first on the same bill", [a]);
+    await h.c.query("commit");
+    const [oa, ob] = await Promise.all([pa, pb]);
+    console.log(`    evidence O1: reallocate p -> ${show(oa)}; reallocate r -> ${show(ob)}`);
+    const dead = [oa, ob].filter((o) => !o.ok && o.code === "40P01").length;
+    expect(dead === 0, `O1: ${dead} reallocation(s) aborted with 40P01 deadlock detected - the opposite-order cycle formed`);
+    expectOk(oa, "reallocate p");
+    expectOk(ob, "reallocate r");
+    for (const pp of [p, r]) await checkPayment(pp, "O1 payment");
+    for (const x of [b1, b2, b3, b4]) await checkBill(x, "O1 bill");
+    eq("O1: both bills fully paid", [(await bill(b3)).status, (await bill(b4)).status], ["paid", "paid"]);
+  },
+
+  // F5 - free race on ONE bill: create a payment onto it / void it / void it, in random order, ROUNDS times. Never a voided bill with
+  //      an active allocation or a paid status, one reversal, the created payment (if it committed) consistent, and - since the
+  //      create now pre-locks the bill before it posts its entry - no 40P01 (D2 is the forced cycle).
+  // concurrency-proof: ap_create_bill_payment_with_allocations (F5 free race: create payment x void bill x void bill, invariants + zero deadlocks)
+  async F5() {
+    const v = await mkVendor();
+    let deadlocks = 0;
+    for (let i = 0; i < ROUNDS; i++) {
+      if (aborting) break;
+      const b = await mkBill(v);
+      const ref = `${TAG}-f5-${i}`;
+      const acts = await Promise.all([actor("r1"), actor("r2"), actor("r3")]);
+      const ops = [(a: Actor) => createPayment(a, v, [alloc(b, 100)], ref), (a: Actor) => voidBill(a, b), (a: Actor) => voidBill(a, b)];
+      const order = ops.map((_, k) => k).sort(() => Math.random() - 0.5);
+      const outs = await Promise.all(
+        acts.map(async (a, k) => {
+          await begin(a);
+          return andEnd(a, ops[order[k]!]!(a));
+        }),
+      );
+      for (const o of outs) {
+        if (o.ok) continue;
+        if (o.code === "40P01") deadlocks += 1;
+        else expect(["P0029", "P0033"].includes(o.code), `round ${i}: unexpected refusal ${show(o)}`);
+      }
+      await checkBill(b, `round ${i} bill`);
+      for (const row of await q(`select id from public.bill_payments where reference = $1`, [ref])) await checkPayment(String(row.id), `round ${i} payment`);
+      await closeAll();
+    }
+    console.log(`    F5: ${deadlocks} of ${ROUNDS} rounds ended one side as a 40P01 abort (expected 0)`);
+    expect(deadlocks === 0, `F5: ${deadlocks} 40P01 deadlock detected - create payment x void bill formed the bill/journal-counter cycle`);
+  },
+
+  // D1 - void a bill x void its payment. ap_void_bill_with_guard takes the BILL row, then the journal-entry counter (the reversal's
+  //      number, je_next_number); ap_void_bill_payment_cascade used to take the PAYMENT row, the same counter, then the BILL row (its
+  //      allocation recompute updates the bill): opposite order, a cycle. A direct writer parks the bill void on the bill_post entry
+  //      AFTER it holds the bill row, so the payment void can run to its wait on the bill row; releasing the writer then closed the
+  //      cycle (40P01). Now the cascade pre-locks the bill right after the payment row, BEFORE the counter: it waits holding only the
+  //      payment row, the bill void finishes (refused P0029: the payment is still active - the order the message tells an admin to
+  //      use) and the payment void proceeds. Both callers are the real functions.
+  // concurrency-proof: ap_void_bill_with_guard (D1: bill row -> journal-entry counter, against the payment cascade's bill pre-lock)
+  // concurrency-proof: ap_void_bill_payment_cascade (D1: payment row -> bill pre-lock -> journal-entry counter, against the bill void's bill row -> counter)
   async D1() {
     const v = await mkVendor();
     const b = await mkBill(v);
@@ -1041,25 +1184,50 @@ const scenarios: Record<string, Scenario> = {
     await mustWait(x, "journal_entries", "the bill void holds the bill row and queues on the bill_post entry the writer holds");
     await begin(a);
     const pa = andEnd(a, voidPay(a, p));
-    await mustWait(a, "bills", "the payment void (counter already held) queues on the bill row the bill void holds");
+    await mustWait(a, "bills", "the payment void queues on the bill row the bill void holds");
     await h.c.query("commit");
     const [oa, ox] = await Promise.all([pa, px]);
     console.log(`    evidence D1: void payment -> ${show(oa)}; void bill -> ${show(ox)}`);
     const dead = [oa, ox].filter((o) => !o.ok && o.code === "40P01").length;
-    // Atomic whichever side lost: every invariant holds after re-running what was refused (the bill can only be voided once its
-    // payment is, so a P0029 on the bill void is the expected refusal when the payment void was the one aborted).
-    const [a2, x2] = [await actor("retry-payment"), await actor("retry-bill")];
-    if (!oa.ok) {
-      await begin(a2);
-      expectOk(await andEnd(a2, voidPay(a2, p)), "retry of the payment void");
-    }
-    if (!ox.ok) {
-      await begin(x2);
-      expectOk(await andEnd(x2, voidBill(x2, b)), "retry of the bill void (the payment is voided now)");
-    }
+    expect(dead === 0, `D1: ${dead} void(s) aborted with 40P01 deadlock detected (void payment: ${show(oa)}; void bill: ${show(ox)})`);
+    expectOk(oa, "void payment");
+    expectRefused(ox, "void of a bill whose payment is still active", "P0029");
+    // The bill can be voided once its payment is: the refused side converges on a retry.
+    const x2 = await actor("retry-bill");
+    await begin(x2);
+    expectOk(await andEnd(x2, voidBill(x2, b)), "retry of the bill void (the payment is voided now)");
     await checkPayment(p, "D1 payment");
     await checkBill(b, "D1 bill");
-    return dead > 0 ? "reproduced" : "not-reproduced";
+  },
+
+  // D2 - create a payment onto a bill x void that bill: D1's cycle through ap_create_bill_payment_with_allocations. The create used to
+  //      insert the payment first (its bridge posts the entry: the counter), reach the bill only through the allocation insert, and
+  //      queue on it while holding the counter; the bill void holds the bill and queues for the counter. Now the create pre-locks the
+  //      bill before it inserts anything: the bill void finishes first, the create then runs and is refused at commit (P0033: the
+  //      bill is voided) with no payment left behind.
+  // concurrency-proof: ap_create_bill_payment_with_allocations (D2: create payment onto a bill x void that bill, the bill pre-lock before the payment's journal entry)
+  async D2() {
+    const v = await mkVendor();
+    const b = await mkBill(v);
+    const ref = `${TAG}-d2`;
+    const [h, a, x] = [await actor("writer"), await actor("create-payment"), await actor("void-bill")];
+    await beginPlain(h);
+    expectOk(await call(h, `update public.journal_entries set notes = notes where source_kind = 'bill_post' and source_id = $1 and status = 'posted'`, [b]), "writer");
+    await begin(x);
+    const px = andEnd(x, voidBill(x, b));
+    await mustWait(x, "journal_entries", "the bill void holds the bill row and queues on the bill_post entry the writer holds");
+    await begin(a);
+    const pa = andEnd(a, createPayment(a, v, [alloc(b, 100)], ref));
+    await mustWait(a, "bills", "the payment create queues on the bill row the bill void holds");
+    await h.c.query("commit");
+    const [oa, ox] = await Promise.all([pa, px]);
+    console.log(`    evidence D2: create payment -> ${show(oa)}; void bill -> ${show(ox)}`);
+    const dead = [oa, ox].filter((o) => !o.ok && o.code === "40P01").length;
+    expect(dead === 0, `D2: ${dead} call(s) aborted with 40P01 deadlock detected (create payment: ${show(oa)}; void bill: ${show(ox)})`);
+    expectOk(ox, "void bill");
+    expectRefused(oa, "payment onto a bill that was just voided", "P0033");
+    eq("no payment survived the refusal", (await q(`select 1 from public.bill_payments where reference = $1`, [ref])).length, 0);
+    await checkBill(b, "D2 bill");
   },
 };
 
@@ -1095,11 +1263,14 @@ async function runAll(only: string[] | null): Promise<Record<string, Result>> {
 // ---------------------------------------------------------------------------
 // Mutants (copies in a throwaway schema; public is never touched)
 // ---------------------------------------------------------------------------
+/** One deviation a mutant applies: a COPY of a public function in the mutant's throwaway schema (called through its FN slot) with one guard
+ *  stripped - `for-update` the single `for update;` of 0049, `lock-block` the single `-- 0222 lock begin .. end` block of 0222 - or the
+ *  TEMPORARY tagged swap of the public recompute trigger (a trigger function cannot be copied into another schema). */
+type Part = { kind: "copy"; fn: string; slot: Slot; strip: "for-update" | "lock-block" } | { kind: "trigger" };
 type Mutant = {
   id: string;
   note: string;
-  fn: string; // regprocedure
-  slot: Slot;
+  parts: Part[];
   mustFail: string[];
   /** The failure every mustFail scenario must show: the OUTCOME the dropped guard protects (not merely a failure of some kind). */
   reason: RegExp;
@@ -1110,31 +1281,103 @@ type Mutant = {
  *  failed, a connection died. Never a catch, whatever the mutant's reason says. */
 const INFRA_RE =
   /interleaving not reached|never blocked by|never waited|answered without waiting|statement timeout|canceling statement|57014|timed out|Connection terminated|terminating connection|^INFRA:/i;
+const copyOf = (fn: string, slot: Slot, strip: "for-update" | "lock-block"): Part => ({ kind: "copy", fn, slot, strip });
+const SIG = {
+  voidPay: "public.ap_void_bill_payment_cascade(uuid,text,uuid)",
+  realloc: "public.ap_reallocate_bill_payment(uuid,jsonb,uuid)",
+  voidBill: "public.ap_void_bill_with_guard(uuid,text,uuid)",
+  updDraft: "public.ap_update_bill_draft(uuid,jsonb,uuid)",
+  postTpl: "public.ap_post_recurring_template(uuid)",
+  revJe: "public.ap_reverse_je_for_source(text,uuid,uuid)",
+  createPay: "public.ap_create_bill_payment_with_allocations(jsonb,uuid)",
+};
 const MUTANTS: Mutant[] = [
-  { id: "MVP", note: "ap_void_bill_payment_cascade without the payment FOR UPDATE", fn: "public.ap_void_bill_payment_cascade(uuid,text,uuid)", slot: "voidPay", mustFail: ["P1"], reason: /second void: refused P0001 \(No posted JE found for source bill_payment/, mustPass: ["P3"] },
-  { id: "MRA", note: "ap_reallocate_bill_payment without the payment FOR UPDATE", fn: "public.ap_reallocate_bill_payment(uuid,jsonb,uuid)", slot: "realloc", mustFail: ["P2", "P4"], reason: /reallocate after void: expected a refusal, but it succeeded|second reallocate: refused P0030 \(Allocation total/ },
-  { id: "MVB", note: "ap_void_bill_with_guard without the bill FOR UPDATE", fn: "public.ap_void_bill_with_guard(uuid,text,uuid)", slot: "voidBill", mustFail: ["B1"], reason: /second void: refused P0001 \(No posted JE found for source bill_post/, mustPass: ["B3"] },
-  { id: "MUD", note: "ap_update_bill_draft without the bill FOR UPDATE", fn: "public.ap_update_bill_draft(uuid,jsonb,uuid)", slot: "updDraft", mustFail: ["B6", "B8"], reason: /edit of a posted bill: expected a refusal, but it succeeded|edit of a deleted draft: expected P0002, got 23503/, mustPass: ["B5"] },
-  { id: "MPR", note: "ap_post_recurring_template without the template FOR UPDATE", fn: "public.ap_post_recurring_template(uuid)", slot: "postTpl", mustFail: ["T1", "T2", "T3"], reason: /second run skipped: got|two bills for two different months: got|run of a deactivated template: expected a refusal, but it succeeded/ },
-  { id: "MRJ", note: "ap_reverse_je_for_source without the journal-entry FOR UPDATE", fn: "public.ap_reverse_je_for_source(text,uuid,uuid)", slot: "revJe", mustFail: ["J1", "J2"], reason: /(second reversal|reversal behind the writer): expected a refusal, but it succeeded/ },
+  { id: "MVP", note: "ap_void_bill_payment_cascade without the payment FOR UPDATE", parts: [copyOf(SIG.voidPay, "voidPay", "for-update")], mustFail: ["P1"], reason: /second void: refused P0001 \(No posted JE found for source bill_payment/, mustPass: ["P3"] },
+  { id: "MRA", note: "ap_reallocate_bill_payment without the payment FOR UPDATE", parts: [copyOf(SIG.realloc, "realloc", "for-update")], mustFail: ["P2"], reason: /reallocate after void: expected a refusal, but it succeeded/, mustPass: ["P4"] },
+  { id: "MVB", note: "ap_void_bill_with_guard without the bill FOR UPDATE", parts: [copyOf(SIG.voidBill, "voidBill", "for-update")], mustFail: ["B1"], reason: /second void: refused P0001 \(No posted JE found for source bill_post/, mustPass: ["B3"] },
+  { id: "MUD", note: "ap_update_bill_draft without the bill FOR UPDATE", parts: [copyOf(SIG.updDraft, "updDraft", "for-update")], mustFail: ["B6", "B8"], reason: /edit of a posted bill: expected a refusal, but it succeeded|edit of a deleted draft: expected P0002, got 23503/, mustPass: ["B5"] },
+  { id: "MPR", note: "ap_post_recurring_template without the template FOR UPDATE", parts: [copyOf(SIG.postTpl, "postTpl", "for-update")], mustFail: ["T1", "T2", "T3"], reason: /second run skipped: got|two bills for two different months: got|run of a deactivated template: expected a refusal, but it succeeded/ },
+  { id: "MRJ", note: "ap_reverse_je_for_source without the journal-entry FOR UPDATE", parts: [copyOf(SIG.revJe, "revJe", "for-update")], mustFail: ["J1", "J2"], reason: /(second reversal|reversal behind the writer): expected a refusal, but it succeeded/ },
+  { id: "MK", note: "ap_recompute_bill_paid_and_status without the bill lock before the sum", parts: [{ kind: "trigger" }], mustFail: ["K4"], reason: /lost update/, mustPass: ["K2", "K3"] },
+  { id: "MKK", note: "the recompute lock AND the reallocate / void-cascade bill pre-locks removed", parts: [{ kind: "trigger" }, copyOf(SIG.realloc, "realloc", "lock-block"), copyOf(SIG.voidPay, "voidPay", "lock-block")], mustFail: ["K2", "K3"], reason: /lost update/ },
+  { id: "MD", note: "ap_void_bill_payment_cascade without the bill pre-lock (before the journal counter)", parts: [copyOf(SIG.voidPay, "voidPay", "lock-block")], mustFail: ["D1"], reason: /40P01 deadlock detected/ },
+  { id: "MCP", note: "ap_create_bill_payment_with_allocations without the bill pre-lock (before the payment's journal entry)", parts: [copyOf(SIG.createPay, "createPay", "lock-block")], mustFail: ["D2"], reason: /40P01 deadlock detected/ },
+  { id: "MRO", note: "ap_reallocate_bill_payment without the ordered bill pre-lock", parts: [copyOf(SIG.realloc, "realloc", "lock-block")], mustFail: ["O1"], reason: /40P01 deadlock detected/ },
 ];
 
-async function liveDef(sig: string): Promise<string> {
-  return String((await q("select pg_get_functiondef($1::regprocedure) as d", [sig]))[0]!.d);
+async function liveDef(sig: string, c: Client = monitor): Promise<string> {
+  return String((await c.query("select pg_get_functiondef($1::regprocedure) as d", [sig])).rows[0]!.d);
 }
-/** Copy the live function into `schema` with its one FOR UPDATE removed (throws if the live text no longer has exactly one). */
+const LOCK_BLOCK_RE = /[ \t]*-- 0222 lock begin[\s\S]*?-- 0222 lock end\n/g;
+/** Copy the live function(s) of a mutant into `schema`, each with its ONE guard stripped (throws if the live text no longer has exactly one). */
 async function makeSchemaMutant(schema: string, m: Mutant): Promise<void> {
-  const def = await liveDef(m.fn);
-  const hits = def.match(/\s+for update;/g) ?? [];
-  if (hits.length !== 1) throw new Error(`${m.id}: the live function has ${hits.length} «for update;» (want exactly 1) - update MUTANTS`);
-  const name = m.fn.slice(m.fn.indexOf(".") + 1, m.fn.indexOf("("));
-  const args = m.fn.slice(m.fn.indexOf("("));
-  const body = def.replace(`public.${name}`, () => `${schema}.${name}`).replace(/\s+for update;/, () => ";");
-  if (body === def) throw new Error(`${m.id}: mutation did not apply`);
+  const copies = m.parts.filter((p): p is Extract<Part, { kind: "copy" }> => p.kind === "copy");
+  if (copies.length === 0) return;
   await monitor.query(`create schema ${schema}`);
-  await monitor.query(body);
   await monitor.query(`grant usage on schema ${schema} to service_role`);
-  await monitor.query(`grant execute on function ${schema}.${name}${args} to service_role`);
+  for (const part of copies) {
+    const def = await liveDef(part.fn);
+    const name = part.fn.slice(part.fn.indexOf(".") + 1, part.fn.indexOf("("));
+    const args = part.fn.slice(part.fn.indexOf("("));
+    let stripped: string;
+    if (part.strip === "for-update") {
+      const hits = def.match(/\s+for update;/g) ?? [];
+      if (hits.length !== 1) throw new Error(`${m.id}: the live ${name} has ${hits.length} «for update;» (want exactly 1) - update MUTANTS`);
+      stripped = def.replace(/\s+for update;/, () => ";");
+    } else {
+      const hits = def.match(LOCK_BLOCK_RE) ?? [];
+      if (hits.length !== 1) throw new Error(`${m.id}: the live ${name} has ${hits.length} «-- 0222 lock begin .. end» blocks (want exactly 1) - update MUTANTS`);
+      stripped = def.replace(LOCK_BLOCK_RE, () => "");
+    }
+    const body = stripped.replace(`public.${name}`, () => `${schema}.${name}`);
+    if (body === def || stripped === def) throw new Error(`${m.id}: mutation did not apply to ${name}`);
+    await monitor.query(body);
+    await monitor.query(`grant execute on function ${schema}.${name}${args} to service_role`);
+  }
+}
+
+// The recompute trigger cannot be copied into a schema: swap the PUBLIC function for a variant that skips its lock only inside a
+// transaction that ran set_config('aps.tag', TAG, true), and put it back byte-for-byte.
+const TRIG = "public.ap_recompute_bill_paid_and_status()";
+const TRIG_MARK = "/* aps-mutant */";
+const TRIG_LOCK = "perform 1 from public.bills where id = v_bill_id for no key update;";
+let triggerOriginal: string | null = null;
+async function swapTrigger(): Promise<void> {
+  // Nothing awaited between the last `aborting` check and the install, so a signal lands before the swap (nothing to restore) or after it.
+  if (aborting) throw new Error("aborting: not swapping the recompute trigger");
+  const def = await liveDef(TRIG);
+  if (aborting) throw new Error("aborting: not swapping the recompute trigger");
+  if (def.includes(TRIG_MARK)) throw new Error("the recompute trigger is already a mutant (a crashed run?) - restore it first");
+  if (def.split(TRIG_LOCK).length !== 2) throw new Error("the live recompute trigger no longer holds exactly one lock statement this runner knows - update TRIG_LOCK");
+  const mutated = def
+    .replace(TRIG_LOCK, () => `if current_setting('aps.tag', true) is distinct from '${TAG}' then\n    ${TRIG_LOCK}\n  end if;`)
+    .replace("AS $function$", () => `AS $function$ ${TRIG_MARK}`);
+  if (!mutated.includes(TRIG_MARK) || mutated === def) throw new Error("could not build the trigger mutant");
+  triggerOriginal = def;
+  if (aborting) throw new Error("aborting: not swapping the recompute trigger");
+  await monitor.query(mutated);
+}
+/** The 0222 text of the function (the fallback when the in-memory original is gone: a crashed earlier run). */
+function triggerFromMigration(): string {
+  const sql = readFileSync(join(process.cwd(), "supabase/migrations/0222_ap_bill_lock_order.sql"), "utf8");
+  const start = sql.indexOf("create or replace function public.ap_recompute_bill_paid_and_status()");
+  const end = sql.indexOf("\n$$;", start);
+  if (start < 0 || end < 0) throw new Error("0222 no longer defines ap_recompute_bill_paid_and_status");
+  return sql.slice(start, end + 4);
+}
+async function restoreTrigger(c: Client = monitor): Promise<void> {
+  const live = await liveDef(TRIG, c).catch(() => "");
+  if (!live.includes(TRIG_MARK)) {
+    triggerOriginal = null;
+    return;
+  }
+  const original = triggerOriginal ?? triggerFromMigration();
+  await c.query(original);
+  const after = await liveDef(TRIG, c);
+  if (after.includes(TRIG_MARK)) throw new Error("the recompute trigger was not restored");
+  if (triggerOriginal && after !== triggerOriginal) throw new Error("the recompute trigger was not restored byte-for-byte");
+  if (!triggerOriginal) console.error("the recompute trigger restored from 0222 (a crashed run had left a mutant)");
+  triggerOriginal = null;
 }
 
 // ---------------------------------------------------------------------------
@@ -1228,14 +1471,19 @@ async function abortCleanup(sig: string, code: number): Promise<number> {
   await cleaner.connect();
   await cleaner.query("select pg_terminate_backend(pid) from pg_stat_activity where pid <> pg_backend_pid() and application_name = $1", [APP_NAME]);
   await sleep(300);
+  let restoreFailed = false;
+  await restoreTrigger(cleaner).catch((e) => {
+    restoreFailed = true;
+    console.error(e instanceof Error ? e.message : e);
+  });
   const failedSteps = await purge(cleaner);
   const left = await leftovers(cleaner).catch(() => -1);
   await cleaner.end().catch(() => undefined);
-  if (left !== 0 || failedSteps > 0) {
-    console.log("  FAIL     teardown - " + left + " tagged rows left behind, " + failedSteps + " cleanup step(s) failed");
+  if (left !== 0 || failedSteps > 0 || restoreFailed) {
+    console.log("  FAIL     teardown - " + left + " tagged rows left behind, " + failedSteps + " cleanup step(s) failed" + (restoreFailed ? ", the recompute trigger was not restored" : ""));
     return 1;
   }
-  console.log("  teardown: every tagged row removed");
+  console.log("  teardown: every tagged row removed, the recompute trigger is the original");
   return code;
 }
 
@@ -1250,6 +1498,10 @@ async function main(): Promise<void> {
   let exit = 0;
   const cleanup = async (): Promise<void> => {
     await closeAll();
+    await restoreTrigger().catch((e) => {
+      console.error(`FAIL: ${e instanceof Error ? e.message : e}`);
+      exit = 1;
+    });
     const failedSteps = await purge();
     if (failedSteps > 0) {
       console.error(`FAIL: ${failedSteps} cleanup step(s) failed`);
@@ -1281,7 +1533,8 @@ async function main(): Promise<void> {
       )[0]!.n,
     );
     if (have !== 9) throw new Error(`prerequisites missing by object: found ${have} of 9 AP functions (0049 must be applied)`);
-    // A crashed earlier run may have left tagged rows or a control schema.
+    // A crashed earlier run may have left the recompute trigger swapped, tagged rows or a control schema.
+    await restoreTrigger();
     if ((await purge()) > 0) throw new Error("the start-of-run sweep failed - not starting on a dirty stack");
     await setup();
     console.log(`Server: ${String((await q("select version() as v"))[0]!.v).split(",")[0]}; tag ${TAG}; ${ROUNDS} free-race rounds`);
@@ -1290,7 +1543,7 @@ async function main(): Promise<void> {
     const asserted = Object.entries(real).filter(([id]) => !KNOWN.has(id));
     const passed = asserted.filter(([, r]) => r.status === "pass").length;
     const known = Object.values(real).filter((r) => r.status === "known").length;
-    console.log(`${passed}/${asserted.length} scenarios passed; ${known} known issue(s) reproduced.`);
+    console.log(`${passed}/${asserted.length} scenarios passed${KNOWN.size ? `; ${known} known issue(s) reproduced` : ""}.`);
     if (passed !== asserted.length) exit = 1;
     // A KNOWN scenario must keep reproducing: a vanished bug (FIXED) or a broken scenario (FAIL) forces action.
     const knownBad = Object.entries(real).filter(([id, r]) => KNOWN.has(id) && r.status !== "known");
@@ -1310,7 +1563,13 @@ async function main(): Promise<void> {
         const schema = `aps_ctl_${randomBytes(3).toString("hex")}`;
         try {
           await makeSchemaMutant(schema, m);
-          FN[m.slot] = schema;
+          for (const part of m.parts) {
+            if (part.kind === "copy") FN[part.slot] = schema;
+            else {
+              await swapTrigger();
+              mutantTag = true;
+            }
+          }
           relaxedWait = true;
           const res = await runAll([...m.mustFail, ...(m.mustPass ?? [])]);
           if (aborting) break;
@@ -1339,9 +1598,14 @@ async function main(): Promise<void> {
           }
         } finally {
           relaxedWait = false;
+          mutantTag = false;
           for (const k of Object.keys(FN) as Slot[]) FN[k] = "public";
           if (!aborting) {
             await closeAll();
+            await restoreTrigger().catch((e) => {
+              console.error(`FAIL: ${e instanceof Error ? e.message : e}`);
+              exit = 1;
+            });
             await monitor.query(`drop schema if exists ${schema} cascade`).catch(() => undefined);
           }
         }
