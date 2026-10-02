@@ -31,20 +31,30 @@
 --     not re-run, the line still "qualifies" and its clinic_fee_php /
 --     doctor_pf_php are rewritten under a posted entry.
 --
+--  4. PATIENT LIFECYCLE LOCK ORDER. The (d) UPDATE fires a_lifecycle_guard (0184), which takes
+--     the patient advisory lock SHARED per row. A recompute that already holds a visit then
+--     asks for the shared lock, while merge_patients_guarded / undo_patient_merge_guarded
+--     (0196) hold it EXCLUSIVE and then UPDATE visits (needing that visit): 40P01. 0184 called
+--     row -> advisory harmless because delete / restore never take child row locks; merge
+--     does. release / undo avoid it by taking the shared patient lock first (scenario R7).
+--
 -- THE FIX - one global lock order, then a fresh decision:
 --   (a) collect the candidate line ids and their visit ids with the existing
 --       eligibility predicate (incl. 0184's active-patient filter). NO lock.
+--   (b0) lifecycle_lock(the candidates' patients, shared) FIRST, before any row lock.
 --   (b) lock those visits FOR UPDATE ORDER BY id. FOR UPDATE is exactly what the
 --       0183 guard takes again per line, so the guard never upgrades a lock or
 --       waits for a second time, and a visit-first writer (release / undo /
 --       payment recalc) is either ahead of us (we wait holding NO line) or
 --       behind us (it waits holding at most its visit share, on a visit we
 --       already own).
---   (c) lock those lines FOR UPDATE ORDER BY id: the order release/undo
---       (FOR UPDATE ORDER BY id) and claim/unclaim (FOR NO KEY UPDATE ORDER BY
---       id, 0211) use, so recompute can no longer close a cycle with them. The
---       order is visits first, then lines - the same as release/undo: patient
---       advisory (shared) -> visit -> lines ascending.
+--   (c) lock those lines FOR NO KEY UPDATE ORDER BY id: the UPDATE's own mode (as
+--       claim/unclaim, 0211), still conflicting with release/undo's FOR UPDATE
+--       ORDER BY id, so recompute can no longer close a cycle with them. The
+--       order is the same as release/undo: patient advisory (shared) -> visit ->
+--       lines ascending. A visit whose patient changed between (a) and the lock
+--       (a merge committed meanwhile) is dropped by (d), like a line that
+--       stopped being eligible: it waits for the next run.
 --   (d) a NEW statement (a fresh READ COMMITTED snapshot, taken after every wait)
 --       UPDATEs only `id = any(v_lines)` AND re-evaluates the full eligibility
 --       predicate. A line a release posted while we waited drops out; nothing
@@ -87,14 +97,16 @@ as $$
 declare
   v_lines    uuid[];
   v_visits   uuid[];
+  v_patients uuid[];
   v_affected int := 0;
 begin
   -- (a) candidates - no lock.
   select coalesce(array_agg(e.id), '{}'::uuid[]),
-         coalesce(array_agg(distinct e.visit_id), '{}'::uuid[])
-    into v_lines, v_visits
+         coalesce(array_agg(distinct e.visit_id), '{}'::uuid[]),
+         coalesce(array_agg(distinct e.patient_id), '{}'::uuid[])
+    into v_lines, v_visits, v_patients
     from (
-      select tr.id, tr.visit_id
+      select tr.id, tr.visit_id, v.patient_id
         from public.test_requests tr
         join public.visits v on v.id = tr.visit_id
         join public.patients pt on pt.id = v.patient_id   -- 0184: only an active patient's line
@@ -120,17 +132,25 @@ begin
     return jsonb_build_object('rows_affected', 0);
   end if;
 
+  -- (b0) the patients' lifecycle lock, SHARED (0184), before any row lock: the order release /
+  -- undo use, and the order merge / undo-merge need (they take it EXCLUSIVE, then UPDATE
+  -- visits). Without it the (d) UPDATE would ask for the shared lock (a_lifecycle_guard) while
+  -- holding the visit, against a merge holding the exclusive lock and waiting for that visit.
+  perform public.lifecycle_lock(v_patients, false);
+
   -- (b) visits first, FOR UPDATE (the mode the 0183 guard re-takes), ascending.
   perform 1 from public.visits
    where id = any (v_visits)
    order by id
      for update;
 
-  -- (c) then the lines, ascending (release/undo and claim/unclaim order).
+  -- (c) then the lines, ascending (release/undo and claim/unclaim order). FOR NO KEY UPDATE is
+  -- the mode the UPDATE itself takes (as claim / unclaim, 0211) and still conflicts with
+  -- release / undo's FOR UPDATE.
   perform 1 from public.test_requests
    where id = any (v_lines)
    order by id
-     for update;
+     for no key update;
 
   -- (d) fresh snapshot, locks held: re-decide, then write.
   with updated as (
@@ -154,6 +174,7 @@ begin
             and tr.clinic_fee_php > 0
             and pt.deleted_at is null and pt.merged_into_id is null   -- 0184
             and v.payment_status is distinct from 'waived'   -- 0215
+            and v.patient_id = any (v_patients)   -- 0215: a visit merged to another patient meanwhile waits for the next run
             and not exists (
               select 1 from public.journal_entries je
                where je.source_kind = 'test_request'
@@ -176,7 +197,7 @@ comment on function public.recompute_clinic_fee_for_unreleased() is
   'reversed JE would wrongly freeze it. Do not widen to posted + reversed: that rule '
   '(LEDGER_TOTAL_STATUSES, src/lib/accounting/ledger-status.ts; CLAUDE.md "Ledger totals count '
   'posted + reversed") is for sums. Listed in SQL_LOOKUPS (src/lib/accounting/ledger-status-sql.test.ts). '
-  '0215: locks the candidates'' visits then lines FOR UPDATE ORDER BY id before a fresh-snapshot '
+  '0215: takes the candidates'' patient lifecycle locks (shared), then locks their visits FOR UPDATE and lines FOR NO KEY UPDATE ORDER BY id before a fresh-snapshot '
   'UPDATE that re-checks eligibility (proof: scripts/plan-order-lockers-proof.ts).';
 
 revoke all on function public.recompute_clinic_fee_for_unreleased() from public, anon, authenticated;

@@ -55,6 +55,7 @@
     "perf:rls-structural": "tsx scripts/perf/rls-structural-prove.ts",
     "perf:rls-fixture": "tsx scripts/perf/seed-rls-fixture.ts",
     "sheet-sync:db-proof": "tsx scripts/sheet-sync-db-proof.ts",
+    "sheet-sync:concurrency-proof": "tsx scripts/sheet-sync-concurrency-proof.ts",
     "sheet:sync": "tsx scripts/sheet-sync.ts",
     "first-night:check": "tsx --require ./scripts/lib/server-only-shim.cjs scripts/first-night-check.ts",
     "email:preview": "tsx --require ./scripts/lib/server-only-shim.cjs scripts/email-preview.mts",
@@ -67,7 +68,9 @@
     "report-release:concurrency-proof": "tsx scripts/report-release-concurrency-proof.ts",
     "waiver:concurrency-proof": "tsx scripts/waiver-concurrency-proof.ts",
     "ps-digest-claim:concurrency-proof": "tsx scripts/ps-digest-claim-concurrency-proof.ts",
-    "release-notice:concurrency-proof": "tsx scripts/release-notice-concurrency-proof.ts"
+    "release-notice:concurrency-proof": "tsx scripts/release-notice-concurrency-proof.ts",
+    "view-as-restore:concurrency-proof": "tsx scripts/view-as-restore-concurrency-proof.ts",
+    "notice-claims:concurrency-proof": "tsx scripts/notice-claims-concurrency-proof.ts"
   },
   "dependencies": {
     "@base-ui/react": "^1.4.1",

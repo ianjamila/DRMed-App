@@ -13,9 +13,13 @@ deterministic forced interleavings read from `pg_locks` (never sleeps), strict
 patient advisory (shared) → result membership (shared) → **visit row** → **lines
 FOR UPDATE ORDER BY id**. release/undo: visit FOR SHARE then member lines +
 package header ORDER BY id. claim/unclaim (0211): lines ORDER BY id, no visit
-lock. Row lock → shared patient advisory lock inside `a_lifecycle_guard` is a
-known, harmless reversal (only delete/restore take it exclusive and they never
-take child row locks).
+lock. Row lock → shared patient advisory lock inside `a_lifecycle_guard` is
+NOT harmless (corrected during 3a review): delete/restore take it exclusive
+without child row locks, but merge / undo-merge (0196) take it exclusive and
+then UPDATE visits, so a writer holding a visit that only later asks for the
+shared lock deadlocks against a merge. Every new lock function takes
+`lifecycle_lock(patients, false)` FIRST (0215 step b0; proof scenario R7,
+mutant M6).
 
 ## Hidden lock found while reading (drives most of this)
 

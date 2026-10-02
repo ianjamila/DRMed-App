@@ -76,6 +76,7 @@ export const DASHBOARD_CARDS: readonly CardDef[] = [
   { id: "admin.dup_candidates",    label: "Possible duplicates", roles: ["admin"], group: "operations" },
   { id: "admin.new_messages",      label: "Website messages",    roles: ["admin"], group: "operations" },
   { id: "admin.result_followups",  label: "Result follow-ups",   roles: ["admin"], group: "attention" },
+  { id: "admin.result_notices_abandoned", label: "Result-ready messages given up on", roles: ["admin"], group: "attention" },
 
   // ---- Admin: Money -------------------------------------------------------
   { id: "admin.revenue_by_class",     label: "Revenue by classification", roles: ["admin"], group: "money", sensitive: true },
