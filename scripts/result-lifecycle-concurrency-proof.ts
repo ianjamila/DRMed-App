@@ -1740,20 +1740,39 @@ interface Mutant {
   id: string;
   fn: keyof typeof FN;
   what: string;
-  edits: Array<[string, string]>;
+  /** [from, to, expected occurrences (default 1)] - the live text must contain `from` exactly that often, or the mutant is stale. */
+  edits: Array<[string, string] | [string, string, number]>;
   /** scenarios that must FAIL (guard failure) against the mutant */
   mustFail: string[];
-  reason?: RegExp;
+  /** The failure each mustFail scenario must show: the OUTCOME (or lock position) the removed guard protects. A failure that does not
+   *  match it is never a catch. */
+  reason: RegExp;
 }
+/** Failures that say nothing about the guard: a statement timeout, a wait that never ended, a fixture / setup error, an interleaving
+ *  whose FIRST caller did not answer ok, a terminated backend. A mutant is never "caught" by one of these, whatever its reason says. */
+const INFRA_RE =
+  /statement timeout|canceling statement|57014|neither .* nor .* finished|neither answered nor queued|Connection terminated|terminating connection|^INFRA:|fixture:|setup call failed|\[first answered: (?!ok)/;
+// A lock-removal mutant is caught by WHERE the second caller queued - the scenario asserts the wait on the lock the mutant no longer
+// takes. Its reason therefore names that lock AND what the caller did instead (answered at once with the first caller ok, or queued
+// on a different lock: "saw transactionid" / "saw advisory lifecycle key"); a bare "saw no lock wait" is not enough.
 const MUTANTS: Mutant[] = [
   // lifecycle_lock_results
-  { id: "ML1", fn: "lockResults", what: "ignores p_exclusive (always shared)", edits: [["    if p_exclusive then", "    if false then"]], mustFail: ["K1", "K2"] },
+  {
+    id: "ML1",
+    fn: "lockResults",
+    what: "ignores p_exclusive (always shared)",
+    edits: [["    if p_exclusive then", "    if false then"]],
+    mustFail: ["K1", "K2"],
+    reason: /second answered without waiting on the membership advisory lock[\s\S]*\[first answered: ok; second answered: ok\]/,
+  },
   {
     id: "ML2",
     fn: "lockResults",
     what: "keys the lock under the patient lifecycle class instead of 'result_membership'",
-    edits: [["hashtext('result_membership')", "hashtext('patient_lifecycle')"]],
+    // both branches of the function (shared and exclusive) key the lock with the literal
+    edits: [["hashtext('result_membership')", "hashtext('patient_lifecycle')", 2]],
     mustFail: ["K1", "K4"],
+    reason: /second never waited on the membership advisory lock[\s\S]*; saw advisory lifecycle key \d+|blocked on advisory lifecycle key \d+ but should have answered at once/,
   },
   {
     id: "ML3",
@@ -1766,7 +1785,7 @@ const MUTANTS: Mutant[] = [
       ],
     ],
     mustFail: ["K5"],
-    reason: /lock-order cycle/,
+    reason: /lock-order cycle \(caller B took the higher key first: true\): [\s\S]*40P01 deadlock detected/, // either caller can be the victim
   },
   // result_create_linked
   {
@@ -1775,6 +1794,7 @@ const MUTANTS: Mutant[] = [
     what: "no lines FOR UPDATE (the unique link index is all that is left)",
     edits: [["  perform 1 from public.test_requests tr where tr.id = any(v_ids) order by tr.id for update;", "  null;"]],
     mustFail: ["C1", "C2"],
+    reason: /second never waited on a row of test_requests[\s\S]*; saw transactionid/,
   },
   {
     id: "MC2",
@@ -1782,9 +1802,16 @@ const MUTANTS: Mutant[] = [
     what: "no explicit patient lock BEFORE the lines (the link-insert trigger locks it later)",
     edits: [["  perform public.lifecycle_lock_and_assert(v_patients, false);", "  null;"]],
     mustFail: ["C8"],
-    reason: /already holds the test row/,
+    reason: /already holds the test row while it is queued on the patient lock/,
   },
-  { id: "MC3", fn: "create", what: "no live-line recount after the line locks", edits: [["  if v_live <> cardinality(v_ids) then", "  if false then"]], mustFail: ["C3"] },
+  {
+    id: "MC3",
+    fn: "create",
+    what: "no live-line recount after the line locks",
+    edits: [["  if v_live <> cardinality(v_ids) then", "  if false then"]],
+    mustFail: ["C3"],
+    reason: /create after delete: expected P0066, but it succeeded/,
+  },
   {
     id: "MC4",
     fn: "create",
@@ -1796,6 +1823,7 @@ const MUTANTS: Mutant[] = [
       ],
     ],
     mustFail: ["C7"],
+    reason: /create: expected P0072, but it succeeded/,
   },
   {
     id: "MC5",
@@ -1803,6 +1831,7 @@ const MUTANTS: Mutant[] = [
     what: "no 'already has a result' check (P0066) after the line locks",
     edits: [["  if exists (select 1 from public.result_test_requests rtr where rtr.test_request_id = any(v_ids)) then", "  if false then"]],
     mustFail: ["C1"],
+    reason: /second create: expected P0066, got 23505 duplicate key value violates unique constraint/,
   },
   {
     id: "MC6",
@@ -1810,24 +1839,74 @@ const MUTANTS: Mutant[] = [
     what: "lines locked in plan order, not id order (no ORDER BY id)",
     edits: [["where tr.id = any(v_ids) order by tr.id for update;", "where tr.id = any(v_ids) for update;"]],
     mustFail: ["C9"],
-    reason: /40P01/,
+    reason: /lock-order cycle: 40P01 victim (delete lines|create|delete lines, create) - [\s\S]*40P01 deadlock detected/, // either side can be the victim
   },
   // result_finalise_commit
-  { id: "MF1", fn: "finalise", what: "no results-row FOR UPDATE", edits: [[RESULT_ROW_LOCK, "   where id = p_result_id;"]], mustFail: ["F1"] },
-  { id: "MF2", fn: "finalise", what: "no finalised_at re-check after the row lock", edits: [["  if v_result.finalised_at is not null then", "  if false then"]], mustFail: ["F1"] },
-  { id: "MF3", fn: "finalise", what: "no result-membership lock", edits: [["  perform public.lifecycle_lock_results(array[p_result_id], false);", "  null;"]], mustFail: ["F5"] },
-  { id: "MF4", fn: "finalise", what: "no post-lock patient re-check (P0072)", edits: [[PATIENT_RECHECK_RESULT, "  if false then"]], mustFail: ["F9"] },
+  {
+    id: "MF1",
+    fn: "finalise",
+    what: "no results-row FOR UPDATE",
+    edits: [[RESULT_ROW_LOCK, "   where id = p_result_id;"]],
+    mustFail: ["F1"],
+    reason: /second never waited on a row of results[\s\S]*; saw transactionid/,
+  },
+  {
+    id: "MF2",
+    fn: "finalise",
+    what: "no finalised_at re-check after the row lock",
+    edits: [["  if v_result.finalised_at is not null then", "  if false then"]],
+    mustFail: ["F1"],
+    reason: /second finalise: P0066 message was .*expected \/already finalised\//,
+  },
+  {
+    id: "MF3",
+    fn: "finalise",
+    what: "no result-membership lock",
+    edits: [["  perform public.lifecycle_lock_results(array[p_result_id], false);", "  null;"]],
+    mustFail: ["F5"],
+    reason: /second never waited on the membership advisory lock[\s\S]*; saw transactionid/,
+  },
+  {
+    id: "MF4",
+    fn: "finalise",
+    what: "no post-lock patient re-check (P0072)",
+    edits: [[PATIENT_RECHECK_RESULT, "  if false then"]],
+    mustFail: ["F9"],
+    reason: /finalise: expected P0072, but it succeeded/,
+  },
   // result_save_draft
-  { id: "MD1", fn: "draft", what: "no results-row FOR UPDATE", edits: [[RESULT_ROW_LOCK, "   where id = p_result_id;"]], mustFail: ["F2", "D3", "D1"] },
+  {
+    id: "MD1",
+    fn: "draft",
+    what: "no results-row FOR UPDATE",
+    edits: [[RESULT_ROW_LOCK, "   where id = p_result_id;"]],
+    mustFail: ["F2", "D3", "D1"],
+    reason: /second never waited on a row of results[\s\S]*; saw transactionid|40P01 victim draft [AB] \(each draft held one parameter and wanted the other\)/,
+  },
   {
     id: "MD2",
     fn: "draft",
     what: "no finalised_at refusal (a draft may overwrite a finalised result)",
     edits: [["  if v_result.generation_kind <> 'structured' or v_result.finalised_at is not null then", "  if v_result.generation_kind <> 'structured' then"]],
     mustFail: ["F2"],
+    reason: /draft after finalise: expected P0066, but it succeeded/,
   },
-  { id: "MD3", fn: "draft", what: "no result-membership lock", edits: [["  perform public.lifecycle_lock_results(array[p_result_id], false);", "  null;"]], mustFail: ["D4"] },
-  { id: "MD4", fn: "draft", what: "no post-lock patient re-check (P0072)", edits: [[PATIENT_RECHECK_RESULT, "  if false then"]], mustFail: ["D5"] },
+  {
+    id: "MD3",
+    fn: "draft",
+    what: "no result-membership lock",
+    edits: [["  perform public.lifecycle_lock_results(array[p_result_id], false);", "  null;"]],
+    mustFail: ["D4"],
+    reason: /second never waited on the membership advisory lock[\s\S]*; saw transactionid/,
+  },
+  {
+    id: "MD4",
+    fn: "draft",
+    what: "no post-lock patient re-check (P0072)",
+    edits: [[PATIENT_RECHECK_RESULT, "  if false then"]],
+    mustFail: ["D5"],
+    reason: /draft: expected P0072, but it succeeded/,
+  },
 ];
 
 async function installCopies(schema: string, m: Mutant | null): Promise<void> {
@@ -1836,9 +1915,16 @@ async function installCopies(schema: string, m: Mutant | null): Promise<void> {
   for (const [key, sig] of Object.entries(SIGS) as Array<[keyof typeof FN, string]>) {
     let def = (await monitor.query<{ d: string }>("select pg_get_functiondef($1::regprocedure) as d", [sig])).rows[0]!.d;
     if (m && m.fn === key) {
-      for (const [from, to] of m.edits) {
-        if (!def.includes(from)) throw new Error(`mutant ${m.id}: the live ${key} no longer contains «${from.split("\n")[0]}» - update MUTANTS`);
-        def = def.split(from).join(to);
+      for (const [from, to, want = 1] of m.edits) {
+        const hits = def.split(from).length - 1;
+        if (hits !== want) throw new Error(`mutant ${m.id}: the live ${key} contains «${from.split("\n")[0]}» ${hits} time(s) (want exactly ${want}) - update MUTANTS`);
+        // function replacer (no `$&` patterns in `to`), each of the `want` verified occurrences once, left to right
+        let at = 0;
+        for (let k = 0; k < want; k++) {
+          const i = def.indexOf(from, at);
+          def = def.slice(0, i) + to + def.slice(i + from.length);
+          at = i + to.length;
+        }
       }
     }
     const name = sig.slice(sig.indexOf(".") + 1, sig.indexOf("("));
@@ -1873,8 +1959,8 @@ async function controlRounds(): Promise<boolean> {
         continue;
       }
       const survived = r.m.mustFail.filter((id) => res[id]?.status === "pass" || res[id]?.status === "known" || res[id]?.status === "fixed");
-      const infra = r.m.mustFail.filter((id) => res[id]?.status === "infra" || !res[id]);
-      const wrong = r.m.reason ? r.m.mustFail.filter((id) => res[id]?.status === "fail" && !r.m!.reason!.test(res[id]!.msg)) : [];
+      const infra = r.m.mustFail.filter((id) => !res[id] || res[id]!.status === "infra" || (res[id]!.status === "fail" && INFRA_RE.test(res[id]!.msg)));
+      const wrong = r.m.mustFail.filter((id) => res[id]?.status === "fail" && !INFRA_RE.test(res[id]!.msg) && !r.m!.reason.test(res[id]!.msg));
       if (survived.length || infra.length || wrong.length) {
         allOk = false;
         console.log(

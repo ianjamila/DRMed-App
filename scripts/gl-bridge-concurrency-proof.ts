@@ -68,7 +68,9 @@
 //   K1a cancel x PF payout link   K1b PF payout link x cancel   - KNOWN issues, see below
 //
 // CONTROL ROUNDS (--control) prove the proof can fail. Each mutant removes ONE guard from the live
-// function and the named scenarios must FAIL against it (mustPass ones must still pass):
+// function and the named scenarios must FAIL against it, for the mutant's stated REASON (a regexp over the failure message: the outcome
+// the guard protects; an infrastructure failure - interleaving not reached, a timeout, a failed fixture - is never a catch, and every
+// caught message is printed). The mustPass ones must still pass:
 //   M<fn>L  the journal-entry FOR UPDATE removed        M<fn>S  the `status = 'posted'` filter removed
 //     (fn = PV payment void, PI payment insert, CV / CI cash adjustment void / insert, HV / HI HMO resolution
 //      void / insert, TC test request cancelled: 14 mutants; the L / S of a void or cancel die in P2 C2 H2 T5 on
@@ -123,6 +125,7 @@ const ROUNDS = Number(process.env.GLB_ROUNDS ?? 15);
 const ONLY = process.env.GLB_ONLY ? new Set(process.env.GLB_ONLY.split(",").map((s) => s.trim())) : null;
 const CONTROL = process.argv.includes("--control");
 const BACKUP = join(tmpdir(), "glb-bridge-originals.json");
+const APP_NAME = `gl-bridge:${TAG}`;
 const MARK = "/* glb-mutant */";
 
 const fx = {
@@ -163,7 +166,8 @@ type Actor = { c: Client; pid: number; name: string; who: Who; settled: boolean 
 type Out = { ok: true; rows: Record<string, unknown>[]; rowCount: number } | { ok: false; code: string; msg: string };
 
 async function newClient(): Promise<Client> {
-  const c = new Client({ connectionString: DB_URL });
+  const c = new Client({ connectionString: DB_URL, application_name: APP_NAME });
+  c.on("error", () => undefined); // a backend terminated by the abort cleanup must not crash the process
   await c.connect();
   await c.query("set statement_timeout = '20s'");
   open.push(c);
@@ -724,7 +728,7 @@ const scenarios: Record<string, Scenario> = {
   P1: () => sVoidVoid(PAY),
   // concurrency-proof: bridge_payment_void (P2 void x a direct JE writer holding the payment's entry)
   P2: () => sVoidWriter(PAY),
-  // concurrency-proof: bridge_payment_insert (P3a Edit payment inserts the new row and voids the old one in ONE transaction while a plain void of the old row queues)
+  // P3a (bridge_payment_insert: the Edit's new-row insert is not contended here - the lock under test is the void's) Edit payment inserts the new row and voids the old one in ONE transaction while a plain void of the old row queues
   // concurrency-proof: bridge_payment_void (P3a the Edit's void of the old row races the plain void)
   async P3a() {
     const c = await mkSrc(PAY);
@@ -772,11 +776,11 @@ const scenarios: Record<string, Scenario> = {
     await assertOneReversal("payment", c.id, "void then edit");
     eq("no replacement payment", await num("select count(*)::int as n from public.payments where visit_id = $1 and voided_at is null", [c.visit]), 0);
   },
-  // concurrency-proof: bridge_payment_insert (P4 two inserts of one payment id: the loser waits on the unique index, one JE)
+  // P4 two inserts of one payment id: the loser waits on the unique index (not on the bridge's journal-entry lock), one JE
   P4: () => sDupInsert(PAY),
   // concurrency-proof: bridge_payment_insert (P5 re-insert of a payment id whose JE is held by a direct writer)
   P5: () => sInsertWriter(PAY),
-  // concurrency-proof: bridge_payment_insert (P7 the visit gains an HMO provider while a payment is being recorded: the insert queues on the visit row and its JE debits AR - HMO)
+  // P7 the visit gains an HMO provider while a payment is being recorded: the insert queues on the visit row and its JE debits AR - HMO
   async P7() {
     const visit = await mkVisit(1000, "p7");
     const id = mint();
@@ -797,7 +801,7 @@ const scenarios: Record<string, Scenario> = {
     );
     eq("the payment's credit side is AR - HMO (the visit's committed state), not AR - Patients", dr.rows.map((r) => r.code), ["1110"]);
   },
-  // concurrency-proof: bridge_payment_insert (P8a a visit delete in flight x a payment insert)
+  // P8a a visit delete in flight x a payment insert
   async P8a() {
     const visit = await mkVisit(1000, "p8a");
     const id = mint();
@@ -817,7 +821,7 @@ const scenarios: Record<string, Scenario> = {
     eq("no payment row", await num("select count(*)::int as n from public.payments where id = $1", [id]), 0);
     eq("no JE", (await jeState("payment", id)).total, 0);
   },
-  // concurrency-proof: bridge_payment_insert (P8b a payment insert in flight x a visit delete)
+  // P8b a payment insert in flight x a visit delete
   async P8b() {
     const visit = await mkVisit(1000, "p8b");
     const id = mint();
@@ -839,6 +843,7 @@ const scenarios: Record<string, Scenario> = {
   // concurrency-proof: bridge_payment_void (P6 free race)
   async P6() {
     for (let i = 0; i < ROUNDS; i++) {
+      if (aborting) break;
       const visit = await mkVisit(3000, "p6");
       const [p1, p2] = [await mkPaymentOn(visit, 1000), await mkPaymentOn(visit, 1000)];
       const ops: Array<(a: Actor) => Promise<Out>> = [
@@ -873,7 +878,7 @@ const scenarios: Record<string, Scenario> = {
   C1: () => sVoidVoid(CASH),
   // concurrency-proof: bridge_cash_adjustment_void (C2 void x a direct JE writer holding the adjustment's entry)
   C2: () => sVoidWriter(CASH),
-  // concurrency-proof: bridge_cash_adjustment_insert (C3 two inserts of one adjustment id: the loser waits on the unique index, one JE)
+  // C3 two inserts of one adjustment id: the loser waits on the unique index (not on the bridge's journal-entry lock), one JE
   C3: () => sDupInsert(CASH),
   // concurrency-proof: bridge_cash_adjustment_insert (C4 re-insert of an adjustment id whose JE is held by a direct writer)
   C4: () => sInsertWriter(CASH),
@@ -882,7 +887,7 @@ const scenarios: Record<string, Scenario> = {
   H1: () => sVoidVoid(HMO),
   // concurrency-proof: bridge_hmo_claim_resolution_void (H2 void x a direct JE writer holding the resolution's entry)
   H2: () => sVoidWriter(HMO),
-  // concurrency-proof: bridge_hmo_claim_resolution_insert (H3 two inserts of one resolution id: the loser waits on the unique index, one JE)
+  // H3 two inserts of one resolution id: the loser waits on the unique index (not on the bridge's journal-entry lock), one JE
   H3: () => sDupInsert(HMO),
   // concurrency-proof: bridge_hmo_claim_resolution_insert (H4 re-insert of a resolution id whose JE is held by a direct writer)
   H4: () => sInsertWriter(HMO),
@@ -905,7 +910,7 @@ const scenarios: Record<string, Scenario> = {
     eq("JEs of the refused one", (await jeState("hmo_claim_resolution", r2)).total, 0);
   },
 
-  // concurrency-proof: bridge_test_request_released (T1 doctor line "Mark done" x "Mark done": the second queues on the LINE, one JE, one PF accrual)
+  // T1 doctor line "Mark done" x "Mark done": the second queues on the LINE (the release bridge's own locks are never contended), one JE, one PF accrual
   async T1() {
     const l = await mkLine({ doc: true });
     const { o1, o2 } = await forced({
@@ -922,7 +927,7 @@ const scenarios: Record<string, Scenario> = {
     eq("line", await lineInvariants(l, "T1"), "released");
     eq("PF entries ever", await allPf(l.id), 1);
   },
-  // concurrency-proof: bridge_test_request_released (T1b lab release x release through release_visit_results)
+  // T1b lab release x release through release_visit_results: the second queues on the line row, the bridge's own locks are never contended
   async T1b() {
     const l = await mkLine({});
     const { o1, o2 } = await forced({
@@ -937,7 +942,7 @@ const scenarios: Record<string, Scenario> = {
     expectOk(o2, "second release");
     eq("line", await lineInvariants(l, "T1b"), "released");
   },
-  // concurrency-proof: bridge_test_request_released (T2a release x undo of a doctor line: the undo queues, then reverses the JE once and voids the PF accrual)
+  // T2a release x undo of a doctor line: the undo queues on the line, then reverses the JE once and voids the PF accrual (the release bridge's own locks are never contended)
   async T2a() {
     const l = await mkLine({ doc: true });
     const { o1, o2 } = await forced({
@@ -1144,6 +1149,7 @@ const scenarios: Record<string, Scenario> = {
   async T8() {
     const kinds = ["release", "undo", "cancel"] as const;
     for (let i = 0; i < ROUNDS; i++) {
+      if (aborting) break;
       const l = await mkLine({ doc: i % 2 === 1, release: Math.random() < 0.5 });
       const picks = [0, 1, 2].map(() => kinds[Math.floor(Math.random() * 3)]!);
       const acts = await Promise.all(picks.map((p, k) => actor(`r${k}`, p === "cancel" ? "svc" : "staff")));
@@ -1207,6 +1213,7 @@ const scenarios: Record<string, Scenario> = {
   // concurrency-proof: bridge_test_request_released (X1 free race)
   async X1() {
     for (let i = 0; i < ROUNDS; i++) {
+      if (aborting) break;
       // A visit of two lab lines (L1 ready, L2 released), paid in full by two payments of 1000.
       const visit = await mkVisit(2000, "x1");
       const [pa, pb] = [await mkPaymentOn(visit, 1000), await mkPaymentOn(visit, 1000)];
@@ -1310,7 +1317,7 @@ async function pfPayoutVerdict(entry: string, disb: string, how: string): Promis
   throw new Fail(`${how}: no longer reproduces (entry voided=${String(e.voided)}, disbursement_id=${String(e.disbursement_id)}) - promote K1 to a real scenario`);
 }
 
-type Status = "pass" | "known" | "fixed" | "fail";
+type Status = "pass" | "known" | "fixed" | "fail" | "infra";
 interface Verdict {
   status: Status;
   msg: string;
@@ -1328,6 +1335,8 @@ async function runAll(filter?: Set<string>): Promise<Record<string, Verdict>> {
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       if (e instanceof Known) result[name] = { status: "known", msg };
+      // A Fail is the behaviour under test being wrong; anything else (a fixture statement, a dropped connection) is the proof's own plumbing.
+      else if (!(e instanceof Fail)) result[name] = { status: KNOWN_IDS.has(name) ? "fixed" : "infra", msg: `INFRA: ${msg}` };
       else result[name] = { status: KNOWN_IDS.has(name) ? "fixed" : "fail", msg };
     }
     const v = result[name]!;
@@ -1364,38 +1373,48 @@ interface Mutant {
   kind: MutKind;
   note: string;
   mustFail: string[];
+  /** The failure every mustFail scenario must show: the OUTCOME the removed guard protects (not merely a failure of some kind). */
+  reason: RegExp;
   /** Scenarios that must still PASS against the mutant (the source-row lock already serialises them). */
   mustPass?: string[];
 }
+/** Failures that say nothing about the guard: the interleaving was not reached, a wait or statement timed out, a fixture failed, a
+ *  connection died. Never a catch, whatever the mutant's reason says. */
+const INFRA_RE = /interleaving not reached|statement timeout|canceling statement|57014|timed out|Connection terminated|terminating connection|\bfixture\b|^INFRA:/i;
+/** A direct JE writer reversed the entry first: a void/cancel bridge that reversed it AGAIN. */
+const DOUBLE_REVERSAL = /no second reversal of an entry the writer already reversed/;
+/** A direct JE writer reversed the entry first: an insert bridge that trusted the stale entry and posted nothing. */
+const NO_REPOSTING = /posted JEs for the re-inserted source \(the writer reversed the old one\)/;
 const NOLOCK = "the journal-entry FOR UPDATE removed";
 const NOSTATUS = "the `status = 'posted'` filter removed";
 const MUTANTS: Mutant[] = [
-  { id: "MPVL", fn: "bridge_payment_void", kind: "nolock", note: NOLOCK, mustFail: ["P2"], mustPass: ["P1", "P3a"] },
-  { id: "MPVS", fn: "bridge_payment_void", kind: "nostatus", note: NOSTATUS, mustFail: ["P2"], mustPass: ["P1"] },
-  { id: "MPIL", fn: "bridge_payment_insert", kind: "nolock", note: NOLOCK, mustFail: ["P5"], mustPass: ["P4"] },
-  { id: "MPIS", fn: "bridge_payment_insert", kind: "nostatus", note: NOSTATUS, mustFail: ["P5"], mustPass: ["P4"] },
-  { id: "MCVL", fn: "bridge_cash_adjustment_void", kind: "nolock", note: NOLOCK, mustFail: ["C2"], mustPass: ["C1"] },
-  { id: "MCVS", fn: "bridge_cash_adjustment_void", kind: "nostatus", note: NOSTATUS, mustFail: ["C2"], mustPass: ["C1"] },
-  { id: "MCIL", fn: "bridge_cash_adjustment_insert", kind: "nolock", note: NOLOCK, mustFail: ["C4"], mustPass: ["C3"] },
-  { id: "MCIS", fn: "bridge_cash_adjustment_insert", kind: "nostatus", note: NOSTATUS, mustFail: ["C4"], mustPass: ["C3"] },
-  { id: "MHVL", fn: "bridge_hmo_claim_resolution_void", kind: "nolock", note: NOLOCK, mustFail: ["H2"], mustPass: ["H1"] },
-  { id: "MHVS", fn: "bridge_hmo_claim_resolution_void", kind: "nostatus", note: NOSTATUS, mustFail: ["H2"], mustPass: ["H1"] },
-  { id: "MHIL", fn: "bridge_hmo_claim_resolution_insert", kind: "nolock", note: NOLOCK, mustFail: ["H4"], mustPass: ["H3", "H5"] },
-  { id: "MHIS", fn: "bridge_hmo_claim_resolution_insert", kind: "nostatus", note: NOSTATUS, mustFail: ["H4"], mustPass: ["H3", "H5"] },
-  { id: "MTCL", fn: "bridge_test_request_cancelled", kind: "nolock", note: NOLOCK, mustFail: ["T5"], mustPass: ["T4", "T3b"] },
-  { id: "MTCS", fn: "bridge_test_request_cancelled", kind: "nostatus", note: NOSTATUS, mustFail: ["T5"], mustPass: ["T4", "T3b"] },
+  { id: "MPVL", fn: "bridge_payment_void", kind: "nolock", note: NOLOCK, mustFail: ["P2"], reason: DOUBLE_REVERSAL, mustPass: ["P1", "P3a"] },
+  { id: "MPVS", fn: "bridge_payment_void", kind: "nostatus", note: NOSTATUS, mustFail: ["P2"], reason: DOUBLE_REVERSAL, mustPass: ["P1"] },
+  { id: "MPIL", fn: "bridge_payment_insert", kind: "nolock", note: NOLOCK, mustFail: ["P5"], reason: NO_REPOSTING, mustPass: ["P4"] },
+  { id: "MPIS", fn: "bridge_payment_insert", kind: "nostatus", note: NOSTATUS, mustFail: ["P5"], reason: NO_REPOSTING, mustPass: ["P4"] },
+  { id: "MCVL", fn: "bridge_cash_adjustment_void", kind: "nolock", note: NOLOCK, mustFail: ["C2"], reason: DOUBLE_REVERSAL, mustPass: ["C1"] },
+  { id: "MCVS", fn: "bridge_cash_adjustment_void", kind: "nostatus", note: NOSTATUS, mustFail: ["C2"], reason: DOUBLE_REVERSAL, mustPass: ["C1"] },
+  { id: "MCIL", fn: "bridge_cash_adjustment_insert", kind: "nolock", note: NOLOCK, mustFail: ["C4"], reason: NO_REPOSTING, mustPass: ["C3"] },
+  { id: "MCIS", fn: "bridge_cash_adjustment_insert", kind: "nostatus", note: NOSTATUS, mustFail: ["C4"], reason: NO_REPOSTING, mustPass: ["C3"] },
+  { id: "MHVL", fn: "bridge_hmo_claim_resolution_void", kind: "nolock", note: NOLOCK, mustFail: ["H2"], reason: DOUBLE_REVERSAL, mustPass: ["H1"] },
+  { id: "MHVS", fn: "bridge_hmo_claim_resolution_void", kind: "nostatus", note: NOSTATUS, mustFail: ["H2"], reason: DOUBLE_REVERSAL, mustPass: ["H1"] },
+  { id: "MHIL", fn: "bridge_hmo_claim_resolution_insert", kind: "nolock", note: NOLOCK, mustFail: ["H4"], reason: NO_REPOSTING, mustPass: ["H3", "H5"] },
+  { id: "MHIS", fn: "bridge_hmo_claim_resolution_insert", kind: "nostatus", note: NOSTATUS, mustFail: ["H4"], reason: NO_REPOSTING, mustPass: ["H3", "H5"] },
+  { id: "MTCL", fn: "bridge_test_request_cancelled", kind: "nolock", note: NOLOCK, mustFail: ["T5"], reason: DOUBLE_REVERSAL, mustPass: ["T4", "T3b"] },
+  { id: "MTCS", fn: "bridge_test_request_cancelled", kind: "nostatus", note: NOSTATUS, mustFail: ["T5"], reason: DOUBLE_REVERSAL, mustPass: ["T4", "T3b"] },
   {
     id: "MRA",
     fn: "bridge_test_request_released",
     kind: "nolock",
     note: "the waiver-allocation FOR UPDATE removed (the line lock still serialises every real writer)",
     mustFail: ["T6"],
+    reason: /the already-recognised share is NOT folded into the release entry again/,
     mustPass: ["TW1"],
   },
 ];
 
-async function liveDef(sig: string): Promise<string> {
-  return (await monitor.query<{ d: string }>("select pg_get_functiondef($1::regprocedure) as d", [sig])).rows[0]!.d;
+async function liveDef(sig: string, c: Client = monitor): Promise<string> {
+  return (await c.query<{ d: string }>("select pg_get_functiondef($1::regprocedure) as d", [sig])).rows[0]!.d;
 }
 /** The one lock-and-read statement each bridge starts from: `select .. into .. from public.<journal_entries|visit_waiver_allocations> .. for update;`. */
 const TARGET = /select [^;]*? into [^;]*?from public\.(?:journal_entries|visit_waiver_allocations)[^;]*?for update;/;
@@ -1416,12 +1435,18 @@ function readBackup(): Record<string, string> {
   return existsSync(BACKUP) ? (JSON.parse(readFileSync(BACKUP, "utf8")) as Record<string, string>) : {};
 }
 async function swapIn(m: Mutant): Promise<void> {
+  // The abort cleanup may start at any await: re-check `aborting` after each one, and the last check sits right before the install with
+  // nothing awaited in between, so a signal can only ever land BEFORE the swap (nothing to restore) or after it was sent (the cleanup
+  // terminates this backend first, then restores from the backup written below).
   if (aborting) throw new Error(`aborting: not swapping ${m.fn}`);
   const sig = sigOf(m.fn);
   const def = await liveDef(sig);
+  if (aborting) throw new Error(`aborting: not swapping ${m.fn}`);
   if (def.includes(MARK)) throw new Error(`${m.fn} is already a mutant (a crashed run?) - restore it first`);
+  const mutated = mutate(def, m);
   writeFileSync(BACKUP, JSON.stringify({ ...readBackup(), [sig]: def }));
-  await monitor.query(mutate(def, m));
+  if (aborting) throw new Error(`aborting: not swapping ${m.fn}`);
+  await monitor.query(mutated);
 }
 /** The statement from the migration that holds the function's latest definition (fallback when the backup is gone). */
 function fromMigration(f: Fn): string {
@@ -1436,19 +1461,19 @@ function fromMigration(f: Fn): string {
   return sql.slice(start, close + open[1]!.length);
 }
 /** Put every bridge back (backup file first, the migration text if it is gone) and verify. */
-async function restoreFunctions(): Promise<void> {
+async function restoreFunctions(c: Client = monitor): Promise<void> {
   const backup = readBackup();
   for (const f of FUNCS) {
     const sig = sigOf(f.name);
-    const live = await liveDef(sig).catch(() => "");
+    const live = await liveDef(sig, c).catch(() => "");
     if (!live.includes(MARK)) continue;
     const original = backup[sig];
     if (original) {
-      await monitor.query(original);
-      if ((await liveDef(sig)) !== original) throw new Error(`${f.name} was not restored byte-for-byte`);
+      await c.query(original);
+      if ((await liveDef(sig, c)) !== original) throw new Error(`${f.name} was not restored byte-for-byte`);
     } else {
-      await monitor.query(fromMigration(f));
-      if ((await liveDef(sig)).includes(MARK)) throw new Error(`fallback restore of ${f.name} failed`);
+      await c.query(fromMigration(f));
+      if ((await liveDef(sig, c)).includes(MARK)) throw new Error(`fallback restore of ${f.name} failed`);
       console.error(`${f.name} restored from ${f.migration} (backup file was missing)`);
     }
   }
@@ -1458,11 +1483,12 @@ async function restoreFunctions(): Promise<void> {
 // ---------------------------------------------------------------------------
 // Cleanup
 // ---------------------------------------------------------------------------
-async function purge(): Promise<void> {
-  const hasNotices = (await monitor.query("select to_regclass('public.release_notices') is not null as ok").catch(() => null))?.rows[0]?.ok === true;
+/** Sweep every glb-tagged row. Returns 1 when the sweep FAILED (0 = clean). */
+async function purge(c: Client = monitor): Promise<number> {
+  const hasNotices = (await c.query("select to_regclass('public.release_notices') is not null as ok").catch(() => null))?.rows[0]?.ok === true;
   try {
-    await monitor.query("begin");
-    await monitor.query("set local session_replication_role = replica");
+    await c.query("begin");
+    await c.query("set local session_replication_role = replica");
     const stmts = [
       `create temp table glb_staff on commit drop as select id from auth.users where email like 'glb-%@glb.example.test'`,
       `create temp table glb_pat on commit drop as select id from public.patients where drm_id like 'DRM-GLB-%'`,
@@ -1513,15 +1539,17 @@ async function purge(): Promise<void> {
       `delete from public.staff_profiles where id in (select id from glb_staff)`,
       `delete from auth.users where id in (select id from glb_staff)`,
     ];
-    for (const sql of stmts) await monitor.query(sql);
-    await monitor.query("commit");
+    for (const sql of stmts) await c.query(sql);
+    await c.query("commit");
+    return 0;
   } catch (e) {
-    await monitor.query("rollback").catch(() => undefined);
+    await c.query("rollback").catch(() => undefined);
     console.error(`  cleanup failed: ${(e as Error).message.split("\n")[0]}`);
+    return 1;
   }
 }
-async function leftovers(): Promise<number> {
-  const r = await monitor.query(
+async function leftovers(c: Client = monitor): Promise<number> {
+  const r = await c.query(
     `select (select count(*) from auth.users where email like 'glb-%@glb.example.test')
           + (select count(*) from public.staff_profiles where full_name like 'glb-%')
           + (select count(*) from public.patients where drm_id like 'DRM-GLB-%')
@@ -1535,6 +1563,32 @@ async function leftovers(): Promise<number> {
   return Number(r.rows[0]!.n);
 }
 
+/** SIGINT / SIGTERM: stop every backend of THIS run (by application_name) from a dedicated client - an actor may be parked on a lock and
+ *  a queued ROLLBACK on its own connection would wait behind it - then put the bridges back, sweep and count on that client. Returns the exit code. */
+async function abortCleanup(sig: string, code: number): Promise<number> {
+  aborting = true;
+  console.log(`\n  ${sig} received - tearing down`);
+  const cleaner = new Client({ connectionString: DB_URL });
+  cleaner.on("error", () => undefined);
+  await cleaner.connect();
+  let bad = 0;
+  await cleaner.query("select pg_terminate_backend(pid) from pg_stat_activity where pid <> pg_backend_pid() and application_name = $1", [APP_NAME]);
+  await sleep(300);
+  await restoreFunctions(cleaner).catch((e) => {
+    console.error(`FAIL: ${(e as Error).message}`);
+    bad = 1;
+  });
+  bad += await purge(cleaner);
+  const left = await leftovers(cleaner).catch(() => -1);
+  await cleaner.end().catch(() => undefined);
+  if (left !== 0 || bad > 0) {
+    console.log(`  FAIL     teardown - ${left} tagged rows left behind${bad ? ", a restore / sweep step failed" : ""}`);
+    return 1;
+  }
+  console.log("  teardown: every bridge restored, every tagged row removed");
+  return code;
+}
+
 // ---------------------------------------------------------------------------
 async function main(): Promise<void> {
   monitor = await newClient();
@@ -1544,39 +1598,42 @@ async function main(): Promise<void> {
     process.exit(2);
   }
   let exit = 0;
-  let cleanupP: Promise<void> | null = null;
-  const cleanup = (): Promise<void> => {
-    cleanupP ??= (async () => {
-      await closeAll();
-      await restoreFunctions().catch((e) => {
-        console.error(`FAIL: ${(e as Error).message}`);
-        exit = 1;
-      });
-      await purge();
-      const left = await leftovers().catch(() => -1);
-      if (left !== 0) {
-        console.error(`FAIL: ${left} tagged rows left behind`);
-        exit = 1;
-      }
-    })();
-    return cleanupP;
+  const cleanup = async (): Promise<void> => {
+    await closeAll();
+    await restoreFunctions().catch((e) => {
+      console.error(`FAIL: ${(e as Error).message}`);
+      exit = 1;
+    });
+    if ((await purge()) > 0) {
+      console.error("FAIL: the cleanup sweep failed");
+      exit = 1;
+    }
+    const left = await leftovers().catch(() => -1);
+    if (left !== 0) {
+      console.error(`FAIL: ${left} tagged rows left behind`);
+      exit = 1;
+    } else console.log("Leftovers: 0");
   };
-  for (const sig of ["SIGINT", "SIGTERM"] as const) {
+  for (const [sig, code] of [["SIGINT", 130], ["SIGTERM", 143]] as const) {
     process.once(sig, () => {
-      aborting = true;
-      void cleanup().finally(() => process.exit(sig === "SIGINT" ? 130 : 143));
+      abortCleanup(sig, code)
+        .catch((e) => {
+          console.error(e);
+          return 1;
+        })
+        .then((c) => process.exit(c));
     });
   }
   try {
     // A crashed earlier run may have left a mutant bridge or tagged rows.
     await restoreFunctions();
-    await purge();
+    if ((await purge()) > 0) throw new Error("the start-of-run sweep failed - not starting on a dirty stack");
     console.log(`Server: ${(await monitor.query<{ v: string }>("select version() as v")).rows[0]!.v}`);
     await seed();
     console.log(`Real bridge functions (public), ${ROUNDS} free-race rounds:`);
     const real = await runAll();
     const all = Object.entries(real);
-    const bad = all.filter(([, v]) => v.status === "fail" || v.status === "fixed");
+    const bad = all.filter(([, v]) => v.status === "fail" || v.status === "infra" || v.status === "fixed");
     const known = all.filter(([, v]) => v.status === "known");
     const passed = all.filter(([, v]) => v.status === "pass").length;
     console.log(`${passed}/${all.length - known.length} scenarios passed${known.length ? `; ${known.length} KNOWN issue(s) reproduced (${known.map(([k]) => k).join(", ")})` : ""}.`);
@@ -1597,27 +1654,43 @@ async function main(): Promise<void> {
           await swapIn(m);
           const res = await runAll(new Set([...m.mustFail, ...(m.mustPass ?? [])]));
           if (aborting) break;
-          const survived = m.mustFail.filter((x) => res[x]?.status === "pass");
-          const broke = (m.mustPass ?? []).filter((x) => res[x]?.status !== "pass");
+          const survived = m.mustFail.filter((x) => res[x]?.status === "pass" || res[x]?.status === "known" || res[x]?.status === "fixed");
+          // A failure counts as a catch only when it is a GUARD failure: not infrastructure, and the stated outcome.
+          const infra = m.mustFail.filter((x) => !res[x] || res[x]!.status === "infra" || (res[x]!.status === "fail" && INFRA_RE.test(res[x]!.msg)));
+          const wrong = m.mustFail.filter((x) => res[x]?.status === "fail" && !INFRA_RE.test(res[x]!.msg) && !m.reason.test(res[x]!.msg));
+          // mustPass ids outside GLB_ONLY were not run (runAll filters them), so they are not judged.
+          const broke = (m.mustPass ?? []).filter((x) => (!ONLY || ONLY.has(x)) && res[x]?.status !== "pass");
           if (survived.length > 0) {
             console.log(`  CONTROL FAIL ${m.id}: ${survived.join(", ")} still passed against the mutant - the proof cannot catch this bug`);
+            exit = 1;
+          } else if (infra.length > 0) {
+            console.log(`  CONTROL FAIL ${m.id}: ${infra.map((x) => `${x} (${(res[x]?.msg ?? "not run").slice(0, 160)})`).join("; ")} failed for an infrastructure reason, which is not a catch`);
+            exit = 1;
+          } else if (wrong.length > 0) {
+            console.log(`  CONTROL FAIL ${m.id}: failed for the wrong reason (wanted ${m.reason}): ${wrong.map((x) => `${x} ${res[x]!.msg.slice(0, 160)}`).join("; ")}`);
             exit = 1;
           } else if (broke.length > 0) {
             console.log(`  CONTROL FAIL ${m.id}: ${broke.join(", ")} should pass against this mutant but did not`);
             exit = 1;
           } else {
             caught += 1;
-            console.log(`  control ${m.id} ok: ${m.mustFail.join(", ")} failed against the mutant${m.mustPass ? `; ${m.mustPass.join(", ")} still pass (the source row's lock serialises them)` : ""}`);
+            const stillPass = (m.mustPass ?? []).filter((x) => !ONLY || ONLY.has(x));
+            console.log(`  control ${m.id} ok: ${m.mustFail.join(", ")} failed against the mutant for the stated reason${stillPass.length ? `; ${stillPass.join(", ")} still pass (the source row's lock serialises them)` : ""}`);
+            for (const x of m.mustFail) console.log(`        ${x}: ${res[x]!.msg.split("\n")[0]!.slice(0, 190)}`);
           }
         } finally {
-          await restoreFunctions();
-          await purge();
-          if (!aborting) await seed(); // the purge removed the shared fixtures too
+          // On an abort the signal handler's cleanup owns the restore and the sweep (its client first terminates ours).
+          if (!aborting) {
+            await restoreFunctions();
+            await purge();
+            await seed(); // the purge removed the shared fixtures too
+          }
         }
       }
       console.log(`${caught}/${ran} mutants caught.`);
     }
   } finally {
+    if (aborting) await sleep(60000); // the signal handler is cleaning up and will exit
     await cleanup();
     await monitor.query("select pg_advisory_unlock(hashtext('gl-bridge:concurrency-proof'))").catch(() => undefined);
     await monitor.end().catch(() => undefined);
@@ -1626,6 +1699,7 @@ async function main(): Promise<void> {
 }
 
 main().catch(async (e) => {
+  if (aborting) await sleep(60000);
   console.error(e instanceof Error ? e.message : e);
   process.exit(1);
 });

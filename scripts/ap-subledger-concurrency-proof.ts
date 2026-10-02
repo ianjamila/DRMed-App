@@ -40,7 +40,9 @@
 //   K3 void one payment of a bill while a reallocation puts another on it: the same stale-sum overwrite, through the void cascade
 //
 // CONTROL ROUNDS (--control) prove the proof can fail. Each mutant removes ONE guard and the named scenarios must
-// FAIL against it (a copy in a throwaway schema aps_ctl_<hex>, never public). During a mutant round the forced scenarios only
+// FAIL against it (a copy in a throwaway schema aps_ctl_<hex>, never public), for the mutant's stated REASON (a regexp over the
+// failure message: the outcome the guard protects) - an infrastructure failure (interleaving not reached, a wait timeout, a statement
+// timeout, a failed fixture) is never a catch, and every caught message is printed. During a mutant round the forced scenarios only
 // require the second caller to be BLOCKED BY the first (not queued on the guard's own relation), so what fails is the OUTCOME the
 // guard protects - a second reversal, a duplicate bill for one month, an active allocation on a voided payment, an edit of a
 // posted bill - not merely where the waiter queued (the normal run checks the queue relation too):
@@ -96,6 +98,7 @@ const TAG = `aps-${randomBytes(3).toString("hex")}`;
 const ROUNDS = Number(process.env.APS_ROUNDS ?? 15);
 const ONLY = process.env.APS_ONLY ? new Set(process.env.APS_ONLY.split(",").map((s) => s.trim()).filter(Boolean)) : null;
 const CONTROL = process.argv.includes("--control");
+const APP_NAME = `ap-subledger:${TAG}`;
 
 // Which schema each function is called from (public, or a mutant's throwaway schema).
 /** During a mutant round the forced scenarios only require the second caller to be BLOCKED BY the first (not queued on the real
@@ -107,6 +110,12 @@ type Slot = keyof typeof FN;
 let monitor: Client;
 const open: Client[] = [];
 let seq = 0;
+/** Every id this run minted (vendors, bills, payments, templates): the leftover check looks them up by primary key as well as by tag. */
+const madeIds: string[] = [];
+const made = (id: string): string => {
+  madeIds.push(id);
+  return id;
+};
 /** Set by the SIGINT/SIGTERM handler: no new scenario or mutant may start once cleanup is under way. */
 let aborting = false;
 
@@ -134,8 +143,8 @@ type Out = { ok: true; rows: Record<string, unknown>[]; rowCount: number } | { o
 type Row = Record<string, unknown>;
 
 async function newClient(): Promise<Client> {
-  const c = new Client({ connectionString: DB_URL });
-  c.on("error", () => undefined);
+  const c = new Client({ connectionString: DB_URL, application_name: APP_NAME });
+  c.on("error", () => undefined); // a backend terminated by the abort cleanup must not crash the process
   await c.connect();
   await c.query("set statement_timeout = '20s'");
   open.push(c);
@@ -280,11 +289,11 @@ async function mkAdmin(label: string): Promise<string> {
     [id, `${TAG}-${seq}@aps.example.test`],
   );
   await monitor.query(`insert into public.staff_profiles (id, full_name, role, is_active) values ($1, $2, 'admin', true)`, [id, `${TAG} ${label}`]);
-  return id;
+  return made(id);
 }
 async function mkVendor(): Promise<string> {
   seq += 1;
-  return String((await q(`insert into public.vendors (name, is_active) values ($1, true) returning id`, [`${TAG} vendor ${seq}`]))[0]!.id);
+  return made(String((await q(`insert into public.vendors (name, is_active) values ($1, true) returning id`, [`${TAG} vendor ${seq}`]))[0]!.id));
 }
 function billInput(vendor: string, lines: number[]): string {
   seq += 1;
@@ -301,12 +310,12 @@ function billInput(vendor: string, lines: number[]): string {
 /** A POSTED bill (net = gross = amount, no withholding) with its bill_post journal entry. */
 async function mkBill(vendor: string, amount = 100): Promise<string> {
   const r = await q(`select (public.ap_create_bill_and_post($1::jsonb, $2::uuid, gen_random_uuid())->>'bill_id') as id`, [billInput(vendor, [amount]), ADMIN]);
-  return String(r[0]!.id);
+  return made(String(r[0]!.id));
 }
 /** A DRAFT bill with the given line amounts. */
 async function mkDraft(vendor: string, lines: number[]): Promise<string> {
   const r = await q(`select (public.ap_create_bill_draft($1::jsonb, $2::uuid, gen_random_uuid())->>'bill_id') as id`, [billInput(vendor, lines), ADMIN]);
-  return String(r[0]!.id);
+  return made(String(r[0]!.id));
 }
 /** A bank-transfer payment (1020) allocated to the given bills, with its bill_payment journal entry. */
 async function mkPayment(vendor: string, allocs: { bill: string; amount: number }[]): Promise<string> {
@@ -321,7 +330,7 @@ async function mkPayment(vendor: string, allocs: { bill: string; amount: number 
     allocations: allocs.map((a) => ({ bill_id: a.bill, allocated_amount: a.amount })),
   });
   const r = await q(`select (public.ap_create_bill_payment_with_allocations($1::jsonb, $2::uuid)->>'payment_id') as id`, [input, ADMIN]);
-  return String(r[0]!.id);
+  return made(String(r[0]!.id));
 }
 async function mkTemplate(vendor: string, nextRunOffset: string, active = true): Promise<string> {
   seq += 1;
@@ -330,7 +339,7 @@ async function mkTemplate(vendor: string, nextRunOffset: string, active = true):
      values ($1, $2, 15, 50, $3, true, ((now() at time zone 'Asia/Manila')::date + $4::interval)::date, $5) returning id`,
     [vendor, `${TAG} template ${seq}`, EXPENSE, nextRunOffset, active],
   );
-  return String(r[0]!.id);
+  return made(String(r[0]!.id));
 }
 const alloc = (bill: string, amount: number) => ({ bill_id: bill, allocated_amount: amount });
 
@@ -378,6 +387,11 @@ async function billsOfTemplate(tpl: string): Promise<{ n: number; dues: string[]
 }
 async function templateNext(tpl: string): Promise<string> {
   return String((await q(`select next_run_date::text as d from public.recurring_bill_templates where id = $1`, [tpl]))[0]!.d);
+}
+/** [d + 1 month, d + 1 month + 1 month] as the function chains them (Manila dates, computed in SQL: no JS Date arithmetic). */
+async function monthsAfter(d: string): Promise<[string, string]> {
+  const r = (await q(`select ($1::date + interval '1 month')::date::text as d1, (($1::date + interval '1 month')::date + interval '1 month')::date::text as d2`, [d]))[0]!;
+  return [String(r.d1), String(r.d2)];
 }
 async function dateOffset(offset: string): Promise<string> {
   return String((await q(`select ((now() at time zone 'Asia/Manila')::date + $1::interval)::date::text as d`, [offset]))[0]!.d);
@@ -732,6 +746,11 @@ const scenarios: Record<string, Scenario> = {
   async T2() {
     const v = await mkVendor();
     const t = await mkTemplate(v, "-1 month");
+    // The function advances next_run_date by `+ interval '1 month'` PER RUN (Jan 31 -> Feb 28 -> Mar 28, not Mar 31), and the bill's
+    // due_date is the next_run_date it ran on. So the expected dates are chained in SQL from the committed next_run_date; "today" is
+    // never one of them (on the 29th-31st today - 1 month + 1 month is not today).
+    const d0 = await templateNext(t);
+    const [d1, d2] = await monthsAfter(d0);
     const { o1, o2 } = await forced({
       first: (a) => postTemplate(a, t),
       second: (b) => postTemplate(b, t),
@@ -742,8 +761,8 @@ const scenarios: Record<string, Scenario> = {
     expectOk(o2, "second run");
     expect(typeof rj(o1).bill_id === "string" && typeof rj(o2).bill_id === "string", `both runs should create a bill: ${show(o1)} / ${show(o2)}`);
     const got = await billsOfTemplate(t);
-    eq("two bills for two different months", got.dues, [await dateOffset("-1 month"), await dateOffset("0 days")]);
-    eq("next_run_date advanced twice", await templateNext(t), await dateOffset("1 month"));
+    eq("two bills for two different months", got.dues, [d0, d1]);
+    eq("next_run_date advanced twice", await templateNext(t), d2);
   },
   // T3 - an admin deactivates the template while the cron fires: the run queues, re-checks is_active and finds nothing (P0002); no
   //      bill from a switched-off template.
@@ -881,7 +900,9 @@ const scenarios: Record<string, Scenario> = {
   // concurrency-proof: ap_reallocate_bill_payment (F1 free race: void x void x reallocate on one payment, invariants only)
   async F1() {
     const v = await mkVendor();
+    let deadlocks = 0;
     for (let i = 0; i < ROUNDS; i++) {
+      if (aborting) break;
       const [b1, b2] = [await mkBill(v), await mkBill(v)];
       const p = await mkPayment(v, [{ bill: b1, amount: 100 }]);
       const acts = await Promise.all([actor("r1"), actor("r2"), actor("r3")]);
@@ -893,18 +914,27 @@ const scenarios: Record<string, Scenario> = {
           return andEnd(a, ops[order[k]!]!(a));
         }),
       );
-      for (const o of outs) if (!o.ok) expect(["P0004", "40P01"].includes(o.code), `round ${i}: unexpected refusal ${show(o)}`);
+      for (const o of outs) {
+        if (o.ok) continue;
+        if (o.code === "40P01") deadlocks += 1;
+        else expect(o.code === "P0004", `round ${i}: unexpected refusal ${show(o)}`);
+      }
       await checkPayment(p, `round ${i}`);
       await checkBill(b1, `round ${i} b1`);
       await checkBill(b2, `round ${i} b2`);
       await closeAll();
     }
+    // No KNOWN cycle can form here: D1 needs a bill void AND a payment void, and F1 races payment voids / a reallocation only (all take the
+    // payment row first). A 40P01 is therefore an unexplained deadlock, not an accepted abort.
+    console.log(`    F1: ${deadlocks} of ${ROUNDS} rounds ended one side as a 40P01 abort (expected 0: no KNOWN cycle applies)`);
+    expect(deadlocks === 0, `F1: ${deadlocks} unexplained 40P01 deadlock(s) - the only KNOWN cycle (D1) needs a bill void next to a payment void, which F1 never races`);
   },
   // F2 - free race: three overlapping cron runs on a template due once, ROUNDS times: exactly one bill, one advance, two skips.
   // concurrency-proof: ap_post_recurring_template (F2 free race: three overlapping runs on one template, invariants only)
   async F2() {
     const v = await mkVendor();
     for (let i = 0; i < ROUNDS; i++) {
+      if (aborting) break;
       const t = await mkTemplate(v, "0 days");
       const acts = await Promise.all([actor("r1"), actor("r2"), actor("r3")]);
       const outs = await Promise.all(
@@ -925,7 +955,9 @@ const scenarios: Record<string, Scenario> = {
   // concurrency-proof: ap_void_bill_with_guard (F3 free race: void x void x allocation onto the bill, invariants only)
   async F3() {
     const v = await mkVendor();
+    let deadlocks = 0;
     for (let i = 0; i < ROUNDS; i++) {
+      if (aborting) break;
       const [b1, b2] = [await mkBill(v), await mkBill(v)];
       const p = await mkPayment(v, [{ bill: b1, amount: 100 }]);
       const acts = await Promise.all([actor("r1"), actor("r2"), actor("r3")]);
@@ -937,12 +969,20 @@ const scenarios: Record<string, Scenario> = {
           return andEnd(a, ops[order[k]!]!(a));
         }),
       );
-      for (const o of outs) if (!o.ok) expect(["P0029", "P0033", "40P01"].includes(o.code), `round ${i}: unexpected refusal ${show(o)}`);
+      for (const o of outs) {
+        if (o.ok) continue;
+        if (o.code === "40P01") deadlocks += 1;
+        else expect(["P0029", "P0033"].includes(o.code), `round ${i}: unexpected refusal ${show(o)}`);
+      }
       await checkBill(b2, `round ${i} b2`);
       await checkBill(b1, `round ${i} b1`);
       await checkPayment(p, `round ${i} payment`);
       await closeAll();
     }
+    // D1 (bill row -> journal-entry counter against payment row -> counter -> bill row) needs a PAYMENT VOID. F3 races bill voids and a
+    // reallocation (which posts no journal entry), so no KNOWN cycle explains a 40P01 here.
+    console.log(`    F3: ${deadlocks} of ${ROUNDS} rounds ended one side as a 40P01 abort (expected 0: D1 needs a payment void, which F3 never races)`);
+    expect(deadlocks === 0, `F3: ${deadlocks} unexplained 40P01 deadlock(s) - D1 needs a payment void next to a bill void, which F3 never races`);
   },
   // F4 - free race: two payments reallocating over the same two bills in OPPOSITE order (each insert's recompute updates a bill
   //      row, so the order of the caller's array is the lock order). A cycle, if it forms, must end as a clean 40P01 abort with
@@ -952,6 +992,7 @@ const scenarios: Record<string, Scenario> = {
     let deadlocks = 0;
     let drift = 0;
     for (let i = 0; i < ROUNDS; i++) {
+      if (aborting) break;
       const [b1, b2, b3, b4] = [await mkBill(v), await mkBill(v), await mkBill(v), await mkBill(v)];
       const p = await mkPayment(v, [{ bill: b1, amount: 100 }]);
       const r = await mkPayment(v, [{ bill: b2, amount: 100 }]);
@@ -1025,7 +1066,7 @@ const scenarios: Record<string, Scenario> = {
 // ---------------------------------------------------------------------------
 // Runner
 // ---------------------------------------------------------------------------
-type Status = "pass" | "fail" | "known" | "fixed";
+type Status = "pass" | "fail" | "infra" | "known" | "fixed";
 type Result = { status: Status; msg: string | null };
 async function runAll(only: string[] | null): Promise<Record<string, Result>> {
   const result: Record<string, Result> = {};
@@ -1039,7 +1080,9 @@ async function runAll(only: string[] | null): Promise<Record<string, Result>> {
       if (KNOWN.has(name)) r = v === "reproduced" ? { status: "known", msg: "reproduced" } : { status: "fixed", msg: "no longer reproduces" };
       else r = { status: "pass", msg: null };
     } catch (e) {
-      r = { status: "fail", msg: e instanceof Error ? e.message : String(e) };
+      const msg = e instanceof Error ? e.message : String(e);
+      // A Fail is the behaviour under test being wrong; anything else (a fixture RPC, a dropped connection) is the proof's own plumbing.
+      r = e instanceof Fail ? { status: "fail", msg } : { status: "infra", msg: `INFRA: ${msg}` };
     }
     result[name] = r;
     const tag = r.status === "pass" ? "ok   " : r.status === "known" ? "KNOWN" : r.status === "fixed" ? "FIXED" : "FAIL ";
@@ -1058,16 +1101,22 @@ type Mutant = {
   fn: string; // regprocedure
   slot: Slot;
   mustFail: string[];
+  /** The failure every mustFail scenario must show: the OUTCOME the dropped guard protects (not merely a failure of some kind). */
+  reason: RegExp;
   /** Scenarios that must still PASS against the mutant: they check shared behaviour, not the dropped guard. */
   mustPass?: string[];
 };
+/** Failures that say nothing about the guard: the interleaving was not reached, a wait or statement timed out, a fixture or setup call
+ *  failed, a connection died. Never a catch, whatever the mutant's reason says. */
+const INFRA_RE =
+  /interleaving not reached|never blocked by|never waited|answered without waiting|statement timeout|canceling statement|57014|timed out|Connection terminated|terminating connection|^INFRA:/i;
 const MUTANTS: Mutant[] = [
-  { id: "MVP", note: "ap_void_bill_payment_cascade without the payment FOR UPDATE", fn: "public.ap_void_bill_payment_cascade(uuid,text,uuid)", slot: "voidPay", mustFail: ["P1"], mustPass: ["P3"] },
-  { id: "MRA", note: "ap_reallocate_bill_payment without the payment FOR UPDATE", fn: "public.ap_reallocate_bill_payment(uuid,jsonb,uuid)", slot: "realloc", mustFail: ["P2", "P4"] },
-  { id: "MVB", note: "ap_void_bill_with_guard without the bill FOR UPDATE", fn: "public.ap_void_bill_with_guard(uuid,text,uuid)", slot: "voidBill", mustFail: ["B1"], mustPass: ["B3"] },
-  { id: "MUD", note: "ap_update_bill_draft without the bill FOR UPDATE", fn: "public.ap_update_bill_draft(uuid,jsonb,uuid)", slot: "updDraft", mustFail: ["B6", "B8"], mustPass: ["B5"] },
-  { id: "MPR", note: "ap_post_recurring_template without the template FOR UPDATE", fn: "public.ap_post_recurring_template(uuid)", slot: "postTpl", mustFail: ["T1", "T2", "T3"] },
-  { id: "MRJ", note: "ap_reverse_je_for_source without the journal-entry FOR UPDATE", fn: "public.ap_reverse_je_for_source(text,uuid,uuid)", slot: "revJe", mustFail: ["J1", "J2"] },
+  { id: "MVP", note: "ap_void_bill_payment_cascade without the payment FOR UPDATE", fn: "public.ap_void_bill_payment_cascade(uuid,text,uuid)", slot: "voidPay", mustFail: ["P1"], reason: /second void: refused P0001 \(No posted JE found for source bill_payment/, mustPass: ["P3"] },
+  { id: "MRA", note: "ap_reallocate_bill_payment without the payment FOR UPDATE", fn: "public.ap_reallocate_bill_payment(uuid,jsonb,uuid)", slot: "realloc", mustFail: ["P2", "P4"], reason: /reallocate after void: expected a refusal, but it succeeded|second reallocate: refused P0030 \(Allocation total/ },
+  { id: "MVB", note: "ap_void_bill_with_guard without the bill FOR UPDATE", fn: "public.ap_void_bill_with_guard(uuid,text,uuid)", slot: "voidBill", mustFail: ["B1"], reason: /second void: refused P0001 \(No posted JE found for source bill_post/, mustPass: ["B3"] },
+  { id: "MUD", note: "ap_update_bill_draft without the bill FOR UPDATE", fn: "public.ap_update_bill_draft(uuid,jsonb,uuid)", slot: "updDraft", mustFail: ["B6", "B8"], reason: /edit of a posted bill: expected a refusal, but it succeeded|edit of a deleted draft: expected P0002, got 23503/, mustPass: ["B5"] },
+  { id: "MPR", note: "ap_post_recurring_template without the template FOR UPDATE", fn: "public.ap_post_recurring_template(uuid)", slot: "postTpl", mustFail: ["T1", "T2", "T3"], reason: /second run skipped: got|two bills for two different months: got|run of a deactivated template: expected a refusal, but it succeeded/ },
+  { id: "MRJ", note: "ap_reverse_je_for_source without the journal-entry FOR UPDATE", fn: "public.ap_reverse_je_for_source(text,uuid,uuid)", slot: "revJe", mustFail: ["J1", "J2"], reason: /(second reversal|reversal behind the writer): expected a refusal, but it succeeded/ },
 ];
 
 async function liveDef(sig: string): Promise<string> {
@@ -1080,7 +1129,7 @@ async function makeSchemaMutant(schema: string, m: Mutant): Promise<void> {
   if (hits.length !== 1) throw new Error(`${m.id}: the live function has ${hits.length} «for update;» (want exactly 1) - update MUTANTS`);
   const name = m.fn.slice(m.fn.indexOf(".") + 1, m.fn.indexOf("("));
   const args = m.fn.slice(m.fn.indexOf("("));
-  const body = def.replace(`public.${name}`, `${schema}.${name}`).replace(/\s+for update;/, ";");
+  const body = def.replace(`public.${name}`, () => `${schema}.${name}`).replace(/\s+for update;/, () => ";");
   if (body === def) throw new Error(`${m.id}: mutation did not apply`);
   await monitor.query(`create schema ${schema}`);
   await monitor.query(body);
@@ -1099,21 +1148,25 @@ async function setup(): Promise<void> {
 }
 
 const TAG_RE = "(^|[^a-z0-9])aps-[0-9a-f]{6}";
-async function purge(): Promise<void> {
+const CTL_SCHEMA_RE = "^aps_ctl_[0-9a-f]{6}$";
+/** Sweep every aps-tagged row (this run's and any crashed earlier run's). Returns how many cleanup steps FAILED (0 = clean). */
+async function purge(c: Client = monitor): Promise<number> {
+  let failed = 0;
   const step = async (sql: string, params: unknown[] = []) => {
     try {
-      return await monitor.query(sql, params);
+      return await c.query(sql, params);
     } catch (e) {
-      console.error(`  cleanup step failed: ${(e as Error).message.split("\n")[0]}`);
+      failed += 1;
+      console.error("  cleanup step failed: " + (e as Error).message.split("\n")[0]);
       return null;
     }
   };
   const ids = async (sql: string) => ((await step(sql))?.rows ?? []).map((r) => r.id as string);
-  const vendors = await ids(`select id from public.vendors where name like 'aps-%'`);
-  const staff = await ids(`select id from public.staff_profiles where full_name like 'aps-%'`);
-  const bills = (await step(`select id from public.bills where vendor_id = any($1::uuid[])`, [vendors]))?.rows.map((r) => r.id as string) ?? [];
-  const pays = (await step(`select id from public.bill_payments where vendor_id = any($1::uuid[])`, [vendors]))?.rows.map((r) => r.id as string) ?? [];
-  const tpls = (await step(`select id from public.recurring_bill_templates where vendor_id = any($1::uuid[]) or description like 'aps-%'`, [vendors]))?.rows.map((r) => r.id as string) ?? [];
+  const vendors = await ids("select id from public.vendors where name like 'aps-%'");
+  const staff = await ids("select id from public.staff_profiles where full_name like 'aps-%'");
+  const bills = (await step("select id from public.bills where vendor_id = any($1::uuid[]) or vendor_invoice_number ~ $2 or description ~ $2", [vendors, TAG_RE]))?.rows.map((r) => r.id as string) ?? [];
+  const pays = (await step("select id from public.bill_payments where vendor_id = any($1::uuid[]) or reference ~ $2", [vendors, TAG_RE]))?.rows.map((r) => r.id as string) ?? [];
+  const tpls = (await step("select id from public.recurring_bill_templates where vendor_id = any($1::uuid[]) or description like 'aps-%'", [vendors]))?.rows.map((r) => r.id as string) ?? [];
   // Triggers skipped (local only, this transaction only): je_status_balance_check would reject entries emptied line by line,
   // and the bills/payments triggers would post yet more journal entries.
   await step("begin");
@@ -1128,34 +1181,62 @@ async function purge(): Promise<void> {
      delete from public.journal_entries where id in (select id from allje)`,
     [bills, pays, staff, TAG_RE],
   );
-  await step(`delete from public.bill_payment_allocations where payment_id = any($1::uuid[]) or bill_id = any($2::uuid[])`, [pays, bills]);
-  await step(`delete from public.bill_payments where id = any($1::uuid[])`, [pays]);
-  await step(`delete from public.bill_lines where bill_id = any($1::uuid[])`, [bills]);
-  await step(`delete from public.bill_attachments where bill_id = any($1::uuid[])`, [bills]);
-  await step(`delete from public.bills where id = any($1::uuid[])`, [bills]);
-  await step(`delete from public.recurring_bill_templates where id = any($1::uuid[])`, [tpls]);
-  await step(`delete from public.vendors where id = any($1::uuid[])`, [vendors]);
+  await step("delete from public.bill_payment_allocations where payment_id = any($1::uuid[]) or bill_id = any($2::uuid[])", [pays, bills]);
+  await step("delete from public.bill_payments where id = any($1::uuid[])", [pays]);
+  await step("delete from public.bill_lines where bill_id = any($1::uuid[])", [bills]);
+  await step("delete from public.bill_attachments where bill_id = any($1::uuid[])", [bills]);
+  await step("delete from public.bills where id = any($1::uuid[])", [bills]);
+  await step("delete from public.recurring_bill_templates where id = any($1::uuid[])", [tpls]);
+  await step("delete from public.vendors where id = any($1::uuid[])", [vendors]);
   await step(
-    `delete from public.audit_log where resource_id = any($1::uuid[] || $2::uuid[] || $3::uuid[]) or actor_id = any($4::uuid[])`,
+    "delete from public.audit_log where resource_id = any($1::uuid[] || $2::uuid[] || $3::uuid[]) or actor_id = any($4::uuid[])",
     [bills, pays, tpls, staff],
   );
   await step("commit");
-  await step(`delete from public.staff_profiles where id = any($1::uuid[])`, [staff]);
-  await step(`delete from auth.users where email like '%@aps.example.test'`);
-  const schemas = (await step("select nspname from pg_namespace where nspname like 'aps_ctl_%'"))?.rows ?? [];
-  for (const s of schemas) await step(`drop schema ${s.nspname} cascade`);
+  await step("delete from public.staff_profiles where id = any($1::uuid[])", [staff]);
+  await step("delete from auth.users where email like '%@aps.example.test'");
+  const schemas = (await step("select nspname from pg_namespace where nspname ~ '" + CTL_SCHEMA_RE + "'"))?.rows ?? [];
+  for (const sc of schemas) await step("drop schema " + sc.nspname + " cascade");
+  return failed;
 }
-async function leftovers(): Promise<number> {
-  const r = await q(
+/** Tagged rows still present: the fixtures by tag, and everything they posted (bills, payments, allocations, lines, audit rows,
+ *  journal entries incl. reversals) by tag, by this run's minted ids and by its admin. */
+async function leftovers(c: Client = monitor): Promise<number> {
+  const r = await c.query<{ n: string }>(
     `select (select count(*) from public.vendors where name like 'aps-%')
-          + (select count(*) from public.recurring_bill_templates where description like 'aps-%')
+          + (select count(*) from public.recurring_bill_templates where description like 'aps-%' or id = any($2::uuid[]))
           + (select count(*) from public.staff_profiles where full_name like 'aps-%')
           + (select count(*) from auth.users where email like '%@aps.example.test')
-          + (select count(*) from public.journal_entries where description ~ $1)
-          + (select count(*) from pg_namespace where nspname like 'aps_ctl_%') as n`,
-    [TAG_RE],
+          + (select count(*) from public.bills where vendor_invoice_number ~ $1 or description ~ $1 or id = any($2::uuid[]))
+          + (select count(*) from public.bill_lines where bill_id = any($2::uuid[]))
+          + (select count(*) from public.bill_payments where reference ~ $1 or id = any($2::uuid[]))
+          + (select count(*) from public.bill_payment_allocations where payment_id = any($2::uuid[]) or bill_id = any($2::uuid[]))
+          + (select count(*) from public.audit_log where resource_id = any($2::uuid[]) or actor_id = nullif($3::text, '')::uuid)
+          + (select count(*) from public.journal_entries where description ~ $1 or created_by = nullif($3::text, '')::uuid or source_id = any($2::uuid[]))
+          + (select count(*) from pg_namespace where nspname ~ $4) as n`,
+    [TAG_RE, madeIds, ADMIN, CTL_SCHEMA_RE],
   );
-  return Number(r[0]!.n);
+  return Number(r.rows[0]!.n);
+}
+/** SIGINT / SIGTERM: stop every backend of THIS run (by application_name) from a dedicated client - the actors may be parked on a lock
+ *  and a queued ROLLBACK on their own connection would wait behind it - then sweep and count on that client. Returns the exit code. */
+async function abortCleanup(sig: string, code: number): Promise<number> {
+  aborting = true;
+  console.log("\n  " + sig + " received - tearing down");
+  const cleaner = new Client({ connectionString: DB_URL });
+  cleaner.on("error", () => undefined);
+  await cleaner.connect();
+  await cleaner.query("select pg_terminate_backend(pid) from pg_stat_activity where pid <> pg_backend_pid() and application_name = $1", [APP_NAME]);
+  await sleep(300);
+  const failedSteps = await purge(cleaner);
+  const left = await leftovers(cleaner).catch(() => -1);
+  await cleaner.end().catch(() => undefined);
+  if (left !== 0 || failedSteps > 0) {
+    console.log("  FAIL     teardown - " + left + " tagged rows left behind, " + failedSteps + " cleanup step(s) failed");
+    return 1;
+  }
+  console.log("  teardown: every tagged row removed");
+  return code;
 }
 
 // ---------------------------------------------------------------------------
@@ -1167,23 +1248,27 @@ async function main(): Promise<void> {
     process.exit(2);
   }
   let exit = 0;
-  let cleanupP: Promise<void> | null = null;
-  const cleanup = (): Promise<void> => {
-    cleanupP ??= (async () => {
-      await closeAll();
-      await purge();
-      const left = await leftovers().catch(() => -1);
-      if (left !== 0) {
-        console.error(`FAIL: ${left} tagged rows left behind`);
-        exit = 1;
-      }
-    })();
-    return cleanupP;
+  const cleanup = async (): Promise<void> => {
+    await closeAll();
+    const failedSteps = await purge();
+    if (failedSteps > 0) {
+      console.error(`FAIL: ${failedSteps} cleanup step(s) failed`);
+      exit = 1;
+    }
+    const left = await leftovers().catch(() => -1);
+    if (left !== 0) {
+      console.error(`FAIL: ${left} tagged rows left behind`);
+      exit = 1;
+    }
   };
-  for (const sig of ["SIGINT", "SIGTERM"] as const) {
+  for (const [sig, code] of [["SIGINT", 130], ["SIGTERM", 143]] as const) {
     process.once(sig, () => {
-      aborting = true;
-      void cleanup().finally(() => process.exit(sig === "SIGINT" ? 130 : 143));
+      abortCleanup(sig, code)
+        .catch((e) => {
+          console.error(e);
+          return 1;
+        })
+        .then((c) => process.exit(c));
     });
   }
   try {
@@ -1197,7 +1282,7 @@ async function main(): Promise<void> {
     );
     if (have !== 9) throw new Error(`prerequisites missing by object: found ${have} of 9 AP functions (0049 must be applied)`);
     // A crashed earlier run may have left tagged rows or a control schema.
-    await purge();
+    if ((await purge()) > 0) throw new Error("the start-of-run sweep failed - not starting on a dirty stack");
     await setup();
     console.log(`Server: ${String((await q("select version() as v"))[0]!.v).split(",")[0]}; tag ${TAG}; ${ROUNDS} free-race rounds`);
     console.log("Real functions (public):");
@@ -1230,23 +1315,35 @@ async function main(): Promise<void> {
           const res = await runAll([...m.mustFail, ...(m.mustPass ?? [])]);
           if (aborting) break;
           const wanted = m.mustFail.filter((x) => !ONLY || ONLY.has(x));
-          const survived = wanted.filter((x) => res[x]?.status !== "fail");
+          const survived = wanted.filter((x) => res[x]?.status === "pass" || res[x]?.status === "known" || res[x]?.status === "fixed");
+          // A failure counts as a catch only when it is a GUARD failure: not infrastructure, and the stated outcome.
+          const infra = wanted.filter((x) => !res[x] || res[x]!.status === "infra" || (res[x]!.status === "fail" && INFRA_RE.test(res[x]!.msg ?? "")));
+          const wrong = wanted.filter((x) => res[x]?.status === "fail" && !INFRA_RE.test(res[x]!.msg ?? "") && !m.reason.test(res[x]!.msg ?? ""));
           const broke = (m.mustPass ?? []).filter((x) => (!ONLY || ONLY.has(x)) && res[x]?.status !== "pass");
           if (survived.length > 0) {
             console.log(`  CONTROL FAIL ${m.id}: scenarios ${survived.join(", ")} still passed against the mutant - the proof cannot catch this bug`);
+            exit = 1;
+          } else if (infra.length > 0) {
+            console.log(`  CONTROL FAIL ${m.id}: ${infra.map((x) => `${x} (${(res[x]?.msg ?? "not run").slice(0, 160)})`).join("; ")} failed for an infrastructure reason, which is not a catch`);
+            exit = 1;
+          } else if (wrong.length > 0) {
+            console.log(`  CONTROL FAIL ${m.id}: failed for the wrong reason (wanted ${m.reason}): ${wrong.map((x) => `${x} ${(res[x]!.msg ?? "").slice(0, 160)}`).join("; ")}`);
             exit = 1;
           } else if (broke.length > 0) {
             console.log(`  CONTROL FAIL ${m.id}: ${broke.join(", ")} should pass against this mutant but ${broke.map((x) => res[x]?.msg).join("; ")}`);
             exit = 1;
           } else {
             caught += 1;
-            console.log(`  control ${m.id} ok: ${wanted.join(", ")} failed against the mutant${m.mustPass ? `; ${m.mustPass.join(", ")} still pass (shared behaviour, see the header)` : ""}`);
+            console.log(`  control ${m.id} ok: ${wanted.join(", ")} failed against the mutant for the stated reason${m.mustPass ? `; ${m.mustPass.join(", ")} still pass (shared behaviour, see the header)` : ""}`);
+            for (const x of wanted) console.log(`        ${x}: ${(res[x]!.msg ?? "").split("\n")[0]!.slice(0, 190)}`);
           }
         } finally {
           relaxedWait = false;
           for (const k of Object.keys(FN) as Slot[]) FN[k] = "public";
-          await closeAll();
-          await monitor.query(`drop schema if exists ${schema} cascade`).catch(() => undefined);
+          if (!aborting) {
+            await closeAll();
+            await monitor.query(`drop schema if exists ${schema} cascade`).catch(() => undefined);
+          }
         }
       }
       console.log(`${caught}/${ran} mutants caught.`);
@@ -1255,16 +1352,18 @@ async function main(): Promise<void> {
     console.error(e instanceof Error ? e.message : e);
     exit = 1;
   } finally {
+    if (aborting) await sleep(60000); // the signal handler is cleaning up and will exit
     await cleanup();
     const left = await leftovers().catch(() => -1);
     if (left === 0) console.log("Leftovers: 0");
     await monitor.query("select pg_advisory_unlock(hashtext('ap-subledger:concurrency-proof'))").catch(() => undefined);
     await monitor.end().catch(() => undefined);
   }
-  process.exit(aborting ? 130 : exit);
+  process.exit(exit);
 }
 
 main().catch(async (e) => {
+  if (aborting) await sleep(60000);
   console.error(e instanceof Error ? e.message : e);
   process.exit(1);
 });
