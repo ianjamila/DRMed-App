@@ -1,5 +1,6 @@
 // Hand-run local CONCURRENCY proof for the eight GL-bridge TRIGGER functions that took row locks
-// but had never been raced:
+// but had never been raced - plus (0224) the atomic doctor payout pf_disburse_entries and the PF-entry refusal the cancel and undo bridges
+// now carry:
 //   bridge_payment_insert / bridge_payment_void                          (0140)  AFTER INSERT / void UPDATE on payments
 //   bridge_cash_adjustment_insert (0152) / bridge_cash_adjustment_void (0141)    on eod_cash_adjustments
 //   bridge_hmo_claim_resolution_insert / _void                           (0141)  on hmo_claim_resolutions
@@ -65,7 +66,10 @@
 //   TW1 waive_visit_balance x release of a line of that visit (the share folds into the release JE once)
 //   T8 free race: release / undo / cancel soup on one line, lab and doctor, invariants only
 //   X1 free race: every bridge at once (payment insert/void, cash adj, HMO resolution, release/undo), no 40P01
-//   K1a cancel x PF payout link   K1b PF payout link x cancel   - KNOWN issues, see below
+//   K1a cancel x PF payout   K1b PF payout x cancel   K1c PF payout x Undo release   K1d Undo release x PF payout  (0224, see below)
+//   PD1 pay, then cancel / undo (refused with no race), void the payout, then cancel / undo (works)
+//   PD2 every payout refusal rolls everything back (incl. the burned batch number)    PD3 payout x payout of OVERLAPPING entries
+//   PD3b payout x payout of disjoint entries (the batch counter serialises them)    PD5 free race: payout / cancel / undo soup on one paid line
 //
 // CONTROL ROUNDS (--control) prove the proof can fail. Each mutant removes ONE guard from the live
 // function and the named scenarios must FAIL against it, for the mutant's stated REASON (a regexp over the failure message: the outcome
@@ -76,21 +80,29 @@
 //      void / insert, TC test request cancelled: 14 mutants; the L / S of a void or cancel die in P2 C2 H2 T5 on
 //      the duplicate reversal, those of an insert in P5 C4 H4 on the missing re-posting)
 //   MRA     bridge_test_request_released without the waiver-allocation FOR UPDATE (T6)
-// A trigger function cannot be copied into another schema, so each mutant is a TAGGED-CONDITIONAL swap of
+//   MTCP / MUDP   the cancel / undo bridge without the PF-entry FOR UPDATE (K1b / K1c: a payout in flight is invisible, the later UPDATE voids the paid entry)
+//   MTCR / MUDR   the cancel / undo bridge without the paid-out refusal (K1b / K1c and the sequential PD1)
+//   MPD     pf_disburse_entries without the entry lock AND the link's filters + row-count check (PD3 pays one entry twice, K1a links a voided entry). Each of the
+//           two is a second line of defence for the other, so removing only one is NOT caught - and not a bug.
+// The payout function is an ordinary function, so MPD is a copy of the live definition in a throwaway schema (glb_mut_<hex>) that the payout calls
+// are pointed at for that round; the schema is dropped (cascade) in finally / SIGINT / SIGTERM and counted as a leftover.
+// A trigger function cannot be copied into another schema, so each other mutant is a TAGGED-CONDITIONAL swap of
 // the public function: the deviation applies only inside a transaction that ran
 //   set_config('glb.tag', '<run tag>', true)
 // which only this runner's actors do - every other session's rows behave exactly as before. The originals
 // are restored in finally / SIGINT / SIGTERM and verified byte-for-byte.
 //
-// KNOWN ISSUES (reported, not asserted; a KNOWN scenario that stops reproducing or breaks exits 1):
-//   K1a/K1b createPfDisbursement (src/lib/actions/accounting/pf-disbursements.ts) reads the open PF entries,
-//   inserts the disbursement header (its JE posts Dr 2110 / Cr cash for the total) and only then links the
-//   entries with `update ... where id in (...)` - three statements, no lock, and the link has no
-//   `voided_at is null` / `disbursement_id is null` filter. A concurrent cancel (or undo) of the line voids
-//   the entry in between: the entry ends up voided AND disbursed, the doctor was paid for a cancelled line and
-//   2110 is debited twice. The reverse order (link first, then cancel/undo) voids an entry that is already paid
-//   out - bridge_test_request_cancelled's / fn_undo_release_bridge's UPDATE of doctor_pf_entries has no
-//   `disbursement_id is null` guard either.
+// THE PF PAYOUT (0224; K1a/K1b were KNOWN issues until this migration)
+//   createPfDisbursement / createBulkPfPayoutCash used to read the open PF entries, insert the disbursement header (its JE posts Dr 2110 / Cr cash) and
+//   only then link the entries with `update ... where id in (...)` - four statements, no lock, no `voided_at is null` / `disbursement_id is null` filter.
+//   A concurrent cancel (or undo) voided the entry in between: voided AND disbursed, the doctor paid for a cancelled line, 2110 debited twice (K1a). In the
+//   other order the cancel / undo bridge voided an entry that was ALREADY paid out (K1b) - and did so with no race at all (PD1).
+//   Now the payout is the one function pf_disburse_entries (entries ORDER BY id FOR UPDATE, checks after the lock, server total, batch number, header, link,
+//   one transaction) and the bridges lock the line's live PF entries and refuse P0084 when one is disbursed. The payout is called exactly as the app calls
+//   it: one service_role rpc with named arguments. Void-the-payout is simulated by its row effects (soft-void the header, unlink the entries); the TypeScript
+//   journal reversal in voidPfDisbursementAndUnlink is not part of what the guards read.
+//   Other PF-entry writers (decided in 0224's header): bridge_pf_at_hmo_writeoff / _allocation only touch PENDING entries (recognized_at is null) a payout
+//   refuses anyway, bridge_payment_void_pf_cascade was dropped in 0174, the release bridge only inserts.
 //
 // FIXTURES are committed (two connections cannot see each other's uncommitted rows), tagged glb-<hex>,
 // swept at start, deleted in finally (incl. auth users and every journal entry they posted) and then
@@ -110,7 +122,7 @@ import { Client } from "pg";
 
 requireLocalOrExplicitProd("gl-bridge:concurrency-proof", {
   writes:
-    "throwaway staff, services, a physician, patients, visits, lines, payments, cash adjustments, HMO claims and PF disbursements tagged glb-<hex>, plus the journal entries their bridges post, committed so two connections can race on them, then deleted; during --control it briefly swaps the eight public.bridge_* trigger functions for variants that deviate only inside transactions carrying this run's tag",
+    "throwaway staff, services, a physician, patients, visits, lines, payments, cash adjustments, HMO claims and PF disbursements (through pf_disburse_entries) tagged glb-<hex>, plus the journal entries their bridges post, committed so two connections can race on them, then deleted; during --control it briefly swaps the public.bridge_* trigger functions (and fn_undo_release_bridge) for variants that deviate only inside transactions carrying this run's tag, and creates a throwaway glb_mut_<hex> schema holding a mutant copy of pf_disburse_entries",
 });
 
 const DB_URL = process.env.SUPABASE_DB_URL ?? "postgresql://postgres:postgres@127.0.0.1:54322/postgres";
@@ -294,6 +306,23 @@ async function forced(opts: {
   const o1 = await end(a, r1);
   const o2 = await p2;
   return { o1, o2 };
+}
+
+/**
+ * forced(), with the waiter's relation check moved AFTER the outcome: returns `queued()` to call once the scenario's outcome assertions have
+ * passed. A mutant that removed the lock the check is about waits somewhere else (or nowhere - an UPDATE that waits on a row an updater holds
+ * takes no tuple lock), and must die on the OUTCOME it let through, not on where it queued.
+ */
+async function forcedLate(opts: Omit<Parameters<typeof forced>[0], "rel" | "during"> & { rel: string }): Promise<{ o1: Out; o2: Out; queued: () => void }> {
+  let rels: string[] = [];
+  const { rel, ...rest } = opts;
+  const r = await forced({
+    ...rest,
+    during: async (_a, b) => {
+      rels = await tupleRelations(b.pid);
+    },
+  });
+  return { ...r, queued: () => expect(rels.includes(rel), `the waiter is queued on ${JSON.stringify(rels)}, not ${rel}`) };
 }
 
 // ---------------------------------------------------------------------------
@@ -722,7 +751,9 @@ async function sInsertWriter(s: Src): Promise<void> {
 // Scenarios
 // ---------------------------------------------------------------------------
 type Scenario = () => Promise<void>;
-const KNOWN_IDS = new Set(["K1a", "K1b"]);
+// No KNOWN issues are open: K1a / K1b were promoted to real scenarios by 0224. A scenario listed here is reported, not failed, while it
+// reproduces - and fails the run (FIXED) the day it stops.
+const KNOWN_IDS = new Set<string>();
 const scenarios: Record<string, Scenario> = {
   // concurrency-proof: bridge_payment_void (P1 void x void - the second queues on the PAYMENT row, one reversal)
   P1: () => sVoidVoid(PAY),
@@ -1169,39 +1200,266 @@ const scenarios: Record<string, Scenario> = {
     }
   },
 
-  // concurrency-proof: bridge_test_request_cancelled (K1a KNOWN: cancel in flight x the PF payout's entry link - the link has no voided_at guard)
+  // ---- the PF payout (0224 pf_disburse_entries) against cancel / undo of the line ------------------------------------
+  // concurrency-proof: bridge_test_request_cancelled (K1a: the cancel in flight x a PF payout of its entry - the payout waits on the entry, then refuses it)
+  // concurrency-proof: pf_disburse_entries (K1a: the payout queues on the entry lock the cancel holds and is refused P0085, nothing linked, no JE)
   async K1a() {
     const l = await mkLine({ doc: true, release: true });
-    const entry = String((await q("select id from public.doctor_pf_entries where test_request_id = $1 and voided_at is null", [l.id])).rows[0]!.id);
-    const disb = await mkDisbursement(600);
-    const { o1, o2 } = await forced({
+    const entry = await pfEntryOf(l);
+    const before = await payoutCounts();
+    const { o1, o2, queued } = await forcedLate({
       whoA: "svc",
       whoB: "svc",
       first: (a) => cancelLine(a, l.id),
-      second: (b) => linkEntries(b, disb, [entry]),
+      second: (b) => payoutRpc(b, [entry], 600),
       rel: "doctor_pf_entries",
-      why: "the payout's link UPDATE queues on the PF entry row the cancel holds",
+      why: "the payout's entry lock queues on the PF entry row the cancel voided",
     });
     expectOk(o1, "cancel");
-    expectOk(o2, "link");
-    return pfPayoutVerdict(entry, disb, "cancel first, payout link second");
+    refused(o2, "P0085", /not open for disbursement/, "payout behind a cancel: expected P0085 (the entry is voided)");
+    await assertNoPayout(entry, before, "cancel first, payout second");
+    eq("line", await lineInvariants(l, "K1a"), "cancelled");
+    eq("the cancelled line's 2110 accounts net to zero (accrual reversed, nothing paid)", await net2110(l), 0);
+    expect((await pfRow(entry)).voided === true, "the entry is voided");
+    queued();
   },
-  // concurrency-proof: bridge_test_request_cancelled (K1b KNOWN: the PF payout's entry link in flight x a cancel - the cancel's PF void has no disbursement_id guard)
+  // concurrency-proof: bridge_test_request_cancelled (K1b: a PF payout in flight x a cancel - the cancel's PF lock waits on the entry, sees the link and is refused P0084)
   async K1b() {
     const l = await mkLine({ doc: true, release: true });
-    const entry = String((await q("select id from public.doctor_pf_entries where test_request_id = $1 and voided_at is null", [l.id])).rows[0]!.id);
-    const disb = await mkDisbursement(600);
+    const entry = await pfEntryOf(l);
+    const { o1, o2, queued } = await forcedLate({
+      whoA: "svc",
+      whoB: "svc",
+      first: (a) => payoutRpc(a, [entry], 600),
+      second: (b) => cancelLine(b, l.id),
+      rel: "doctor_pf_entries",
+      why: "the cancel bridge's PF lock queues on the entry the payout holds",
+    });
+    expectOk(o1, "payout");
+    refused(o2, "P0084", /already paid out/, "cancel behind a payout: expected P0084 (already paid out)");
+    await assertPaidAndUntouched(l, entry, payoutIdOf(o1), "K1b");
+    queued();
+  },
+  // concurrency-proof: fn_undo_release_bridge (K1c: a PF payout in flight x an Undo release - the undo's PF lock waits, sees the link and is refused P0084, the whole undo rolls back)
+  async K1c() {
+    const l = await mkLine({ doc: true, release: true });
+    const entry = await pfEntryOf(l);
+    const { o1, o2, queued } = await forcedLate({
+      whoA: "svc",
+      whoB: "staff",
+      first: (a) => payoutRpc(a, [entry], 600),
+      second: (b) => undoRpc(b, l.visit, [l.id]),
+      rel: "doctor_pf_entries",
+      why: "the undo bridge's PF lock queues on the entry the payout holds",
+    });
+    expectOk(o1, "payout");
+    refused(o2, "P0084", /already paid out/, "undo behind a payout: expected P0084 (already paid out)");
+    await assertPaidAndUntouched(l, entry, payoutIdOf(o1), "K1c");
+    eq("the refused undo wrote no release_undone audit row", await num("select count(*)::int as n from public.audit_log where action = 'test_request.release_undone' and resource_id = $1", [l.id]), 0);
+    queued();
+  },
+  // concurrency-proof: fn_undo_release_bridge (K1d: an Undo release in flight x a PF payout of its entry - the payout waits on the entry, then refuses it)
+  async K1d() {
+    const l = await mkLine({ doc: true, release: true });
+    const entry = await pfEntryOf(l);
+    const before = await payoutCounts();
+    const { o1, o2, queued } = await forcedLate({
+      whoA: "staff",
+      whoB: "svc",
+      first: (a) => undoRpc(a, l.visit, [l.id]),
+      second: (b) => payoutRpc(b, [entry], 600),
+      rel: "doctor_pf_entries",
+      why: "the payout's entry lock queues on the PF entry row the undo voided",
+    });
+    expectOk(o1, "undo");
+    refused(o2, "P0085", /not open for disbursement/, "payout behind an undo: expected P0085 (the entry is voided)");
+    await assertNoPayout(entry, before, "undo first, payout second");
+    eq("line", await lineInvariants(l, "K1d"), "ready_for_release");
+    eq("the un-released line's 2110 accounts net to zero", await net2110(l), 0);
+    queued();
+  },
+
+  // PD1 sequential: pay, then cancel / undo of the paid line are refused (no race at all); void the payout and they work
+  // concurrency-proof: bridge_test_request_cancelled (PD1: a cancel of a line whose fee was already paid out is refused, with no race at all)
+  // concurrency-proof: fn_undo_release_bridge (PD1: an Undo release of a paid-out line is refused; after the payout is voided it works)
+  async PD1() {
+    const l = await mkLine({ doc: true, release: true });
+    const entry = await pfEntryOf(l);
+    const pay = await once("svc", (a) => payoutRpc(a, [entry], 600));
+    expectOk(pay, "payout");
+    const disb = payoutIdOf(pay);
+    const h = (await q("select batch_number::int as batch, physician_id, method, total_php::float8 as total, recorded_by, voided_at, journal_entry_id from public.doctor_pf_disbursements where id = $1", [disb])).rows[0]!;
+    eq("the header", [h.physician_id, h.method, h.total, h.recorded_by, h.voided_at], [fx.physician, "cash", 600, fx.admin, null]);
+    eq("the RPC returned the batch number it allocated", (pay.ok ? (pay.rows[0]!.r as { batch_number: number }).batch_number : null), h.batch);
+    const je = await q("select id from public.journal_entries where source_kind = 'doctor_pf_disbursement' and source_id = $1 and status = 'posted'", [disb]);
+    eq("one posted payout entry", je.rowCount, 1);
+    eq("the header points at it", h.journal_entry_id, je.rows[0]!.id);
+    const lines = await q("select a.code, l.debit_php::float8 as d, l.credit_php::float8 as c from public.journal_lines l join public.chart_of_accounts a on a.id = l.account_id where l.entry_id = $1 order by a.code", [je.rows[0]!.id]);
+    eq("Dr 2110 / Cr 1010 for the total", lines.rows.map((r) => [r.code, r.d, r.c]), [["1010", 0, 600], ["2110", 600, 0]]);
+    await assertPaidAndUntouched(l, entry, disb, "PD1 after the payout");
+
+    const c = await once("svc", (a) => cancelLine(a, l.id));
+    refused(c, "P0084", /already paid out/, "cancel after a payout: expected P0084 (already paid out)");
+    await assertPaidAndUntouched(l, entry, disb, "PD1 after the refused cancel");
+    const u = await once("staff", (a) => undoRpc(a, l.visit, [l.id]));
+    refused(u, "P0084", /already paid out/, "undo after a payout: expected P0084 (already paid out)");
+    await assertPaidAndUntouched(l, entry, disb, "PD1 after the refused undo");
+
+    // Void the payout (what voidPfDisbursementAndUnlink does to the rows), and the undo works.
+    await voidPayout(disb);
+    expectOk(await once("staff", (a) => undoRpc(a, l.visit, [l.id])), "undo after the payout was voided");
+    eq("line", await lineInvariants(l, "PD1 void then undo"), "ready_for_release");
+    const e = await pfRow(entry);
+    eq("the entry is voided and unlinked", [e.voided, e.disbursement_id], [true, null]);
+    await assertOneReversal("test_request", l.id, "PD1 void then undo");
+
+    // The cancel works the same way once the payout is voided.
+    const l2 = await mkLine({ doc: true, release: true });
+    const e2 = await pfEntryOf(l2);
+    const pay2 = await once("svc", (a) => payoutRpc(a, [e2], 600));
+    expectOk(pay2, "second payout");
+    const c2 = await once("svc", (a) => cancelLine(a, l2.id));
+    refused(c2, "P0084", /already paid out/, "cancel after a payout: expected P0084 (already paid out)");
+    await voidPayout(payoutIdOf(pay2));
+    expectOk(await once("svc", (a) => cancelLine(a, l2.id)), "cancel after the payout was voided");
+    eq("line", await lineInvariants(l2, "PD1 void then cancel"), "cancelled");
+  },
+
+  // concurrency-proof: pf_disburse_entries (PD2: every refusal rolls the whole payout back - no header, no JE, no burned batch number, entries untouched)
+  async PD2() {
+    const open = async () => {
+      const l = await mkLine({ doc: true, release: true });
+      return pfEntryOf(l);
+    };
+    const [a, b, c, d, e, f] = [await open(), await open(), await open(), await open(), await open(), await open()];
+    // a voided entry (its line cancelled) and an already-paid one
+    const lv = await mkLine({ doc: true, release: true });
+    const voided = await pfEntryOf(lv);
+    expectOk(await once("svc", (x) => cancelLine(x, lv.id)), "cancel");
+    const paid = await open();
+    expectOk(await once("svc", (x) => payoutRpc(x, [paid], 600)), "payout of the paid-out entry");
+    // an entry that was never recognised (a pending HMO fee)
+    const lp = await mkLine({ doc: true });
+    const pending = mint();
+    await q("insert into public.doctor_pf_entries (id, test_request_id, physician_id, pf_php, recognition_basis) values ($1, $2, $3, 600, 'hmo_at_settlement')", [pending, lp.id, fx.physician]);
+    const before = await payoutCounts();
+    const NOT_OPEN = /^One or more PF entries are not open for disbursement$/;
+    const cases: Array<[string, (x: Actor) => Promise<Out>, RegExp]> = [
+      ["no entries", (x) => payoutRpc(x, [], 600), /^Must select at least one open PF entry$/],
+      ["an unknown id", (x) => payoutRpc(x, [a, randomUUID()], 1200), /^One or more PF entries not found$/],
+      ["the same id twice", (x) => payoutRpc(x, [a, a], 1200), /^One or more PF entries not found$/],
+      ["another doctor's entries", (x) => payoutRpc(x, [a, b], 1200, { physician: randomUUID() }), /^PF entries must all belong to the same physician$/],
+      ["a voided entry", (x) => payoutRpc(x, [c, voided], 1200), NOT_OPEN],
+      ["an already-paid entry", (x) => payoutRpc(x, [d, paid], 1200), NOT_OPEN],
+      ["a never-recognised entry", (x) => payoutRpc(x, [e, pending], 1200), NOT_OPEN],
+      ["a total that does not match", (x) => payoutRpc(x, [f], 599), /^Total mismatch: expected 600, got 599$/],
+      ["a null total", (x) => payoutRpc(x, [f], null), /^Total mismatch: expected 600, got nothing$/],
+    ];
+    for (const [what, run, re] of cases) {
+      const o = await once("svc", run);
+      refused(o, "P0085", re, `refusal for ${what}`);
+    }
+    // A failure AFTER the batch number was taken and the header insert started rolls everything back too.
+    const bad = await once("svc", (x) => payoutRpc(x, [f], 600, { method: "paypal" }));
+    expect(!bad.ok && bad.code === "23514", `an unknown payout method: expected 23514, got ${JSON.stringify(bad)}`);
+    const after = await payoutCounts();
+    eq("no header, no payout JE and no burned batch number after nine refusals and a failed insert", [after.headers, after.jes, after.counter], [before.headers, before.jes, before.counter]);
+    for (const [id, what] of [[a, "a"], [b, "b"], [c, "c"], [d, "d"], [e, "e"], [f, "f"]] as const) {
+      eq(`entry ${what} untouched`, (await pfRow(id)).disbursement_id, null);
+    }
+    // The centavo tolerance of the old check still holds: 600.004 pays a 600.00 entry.
+    const tol = await once("svc", (x) => payoutRpc(x, [f], 600.004));
+    expectOk(tol, "a total within half a centavo");
+    eq("the entry is linked to it", (await pfRow(f)).disbursement_id, payoutIdOf(tol));
+    // ... and with several entries the total is the SUM, in id order the same.
+    const two = await once("svc", (x) => payoutRpc(x, [b, a], 1200));
+    expectOk(two, "two entries");
+    eq("both linked to one header", [(await pfRow(a)).disbursement_id, (await pfRow(b)).disbursement_id], [payoutIdOf(two), payoutIdOf(two)]);
+  },
+
+  // concurrency-proof: pf_disburse_entries (PD3: two payouts of OVERLAPPING entries - the second queues on the shared entry, then refuses it: exactly one wins)
+  async PD3() {
+    const [l1, l2, l3] = [await mkLine({ doc: true, release: true }), await mkLine({ doc: true, release: true }), await mkLine({ doc: true, release: true })];
+    const [e1, e2, e3] = [await pfEntryOf(l1), await pfEntryOf(l2), await pfEntryOf(l3)];
+    const before = await payoutCounts();
+    let rels: string[] = [];
     const { o1, o2 } = await forced({
       whoA: "svc",
       whoB: "svc",
-      first: (a) => linkEntries(a, disb, [entry]),
-      second: (b) => cancelLine(b, l.id),
-      rel: "doctor_pf_entries",
-      why: "the cancel bridge's PF void queues on the entry row the payout link holds",
+      first: (a) => payoutRpc(a, [e1, e2], 1200),
+      second: (b) => payoutRpc(b, [e2, e3], 1200),
+      why: "the second payout queues on the entry both want",
+      // asserted after the outcome, so a payout without the entry lock dies on the double payment
+      during: async (_a, b) => {
+        rels = await tupleRelations(b.pid);
+      },
     });
-    expectOk(o1, "link");
-    expectOk(o2, "cancel");
-    return pfPayoutVerdict(entry, disb, "payout link first, cancel second");
+    expectOk(o1, "first payout");
+    refused(o2, "P0085", /not open for disbursement/, "second payout of overlapping entries was not refused");
+    const after = await payoutCounts();
+    eq("exactly one header and one payout JE", [after.headers - before.headers, after.jes - before.jes], [1, 1]);
+    const disb = payoutIdOf(o1);
+    eq("the shared entries belong to the winner", [(await pfRow(e1)).disbursement_id, (await pfRow(e2)).disbursement_id], [disb, disb]);
+    eq("the loser's other entry was not linked (its whole payout rolled back)", (await pfRow(e3)).disbursement_id, null);
+    expect(rels.includes("doctor_pf_entries"), `the second payout queued on ${JSON.stringify(rels)}, not doctor_pf_entries (its entry lock)`);
+  },
+  // concurrency-proof: pf_disburse_entries (PD3b: two payouts of DISJOINT entries serialise on the batch counter - both succeed, distinct batch numbers, no 40P01)
+  async PD3b() {
+    const [l1, l2] = [await mkLine({ doc: true, release: true }), await mkLine({ doc: true, release: true })];
+    const [e1, e2] = [await pfEntryOf(l1), await pfEntryOf(l2)];
+    const { o1, o2 } = await forced({
+      whoA: "svc",
+      whoB: "svc",
+      first: (a) => payoutRpc(a, [e1], 600),
+      second: (b) => payoutRpc(b, [e2], 600),
+      why: "the second payout queues on the batch counter row the first holds",
+    });
+    expectOk(o1, "first payout");
+    expectOk(o2, "second payout");
+    const [d1, d2] = [payoutIdOf(o1), payoutIdOf(o2)];
+    expect(d1 !== d2, "two payouts, two headers");
+    const batches = (await q("select batch_number::int as b from public.doctor_pf_disbursements where id = any($1::uuid[]) order by batch_number", [[d1, d2]])).rows.map((r) => Number(r.b));
+    expect(batches.length === 2 && batches[0] !== batches[1], `the batch numbers must differ: ${JSON.stringify(batches)}`);
+    eq("each entry belongs to its own payout", [(await pfRow(e1)).disbursement_id, (await pfRow(e2)).disbursement_id], [d1, d2]);
+  },
+
+  // concurrency-proof: pf_disburse_entries (PD5 free race: payouts, cancels and Undo releases of one paid-or-not line from three sessions, invariants only)
+  // concurrency-proof: bridge_test_request_cancelled (PD5 free race)
+  // concurrency-proof: fn_undo_release_bridge (PD5 free race)
+  async PD5() {
+    const kinds = ["payout", "cancel", "undo"] as const;
+    for (let i = 0; i < ROUNDS; i++) {
+      if (aborting) break;
+      const l = await mkLine({ doc: true, release: true });
+      const entry = await pfEntryOf(l);
+      const before = await payoutCounts();
+      const picks = [0, 1, 2].map(() => kinds[Math.floor(Math.random() * 3)]!);
+      const acts = await Promise.all(picks.map((p, k) => actor(`r${k}`, p === "undo" ? "staff" : "svc")));
+      const outs = await Promise.all(
+        acts.map(async (a, k) => {
+          await begin(a);
+          const p = picks[k];
+          return andEnd(a, p === "payout" ? payoutRpc(a, [entry], 600) : p === "undo" ? undoRpc(a, l.visit, [l.id]) : cancelLine(a, l.id));
+        }),
+      );
+      // P0084 = the bridge refusing a paid-out line, P0085 = the payout refusing a voided / paid entry, P0081 = the undo RPC
+      // finding the line no longer released. A 40P01 would be a real defect.
+      const label = `round ${i} [${picks.join(",")}]`;
+      outs.forEach((o, k) => {
+        if (!o.ok) expect(["P0084", "P0085", "P0081"].includes(o.code), `${label} racer ${k} (${picks[k]}): ${o.code} ${o.msg}`);
+      });
+      const e = await pfRow(entry);
+      expect(!(e.voided && e.disbursement_id !== null), `${label}: the entry ended VOIDED and DISBURSED`);
+      const after = await payoutCounts();
+      const headers = after.headers - before.headers;
+      eq(`${label}: headers created (one iff the entry is paid out)`, headers, e.disbursement_id === null ? 0 : 1);
+      eq(`${label}: payout JEs`, after.jes - before.jes, headers);
+      const st = await lineInvariants(l, label);
+      if (e.disbursement_id !== null) eq(`${label}: a paid-out line stays released`, st, "released");
+      else if (e.voided) expect(st !== "released", `${label}: a voided entry on a line that is still released`);
+      eq(`${label}: the line's 2110 accounts`, await net2110(l, e.disbursement_id as string | null), 0);
+      await closeAll();
+    }
   },
 
   // concurrency-proof: bridge_payment_insert (X1 free race: every bridge at once - payments, cash adjustments, HMO resolutions, releases and undos share the JE number counter and the visit)
@@ -1279,42 +1537,84 @@ const scenarios: Record<string, Scenario> = {
   },
 };
 
-// ---- the PF payout, step by step as createPfDisbursement issues it ------------
-/** Step 2 of createPfDisbursement: the disbursement header (its bridge posts Dr 2110 / Cr cash), committed on its own. */
-async function mkDisbursement(total: number): Promise<string> {
-  const a = await actor("payout-header", "svc");
-  await begin(a);
-  const n = await call(a, "select public.next_pf_disbursement_batch_number(extract(year from (now() at time zone 'Asia/Manila'))::smallint) as n");
-  expectOk(n, "batch number");
-  const id = mint();
-  const ins = await call(
+// ---- the PF payout, as the app calls it (0224) --------------------------------
+/** The function the payout calls go through; the control round points it at a throwaway-schema mutant copy. */
+let payoutFn = "public.pf_disburse_entries";
+/** createPfDisbursement / createBulkPfPayoutCash: ONE rpc, named arguments, service_role. */
+const payoutRpc = (a: Actor, ids: string[], total: number | null, o: { physician?: string; method?: string } = {}) =>
+  call(
     a,
-    `insert into public.doctor_pf_disbursements (id, batch_number, physician_id, posted_date, method, total_php, recorded_by, notes)
-     values ($1, $2, $3, ${today}, 'cash', $4, $5, $6)`,
-    [id, val(n, "n"), fx.physician, total, fx.admin, TAG],
+    `select ${payoutFn}(p_physician_id := $1::uuid, p_entry_ids := $2::uuid[], p_posted_date := ${today}, p_method := $3, p_total_php := $4::numeric, p_recorded_by := $5::uuid, p_notes := $6) as r`,
+    [o.physician ?? fx.physician, ids, o.method ?? "cash", total, fx.admin, TAG],
   );
-  expectOk(await end(a, ins), "disbursement header");
-  eq("the payout header posted its entry", (await jeState("doctor_pf_disbursement", id)).posted, 1);
-  return id;
+function payoutIdOf(o: Out): string {
+  const r = val(o, "r") as { disbursement_id?: string } | string | undefined;
+  if (typeof r !== "object" || r === null || typeof r.disbursement_id !== "string") throw new Fail(`the payout did not return a disbursement id: ${JSON.stringify(o)}`);
+  made.ids.push(r.disbursement_id);
+  return r.disbursement_id;
 }
-/** Step 3: `update doctor_pf_entries set disbursement_id = ... where id in (...)` - no voided_at / disbursement_id guard. */
-const linkEntries = (a: Actor, disb: string, ids: string[]) =>
-  call(a, "update public.doctor_pf_entries set disbursement_id = $1 where id = any($2::uuid[])", [disb, ids]);
-/** A voided entry must never be (or stay) linked to a paid-out disbursement. Reproducing that is the KNOWN issue. */
-async function pfPayoutVerdict(entry: string, disb: string, how: string): Promise<void> {
-  const e = (await q("select voided_at is not null as voided, disbursement_id from public.doctor_pf_entries where id = $1", [entry])).rows[0]!;
-  if (e.voided && e.disbursement_id === disb) {
-    const net = await num(
-      `select coalesce(sum(l.debit_php - l.credit_php), 0)::float8 as n
-         from public.journal_lines l join public.chart_of_accounts a on a.id = l.account_id
-        where a.code = '2110' and l.entry_id in (
-          select id from public.journal_entries where (source_kind = 'doctor_pf_disbursement' and source_id = $1) or (source_kind = 'test_request' and source_id = (select test_request_id from public.doctor_pf_entries where id = $2))
-          union select id from public.journal_entries where source_kind = 'reversal' and reverses in (select id from public.journal_entries where source_kind = 'test_request' and source_id = (select test_request_id from public.doctor_pf_entries where id = $2)))`,
-      [disb, entry],
-    );
-    throw new Known(`${how}: the PF entry ends VOIDED and DISBURSED (the doctor was paid for a cancelled line); the line's 2110 accounts net to a ${net} debit instead of 0`);
-  }
-  throw new Fail(`${how}: no longer reproduces (entry voided=${String(e.voided)}, disbursement_id=${String(e.disbursement_id)}) - promote K1 to a real scenario`);
+/** One statement in its own transaction (commit on success, rollback on a refusal), as one app request. */
+async function once(who: Who, f: (a: Actor) => Promise<Out>): Promise<Out> {
+  const a = await actor("once", who);
+  await begin(a);
+  return end(a, await f(a));
+}
+/** A refusal with this SQLSTATE and (when given) this exact message; `label` is what a failure says. */
+function refused(o: Out, code: string, msg: RegExp, label: string): void {
+  expect(!o.ok && o.code === code && msg.test(o.msg), `${label}: got ${JSON.stringify(o)}`);
+}
+/** What voidPfDisbursementAndUnlink does to the ROWS (soft-void the header, unlink its entries); its journal reversal is TypeScript-only and irrelevant to the guards. */
+async function voidPayout(disb: string): Promise<void> {
+  const a = await actor("void-payout", "svc");
+  await begin(a);
+  expectOk(await call(a, "update public.doctor_pf_disbursements set voided_at = now(), voided_by = $2, void_reason = 'glb proof void' where id = $1 and voided_at is null returning id", [disb, fx.admin]), "void the header");
+  expectOk(await end(a, await call(a, "update public.doctor_pf_entries set disbursement_id = null where disbursement_id = $1", [disb])), "unlink the entries");
+}
+const pfEntryOf = async (l: Line): Promise<string> => String((await q("select id from public.doctor_pf_entries where test_request_id = $1 and voided_at is null", [l.id])).rows[0]!.id);
+const pfRow = async (id: string): Promise<{ voided: boolean; disbursement_id: string | null }> => {
+  const r = (await q("select voided_at is not null as voided, disbursement_id from public.doctor_pf_entries where id = $1", [id])).rows[0]!;
+  return { voided: r.voided as boolean, disbursement_id: (r.disbursement_id as string | null) ?? null };
+};
+/** This run's physician's headers, their payout JEs and the year's batch counter (read before / after a scenario). */
+async function payoutCounts(): Promise<{ headers: number; jes: number; counter: number }> {
+  return {
+    headers: await num("select count(*)::int as n from public.doctor_pf_disbursements where physician_id = $1", [fx.physician]),
+    jes: await num(
+      "select count(*)::int as n from public.journal_entries where source_kind = 'doctor_pf_disbursement' and source_id in (select id from public.doctor_pf_disbursements where physician_id = $1)",
+      [fx.physician],
+    ),
+    counter: await num("select coalesce((select next_n from public.pf_disbursement_year_counters where year = extract(year from (now() at time zone 'Asia/Manila'))::smallint), 0)::int as n"),
+  };
+}
+/** The line's 2110 accounts over its release entry, its payout entry (when paid) and every reversal of either: debit - credit. */
+async function net2110(l: Line, disb: string | null = null): Promise<number> {
+  return num(
+    `select coalesce(sum(jl.debit_php - jl.credit_php), 0)::float8 as n
+       from public.journal_lines jl join public.chart_of_accounts a on a.id = jl.account_id
+      where a.code = '2110' and jl.entry_id in (
+        select id from public.journal_entries where (source_kind = 'test_request' and source_id = $1) or (source_kind = 'doctor_pf_disbursement' and source_id = $2)
+        union select id from public.journal_entries where source_kind = 'reversal' and reverses in (
+          select id from public.journal_entries where (source_kind = 'test_request' and source_id = $1) or (source_kind = 'doctor_pf_disbursement' and source_id = $2)))`,
+    [l.id, disb],
+  );
+}
+/** A refused payout leaves nothing: the entry unlinked, no header, no payout JE. */
+async function assertNoPayout(entry: string, before: { headers: number; jes: number }, how: string): Promise<void> {
+  eq(`${how}: the entry stays unlinked`, (await pfRow(entry)).disbursement_id, null);
+  const after = await payoutCounts();
+  eq(`${how}: no header and no payout JE`, [after.headers - before.headers, after.jes - before.jes], [0, 0]);
+}
+/** A paid-out line a cancel / undo was refused for: still released, release entry posted and unreversed, the entry live and linked, 2110 netting to zero. */
+async function assertPaidAndUntouched(l: Line, entry: string, disb: string, how: string): Promise<void> {
+  const e = await pfRow(entry);
+  expect(!e.voided, `${how}: the paid-out entry was VOIDED (the doctor was paid for a line that no longer counts)`);
+  eq(`${how}: the entry stays linked to its payout`, e.disbursement_id, disb);
+  eq(`${how}: the line`, await lineStatus(l.id), "released");
+  const st = await jeState("test_request", l.id);
+  eq(`${how}: the release entry stays posted and unreversed`, [st.posted, st.total, st.reversals], [1, 1, 0]);
+  eq(`${how}: the payout entry`, (await jeState("doctor_pf_disbursement", disb)).posted, 1);
+  eq(`${how}: the line's 2110 accounts net to zero (accrued, then paid out)`, await net2110(l, disb), 0);
+  eq(`${how}: line invariants`, await lineInvariants(l, how), "released");
 }
 
 type Status = "pass" | "known" | "fixed" | "fail" | "infra";
@@ -1362,11 +1662,13 @@ const FUNCS: Fn[] = [
   { name: "bridge_hmo_claim_resolution_insert", migration: "0141_manila_posting_dates_remainder.sql" },
   { name: "bridge_hmo_claim_resolution_void", migration: "0141_manila_posting_dates_remainder.sql" },
   { name: "bridge_test_request_released", migration: "0183_waived_balance_gl.sql" },
-  { name: "bridge_test_request_cancelled", migration: "0183_waived_balance_gl.sql" },
+  { name: "bridge_test_request_cancelled", migration: "0224_pf_payout_atomic.sql" },
+  { name: "fn_undo_release_bridge", migration: "0224_pf_payout_atomic.sql" },
 ];
 const sigOf = (name: string) => `public.${name}()`;
 
-type MutKind = "nolock" | "nostatus";
+/** nolock / nostatus: the journal-entry (or waiver-allocation) lock-and-read of a bridge; nopflock / norefuse: the 0224 PF-entry lock / the disbursed refusal of the cancel and undo bridges; rpcnoguard: the 0224 payout function's entry lock AND its link guards (a throwaway-schema copy). */
+type MutKind = "nolock" | "nostatus" | "nopflock" | "norefuse" | "rpcnoguard";
 interface Mutant {
   id: string;
   fn: string;
@@ -1385,6 +1687,12 @@ const INFRA_RE = /interleaving not reached|statement timeout|canceling statement
 const DOUBLE_REVERSAL = /no second reversal of an entry the writer already reversed/;
 /** A direct JE writer reversed the entry first: an insert bridge that trusted the stale entry and posted nothing. */
 const NO_REPOSTING = /posted JEs for the re-inserted source \(the writer reversed the old one\)/;
+/** The cancel / undo bridge let a paid-out line through. */
+const EXPECT_P0084 = /expected P0084/;
+/** The payout function paid an entry that was already paid or voided. */
+const PAYOUT_NOT_REFUSED = /second payout of overlapping entries was not refused|payout behind a cancel: expected P0085/;
+const NOPFLOCK = "the PF-entry FOR UPDATE removed (the refusal still reads the committed row)";
+const NOREFUSE = "the paid-out refusal removed (the PF-entry lock still held)";
 const NOLOCK = "the journal-entry FOR UPDATE removed";
 const NOSTATUS = "the `status = 'posted'` filter removed";
 const MUTANTS: Mutant[] = [
@@ -1402,6 +1710,16 @@ const MUTANTS: Mutant[] = [
   { id: "MHIS", fn: "bridge_hmo_claim_resolution_insert", kind: "nostatus", note: NOSTATUS, mustFail: ["H4"], reason: NO_REPOSTING, mustPass: ["H3", "H5"] },
   { id: "MTCL", fn: "bridge_test_request_cancelled", kind: "nolock", note: NOLOCK, mustFail: ["T5"], reason: DOUBLE_REVERSAL, mustPass: ["T4", "T3b"] },
   { id: "MTCS", fn: "bridge_test_request_cancelled", kind: "nostatus", note: NOSTATUS, mustFail: ["T5"], reason: DOUBLE_REVERSAL, mustPass: ["T4", "T3b"] },
+  // 0224: the cancel and undo bridges' refusal of a paid-out line. Without the PF lock a payout in flight is invisible (the check reads the
+  // committed, unlinked row and the later UPDATE wakes up and voids the paid entry); without the refusal even a sequential cancel / undo voids it.
+  { id: "MTCP", fn: "bridge_test_request_cancelled", kind: "nopflock", note: NOPFLOCK, mustFail: ["K1b"], reason: EXPECT_P0084, mustPass: ["K1a", "PD1"] },
+  { id: "MTCR", fn: "bridge_test_request_cancelled", kind: "norefuse", note: NOREFUSE, mustFail: ["K1b", "PD1"], reason: EXPECT_P0084 },
+  { id: "MUDP", fn: "fn_undo_release_bridge", kind: "nopflock", note: NOPFLOCK, mustFail: ["K1c"], reason: EXPECT_P0084, mustPass: ["K1d", "PD1"] },
+  { id: "MUDR", fn: "fn_undo_release_bridge", kind: "norefuse", note: NOREFUSE, mustFail: ["K1c", "PD1"], reason: EXPECT_P0084 },
+  // 0224: the payout function itself. The entry lock and the link's filters + row-count check are each a SECOND line of defence for the other
+  // (a payout that read stale rows is stopped by the filtered link and vice versa), so only removing BOTH lets an overlapping or voided entry
+  // be paid: two payouts of one entry both succeed (PD3), a payout links an entry a cancel voided (K1a).
+  { id: "MPD", fn: "pf_disburse_entries", kind: "rpcnoguard", note: "the entry FOR UPDATE and the link's voided / disbursed filters + row-count check removed", mustFail: ["PD3", "K1a"], reason: PAYOUT_NOT_REFUSED, mustPass: ["PD2", "PD3b"] },
   {
     id: "MRA",
     fn: "bridge_test_request_released",
@@ -1421,6 +1739,7 @@ const TARGET = /select [^;]*? into [^;]*?from public\.(?:journal_entries|visit_w
 
 /** The live definition with `kind` applied ONLY inside a transaction that set glb.tag = this run's tag. */
 function mutate(def: string, m: Mutant): string {
+  if (m.kind === "nopflock" || m.kind === "norefuse") return mutatePf(def, m);
   const hit = TARGET.exec(def);
   if (!hit) throw new Error(`${m.id}: the live ${m.fn} no longer holds a lock-and-read statement this runner knows - update TARGET`);
   const orig = hit[0];
@@ -1430,6 +1749,46 @@ function mutate(def: string, m: Mutant): string {
   const out = def.replace(orig, () => wrapped).replace("AS $function$", () => `AS $function$ ${MARK}`);
   if (!out.includes(MARK) || out === def) throw new Error(`${m.id}: could not build the mutant`);
   return out;
+}
+/** 0224's `for v_pf in select ... for update loop ... end loop;` statement of the cancel / undo bridges. */
+const PF_TARGET = /for v_pf in[\s\S]*?end loop;/;
+function mutatePf(def: string, m: Mutant): string {
+  const hit = PF_TARGET.exec(def);
+  if (!hit) throw new Error(`${m.id}: the live ${m.fn} no longer holds the 0224 PF-entry loop - update PF_TARGET`);
+  const orig = hit[0];
+  const variant = m.kind === "nopflock" ? replaceOnce(orig, /\s+for update(\s+loop)/, "$1", m.id) : replaceOnce(orig, /raise exception [^;]*;/, "null;", m.id);
+  const wrapped = `if current_setting('glb.tag', true) = '${TAG}' then\n    ${variant}\n  else\n    ${orig}\n  end if;`;
+  const out = def.replace(orig, () => wrapped).replace("AS $function$", () => `AS $function$ ${MARK}`);
+  if (!out.includes(MARK) || out === def) throw new Error(`${m.id}: could not build the mutant`);
+  return out;
+}
+/** A mutant edit must match its target exactly once, or the mutant is not the one it claims to be. */
+function replaceOnce(text: string, re: RegExp, to: string, id: string): string {
+  const all = text.match(new RegExp(re.source, "g")) ?? [];
+  if (all.length !== 1) throw new Error(`${id}: the mutant edit ${re} matched ${all.length} times, wanted exactly one`);
+  return text.replace(re, to);
+}
+/** The throwaway schema the payout mutant lives in (created and dropped by the control round; nothing outside it changes). */
+const PAYOUT_SIG = "public.pf_disburse_entries(uuid, uuid[], date, text, numeric, uuid, text)";
+async function swapRpc(m: Mutant): Promise<void> {
+  if (aborting) throw new Error(`aborting: not creating ${m.id}`);
+  const def = await liveDef(PAYOUT_SIG);
+  let out = replaceOnce(def, /\s+for update\s+loop/, "\n  loop", m.id);
+  out = replaceOnce(out, /\s+and voided_at is null\s+and disbursement_id is null\s+and recognized_at is not null;/, ";", m.id);
+  out = replaceOnce(out, /if v_linked <> cardinality\(p_entry_ids\) then/, "if false then", m.id);
+  const schema = `glb_mut_${TAG.slice(4)}`;
+  out = replaceOnce(out, /FUNCTION public\.pf_disburse_entries\(/, `FUNCTION ${schema}.pf_disburse_entries(`, m.id);
+  await monitor.query(`create schema ${schema}`);
+  await monitor.query(`grant usage on schema ${schema} to service_role`);
+  await monitor.query(out);
+  await monitor.query(`grant execute on function ${schema}.pf_disburse_entries(uuid, uuid[], date, text, numeric, uuid, text) to service_role`);
+  payoutFn = `${schema}.pf_disburse_entries`;
+}
+/** Drop every throwaway mutant schema (this run's and a crashed run's) and point the payout calls back at the real function. */
+async function dropMutSchemas(c: Client = monitor): Promise<void> {
+  payoutFn = "public.pf_disburse_entries";
+  const { rows } = await c.query<{ nspname: string }>("select nspname from pg_namespace where nspname like 'glb\\_mut\\_%'");
+  for (const r of rows) await c.query(`drop schema if exists ${r.nspname} cascade`);
 }
 function readBackup(): Record<string, string> {
   return existsSync(BACKUP) ? (JSON.parse(readFileSync(BACKUP, "utf8")) as Record<string, string>) : {};
@@ -1462,6 +1821,7 @@ function fromMigration(f: Fn): string {
 }
 /** Put every bridge back (backup file first, the migration text if it is gone) and verify. */
 async function restoreFunctions(c: Client = monitor): Promise<void> {
+  await dropMutSchemas(c);
   const backup = readBackup();
   for (const f of FUNCS) {
     const sig = sigOf(f.name);
@@ -1557,6 +1917,7 @@ async function leftovers(c: Client = monitor): Promise<number> {
           + (select count(*) from public.physicians where slug like 'glb-%')
           + (select count(*) from public.hmo_providers where name like 'glb-%')
           + (select count(*) from public.eod_cash_adjustments where notes like 'glb-%')
+          + (select count(*) from pg_namespace where nspname like 'glb\\_mut\\_%')
           + (select count(*) from public.journal_entries where source_id = any($1::uuid[]) or created_by = $2) as n`,
     [made.ids, fx.admin],
   );
@@ -1651,7 +2012,8 @@ async function main(): Promise<void> {
         ran += 1;
         console.log(`Control ${m.id}: ${m.fn} with ${m.note}`);
         try {
-          await swapIn(m);
+          if (m.kind === "rpcnoguard") await swapRpc(m);
+          else await swapIn(m);
           const res = await runAll(new Set([...m.mustFail, ...(m.mustPass ?? [])]));
           if (aborting) break;
           const survived = m.mustFail.filter((x) => res[x]?.status === "pass" || res[x]?.status === "known" || res[x]?.status === "fixed");
@@ -1675,7 +2037,7 @@ async function main(): Promise<void> {
           } else {
             caught += 1;
             const stillPass = (m.mustPass ?? []).filter((x) => !ONLY || ONLY.has(x));
-            console.log(`  control ${m.id} ok: ${m.mustFail.join(", ")} failed against the mutant for the stated reason${stillPass.length ? `; ${stillPass.join(", ")} still pass (the source row's lock serialises them)` : ""}`);
+            console.log(`  control ${m.id} ok: ${m.mustFail.join(", ")} failed against the mutant for the stated reason${stillPass.length ? `; ${stillPass.join(", ")} still pass (another guard holds them)` : ""}`);
             for (const x of m.mustFail) console.log(`        ${x}: ${res[x]!.msg.split("\n")[0]!.slice(0, 190)}`);
           }
         } finally {

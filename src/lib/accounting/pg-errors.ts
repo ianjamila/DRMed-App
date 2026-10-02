@@ -319,6 +319,16 @@ export function translatePgError(err: PgError): string {
       return err.message
         ? err.message
         : "Part of this report changed since — nothing was put back.";
+    // 0224 bridge_test_request_cancelled / fn_undo_release_bridge: the line's doctor fee was already
+    // paid out, so the cancel / Undo release is refused whole (nothing changes) until the payout is voided.
+    case "P0084":
+      return "This doctor's fee was already paid out — void the payout first.";
+    // 0224 pf_disburse_entries: the payout was refused whole (entries missing, another doctor's,
+    // not open any more, or the total does not match) — hand-written text, passed through.
+    case "P0085":
+      return err.message
+        ? err.message
+        : "This payout can't be recorded right now — refresh the list and try again.";
     default:
       return err.message ?? "Database error. Please try again.";
   }

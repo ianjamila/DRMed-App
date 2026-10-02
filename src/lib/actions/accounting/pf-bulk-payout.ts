@@ -7,7 +7,7 @@ import { audit } from "@/lib/audit/log";
 import { translatePgError } from "@/lib/accounting/pg-errors";
 import { voidPfDisbursementAndUnlink } from "@/lib/accounting/pf-disbursement-void";
 import { PfBulkPayoutSchema } from "@/lib/validations/accounting";
-import { isoDateParts } from "@/lib/dates/manila";
+import { parsePayoutResult } from "@/lib/accounting/pf-payout-result";
 
 type ActionResult<T = unknown> =
   | { ok: true; data: T }
@@ -50,43 +50,35 @@ export async function createBulkPfPayoutCash(
     return `${cause} (${created.length} of ${total} ${noun} in this batch were already created and have been rolled back — nothing was left half-done.)`;
   }
 
-  // Atomic: if any single physician fails, void the previously-created disbursements.
-  // (For simplicity here, we iterate and fail-fast; production-grade transactional
-  // semantics would push this into a SECURITY DEFINER PG function. Acceptable for v1.)
+  // Each doctor's payout is ONE SQL transaction (0224 pf_disburse_entries: lock + validate +
+  // recompute the total + batch number + header/JE + link), so a refusal or failure leaves
+  // nothing of THAT payout behind. The batch as a whole is still sequential: if a later
+  // physician fails, the payouts already created are voided through rollbackCreated().
   for (const phys of data.by_physician) {
-    const year = isoDateParts(data.posted_date).year;
-    const { data: nRow, error: nErr } = await admin.rpc(
-      "next_pf_disbursement_batch_number",
-      { p_year: year }
-    );
-    if (nErr) {
-      const message = translatePgError(nErr);
+    const { data: res, error: rpcErr } = await admin.rpc("pf_disburse_entries", {
+      p_physician_id: phys.physician_id,
+      p_entry_ids: phys.entry_ids,
+      p_posted_date: data.posted_date,
+      p_method: "cash",
+      p_total_php: phys.total_php,
+      p_recorded_by: staff.user_id,
+      p_notes: `Bulk EOD payout ${data.posted_date}`,
+    });
+    if (rpcErr) {
+      const message = translatePgError(rpcErr);
       await rollbackCreated(message);
       return { ok: false, error: partialFailureMessage(message) };
     }
-    const { data: disb, error: insErr } = await admin
-      .from("doctor_pf_disbursements")
-      .insert({
-        batch_number: nRow as number,
-        physician_id: phys.physician_id,
-        posted_date: data.posted_date,
-        method: "cash",
-        total_php: phys.total_php,
-        recorded_by: staff.user_id,
-        notes: `Bulk EOD payout ${data.posted_date}`,
-      })
-      .select("id")
-      .single();
-    if (insErr || !disb) {
-      const message = translatePgError(insErr);
+    const disb = parsePayoutResult(res);
+    if (!disb) {
+      // Unreadable confirmation: the call may have committed, so it cannot be told apart from
+      // success — undo what this batch created and report it.
+      const message =
+        "A payout's confirmation couldn't be read, so the batch was stopped. Check Pay Doctors › Already paid before trying again.";
       await rollbackCreated(message);
       return { ok: false, error: partialFailureMessage(message) };
     }
     created.push(disb.id);
-    await admin
-      .from("doctor_pf_entries")
-      .update({ disbursement_id: disb.id })
-      .in("id", phys.entry_ids);
   }
 
   await audit({

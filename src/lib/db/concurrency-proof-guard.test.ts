@@ -92,7 +92,8 @@ const REGISTRY: Record<string, RegistryEntry> = {
       "callee-only: runs inside waive_visit_balance's transaction under its visit + line locks; its own lock is on a row the same transaction inserted, so no contention is possible",
   },
   guard_payment_on_waived_visit: { proof: ["scripts/waiver-concurrency-proof.ts"] },
-  fn_undo_release_bridge: { proof: ["scripts/waiver-concurrency-proof.ts"] },
+  // 0224 re-created it (a disbursed PF entry refuses the undo): its PF lock is raced in the GL-bridge proof (K1c / K1d).
+  fn_undo_release_bridge: { proof: ["scripts/waiver-concurrency-proof.ts", "scripts/gl-bridge-concurrency-proof.ts"] },
   lifecycle_lock: { proof: ["scripts/smoke-lifecycle-locks.ts"] },
   lifecycle_lock_and_assert: { proof: ["scripts/smoke-lifecycle-locks.ts"] },
   appointments_insert_slot_guarded: { proof: ["scripts/smoke-lifecycle-locks.ts"] },
@@ -134,6 +135,8 @@ const REGISTRY: Record<string, RegistryEntry> = {
   bridge_payment_void: { proof: ["scripts/gl-bridge-concurrency-proof.ts"] },
   bridge_test_request_cancelled: { proof: ["scripts/gl-bridge-concurrency-proof.ts"] },
   bridge_test_request_released: { proof: ["scripts/gl-bridge-concurrency-proof.ts"] },
+  // 0224: the atomic doctor payout (entries FOR UPDATE, header, link) - overlapping payouts, payout x cancel / undo.
+  pf_disburse_entries: { proof: ["scripts/gl-bridge-concurrency-proof.ts"] },
   lifecycle_lock_results: { proof: ["scripts/result-lifecycle-concurrency-proof.ts"] },
   result_create_linked: { proof: ["scripts/result-lifecycle-concurrency-proof.ts"] },
   result_finalise_commit: { proof: ["scripts/result-lifecycle-concurrency-proof.ts"] },

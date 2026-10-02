@@ -310,6 +310,17 @@ describe("undoReleaseBatchAction — audit and outcome", () => {
     expect(statusOf(fake, "x")).toBe("released");
   });
 
+  it("0224: a batch Undo reaching a line whose doctor fee was already paid out (P0084) shows the void-the-payout message; nothing is audited", async () => {
+    const fake = seed();
+    loadBatch(["x"]);
+    fake.failNextRpc("undo_visit_release", { code: "P0084", message: "raw database text that must not reach the user" });
+    expect(await undoReleaseBatchAction({ batchId: BATCH })).toEqual({
+      ok: false,
+      error: "This doctor's fee was already paid out — void the payout first.",
+    });
+    expect(tsUndoAudits()).toEqual([]);
+  });
+
   it("a database refusal (P0081) is shown, nothing is audited", async () => {
     const fake = seed();
     loadBatch(["x"]);

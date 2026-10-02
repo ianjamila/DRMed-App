@@ -1,6 +1,5 @@
 "use server";
 
-import { fetchCompleteRowsByIds } from "@/lib/reports/paging";
 import { z } from "zod";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { requireAdminStaff } from "@/lib/auth/require-admin";
@@ -8,7 +7,7 @@ import { audit } from "@/lib/audit/log";
 import { translatePgError } from "@/lib/accounting/pg-errors";
 import { voidPfDisbursementAndUnlink } from "@/lib/accounting/pf-disbursement-void";
 import { PfDisbursementCreateSchema } from "@/lib/validations/accounting";
-import { isoDateParts } from "@/lib/dates/manila";
+import { parsePayoutResult } from "@/lib/accounting/pf-payout-result";
 
 type ActionResult<T = unknown> =
   | { ok: true; data: T }
@@ -26,64 +25,29 @@ export async function createPfDisbursement(
 
   const admin = createAdminClient();
 
-  // Assign batch_number via the counter function.
-  const year = isoDateParts(data.posted_date).year;
-  const { data: nRow, error: nErr } = await admin.rpc(
-    "next_pf_disbursement_batch_number",
-    { p_year: year }
-  );
-  if (nErr) return { ok: false, error: translatePgError(nErr) };
-  const batchNumber = nRow as number;
-
-  // Fetch and validate selected entries.
-  // Server-side total recompute; client-side total is a hint only.
-  const { data: entries, error: entErr } = await fetchCompleteRowsByIds(data.entry_ids, (ids, from, to) =>
-    admin
-      .from("doctor_pf_entries")
-      .select("id, pf_php, physician_id, disbursement_id, voided_at, recognized_at")
-      .in("id", ids)
-      .order("id", { ascending: true })
-      .range(from, to)
-  );
-  if (entErr) return { ok: false, error: translatePgError(entErr) };
-  if (!entries || entries.length !== data.entry_ids.length) {
-    return { ok: false, error: "One or more PF entries not found" };
+  // 0224: the whole payout is ONE SQL transaction — it locks the entries, validates them
+  // (all found, one physician, open, recognised), recomputes the total server-side (the
+  // client's is a hint), allocates the batch number, inserts the header (its trigger posts
+  // the JE) and links the entries. A refusal (P0085) or any failure rolls all of it back,
+  // so nothing is left half-done and two payouts can never pay the same entry.
+  const { data: res, error: rpcErr } = await admin.rpc("pf_disburse_entries", {
+    p_physician_id: data.physician_id,
+    p_entry_ids: data.entry_ids,
+    p_posted_date: data.posted_date,
+    p_method: data.method,
+    p_total_php: data.total_php,
+    p_recorded_by: staff.user_id,
+    p_notes: data.notes ?? undefined,
+  });
+  if (rpcErr) return { ok: false, error: translatePgError(rpcErr) };
+  const disb = parsePayoutResult(res);
+  if (!disb) {
+    // The call may have committed: don't guess — send the operator to the Already paid list.
+    return {
+      ok: false,
+      error: "The payout may have been recorded, but the confirmation couldn't be read. Check Pay Doctors › Already paid before trying again.",
+    };
   }
-  for (const e of entries) {
-    if (e.physician_id !== data.physician_id) {
-      return { ok: false, error: "PF entries must all belong to the same physician" };
-    }
-    if (e.disbursement_id || e.voided_at || !e.recognized_at) {
-      return { ok: false, error: "One or more PF entries are not open for disbursement" };
-    }
-  }
-  const computedTotal = entries.reduce((s, e) => s + Number(e.pf_php), 0);
-  if (Math.abs(computedTotal - data.total_php) > 0.005) {
-    return { ok: false, error: `Total mismatch: expected ${computedTotal}, got ${data.total_php}` };
-  }
-
-  // Insert disbursement header — trigger emits JE.
-  const { data: disb, error: insErr } = await admin
-    .from("doctor_pf_disbursements")
-    .insert({
-      batch_number: batchNumber,
-      physician_id: data.physician_id,
-      posted_date: data.posted_date,
-      method: data.method,
-      total_php: data.total_php,
-      recorded_by: staff.user_id,
-      notes: data.notes ?? null,
-    })
-    .select("id, batch_number")
-    .single();
-  if (insErr || !disb) return { ok: false, error: translatePgError(insErr) };
-
-  // Link entries to the disbursement.
-  const { error: updErr } = await admin
-    .from("doctor_pf_entries")
-    .update({ disbursement_id: disb.id })
-    .in("id", data.entry_ids);
-  if (updErr) return { ok: false, error: translatePgError(updErr) };
 
   await audit({
     actor_id: staff.user_id,
