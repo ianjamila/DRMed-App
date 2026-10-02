@@ -120,6 +120,24 @@ const REGISTRY: Record<string, RegistryEntry> = {
   claim_statement_email: { proof: ["scripts/notice-claims-concurrency-proof.ts"] },
   result_claim_patient_notify: { proof: ["scripts/notice-claims-concurrency-proof.ts"] },
   result_mark_copy_contacted: { proof: ["scripts/notice-claims-concurrency-proof.ts"] },
+  ap_post_recurring_template: { proof: ["scripts/ap-subledger-concurrency-proof.ts"] },
+  ap_reallocate_bill_payment: { proof: ["scripts/ap-subledger-concurrency-proof.ts"] },
+  ap_reverse_je_for_source: { proof: ["scripts/ap-subledger-concurrency-proof.ts"] },
+  ap_update_bill_draft: { proof: ["scripts/ap-subledger-concurrency-proof.ts"] },
+  ap_void_bill_payment_cascade: { proof: ["scripts/ap-subledger-concurrency-proof.ts"] },
+  ap_void_bill_with_guard: { proof: ["scripts/ap-subledger-concurrency-proof.ts"] },
+  bridge_cash_adjustment_insert: { proof: ["scripts/gl-bridge-concurrency-proof.ts"] },
+  bridge_cash_adjustment_void: { proof: ["scripts/gl-bridge-concurrency-proof.ts"] },
+  bridge_hmo_claim_resolution_insert: { proof: ["scripts/gl-bridge-concurrency-proof.ts"] },
+  bridge_hmo_claim_resolution_void: { proof: ["scripts/gl-bridge-concurrency-proof.ts"] },
+  bridge_payment_insert: { proof: ["scripts/gl-bridge-concurrency-proof.ts"] },
+  bridge_payment_void: { proof: ["scripts/gl-bridge-concurrency-proof.ts"] },
+  bridge_test_request_cancelled: { proof: ["scripts/gl-bridge-concurrency-proof.ts"] },
+  bridge_test_request_released: { proof: ["scripts/gl-bridge-concurrency-proof.ts"] },
+  lifecycle_lock_results: { proof: ["scripts/result-lifecycle-concurrency-proof.ts"] },
+  result_create_linked: { proof: ["scripts/result-lifecycle-concurrency-proof.ts"] },
+  result_finalise_commit: { proof: ["scripts/result-lifecycle-concurrency-proof.ts"] },
+  result_save_draft: { proof: ["scripts/result-lifecycle-concurrency-proof.ts"] },
   queue_claim_remarks: {
     exempt:
       "false positive on the name: a read-only SECURITY DEFINER reader over audit_log that takes no lock and claims nothing",
@@ -128,30 +146,12 @@ const REGISTRY: Record<string, RegistryEntry> = {
 
 /** FROZEN pre-guard functions with no proof. May only shrink. Name -> definition file. */
 const BASELINE: Record<string, string> = {
-  ap_post_recurring_template: "0049_ap_subledger_behavior.sql",
-  ap_reallocate_bill_payment: "0049_ap_subledger_behavior.sql",
-  ap_reverse_je_for_source: "0049_ap_subledger_behavior.sql",
-  ap_update_bill_draft: "0049_ap_subledger_behavior.sql",
-  ap_void_bill_payment_cascade: "0049_ap_subledger_behavior.sql",
-  ap_void_bill_with_guard: "0049_ap_subledger_behavior.sql",
-  bridge_cash_adjustment_insert: "0152_cash_journal_descriptions.sql",
-  bridge_cash_adjustment_void: "0141_manila_posting_dates_remainder.sql",
-  bridge_hmo_claim_resolution_insert: "0141_manila_posting_dates_remainder.sql",
-  bridge_hmo_claim_resolution_void: "0141_manila_posting_dates_remainder.sql",
-  bridge_payment_insert: "0140_manila_posting_dates.sql",
-  bridge_payment_void: "0140_manila_posting_dates.sql",
-  bridge_test_request_cancelled: "0183_waived_balance_gl.sql",
-  bridge_test_request_released: "0183_waived_balance_gl.sql",
   create_visit_encounter: "0184_patient_lifecycle_locks.sql",
   enforce_patient_activity: "0184_patient_lifecycle_locks.sql",
   guard_test_request_on_waived_visit: "0183_waived_balance_gl.sql",
-  lifecycle_lock_results: "0184_patient_lifecycle_locks.sql",
   lock_hmo_batch_before_items: "0184_patient_lifecycle_locks.sql",
   recalc_visit_payment: "0111_payment_void_recalc.sql",
   recompute_hmo_batch_status: "0184_patient_lifecycle_locks.sql",
-  result_create_linked: "0184_patient_lifecycle_locks.sql",
-  result_finalise_commit: "0184_patient_lifecycle_locks.sql",
-  result_save_draft: "0184_patient_lifecycle_locks.sql",
   test_requests_claim_holder_guard: "0190_claim_holder_guard_and_view_as_end_for.sql",
 };
 
@@ -194,7 +194,7 @@ describe("concurrency-proof guard (real migrations)", () => {
     // checkGuard already asserts existence and the per-function annotation;
     // this pins only a floor (non-trivial), so parallel proof PRs do not conflict on an exact count.
     const proofs = Object.values(REGISTRY).filter((e) => "proof" in e);
-    expect(proofs.length).toBeGreaterThanOrEqual(47);
+    expect(proofs.length).toBeGreaterThanOrEqual(65);
   });
 });
 
