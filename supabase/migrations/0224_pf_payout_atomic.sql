@@ -111,7 +111,8 @@
 --
 -- HMO BRIDGES (why the locks cover RECOGNISED entries only). bridge_pf_at_hmo_allocation and _writeoff
 -- (0141) update a PENDING entry (recognized_at is null) - but only after the same transaction has taken the
--- journal-entry number counter: the resolution / payment bridge that fires first posts its own JE. So an HMO
+-- journal-entry number counter: the resolution / payment bridge, or the PF bridge itself (a bare allocation,
+-- allocateExistingPaymentAction, posts its JE before the entry UPDATE), takes it first. So an HMO
 -- transaction runs  counter -> pending entry,  and no re-ordering INSIDE the two PF bridges can change that
 -- (re-creating them to lock first would still sit behind the earlier trigger's counter). If undo / cancel
 -- locked the pending entry up front (entry -> counter) it would close a 40P01 with them - new with 0224,
@@ -120,19 +121,25 @@
 -- touch); a pending entry is still voided by the unchanged UPDATE, after the counter, in the HMO order.
 -- The one gap that opens - an HMO allocation recognising the entry and a payout paying it between the
 -- first look and that UPDATE - is closed by the re-check block before each void UPDATE (all live entries,
--- refusing P0084 when one is disbursed; scenario K1g proves the no-deadlock order, the unit test the text).
+-- refusing P0084 when one is disbursed; scenario K1g proves the no-deadlock order, K1j / K1k prove the re-check
+-- behaviourally - the window is held open on the release JE row - and the unit test pins the text).
 --
 -- LOCK ORDER. The bridges take  PF entries (id order)  ->  journal entry  for the line they were
 -- called for, AFTER the line (and, for the undo RPC, the patient lock and visit) the caller already
--- holds; undo_visit_release takes ALL its candidates' PF entries up front (B2), so the per-row bridge
--- firings never meet a PF entry they have not locked yet while holding the JE counter. A line is never
--- locked while a PF entry is held.
+-- holds; undo_visit_release takes ALL its candidates' RECOGNISED PF entries up front (B2), so the per-row
+-- bridge firings never meet a RECOGNISED PF entry they have not locked yet while holding the JE counter
+-- (a PENDING entry is deliberately met after it - see HMO BRIDGES). A line is never locked while a PF
+-- entry is held.
 --
 -- KNOWN, RARE, HARMLESS (no corruption either way; one side is aborted by Postgres and retries):
 --   (1) a 3-way: an HMO allocation RECOGNISES a pending entry while an Undo / cancel of its line is already past
 --       its first look, and a payout pays it before the bridge's re-check - the bridge holds the journal-entry
 --       counter and waits for the entry the payout holds, the payout waits for the counter: 40P01. The re-check
 --       refuses P0084 whenever it does get the entry, so no paid-out entry is ever voided.
+--   (1b) the re-check (before each void UPDATE) locks a PENDING entry too. When the line's release JE is absent
+--       (the defensive v_original_je-null branch of the cancel bridge) or an earlier row of a multi-row Undo
+--       took no counter, that lock comes BEFORE any counter this transaction holds: a concurrent HMO
+--       transaction on the same line (counter -> pending entry) can then 40P01 against it. Harmless, retried.
 --   (2) voidPfDisbursementAndUnlink unlinks with one `update ... where disbursement_id = X`
 -- (scan order, not id order; the Supabase client cannot lock first). Against a STALE payout of entries
 -- that are still linked, the two can close a 40P01 between the unlink and the payout's id-ordered entry
