@@ -1054,9 +1054,11 @@ export async function waiveVisitBalanceAction(
   // 0183: the RPC owns every rule (admin actor, non-HMO, unpaid/partial,
   // provenance, the per-line split, the discount JE) under the visit + line
   // row locks, and raises P0071 with a staff-readable message per refusal.
-  // 0184: waive_visit_balance takes the patient lifecycle lock LAST, at its
-  // visits UPDATE — a concurrent ownership move can make it a 40P01 victim,
-  // so retry once (a single RPC call, rolled back whole on loss).
+  // 0220: waive_visit_balance takes the patient lifecycle lock FIRST (before
+  // the visit row), so it no longer deadlocks with a merge. A merge that wins
+  // the race refuses the waive with P0058 (the record was merged: the admin
+  // waives on the kept record); a visit moved any other way is P0072 —
+  // retried once (a single RPC call, rolled back whole on loss).
   const { data, error } = await withLifecycleRetry(() =>
     admin.rpc("waive_visit_balance", {
       p_visit_id: visitId,
