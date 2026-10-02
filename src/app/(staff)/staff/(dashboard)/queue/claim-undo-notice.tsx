@@ -10,12 +10,7 @@ import { undoBulkQueueAction } from "./actions";
 // operator here (?claimed=<batch>&at=<ms>): the same 10-minute ↶ Undo the
 // bulk bar offers, over the same server action — which re-proves actor,
 // window and state, so the batch id in the URL grants nothing by itself.
-export function ClaimUndoNotice({
-  batchId,
-  doneAt,
-  reportName,
-  open,
-}: {
+type ClaimUndoNoticeProps = {
   batchId: string;
   /** Epoch ms of the claim: paces the Undo button and the strip timer. `open` (the server's verdict) gates rendering and an immediate strip. */
   doneAt: number;
@@ -27,7 +22,16 @@ export function ClaimUndoNotice({
    * from Date.now() here, which would break render purity.
    */
   open: boolean;
-}) {
+};
+
+// Keyed by batch: claiming again on the same page swaps ?claimed= in place
+// (same component instance), and the fresh claim must not inherit the old
+// one's "Undone — …" message, hidden Undo or spent strip.
+export function ClaimUndoNotice(props: ClaimUndoNoticeProps) {
+  return <ClaimUndoNoticeBody key={props.batchId} {...props} />;
+}
+
+function ClaimUndoNoticeBody({ batchId, doneAt, reportName, open }: ClaimUndoNoticeProps) {
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();

@@ -135,6 +135,33 @@ describe("ClaimUndoNotice", () => {
     expect(router.refresh).toHaveBeenCalledTimes(1);
   });
 
+  it("claiming again on the same page (new batch in the URL) starts a fresh notice with Undo", async () => {
+    vi.mocked(undoBulkQueueAction).mockResolvedValue({
+      ok: true,
+      restoredIds: [KEY],
+      restoredTestCount: 3,
+      notRestored: [],
+    });
+    const view = renderNotice();
+    await userEvent.click(undoBtn()!);
+    await waitFor(() => expect(undoBtn()).toBeNull());
+    const BATCH2 = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+    view.rerender(<ClaimUndoNotice batchId={BATCH2} doneAt={Date.now()} reportName="Chemistry" open />);
+    expect(screen.getByText("You claimed Chemistry.")).toBeTruthy();
+    await userEvent.click(undoBtn()!);
+    expect(undoBulkQueueAction).toHaveBeenLastCalledWith({ batchId: BATCH2 });
+  });
+
+  it("a new batch re-arms the strip even after the previous notice was stripped", async () => {
+    vi.useFakeTimers();
+    const view = renderNotice(Date.now() - 11 * MIN, false);
+    expect(router.replace).toHaveBeenCalledTimes(1);
+    const BATCH2 = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+    view.rerender(<ClaimUndoNotice batchId={BATCH2} doneAt={Date.now()} reportName="Chemistry" open />);
+    await vi.advanceTimersByTimeAsync(10 * MIN + 1);
+    expect(router.replace).toHaveBeenCalledTimes(2);
+  });
+
   it("a panel that moved on is reported as not undone, with Undo hidden and no refresh", async () => {
     const reason = "claimed work has moved on — a result was uploaded or someone else holds it";
     vi.mocked(undoBulkQueueAction).mockResolvedValue({
