@@ -1,8 +1,8 @@
 -- 0216_delete_restore_lock_order.sql
 -- =============================================================================
 -- Test-line delete and restore move into SECURITY DEFINER functions that take
--- the global lock order: visit row FOR UPDATE -> every line they will touch
--- FOR UPDATE ORDER BY id -> the write.
+-- the global lock order: patient lifecycle lock (shared) -> visit row FOR UPDATE
+-- -> every line they will touch FOR UPDATE ORDER BY id -> the write.
 --
 -- THE BUGS (reproduced by scripts/plan-order-lockers-proof.ts, scenarios Q1,
 -- Q2, Q3, Q5, Q6, Q8; PR 3a = 0215 fixed recompute):
@@ -36,6 +36,9 @@
 -- THE FIX: the writes cannot be reordered from a trigger, so they happen in a
 -- function that takes the locks itself, first:
 --   delete_test_request_lines(visit, ids, actor, reason, deleted_at) -> uuid[]
+--     0. lifecycle_lock_and_assert(the visit's patient, shared) - P0058 when the
+--        patient is deleted / merged, as the guard raised before; the visit is
+--        re-read under it and a moved visit raises P0072 (retry);
 --     1. visits WHERE id = visit FOR UPDATE   (the mode the cascade's visit
 --        UPDATE and the 0183 guard take, so no lock upgrade later);
 --     2. the lock set = the requested lines + the live components of any
@@ -46,7 +49,7 @@
 --        P0067 for the whole statement, so it stays atomic, exactly as before;
 --        the cascade trigger now finds its components already locked.
 --   restore_test_request_lines(visit, ids, deleted_at default null) -> uuid[]
---     the same two locks (the lock set includes a header's deleted components),
+--     the same three locks (the lock set includes a header's deleted components),
 --     then the app's UPDATE: with p_deleted_at the EXACT-instant predicate a
 --     bulk Undo uses (deleted_at = p_deleted_at), without it the manual
 --     Restore's "deleted_at IS NOT NULL".
@@ -82,15 +85,33 @@ security definer
 set search_path = pg_catalog, public, pg_temp
 as $$
 declare
-  v_ids uuid[];
+  v_ids     uuid[];
+  v_patient uuid;
+  v_now     uuid;
 begin
   if p_visit_id is null or p_test_request_ids is null
      or cardinality(p_test_request_ids) = 0 or p_deleted_at is null then
     return '{}'::uuid[];
   end if;
 
-  -- 1. the visit, FOR UPDATE: what the cascade's visit UPDATE needs anyway.
-  perform 1 from public.visits where id = p_visit_id for update;
+  -- 0. the patient lifecycle lock (shared, 0184) BEFORE any row lock: the order release /
+  --    undo / recompute use, and the one merge / undo-merge (0196) need - they take it
+  --    EXCLUSIVE and then UPDATE visits, so a delete holding the visit that only later asked
+  --    for it (a_lifecycle_guard on the UPDATE) would close a cycle with a merge. P0058 when
+  --    the patient is deleted or merged (what the guard raised before).
+  select v.patient_id into v_patient from public.visits v where v.id = p_visit_id;
+  if not found then
+    return '{}'::uuid[];
+  end if;
+  perform public.lifecycle_lock_and_assert(array[v_patient], false);
+
+  -- 1. the visit, FOR UPDATE (what the cascade's visit UPDATE needs anyway), re-read under the patient lock: a merge that moved it
+  --    meanwhile means we hold the wrong patient's lock (P0072: callers retry once).
+  select v.patient_id into v_now from public.visits v where v.id = p_visit_id for update;
+  if v_now is distinct from v_patient then
+    raise exception 'the patient on this visit changed while it was being saved — try again'
+      using errcode = 'P0072';
+  end if;
 
   -- 2. every line this delete can touch, ascending: the requested lines and the
   --    live components of a package header among them.
@@ -119,7 +140,7 @@ end;
 $$;
 
 comment on function public.delete_test_request_lines(uuid, uuid[], uuid, text, timestamptz) is
-  'Soft delete of test_requests on one visit in the global lock order (visit FOR UPDATE, then the lines and a package header''s live components ORDER BY id FOR UPDATE), then the same UPDATE the app used to issue. The 0125 guards still raise P0042-P0044/P0050/P0067 for the whole statement. service_role only (the app checks role, reason and active patient first). Proof: scripts/plan-order-lockers-proof.ts.';
+  'Soft delete of test_requests on one visit in the global lock order (patient lifecycle lock shared, visit FOR UPDATE, then the lines and a package header''s live components ORDER BY id FOR UPDATE), then the same UPDATE the app used to issue. The 0125 guards still raise P0042-P0044/P0050/P0067 for the whole statement. service_role only (the app checks role, reason and active patient first). Proof: scripts/plan-order-lockers-proof.ts.';
 
 revoke all on function public.delete_test_request_lines(uuid, uuid[], uuid, text, timestamptz) from public, anon, authenticated;
 grant execute on function public.delete_test_request_lines(uuid, uuid[], uuid, text, timestamptz) to service_role;
@@ -135,14 +156,33 @@ security definer
 set search_path = pg_catalog, public, pg_temp
 as $$
 declare
-  v_ids uuid[];
+  v_ids     uuid[];
+  v_patient uuid;
+  v_now     uuid;
 begin
   if p_visit_id is null or p_test_request_ids is null
      or cardinality(p_test_request_ids) = 0 then
     return '{}'::uuid[];
   end if;
 
-  perform 1 from public.visits where id = p_visit_id for update;
+  -- 0. the patient lifecycle lock (shared, 0184) BEFORE any row lock: the order release /
+  --    undo / recompute use, and the one merge / undo-merge (0196) need - they take it
+  --    EXCLUSIVE and then UPDATE visits, so a delete holding the visit that only later asked
+  --    for it (a_lifecycle_guard on the UPDATE) would close a cycle with a merge. P0058 when
+  --    the patient is deleted or merged (what the guard raised before).
+  select v.patient_id into v_patient from public.visits v where v.id = p_visit_id;
+  if not found then
+    return '{}'::uuid[];
+  end if;
+  perform public.lifecycle_lock_and_assert(array[v_patient], false);
+
+  -- 1. the visit, FOR UPDATE, re-read under the patient lock: a merge that moved it
+  --    meanwhile means we hold the wrong patient's lock (P0072: callers retry once).
+  select v.patient_id into v_now from public.visits v where v.id = p_visit_id for update;
+  if v_now is distinct from v_patient then
+    raise exception 'the patient on this visit changed while it was being saved — try again'
+      using errcode = 'P0072';
+  end if;
 
   -- deleted rows are the point here: the lock set is the requested lines and
   -- any header's components, whatever their deleted state.
@@ -167,7 +207,7 @@ end;
 $$;
 
 comment on function public.restore_test_request_lines(uuid, uuid[], timestamptz) is
-  'Restore of soft-deleted test_requests on one visit in the global lock order (visit FOR UPDATE, then the lines and a package header''s components ORDER BY id FOR UPDATE), then the same UPDATE the app used to issue: with p_deleted_at only rows deleted at exactly that instant (a bulk Undo), without it any deleted row (manual Restore). service_role only. Proof: scripts/plan-order-lockers-proof.ts.';
+  'Restore of soft-deleted test_requests on one visit in the global lock order (patient lifecycle lock shared, visit FOR UPDATE, then the lines and a package header''s components ORDER BY id FOR UPDATE), then the same UPDATE the app used to issue: with p_deleted_at only rows deleted at exactly that instant (a bulk Undo), without it any deleted row (manual Restore). service_role only. Proof: scripts/plan-order-lockers-proof.ts.';
 
 revoke all on function public.restore_test_request_lines(uuid, uuid[], timestamptz) from public, anon, authenticated;
 grant execute on function public.restore_test_request_lines(uuid, uuid[], timestamptz) to service_role;
