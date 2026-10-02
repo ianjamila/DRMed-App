@@ -3,7 +3,11 @@
 // waive_visit_balance (+ its helper waiver_post_allocation) and the guards and
 // bridges it races with - guard_payment_on_waived_visit (payment insert / void,
 // P0070), the visit/line triggers, fn_undo_release_bridge ->
-// waiver_unrecognise_line (undo-release). No later migration redefines them
+// waiver_unrecognise_line (undo-release). 0220 re-creates waive_visit_balance so
+// it takes the patient lifecycle lock FIRST (lifecycle_lock_and_assert, shared)
+// - the global lock order a patient merge (0196, EXCLUSIVE patient lock, then
+// UPDATE visits) needs; 0183's body reached that lock only at its final visits
+// UPDATE and could deadlock (40P01) against a merge. The rest are unchanged
 // (0198 / 0205 only document the lock order in a comment).
 //
 // This replaces supabase/tests/0183_waiver_race_smoke.sql (dblink, supabase_admin,
@@ -11,6 +15,7 @@
 // connections acting as service_role with the admin's JWT `sub` (the app writes
 // waivers, payments and undo-releases through the service-role admin client),
 // real committed fixtures, pg_locks to PROVE each interleaving was reached.
+// W1 / W2 call the REAL merge_patients_guarded as the admin merge action does.
 //
 // DETERMINISTIC, NOT LUCKY. Every forced scenario holds one side's locks in an
 // open transaction, starts the other side, and does not move on until pg_locks
@@ -42,6 +47,22 @@
 //   NEW    -> S9  lock-order agreement: a session holding a visit's LOWEST line
 //                 while the waiver waits on it can still lock the higher line and
 //                 commit - no deadlock, because the waiver locks lines in id order.
+//   NEW    -> S10 undo vs a holder of the recognised allocation row: the undo's
+//                 trigger reaches waiver_unrecognise_line and queues on it.
+//   NEW    -> W1  waive vs a MERGE of the visit's patient, waive first (0220): a
+//                 blocker holds a live line, so the waiver sits mid-function
+//                 holding the visit; merge_patients_guarded (the real 0196 RPC)
+//                 starts and must be seen queued on the patient lifecycle
+//                 ADVISORY lock the waiver took first; the blocker lets go - the
+//                 waive completes (waived once, one allocation set), then the merge
+//                 completes and moves the visit. No 40P01 either way.
+//   NEW    -> W2  merge first, then waive: the merge holds the patient lock
+//                 exclusive; the waiver is seen queued on that advisory lock; the
+//                 merge commits and the waiver is refused P0058 ("merged into
+//                 another record" - the visit it read belongs to a tombstone), with
+//                 nothing half-written; a retry (a fresh call, as the user's second
+//                 click) reads the visit under the kept patient and waives it once.
+//   (W1 / W2 run in both plan modes like the rest.)
 //
 // CONTROL ROUNDS (--control) prove the proof can fail: each copies
 // waive_visit_balance + waiver_post_allocation into a throwaway schema
@@ -51,6 +72,10 @@
 //   M1 drops the line row locks (S3)               M4 drops the already-waived refusal (S6)
 //   M2 drops the visit row lock (S1, S7)           M5 counts voided payments as paid (S7)
 //   M3 locks lines in DESC id order (S5, S9)       M6 never posts the standalone JE (S4)
+//   MW0183 = 0183's ORIGINAL waive_visit_balance (no patient lock first), read from
+//          supabase/migrations/0183_waived_balance_gl.sql (W1: a real 40P01 - the
+//          waiver holds the visit and wants the shared patient lock at its visits
+//          UPDATE, the merge holds it exclusive and wants the visit)
 // NOT mutated: the guards that live in triggers on public tables
 // (guard_payment_on_waived_visit, the visit/line guards, fn_undo_release_bridge /
 // waiver_unrecognise_line). A trigger on a public table fires for every session,
@@ -59,7 +84,8 @@
 //
 // FIXTURES. Committed (two connections cannot see each other's uncommitted
 // rows): an admin (auth.users + staff_profiles), a lab-test and a package
-// service, a patient per run, and a fresh visit + lines + payments per scenario.
+// service, a patient per run, a fresh visit + lines + payments per scenario, and (W1 / W2) a
+// fresh keep/source patient pair per scenario that the real merge is run on.
 // Every row carries a per-run tag (`wvr-<hex>` / `WVR-<HEX>`); stale rows from a
 // crashed run are swept before seeding, and the `finally` deletes everything
 // (and the journal entries the bridges posted for it) and proves nothing tagged
@@ -68,9 +94,13 @@
 // Run (local stack, 0183 applied):
 //   npm run waiver:concurrency-proof               # 2 plan modes
 //   npm run waiver:concurrency-proof -- --control  # + control rounds
+// While iterating: WVR_ONLY=W1,W2 runs just those scenarios; WVR_CTL=MW0183 just those
+// mutants (the baseline then covers only their scenarios).
 import "./lib/load-env";
 import { requireLocalOrExplicitProd } from "./lib/env-guard";
 import { randomBytes, randomUUID } from "node:crypto";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { Client, type QueryResult } from "pg";
 
 requireLocalOrExplicitProd("waiver:concurrency-proof", {
@@ -224,6 +254,15 @@ function lockLine(a: Actor, line: string): Promise<Out<number>> {
   return settle(a.c.query("select 1 from public.test_requests where id = $1 for update", [line]), (r) => r.rowCount ?? 0);
 }
 
+// admin/patient-merge/actions.ts: admin.rpc("merge_patients_guarded") - service role (0196).
+// Takes the patient lifecycle lock EXCLUSIVE, then UPDATEs the source's visits.
+function mergePatients(a: Actor, keep: string, source: string): Promise<Out<{ merge_id: string }>> {
+  return settle(
+    a.c.query("select public.merge_patients_guarded($1, $2, $3, $4::jsonb) as r", [keep, source, fx.admin, JSON.stringify({ source: "admin" })]),
+    (r) => r.rows[0].r as { merge_id: string },
+  );
+}
+
 // Commit on success, roll back on refusal - the way PostgREST ends each RPC's
 // transaction. Never rejects.
 function andEnd<T>(a: Actor, p: Promise<Out<T>>): Promise<Out<T>> {
@@ -266,6 +305,51 @@ async function mustWait(a: Actor, why: string): Promise<void> {
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
+// The patient lifecycle ADVISORY lock (0184): key (hashtext('patient_lifecycle'), hashtext(patient::text)).
+// pg_locks holds the two int4 halves as unsigned oids. `granted` picks the waiter or the holder.
+async function patientLock(pid: number, patient: string, granted: boolean): Promise<boolean> {
+  const { rows } = await monitor.query(
+    `select 1 from pg_locks
+      where pid = $1 and locktype = 'advisory' and objsubid = 2 and granted = $3
+        and classid = (hashtext('patient_lifecycle')::bigint & 4294967295)::oid
+        and objid = (hashtext($2::text)::bigint & 4294967295)::oid`,
+    [pid, patient, granted],
+  );
+  return rows.length > 0;
+}
+
+// The backend must be seen queued on that patient's advisory lock - or, when
+// `orRow`, on a row lock (a body that holds the lock the other way round). Says which.
+async function mustWaitPatient(a: Actor, patient: string, orRow: boolean, why: string): Promise<"patient lock" | "row lock"> {
+  for (let i = 0; i < 50; i++) {
+    if (await patientLock(a.pid, patient, false)) return "patient lock";
+    if (orRow && (await waitingOnLock(a.pid))) return "row lock";
+    await sleep(100);
+  }
+  throw new Fail(`interleaving not reached: ${a.name} never waited on the patient lifecycle lock${orRow ? " or a row lock" : ""} (${why})`);
+}
+
+// Is the visit row locked by anyone? (a non-blocking conflicting probe)
+async function visitHeld(visit: string): Promise<boolean> {
+  await monitor.query("begin");
+  try {
+    const { rowCount } = await monitor.query("select 1 from public.visits where id = $1 for update skip locked", [visit]);
+    return rowCount === 0;
+  } finally {
+    await monitor.query("rollback");
+  }
+}
+
+// Both racers finished within 18s of the holder letting go - or the scenario fails.
+async function raceBoth<A, B>(names: [string, string], pa: Promise<Out<A>>, pb: Promise<Out<B>>): Promise<[Out<A>, Out<B>]> {
+  const timeout = sleep(18000).then(() => "timeout" as const);
+  const both = await Promise.race([Promise.all([pa, pb]), timeout]);
+  if (both === "timeout") throw new Fail(`neither ${names[0]} nor ${names[1]} finished within 18s of the holder letting go`);
+  return both as [Out<A>, Out<B>];
+}
+
+const fmtOut = (o: Out<unknown>) => (o.ok ? "ok" : `${o.code} ${o.message.split("\n")[0]}`);
+
 function expectOk<T>(label: string, o: Out<T>): T {
   if (!o.ok) throw new Fail(`${label}: expected success, got ${o.code} ${o.message}`);
   return o.v;
@@ -281,7 +365,7 @@ function expectCode<T>(label: string, o: Out<T>, code: string): void {
 // ---------------------------------------------------------------------------
 
 let visitSeq = 0;
-const made = { tests: [] as string[], payments: [] as string[], visits: [] as string[] };
+const made = { tests: [] as string[], payments: [] as string[], visits: [] as string[], patients: [] as string[] };
 
 interface Line {
   id: string;
@@ -304,6 +388,7 @@ async function mkVisit(spec: {
   release?: number[];
   voidAfter?: boolean;
   note: string;
+  patient?: string; // default: the run's patient (W1 / W2 use a merge pair's source)
 }): Promise<Fix> {
   const ids = Array.from({ length: spec.prices.length }, () => randomUUID()).sort();
   const lines = ids.map((id, i) => ({ id, price: spec.prices[i] }));
@@ -319,7 +404,7 @@ async function mkVisit(spec: {
     await monitor.query(
       `insert into public.visits (id, visit_number, patient_id, visit_date, payment_status, total_php, paid_php, notes)
        values ($1, $2, $3, (now() at time zone 'Asia/Manila')::date, 'unpaid', $4, 0, $5)`,
-      [visit, `V-${TAG_UP}-${seq}`, fx.patient, total, `${TAG} ${spec.note}`],
+      [visit, `V-${TAG_UP}-${seq}`, spec.patient ?? fx.patient, total, `${TAG} ${spec.note}`],
     );
     for (const l of lines) {
       await monitor.query(
@@ -353,6 +438,29 @@ async function mkVisit(spec: {
     throw e;
   }
   return { visit, lines, payment };
+}
+
+// A keep + source patient pair of its own (committed): the real merge folds the source into the keep.
+let pairSeq = 0;
+async function mkPair(note: string): Promise<{ keep: string; source: string }> {
+  const [keep, source] = [randomUUID(), randomUUID()];
+  const n = ++pairSeq;
+  made.patients.push(keep, source);
+  await monitor.query("begin");
+  try {
+    for (const [id, tag] of [[keep, "K"], [source, "S"]] as const) {
+      await monitor.query(
+        `insert into public.patients (id, drm_id, first_name, last_name, birthdate)
+         values ($1, $2, 'Wvr', $3, '1990-01-01')`,
+        [id, `DRM-${TAG_UP}-${tag}${n}`, `${tag}${n} ${note}`],
+      );
+    }
+    await monitor.query("commit");
+  } catch (e) {
+    await monitor.query("rollback").catch(() => undefined);
+    throw e;
+  }
+  return { keep, source };
 }
 
 interface PkgFix {
@@ -431,6 +539,25 @@ async function visitRow(visit: string): Promise<{ status: string; waived: number
   return { status: rows[0].payment_status, waived: Number(rows[0].waived_php ?? 0), paid: Number(rows[0].paid_php) };
 }
 
+async function visitPatient(visit: string): Promise<string> {
+  const { rows } = await monitor.query<{ patient_id: string }>("select patient_id from public.visits where id = $1", [visit]);
+  return rows[0].patient_id;
+}
+
+async function mergedInto(patient: string): Promise<string | null> {
+  const { rows } = await monitor.query<{ merged_into_id: string | null }>("select merged_into_id from public.patients where id = $1", [patient]);
+  return rows[0].merged_into_id;
+}
+
+// The live ledger row of a merge (source -> keep) and the visits it says it moved.
+async function mergeLedger(source: string): Promise<{ keep: string; visits: string[] } | null> {
+  const { rows } = await monitor.query<{ keep_id: string; moved: { visits?: string[] } }>(
+    "select keep_id, moved from public.patient_merges where source_id = $1 and undone_at is null",
+    [source],
+  );
+  return rows[0] ? { keep: rows[0].keep_id, visits: rows[0].moved.visits ?? [] } : null;
+}
+
 async function allocs(visit: string): Promise<Array<{ id: string; line: string; amount: number; recognised: boolean }>> {
   const { rows } = await monitor.query<{ id: string; test_request_id: string; amount_php: string; recognised_at: Date | null }>(
     "select id, test_request_id, amount_php, recognised_at from public.visit_waiver_allocations where visit_id = $1 order by test_request_id",
@@ -472,7 +599,9 @@ interface Result {
 }
 const results: Result[] = [];
 let sink: Result[] = results;
-let only: string[] | null = null; // control rounds run just the mutant's scenarios
+const envOnly: string[] | null = process.env.WVR_ONLY ? process.env.WVR_ONLY.split(",") : null; // iterate on a subset
+const envCtl: string[] | null = process.env.WVR_CTL ? process.env.WVR_CTL.split(",") : null; // --control: just these mutants
+let only: string[] | null = envOnly; // control rounds run just the mutant's scenarios
 let curMode: Mode = "seq";
 
 async function scenario(id: string, name: string, body: () => Promise<string | void>): Promise<void> {
@@ -759,6 +888,97 @@ async function forcedScenarios(mode: Mode): Promise<void> {
     if (a.recognised) throw new Fail("allocation still recognised after the undo");
     return "undo queued on the allocation row, then reversed the standalone JE";
   });
+
+  // ---- W1 waive then merge of the visit's patient (0220) -------------------
+  // The waiver takes the patient lifecycle lock (shared) FIRST, then the visit, then
+  // queues on the visit's lowest line behind a blocker - so it sits mid-function holding
+  // both. merge_patients_guarded takes the patient lock EXCLUSIVE and then UPDATEs the
+  // visit. Fixed order: the merge queues on the patient ADVISORY lock the waiver already
+  // holds; when the blocker lets go the waive finishes first, then the merge. 0183's body
+  // (mutant MW0183) held the visit and asked for the patient lock only at its own visits
+  // UPDATE: the merge takes the patient lock, queues on the visit, the waiver then wants
+  // the patient lock - 40P01.
+  // concurrency-proof: waive_visit_balance (W1: waive holds the visit mid-function, merge_patients_guarded starts and must queue on the patient advisory lock, no deadlock when the blocker lets go; W2: merge first, the waive queues on the advisory lock and is refused P0058 once the merge commits, then a retry waives once)
+  await scenario("W1", "waive then merge of the visit's patient (waiver holds the visit): must not deadlock", async () => {
+    const pair = await mkPair("W1");
+    const f = await mkVisit({ prices: [500, 500], note: "W1", patient: pair.source });
+    const [blk, wv, mg] = [await actor("W1-blocker"), await actor("W1-waive"), await actor("W1-merge")];
+    await begin(blk, mode);
+    expectOk("W1 blocker locks the lowest line", await lockLine(blk, f.lines[0].id));
+    await begin(wv, mode);
+    const pw = andEnd(wv, waive(wv, f.visit, `${TAG} W1`));
+    await mustWait(wv, "the waiver takes the patient lock and the visit, then queues on the lowest line behind the blocker");
+    if (!(await visitHeld(f.visit))) throw new Fail("the waiver should hold the visit row while it is queued on the line");
+    const heldShared = await patientLock(wv.pid, pair.source, true);
+    await begin(mg, mode);
+    const pm = andEnd(mg, mergePatients(mg, pair.keep, pair.source));
+    const mergeWaits = await mustWaitPatient(mg, pair.source, true, "the merge needs the patient lock exclusive (then the visit)");
+    await blk.c.query("commit");
+    const [rw, rm] = await raceBoth(["waive", "merge"], pw, pm);
+    const dl = [["waive", rw], ["merge", rm]].filter(([, o]) => !(o as Out<unknown>).ok && (o as { code: string }).code === "40P01").map(([n]) => n as string);
+    if (dl.length) {
+      throw new Fail(
+        `40P01 deadlock (victim: ${dl.join(" and ")}): the waiver held the visit${heldShared ? "" : " WITHOUT the patient lifecycle lock"} and wanted the shared patient lock at its visits UPDATE, ` +
+          `the merge held it exclusive and wanted the visit (merge waited on the ${mergeWaits}; waive=${fmtOut(rw)}, merge=${fmtOut(rm)})`,
+      );
+    }
+    if (!rw.ok) throw new Fail(`waive failed: ${fmtOut(rw)}`);
+    if (!rm.ok) throw new Fail(`merge failed: ${fmtOut(rm)}`);
+    if (!heldShared) throw new Fail("the waiver did not hold the shared patient lifecycle lock while queued on the line (0220's order)");
+    if (mergeWaits !== "patient lock") throw new Fail(`the merge should queue on the patient advisory lock the waiver holds, but waited on a ${mergeWaits}`);
+    // The waive finished once, whole; the merge ran after and moved the visit.
+    const v = await visitRow(f.visit);
+    if (v.status !== "waived" || v.waived !== 1000) throw new Fail(`visit should be waived at 1000, got ${v.status}/${v.waived}`);
+    const a = await allocs(f.visit);
+    const sum = a.reduce((t, x) => t + x.amount, 0);
+    if (a.length !== 2 || sum !== 1000) throw new Fail(`expected one allocation set (2 lines, 1000), got ${a.length} / ${sum}`);
+    if ((await visitPatient(f.visit)) !== pair.keep) throw new Fail("the visit was not moved to the kept patient");
+    if ((await mergedInto(pair.source)) !== pair.keep) throw new Fail("the source patient was not merged into the keep");
+    const led = await mergeLedger(pair.source);
+    if (!led || led.keep !== pair.keep || !led.visits.includes(f.visit)) throw new Fail("the merge ledger does not list the visit as moved");
+    return "merge queued on the patient advisory lock behind the waiver; waived 1000 once, then the merge moved the visit";
+  });
+
+  // ---- W2 merge then waive (0220) ------------------------------------------
+  // The merge holds the patient lock exclusive (its transaction stays open). The waiver
+  // reads the visit under the source (the merge is uncommitted), asks for the shared
+  // patient lock FIRST and queues on it. When the merge commits the source is a
+  // tombstone: lifecycle_lock_and_assert refuses P0058 before anything is locked or
+  // written. A retry reads the visit under the keep and waives it once.
+  // concurrency-proof: waive_visit_balance (W2: the waive queues on the patient advisory lock the merge holds, refused P0058 after the merge commits, retried once)
+  await scenario("W2", "merge then waive of the visit's patient: the waive is refused cleanly, a retry waives once", async () => {
+    const pair = await mkPair("W2");
+    const f = await mkVisit({ prices: [500, 500], note: "W2", patient: pair.source });
+    const [mg, wv] = [await actor("W2-merge"), await actor("W2-waive")];
+    await begin(mg, mode);
+    const merged = expectOk("W2 merge", await mergePatients(mg, pair.keep, pair.source));
+    if (!merged.merge_id) throw new Fail("W2 merge returned no merge id");
+    if (!(await patientLock(mg.pid, pair.source, true))) throw new Fail("the merge should hold the patient lifecycle lock (exclusive) in its open transaction");
+    await begin(wv, mode);
+    const pw = andEnd(wv, waive(wv, f.visit, `${TAG} W2`));
+    await mustWaitPatient(wv, pair.source, false, "the waiver asks for the patient lock FIRST, which the open merge holds exclusive");
+    await mg.c.query("commit");
+    const rw = await Promise.race([pw, sleep(18000).then(() => null)]);
+    if (!rw) throw new Fail("the waiver did not finish within 18s of the merge committing");
+    expectCode("W2 stale waive", rw, "P0058");
+    if (!/merged into another record/.test((rw as { message: string }).message)) throw new Fail(`P0058 should say the patient was merged, got: ${(rw as { message: string }).message}`);
+    // Nothing half-written by the refused call.
+    const mid = await visitRow(f.visit);
+    if (mid.status !== "unpaid" || mid.waived !== 0) throw new Fail(`the refused waive left the visit ${mid.status}/${mid.waived}`);
+    if ((await allocs(f.visit)).length !== 0) throw new Fail("the refused waive left allocation rows behind");
+    if ((await visitPatient(f.visit)) !== pair.keep) throw new Fail("the merge did not move the visit");
+    // The retry (a fresh call: the second click) sees the visit under the keep.
+    const wv2 = await actor("W2-retry");
+    await begin(wv2, mode);
+    expectOk("W2 waive retry", await andEnd(wv2, waive(wv2, f.visit, `${TAG} W2 retry`)));
+    const v = await visitRow(f.visit);
+    if (v.status !== "waived" || v.waived !== 1000) throw new Fail(`retry should waive 1000, got ${v.status}/${v.waived}`);
+    const a = await allocs(f.visit);
+    const sum = a.reduce((t, x) => t + x.amount, 0);
+    if (a.length !== 2 || sum !== 1000) throw new Fail(`expected one allocation set (2 lines, 1000), got ${a.length} / ${sum}`);
+    if ((await visitPatient(f.visit)) !== pair.keep) throw new Fail("the visit left the kept patient");
+    return "waiver queued on the patient lock, refused P0058 once the merge committed (nothing written); the retry waived 1000 once";
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -778,6 +998,7 @@ async function sweepTagged(like: string): Promise<void> {
     await monitor.query("set local session_replication_role = replica");
     const stmts = [
       `create temp table wvr_visits on commit drop as select id from public.visits where visit_number like 'V-${up}%'`,
+      `create temp table wvr_pat on commit drop as select id from public.patients where drm_id like 'DRM-${up}%'`,
       `create temp table wvr_staff on commit drop as select id from auth.users where email like '${like}%@example.test'`,
       `create temp table wvr_tr on commit drop as select id from public.test_requests where visit_id in (select id from wvr_visits)`,
       `create temp table wvr_pay on commit drop as select id from public.payments where visit_id in (select id from wvr_visits)`,
@@ -800,6 +1021,8 @@ async function sweepTagged(like: string): Promise<void> {
         where actor_id in (select id from wvr_staff)
            or resource_id in (select id from wvr_tr) or resource_id in (select id from wvr_pay)
            or resource_id in (select id from wvr_visits) or resource_id in (select id from wvr_alloc)`,
+      `delete from public.audit_log where patient_id in (select id from wvr_pat)`,
+      `delete from public.patient_merges where keep_id in (select id from wvr_pat) or source_id in (select id from wvr_pat)`,
       `delete from public.doctor_pf_entries where test_request_id in (select id from wvr_tr)`,
       `delete from public.visit_waiver_allocations where id in (select id from wvr_alloc)`,
       `delete from public.payments where id in (select id from wvr_pay)`,
@@ -833,8 +1056,10 @@ async function countTagged(like: string): Promise<number> {
           + (select count(*) from public.journal_entries
               where source_id = any($7::uuid[]) or source_id = any($8::uuid[]))
           + (select count(*) from public.audit_log
-              where resource_id = any($7::uuid[]) or resource_id = any($8::uuid[]) or resource_id = any($6::uuid[])) as n`,
-    [`${like}%@example.test`, `${like}%`, `${up}%`, `DRM-${up}%`, `V-${up}%`, made.visits, made.tests, made.payments],
+              where resource_id = any($7::uuid[]) or resource_id = any($8::uuid[]) or resource_id = any($6::uuid[])
+                 or patient_id = any($9::uuid[]))
+          + (select count(*) from public.patient_merges where keep_id = any($9::uuid[]) or source_id = any($9::uuid[])) as n`,
+    [`${like}%@example.test`, `${like}%`, `${up}%`, `DRM-${up}%`, `V-${up}%`, made.visits, made.tests, made.payments, made.patients],
   );
   return Number(rows[0].n);
 }
@@ -891,6 +1116,10 @@ interface Mutant {
   fn: FnName;
   edits: Array<[string, string]>;
   mustFail: string[];
+  // Replace the live body wholesale with the migration's ORIGINAL (0183's waive_visit_balance).
+  original?: { file: string; fn: FnName };
+  // A catch only counts when the scenario's failure detail matches (the expected reason).
+  mustMatch?: RegExp;
 }
 
 const LINE_LOCK = "perform 1 from public.test_requests where visit_id = p_visit_id and deleted_at is null order by id for update;";
@@ -938,7 +1167,26 @@ const MUTANTS: Mutant[] = [
     edits: [["where t.status = 'released'", "where false"]],
     mustFail: ["S4"],
   },
+  {
+    key: "MW0183",
+    what: "0183's original waive_visit_balance (the patient lock only at its visits UPDATE, after the visit and lines): a merge of the patient closes a cycle",
+    fn: "waive_visit_balance",
+    edits: [],
+    original: { file: "0183_waived_balance_gl.sql", fn: "waive_visit_balance" },
+    mustFail: ["W1"],
+    mustMatch: /40P01 deadlock/, // a catch counts only for a real deadlock
+  },
 ];
+
+// The original body of a function from its migration file, as a CREATE statement.
+function originalDef(file: string, fn: FnName): string {
+  const text = readFileSync(join(__dirname, "..", "supabase", "migrations", file), "utf8");
+  const start = text.indexOf(`create or replace function public.${fn}(`);
+  if (start < 0) throw new Error(`${file}: public.${fn} not found`);
+  const end = text.indexOf("\n$$;", start);
+  if (end < 0) throw new Error(`${file}: end of public.${fn} not found`);
+  return text.slice(start, end + 4);
+}
 
 const FN_SIGS: Record<FnName, string> = {
   waive_visit_balance: "uuid, uuid, text",
@@ -970,7 +1218,8 @@ async function controlRounds(): Promise<void> {
   // BASELINE round: an UNMUTATED copy must pass every scenario a mutant is
   // judged on. Otherwise a broken copy/grant/rewrite would make every mutant
   // look "caught".
-  const baselineIds = [...new Set(MUTANTS.flatMap((m) => m.mustFail))];
+  const mutants = MUTANTS.filter((m) => !envCtl || envCtl.includes(m.key));
+  const baselineIds = [...new Set(mutants.flatMap((m) => m.mustFail))];
   console.log("\ncontrol baseline: unmutated copy must pass " + baselineIds.join(", "));
   try {
     await install();
@@ -990,7 +1239,7 @@ async function controlRounds(): Promise<void> {
     if (!okBase) return;
   } finally {
     sink = results;
-    only = null;
+    only = envOnly;
     fnSchema = "public";
     await monitor.query(`drop schema if exists ${schema} cascade`);
   }
@@ -1000,8 +1249,14 @@ async function controlRounds(): Promise<void> {
   // reached" are harness faults, not catches.
   const HARNESS = /interleaving not reached|did not answer|permission denied|does not exist|\bgot (42501|42883|42P01|3F000)\b/;
 
-  for (const m of MUTANTS) {
+  for (const m of mutants) {
     let mutated = defs[m.fn];
+    if (m.original) {
+      mutated = originalDef(m.original.file, m.original.fn);
+      // It must really be the pre-fix body: no patient lock in it at all.
+      if (/lifecycle_lock/.test(mutated)) throw new Error(`control ${m.key}: ${m.original.file} already takes the lifecycle lock`);
+      for (const other of names) mutated = mutated.split(`public.${other}(`).join(`${schema}.${other}(`);
+    }
     for (const [from, to] of m.edits) {
       if (!mutated.includes(from)) throw new Error(`control ${m.key}: "${from}" not found in ${m.fn}`);
       mutated = mutated.replace(from, () => to);
@@ -1015,8 +1270,9 @@ async function controlRounds(): Promise<void> {
       fnSchema = schema;
       only = m.mustFail;
       for (const mode of ["seq", "indexed"] as Mode[]) await forcedScenarios(mode);
-      const failedIds = caught.filter((r) => !r.ok && !HARNESS.test(r.detail)).map((r) => r.name);
+      const failedIds = caught.filter((r) => !r.ok && !HARNESS.test(r.detail) && (!m.mustMatch || m.mustMatch.test(r.detail))).map((r) => r.name);
       const harness = caught.filter((r) => !r.ok && HARNESS.test(r.detail)).map((r) => `${r.name}: ${r.detail}`);
+      const wrongReason = caught.filter((r) => !r.ok && !HARNESS.test(r.detail) && m.mustMatch && !m.mustMatch.test(r.detail)).map((r) => `${r.name}: ${r.detail}`);
       const missed = (["seq", "indexed"] as Mode[]).flatMap((mode) =>
         m.mustFail
           .filter((id) => !failedIds.some((n) => n.startsWith(`[${mode}] ${id} `)))
@@ -1027,12 +1283,12 @@ async function controlRounds(): Promise<void> {
         ? `caught by ${failedIds.length} scenario run(s)`
         : harness.length
           ? `HARNESS FAULT (not a catch): ${harness.join("; ")}`
-          : `NOT caught by ${missed.join(", ")}`;
+          : `NOT caught by ${missed.join(", ")}${wrongReason.length ? ` (failed for another reason: ${wrongReason.join("; ")})` : ""}`;
       results.push({ name: `control ${m.key} (${m.what})`, ok, detail });
       console.log(`  ${ok ? "PASS" : "FAIL"}  control ${m.key} - ${detail}`);
     } finally {
       sink = results;
-      only = null;
+      only = envOnly;
       fnSchema = "public";
       await monitor.query(`drop schema if exists ${schema} cascade`);
     }
