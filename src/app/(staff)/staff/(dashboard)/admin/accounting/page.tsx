@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { requireAdminStaff } from "@/lib/auth/require-admin";
 import { manilaDateTime } from "@/lib/dates/manila";
 import { CRON_HEARTBEATS } from "@/lib/ops/cron-heartbeats";
@@ -9,6 +10,8 @@ import {
 } from "@/lib/accounting/sync";
 import { AccountingActions } from "./accounting-actions";
 import { ROUTE_NAME } from "@/lib/staff/route-names";
+import { readSheetOnlyCoverage } from "@/lib/sheet-sync/sheet-only-coverage";
+import { sheetOnlyNote } from "./sheet-only-note";
 
 export const metadata = { title: ROUTE_NAME["/staff/admin/accounting"] };
 export const dynamic = "force-dynamic";
@@ -23,6 +26,8 @@ export default async function AccountingAdminPage() {
   const env = readAccountingEnv();
   const watermarks = await readAllWatermarks();
   const lastRun = await readLastRun();
+  const sheetOnly = await readSheetOnlyCoverage();
+  const notes = new Map(watermarks.map((w) => [w.key, sheetOnlyNote(w.key, sheetOnly)] as const));
 
   const envMissing = "missing" in env ? env.missing : null;
 
@@ -37,6 +42,19 @@ export default async function AccountingAdminPage() {
           Sheets tabs. Each tab below shows how far the copy has reached.
           You can run the copy now, or rewind a tab to copy it again from an
           earlier time.
+        </p>
+        <p className="mt-2 max-w-2xl text-sm text-[color:var(--color-brand-text-soft)]">
+          Only visits entered in the app are copied. Visits still recorded on
+          the reception Google Sheet reach the app through{" "}
+          <Link href="/staff/admin/sheet-sync" className="font-semibold text-[color:var(--color-brand-navy)] underline">
+            {ROUTE_NAME["/staff/admin/sheet-sync"]}
+          </Link>{" "}
+          as a reporting copy for{" "}
+          <Link href="/staff/marketing/patients" className="font-semibold text-[color:var(--color-brand-navy)] underline">
+            {ROUTE_NAME["/staff/marketing/patients"]}
+          </Link>
+          , not as visits, so they are not copied here until the one-time
+          switch-over from the sheet to the app turns them into visits.
         </p>
       </header>
 
@@ -84,6 +102,11 @@ export default async function AccountingAdminPage() {
                     ? ` · ${rowsPhrase(lastRun.rowsByTab.get(w.key) ?? 0)} in the last run`
                     : null}
                 </p>
+                {notes.get(w.key) ? (
+                  <p className="mt-1 text-xs text-amber-800">
+                    {notes.get(w.key)}
+                  </p>
+                ) : null}
                 {w.notes ? (
                   <p className="mt-1 text-xs text-[color:var(--color-brand-text-soft)]">
                     Last rewind: {w.notes}
