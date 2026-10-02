@@ -4,6 +4,7 @@ import { z } from "zod";
 import { revalidatePath } from "next/cache";
 import { requireActiveStaff } from "@/lib/auth/require-staff";
 import { createClient } from "@/lib/supabase/server";
+import { panelRowKey } from "@/lib/queue/bulk-queue";
 import { claimPanelMembers } from "@/lib/actions/queue/panel-writes";
 import {
   finaliseConsolidatedReport,
@@ -15,19 +16,33 @@ import {
 } from "@/lib/actions/results/amend-consolidated";
 
 const ClaimSchema = z.object({
+  visitId: z.string().uuid(),
+  groupId: z.string().uuid(),
   testRequestIds: z.array(z.string().uuid()).min(1),
 });
 
-type ClaimOutcome = { ok: true } | { ok: false; error: string };
+type ClaimOutcome = { ok: true; batchId?: string } | { ok: false; error: string };
 
 export async function claimConsolidated(input: unknown): Promise<ClaimOutcome> {
   try {
-    const { testRequestIds } = ClaimSchema.parse(input);
+    const { visitId, groupId, testRequestIds } = ClaimSchema.parse(input);
     const session = await requireActiveStaff();
     const supabase = await createClient();
-    const result = await claimPanelMembers(session, supabase, testRequestIds);
-    if (result.ok) revalidatePath("/staff/queue");
-    return result;
+    // Undo (bulk-select PR C item 5): a one-panel batch minted HERE, never from
+    // the input — the same shape claimPanelAction writes, so
+    // undoBulkQueueAction's panel branch puts the whole panel back
+    // (unclaim_panel_members, all or nothing).
+    const batchId = crypto.randomUUID();
+    const result = await claimPanelMembers(
+      session,
+      supabase,
+      testRequestIds,
+      { visit_id: visitId, report_group_id: groupId },
+      { batchId, batchSize: 1, panelKey: panelRowKey(visitId, groupId), visitId },
+    );
+    if (!result.ok) return result;
+    revalidatePath("/staff/queue");
+    return { ok: true, batchId };
   } catch (err) {
     return { ok: false, error: (err as Error).message };
   }

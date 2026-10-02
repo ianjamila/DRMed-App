@@ -4,6 +4,7 @@ import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { claimConsolidated, finaliseConsolidated } from "./actions";
 import type { ConsolidatedFormTemplate, ConsolidatedFormVisit } from "./page";
+import { claimReportHref } from "@/lib/queue/claim-undo-link";
 import { normalisePatientSex } from "@/lib/results/types";
 import type { FinaliseDeferral } from "@/lib/actions/results/finalise-release-outcome";
 import { ConsolidatedValuesTable, useConsolidatedValues } from "./consolidated-values-table";
@@ -54,6 +55,8 @@ export function ConsolidatedForm(props: Props) {
     setError(null);
     startTransition(async () => {
       const res = await claimConsolidated({
+        visitId: props.visit.id,
+        groupId: props.group.id,
         testRequestIds: props.testRequestIds,
       });
       if (!res.ok) {
@@ -62,7 +65,17 @@ export function ConsolidatedForm(props: Props) {
         });
         return;
       }
-      router.refresh();
+      // The page re-renders with its Undo notice (the same ?claimed= handshake
+      // as the queue row's Claim). A claim with no batch has nothing to undo,
+      // so it just refreshes.
+      if (res.batchId) {
+        router.replace(
+          claimReportHref({ visitId: props.visit.id, groupId: props.group.id }, res.batchId, Date.now()),
+          { scroll: false },
+        );
+      } else {
+        router.refresh();
+      }
     });
   }
 
