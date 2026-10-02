@@ -1,5 +1,6 @@
 // Hand-run local CONCURRENCY proof for the four result-lifecycle lock functions of 0184
-// that had none (they sat in the concurrency-proof guard's frozen BASELINE):
+// that had none (they sat in the concurrency-proof guard's frozen BASELINE), plus - since 0223 - the status-flip trigger
+// advance_test_on_result_upload:
 //   lifecycle_lock_results   the result-MEMBERSHIP advisory lock (exclusive to change which tests a
 //                            result holds, shared for every other results-family write)
 //   result_create_linked     the results row + every result_test_requests link in one transaction
@@ -14,8 +15,13 @@
 // into a sequential run. Only the free-race rounds (K6, C2f, D6) rely on timing, and they assert
 // invariants only.
 //
-// GLOBAL LOCK ORDER (0184, 0198, 0211, 0216): result MEMBERSHIP -> patient lifecycle (shared; delete /
+// GLOBAL LOCK ORDER (0184, 0198, 0211, 0216, 0223): result MEMBERSHIP -> patient lifecycle (shared; delete /
 // restore / merge exclusive) -> visit row -> test_requests lines ORDER BY id -> write.
+//   0223 brought the two functions that skipped it into line: result_finalise_commit = membership (shared) -> patient (shared)
+//   -> results row FOR UPDATE -> linked VISIT rows FOR SHARE (id order) -> linked lines FOR NO KEY UPDATE (id order) -> the live /
+//   in-progress checks -> write (the results UPDATE fires advance_test_on_result_upload, which walks the junction in id order and
+//   flips a line only WHERE status = 'in_progress'); result_create_linked = membership (exclusive, the new id) -> patient (shared)
+//   -> the lines' VISIT rows FOR SHARE -> lines FOR UPDATE (id order) -> live recount -> insert.
 //
 // HOW EACH FUNCTION IS CALLED (as the app does): service_role, through the admin client -
 //   result_create_linked / result_finalise_commit / result_save_draft   src/lib/actions/results/*,
@@ -34,29 +40,32 @@
 //   K6  free race: opposite-order arrays x ROUNDS, invariants only
 //   C1  create vs create, same test              C2  overlapping sets, both directions; C2f free race
 //   C3  create vs delete_test_request_lines, both orders
-//   C4  KNOWN  create vs a visit soft delete (nothing serialises them)
+//   C4  create vs a visit soft delete, both orders (0223: the create takes the visit FOR SHARE; was a KNOWN defect)
 //   C5  create vs merge_patients_guarded of the test's patient, both orders
 //   C6  create vs delete_patient, both orders
 //   C7  create vs a visit re-assignment to another patient (P0072)
 //   C8  the patient lock is taken BEFORE the lines (the create holds no line while queued behind an exclusive waiter)
-//   C9  lines locked in id order vs an id-ordered writer while a holder pins the lowest line (no 40P01)
+//   C9  lines locked in id order vs an id-ordered writer (unclaim) while a holder pins the lowest line (no 40P01)
 //   C10 create vs claim_panel_members, both orders      C11 create vs release_visit_results, both orders (40001 re-plan)
 //   F1  finalise vs finalise (same result)       F2  finalise vs save_draft, both orders
 //   F3  finalise vs result_edit_commit           F5  finalise vs a link insert (exclusive membership), both orders
-//   F6a KNOWN  finalise vs unclaim_panel_members (a finalised report keeps a test handed back to 'requested')
+//   F6a finalise vs unclaim_panel_members: the unclaim commits first, the finalise is refused (P0066), nothing finalised (0223; was KNOWN)
 //   F6b finalise-first vs unclaim              F6c release-first vs finalise
 //   F6e finalise vs release, junction in id order (no cycle)
-//   F6d KNOWN  finalise vs release, junction stored in reverse id order (40P01)
+//   F6d finalise vs release, junction AND lines stored in reverse id order: no 40P01 (0223; was KNOWN, heap-order dependent - now
+//       built deterministically on both tables, ctid-verified with a bounded retry, sequential scan forced)
+//   F6g the status-flip trigger alone (a results UPDATE) vs unclaim: a line handed back while its flip waited is not flipped
 //   F7  finalise vs merge_patients_guarded, both orders       F8  finalise-first vs delete of a member (P0067)
-//   F8b KNOWN  delete-first vs finalise: the report is finalised over a deleted test
+//   F8b delete-first vs finalise: the finalise queues on the visit, then is refused (P0066), no report over a deleted test (0223; was KNOWN)
+//   F11 finalise vs a visit soft delete, both orders (the twin of C4)
 //   F9  finalise vs a visit re-assignment (P0072)            F10 finalise vs delete_patient (P0059)
 //   D1  save_draft vs save_draft (no lost parameter)        D3  opposite-order upserts vs row holders (no 40P01)
 //   D4  save_draft vs a link insert (membership), both orders     D5  save_draft vs a visit re-assignment (P0072)
 //   D6  free race: finalise vs save_draft x ROUNDS (the committed values are always the finalise's)
 //
-// KNOWN scenarios (C4, F6a, F6d, F8b) REPRODUCE a real defect that this proof deliberately does not fix (SQL is out of
-// scope): they are reported, not counted, and the run exits 1 if one stops reproducing (promote it to an asserted
-// scenario) or breaks. Each states its lock graph in a comment at the scenario.
+// KNOWN scenarios: none since 0223 (C4, F6a, F6d, F8b were reproduced defects, now asserted). The machinery stays: a scenario
+// registered with known=true is reported, not counted, and the run exits 1 if it stops reproducing (promote it to an asserted
+// scenario) or breaks.
 //
 // REDUNDANT guards (no scenario can fail without them, by construction - not mutated):
 //   - result_create_linked's EXCLUSIVE membership lock on the NEW result id: nobody can know the id before the insert
@@ -64,6 +73,9 @@
 //   - for the SAME parameter, the draft upsert's unique index alone would serialise two drafts and the committed values
 //     would come out right; the results-row FOR UPDATE is what the opposite-order D3 and the finalised check (F2) truly
 //     need, and D1 asserts WHICH row the second draft queued on, so it still catches its removal.
+//   - advance_test_on_result_upload's ORDER BY test_request_id: since 0223 result_finalise_commit holds every line before the trigger
+//     runs, so the trigger's own order cannot matter on that path (F6d is caught by the finalise's lock order, mutant MF8). Its
+//     status guard is the one hunk with a scenario of its own (F6g, mutant MT1: the trigger alone, no finalise in front of it).
 //   - result_create_linked's explicit patient lock is order hygiene only: the link-insert trigger would take (and assert)
 //     the same shared lock later, so correctness holds without it; the lock manager even rescues the one cycle that
 //     would result (C8 explains). C8 pins the ORDER directly.
@@ -81,6 +93,12 @@
 //   MF3 finalise without the membership lock (F5)             MF4 finalise without the post-lock patient re-check (F9)
 //   MD1 save_draft without the results-row FOR UPDATE (F2 D3) MD2 save_draft without the finalised refusal (F2)
 //   MD3 save_draft without the membership lock (D4)           MD4 save_draft without the post-lock patient re-check (D5)
+//   MC7 create without the visit FOR SHARE (C4)
+//   MF5 finalise without the visit AND line locks (F6a, F8b)  MF6 finalise without the visit lock (F8b, F11)
+//   MF7 finalise without the line locks (F6a)                 MF8 finalise locks lines in plan order, no ORDER BY (F6d, 40P01)
+//   MT1 advance_test_on_result_upload without its status guard (F6g) - this mutant is swapped in AS the results trigger for its
+//       round (the one object a round touches outside its own schema; healed before the schema drop, at start, at the end and on
+//       SIGINT/SIGTERM - a run that finds it repaired reports it, and a clean run that had to repair it FAILS)
 //   RLC_CTL=B0,MC1 runs only those rounds; RLC_ONLY=none skips the real-function scenarios.
 //
 // FIXTURES are committed (two connections cannot see each other's uncommitted rows), tagged rlc-<hex>,
@@ -98,7 +116,7 @@ import { Client } from "pg";
 
 requireLocalOrExplicitProd("result-lifecycle:concurrency-proof", {
   writes:
-    "throwaway staff, services + a result template, patients, visits, test lines, results and merge/delete audit rows tagged rlc-<hex>, committed so two connections can race on them, then deleted; --control also creates and drops schemas rlc_ctl_<hex> holding copies of four functions",
+    "throwaway staff, services + a result template, patients, visits, test lines, results and merge/delete audit rows tagged rlc-<hex>, committed so two connections can race on them, then deleted; --control also creates and drops schemas rlc_ctl_<hex> holding copies of five functions (and, for mutant MT1 only, temporarily re-points the results trigger trg_results_advance_test at its copy)",
 });
 
 const DB_URL = process.env.SUPABASE_DB_URL ?? "postgresql://postgres:postgres@127.0.0.1:54322/postgres";
@@ -116,7 +134,8 @@ const CONTROL = process.argv.includes("--control");
 const APP_NAME = `result-lifecycle:${TAG}`;
 
 // Which schema each function under test is called from (public, or a mutant's throwaway schema).
-const FN = { lockResults: "public", create: "public", finalise: "public", draft: "public" };
+// `advance` is the results UPDATE trigger function: never called by name, it is copied only so a mutant can be swapped in as the trigger.
+const FN = { lockResults: "public", create: "public", finalise: "public", draft: "public", advance: "public" };
 
 let monitor: Client;
 let aborting = false;
@@ -850,8 +869,8 @@ S("C3", "result_create_linked: create vs delete_test_request_lines, both orders"
   const a1 = await forced({
     first: (a) => delLines(a, w1.visit, w1.lines),
     second: (b) => create(b, w1.lines, { notes: `${TAG}:C3a` }),
-    wait: { kind: "row", rel: "test_requests" },
-    why: "the create queues on the line the delete holds",
+    wait: { kind: "row", rel: "visits" },
+    why: "the create's shared visit lock queues behind the delete's FOR UPDATE on the visit (0223: visit before lines)",
   });
   expectOk(a1.o1, "delete");
   expectRefused(a1.o2, "P0066", /not found or has been deleted/, "create after delete");
@@ -863,8 +882,8 @@ S("C3", "result_create_linked: create vs delete_test_request_lines, both orders"
   const b2 = await forced({
     first: (a) => create(a, w2.lines, { notes: `${TAG}:C3b` }),
     second: (b) => delLines(b, w2.visit, w2.lines),
-    wait: { kind: "row", rel: "test_requests" },
-    why: "the delete queues on the line the create locked",
+    wait: { kind: "row", rel: "visits" },
+    why: "the delete's visit FOR UPDATE queues behind the create's shared visit lock (0223: visit before lines)",
   });
   expectOk(b2.o1, "create");
   const st = (await lineStatus(w2.lines))[w2.lines[0]!];
@@ -872,59 +891,43 @@ S("C3", "result_create_linked: create vs delete_test_request_lines, both orders"
   expect(b2.o2.ok ? st === "in_progress+deleted" && links === 1 : st === "in_progress" && links === 1, `create-first: delete ${fmt(b2.o2)} but the line is ${st} with ${links} link(s)`);
 });
 
-// C4 - KNOWN ISSUE (reproduced): create vs a visit soft delete. result_create_linked takes patient (shared) -> lines FOR
-//      UPDATE and never the VISIT row, while a visit soft delete takes the visit row and no line lock - so nothing
-//      serialises them (0198 release / 0216 delete take visit -> lines; create skips the visit step). The create's
-//      "visit not deleted" re-count reads the snapshot taken before the delete commits, so a draft result is linked to a
-//      line of a visit that is being (and then is) deleted. Fix idea: take the visit FOR SHARE after the patient lock
-//      (release_report_locks step 3) and re-read deleted_at under it.
-S(
-  "C4",
-  "KNOWN: result_create_linked vs a visit soft delete - nothing serialises them (a result lands on a deleted visit's line)",
-  async () => {
-    const softDelete = (a: Actor, visit: string) =>
-      call(a, "update public.visits set deleted_at = now(), deleted_by = $2, delete_reason = 'rlc proof' where id = $1", [visit, fx.admin]);
-    const seen: string[] = [];
-    // (a) the delete is in flight; the create does not wait for it.
-    const w1 = await mkWorld(1);
-    const [a, b] = [await actor("deleter"), await actor("creator")];
-    await begin(a);
-    const r1 = await softDelete(a, w1.visit);
-    expectOk(r1, "soft delete");
-    await begin(b);
-    const p2 = andEnd(b, create(b, w1.lines, { notes: `${TAG}:C4a` }));
-    let waited = false;
-    try {
-      await mustNotWait(b, p2, "the create takes no visit lock, so a visit delete in flight cannot make it wait");
-    } catch {
-      waited = true;
-    }
-    expectOk(await end(a, r1), "delete commit");
-    const o2 = await p2;
-    const v1 = (await monitor.query("select deleted_at is not null as d from public.visits where id = $1", [w1.visit])).rows[0]!.d as boolean;
-    if (!waited && o2.ok && v1 && (await linkCount(w1.lines)) === 1) seen.push("delete in flight -> create ok without waiting");
-    // (b) the create is in flight; the delete does not wait for it either.
-    const w2 = await mkWorld(1);
-    const [c, d] = [await actor("creator"), await actor("deleter")];
-    await begin(c);
-    const r3 = await create(c, w2.lines, { notes: `${TAG}:C4b` });
-    expectOk(r3, "create");
-    await begin(d);
-    const p4 = andEnd(d, softDelete(d, w2.visit));
-    let waited2 = false;
-    try {
-      await mustNotWait(d, p4, "the visit delete takes no line lock, so a create in flight cannot make it wait");
-    } catch {
-      waited2 = true;
-    }
-    expectOk(await end(c, r3), "create commit");
-    const o4 = await p4;
-    const v2 = (await monitor.query("select deleted_at is not null as d from public.visits where id = $1", [w2.visit])).rows[0]!.d as boolean;
-    if (!waited2 && o4.ok && v2 && (await linkCount(w2.lines)) === 1) seen.push("create in flight -> visit delete ok without waiting");
-    if (seen.length === 2) return `reproduced both orders: ${seen.join("; ")}; each ends with a result linked to a line of a deleted visit`;
-  },
-  true,
-);
+// C4 - create vs a visit soft delete (0223). result_create_linked took patient (shared) -> lines FOR UPDATE and never the
+//      VISIT row, while a visit soft delete takes patient (shared) -> visit row: nothing serialised them, so a draft result
+//      could be linked to a line of a visit deleted meanwhile (the create's "visit not deleted" recount read the snapshot
+//      from before the delete committed). Now the create takes the visit FOR SHARE after the patient lock (release's step 3)
+//      and re-reads deleted_at under it: delete first -> the create queues on the visit row, then is refused P0066 and links
+//      nothing; create first -> the delete queues on the visit row, then deletes (the serial create -> delete outcome).
+// 0223 -- was a KNOWN issue (reproduced in both orders); mutant MC7 restores the lock-free body.
+const softDelete = (a: Actor, visit: string) =>
+  call(a, "update public.visits set deleted_at = now(), deleted_by = $2, delete_reason = 'rlc proof' where id = $1", [visit, fx.admin]);
+const visitDeleted = async (visit: string) => (await monitor.query("select deleted_at is not null as d from public.visits where id = $1", [visit])).rows[0]!.d as boolean;
+S("C4", "result_create_linked vs a visit soft delete, both orders - the visit row serialises them (a result never lands on a deleted visit's line)", async () => {
+  // Delete first: the create queues on the visit row, then finds the visit deleted: P0066, no link, no result minted.
+  const w1 = await mkWorld(1);
+  const a = await forced({
+    first: (x) => softDelete(x, w1.visit),
+    second: (y) => create(y, w1.lines, { notes: `${TAG}:C4a` }),
+    wait: { kind: "row", rel: "visits" },
+    why: "the create's shared visit lock queues behind the visit soft delete's row lock",
+  });
+  expectOk(a.o1, "visit soft delete");
+  expectRefused(a.o2, "P0066", /not found or has been deleted/, "create after the visit delete");
+  eq("delete-first: the visit is deleted", await visitDeleted(w1.visit), true);
+  eq("delete-first: nothing linked", await linkCount(w1.lines), 0);
+  eq("delete-first: no result minted", await resultsNoted(`${TAG}:C4a`), 0);
+  // Create first: the delete queues on the visit row the create holds shared, then deletes the visit (serial create -> delete).
+  const w2 = await mkWorld(1);
+  const b = await forced({
+    first: (x) => create(x, w2.lines, { notes: `${TAG}:C4b` }),
+    second: (y) => softDelete(y, w2.visit),
+    wait: { kind: "row", rel: "visits" },
+    why: "the visit soft delete queues behind the create's shared visit lock",
+  });
+  expectOk(b.o1, "create");
+  expectOk(b.o2, "visit soft delete after the create");
+  eq("create-first: the visit is deleted", await visitDeleted(w2.visit), true);
+  eq("create-first: the result stays linked (the serial create -> delete outcome)", await linkCount(w2.lines), 1);
+});
 
 // C5 - create vs merge_patients_guarded of the test's patient (merge: membership shared -> both patients exclusive).
 S("C5", "result_create_linked: create vs merge of the test's patient, both orders - never a result across two patients", async () => {
@@ -1043,31 +1046,31 @@ S("C8", "result_create_linked: patient lock BEFORE the lines - the create holds 
 });
 
 // C9 - create takes its lines in id order. A holder pins the LOWEST of two lines (stored in reverse heap order and read
-//      by a sequential scan); an id-ordered writer queues on it first; the create then arrives. Heap-order locking would
-//      take the higher line first and meet the writer in a cycle when the holder lets go.
+//      by a sequential scan); an id-ordered writer that takes no visit lock (unclaim_panel_members: lines only) queues on
+//      it first; the create then arrives. Heap-order locking would take the higher line first and meet the writer in a
+//      cycle when the holder lets go. (A delete_test_request_lines writer would hold the visit FOR UPDATE and stop the create
+//      at the visit before it reaches any line since 0223, so the writer here is the one that does not.)
 S("C9", "result_create_linked: lines FOR UPDATE in id order vs an id-ordered writer (no 40P01)", async () => {
   const w = await mkWorld(2, { desc: true });
   const [lo] = w.lines as [string, string];
-  const [h, wr, cr] = [await actor("holder"), await actor("delete-lines"), await actor("creator")];
+  const [h, wr, cr] = [await actor("holder"), await actor("unclaim"), await actor("creator")];
   await begin(h, "raw");
   await h.c.query("select 1 from public.test_requests where id = $1 for update", [lo]);
-  await begin(wr);
-  const pw = andEnd(wr, delLines(wr, w.visit, w.lines));
+  await begin(wr, { uid: fx.med });
+  const pw = andEnd(wr, unclaimAs(wr, w.lines));
   await mustWait(wr, { kind: "row", rel: "test_requests" }, "the id-ordered writer queues on the lowest line the holder pins");
   await begin(cr);
   for (const g of ["set local enable_seqscan = on", "set local enable_indexscan = off", "set local enable_indexonlyscan = off", "set local enable_bitmapscan = off"]) await cr.c.query(g);
   const pc = andEnd(cr, create(cr, w.lines, { notes: `${TAG}:C9` }));
   await mustWait(cr, { kind: "row", rel: "test_requests" }, "the create queues on a line behind the writer");
-  const held = await monitor.query("select count(*)::int as n from pg_locks where pid = $1 and locktype = 'transactionid' and granted", [cr.pid]);
-  void held;
   await end(h, { ok: true, rows: [], rowCount: 0 });
-  const [ow, oc] = await bothAnswer(["delete lines", "create"], pw, pc);
-  const dead = victims(["delete lines", "create"], [ow, oc]);
+  const [ow, oc] = await bothAnswer(["unclaim", "create"], pw, pc);
+  const dead = victims(["unclaim", "create"], [ow, oc]);
   expect(dead.length === 0, `lock-order cycle: 40P01 victim ${dead.join(", ")} - ${fmt(ow)} | ${fmt(oc)}`);
-  expectOk(ow, "delete lines");
-  expectRefused(oc, "P0066", /not found or has been deleted/, "create after the delete");
+  expectOk(ow, "unclaim");
+  expectOk(oc, "create after the unclaim");
+  eq("both lines linked to the new result, handed back to 'requested' by the unclaim", [await linkCount(w.lines), Object.values(await lineStatus(w.lines))], [2, ["requested", "requested"]]);
 });
-
 
 // C10 - create vs claim_panel_members (0211) of the same requested lines, both orders: the consolidated flow's own pair
 //       (claim the panel, then create its combined result). Both id-ordered; both must finish.
@@ -1245,31 +1248,29 @@ S("F5", "result_finalise_commit: finalise vs a link insert on the same result - 
   eq("finalise-first: three links", await linkCount(w2.lines), 3);
 });
 
-// F6 - finalise vs the writers of its lines. The finalise validates "every linked line is in progress" from a snapshot,
-//      without locking the lines; the status flip happens later in a trigger.
+// F6 - finalise vs the writers of its lines. Until 0223 the finalise validated "every linked line is in progress" from a
+//      snapshot without locking the lines (or their visit); the status flip happened later in a trigger. Now (membership ->
+//      patient -> results row ->) the linked VISIT rows FOR SHARE, then the linked lines ORDER BY id FOR NO KEY UPDATE, and
+//      only then the live / in-progress checks.
 const unclaimAs = (a: Actor, lines: string[]) => unclaim(a, lines, lines.map(() => fx.med));
-// F6a - KNOWN ISSUE (reproduced): unclaim of the report's lines commits while the finalise is already past its checks.
-S(
-  "F6a",
-  "KNOWN: result_finalise_commit vs unclaim_panel_members - the finalised report keeps tests handed back to 'requested'",
-  async () => {
-    const w = await mkDraftWorld();
-    const { o1, o2 } = await forced({
-      first: (a) => unclaimAs(a, w.lines),
-      firstAs: { uid: fx.med },
-      second: (b) => finalise(b, w.result, vals([0, 1], 10), "f6a"),
-      wait: { kind: "row", rel: "test_requests" },
-      why: "the finalise's status-flip trigger queues on the lines the unclaim holds",
-    });
-    expectOk(o1, "unclaim");
-    const st = await lineStatus(w.lines);
-    const fin = (await resState(w.result)).finalised;
-    if (o2.ok && fin && Object.values(st).some((s) => s === "requested")) {
-      return `reproduced: finalise answered ok and the result is finalised, yet its tests are ${JSON.stringify(Object.values(st).sort())} (the finalise read them in_progress before the unclaim committed and never locked them; its advance trigger then flipped the first with an UPDATE that has no status guard and skipped the second)`;
-    }
-  },
-  true,
-);
+// F6a - unclaim of the report's lines in flight: the finalise queues on the lines, then finds them handed back and is refused whole.
+//       (Was KNOWN: it read them in_progress from a snapshot, finalised, and its advance trigger flipped the first line over
+//       the unclaim's 'requested' with an UPDATE that had no status guard and skipped the second.)
+S("F6a", "result_finalise_commit vs unclaim_panel_members, unclaim first - the finalise is refused (P0066), nothing finalised", async () => {
+  const w = await mkDraftWorld();
+  const { o1, o2 } = await forced({
+    first: (a) => unclaimAs(a, w.lines),
+    firstAs: { uid: fx.med },
+    second: (b) => finalise(b, w.result, vals([0, 1], 10), "f6a"),
+    wait: { kind: "row", rel: "test_requests" },
+    why: "the finalise's line locks queue on the lines the unclaim holds",
+  });
+  expectOk(o1, "unclaim");
+  expectRefused(o2, "P0066", /not in progress/, "finalise after the unclaim");
+  const st = await resState(w.result);
+  eq("the result stays a draft (no finalised_at, no PDF pointer)", [st.finalised, st.storage_path], [false, null]);
+  eq("both tests stay handed back to 'requested'", Object.values(await lineStatus(w.lines)), ["requested", "requested"]);
+});
 // F6b - finalise first: the unclaim queues on the lines, then finds them advanced and is refused whole (P0077).
 S("F6b", "result_finalise_commit vs unclaim_panel_members, finalise first - the unclaim is refused whole", async () => {
   const w = await mkDraftWorld();
@@ -1300,11 +1301,14 @@ S("F6c", "result_finalise_commit vs release_visit_results, release first - both 
   expect(await notInProgress(w.lines), "the lines advanced");
 });
 // F6d/F6e - lock-order check against release: a holder pins the LOWEST line, release (id order) queues on it first, then
-//   the finalise arrives; its trigger walks the junction in HEAP order. With the junction stored in id order (F6e) it
-//   queues behind release holding nothing; stored in reverse (F6d) it takes the higher line first and meets release in a
-//   cycle (40P01) when the holder lets go.
+//   the finalise arrives. Until 0223 the finalise's trigger walked the junction in HEAP order, so with the junction stored
+//   in reverse (F6d) it took the higher line first and met release in a cycle (40P01) when the holder let go. Now the
+//   finalise locks its lines ORDER BY id itself, before the trigger runs, so it queues on the lowest line holding nothing.
+//   F6d builds the reverse heap order on BOTH tables (the junction AND test_requests, each verified by ctid with a bounded
+//   retry) and forces a sequential scan for the finalise, so a lock query without ORDER BY (mutant MF8) takes the higher
+//   line first, deterministically. F6e is the id-ordered storage (no cycle possible either way).
 async function finaliseVsReleaseOrder(desc: boolean): Promise<{ or: Out; of: Out }> {
-  const w = await mkWorld(2);
+  const w = await mkWorld(2, desc ? { desc: true } : {});
   const result = desc ? await mkDescDraft(w.lines) : await mkDraft(w.lines, [0, 1], 1);
   const [lo] = w.lines as [string, string];
   const [h, rel, fin] = [await actor("holder"), await actor("release"), await actor("finalise")];
@@ -1314,8 +1318,9 @@ async function finaliseVsReleaseOrder(desc: boolean): Promise<{ or: Out; of: Out
   const pr = andEnd(rel, release(rel, w.visit, [lo]));
   await mustWait(rel, { kind: "row", rel: "test_requests" }, "release (id order) queues on the lowest line the holder pins");
   await begin(fin);
+  if (desc) for (const g of ["set local enable_seqscan = on", "set local enable_indexscan = off", "set local enable_indexonlyscan = off", "set local enable_bitmapscan = off"]) await fin.c.query(g);
   const pf = andEnd(fin, finalise(fin, result, vals([0, 1], 10), desc ? "f6d" : "f6e"));
-  await mustWait(fin, { kind: "row", rel: "test_requests" }, "the finalise's status-flip trigger queues on a report line");
+  await mustWait(fin, { kind: "row", rel: "test_requests" }, "the finalise's line locks queue on a line release holds or wants");
   await end(h, { ok: true, rows: [], rowCount: 0 });
   const [or, of] = await bothAnswer(["release", "finalise"], pr, pf);
   return { or, of };
@@ -1327,19 +1332,33 @@ S("F6e", "result_finalise_commit vs release_visit_results, junction in id order 
   expectOk(or, "release");
   expectOk(of, "finalise");
 });
-// F6d - KNOWN ISSUE (latent, reproduced): the status-flip trigger locks the lines in JUNCTION heap order.
-S(
-  "F6d",
-  "KNOWN: result_finalise_commit vs release_visit_results, junction stored in reverse id order - 40P01",
-  async () => {
-    const { or, of } = await finaliseVsReleaseOrder(true);
-    const dead = victims(["release", "finalise"], [or, of]);
-    if (dead.length > 0) {
-      return `reproduced: 40P01, victim ${dead.join(", ")} (release locks lines by id; the finalise's advance_test_on_result_upload walks result_test_requests in heap order, here higher id first) - ${fmt(or)} | ${fmt(of)}`;
-    }
-  },
-  true,
-);
+S("F6d", "result_finalise_commit vs release_visit_results, junction AND lines stored in reverse id order - no 40P01", async () => {
+  const { or, of } = await finaliseVsReleaseOrder(true);
+  const dead = victims(["release", "finalise"], [or, of]);
+  expect(dead.length === 0, `lock-order cycle: 40P01 victim ${dead.join(", ")} (release locks lines by id; the finalise took them in heap order, higher id first) - ${fmt(or)} | ${fmt(of)}`);
+  expectOk(or, "release");
+  expectOk(of, "finalise");
+});
+
+// concurrency-proof: advance_test_on_result_upload
+// F6g - the status-flip trigger ALONE (advance_test_on_result_upload, fired by a results UPDATE that sets finalised_at; no
+//       finalise function in front of it): an unclaim holds the lines, the trigger's UPDATE queues on the first, the unclaim
+//       commits ('requested'), and the trigger must then leave the handed-back lines alone (its UPDATE is WHERE status =
+//       'in_progress'). Without the guard it flipped the first line to ready_for_release over the unclaim and skipped the second.
+S("F6g", "advance_test_on_result_upload alone vs unclaim_panel_members - a line handed back while the flip waited is not flipped", async () => {
+  const w = await mkDraftWorld();
+  const { o1, o2 } = await forced({
+    first: (a) => unclaimAs(a, w.lines),
+    firstAs: { uid: fx.med },
+    second: (b) => call(b, "update public.results set finalised_at = now(), storage_path = $2 where id = $1", [w.result, `rlc/${TAG}/f6g.pdf`]),
+    secondAs: "raw",
+    wait: { kind: "row", rel: "test_requests" },
+    why: "the trigger's UPDATE of the first line queues on the line the unclaim holds",
+  });
+  expectOk(o1, "unclaim");
+  expectOk(o2, "results update (the trigger runs)");
+  eq("the lines stay handed back to 'requested' - the late flip skipped them", Object.values(await lineStatus(w.lines)), ["requested", "requested"]);
+});
 
 // F7 - finalise vs merge_patients_guarded, both orders.
 S("F7", "result_finalise_commit: finalise vs merge of the result's patient, both orders", async () => {
@@ -1376,35 +1395,58 @@ S("F8", "result_finalise_commit vs delete_test_request_lines of a member, finali
   const { o1, o2 } = await forced({
     first: (a) => finalise(a, w.result, vals([0, 1], 10), "f8a"),
     second: (b) => delLines(b, w.visit, [w.lines[1]!]),
-    wait: { kind: "row", rel: "test_requests" },
-    why: "the delete queues on the member the finalise advanced",
+    wait: { kind: "row", rel: "visits" },
+    why: "the delete's visit FOR UPDATE queues behind the finalise's shared visit lock (0223)",
   });
   expectOk(o1, "finalise");
   expectRefused(o2, "P0067", /finished combined report/, "delete of a member after the finalise");
   eq("the member is not deleted", (await lineStatus([w.lines[1]!]))[w.lines[1]!], "ready_for_release");
 });
-// F8b - KNOWN ISSUE (reproduced): delete first. The delete's P0067 guard sees an unfinalised draft and lets it through; the
-//       finalise (which checked "live tests" from a snapshot and never locks the lines) then finalises over the deleted one.
-S(
-  "F8b",
-  "KNOWN: result_finalise_commit vs delete_test_request_lines of a member, delete first - the report is finalised over a deleted test",
-  async () => {
-    const w = await mkDraftWorld();
-    const { o1, o2 } = await forced({
-      first: (a) => delLines(a, w.visit, [w.lines[1]!]),
-      second: (b) => finalise(b, w.result, vals([0, 1], 10), "f8b"),
-      wait: { kind: "row", rel: "test_requests" },
-      why: "the finalise's trigger queues on the member the delete holds",
-    });
-    expectOk(o1, "delete");
-    const st = await lineStatus([w.lines[1]!]);
-    const fin = await resState(w.result);
-    if (o2.ok && fin.finalised && fin.storage_path && st[w.lines[1]!]!.includes("+deleted")) {
-      return `reproduced: finalise ok, report finalised with a PDF, member is ${st[w.lines[1]!]} (the 0172 guard P0067 exists to prevent exactly this combination)`;
-    }
-  },
-  true,
-);
+// F8b - delete first. The delete holds the visit FOR UPDATE and the member; the finalise now queues on the VISIT row, then (once the
+//       delete commits) re-reads its lines under the locks and is refused: a member of the report was deleted. (Was KNOWN: the
+//       delete's P0067 guard saw an unfinalised draft and let it through, and the finalise - which checked "live" from a
+//       snapshot and never locked the lines - finalised a PDF over the deleted test, the state P0067 exists to prevent.)
+S("F8b", "result_finalise_commit vs delete_test_request_lines of a member, delete first - the finalise is refused (P0066)", async () => {
+  const w = await mkDraftWorld();
+  const { o1, o2 } = await forced({
+    first: (a) => delLines(a, w.visit, [w.lines[1]!]),
+    second: (b) => finalise(b, w.result, vals([0, 1], 10), "f8b"),
+    wait: { kind: "row", rel: "visits" },
+    why: "the finalise's shared visit lock queues behind the delete's FOR UPDATE on the visit",
+  });
+  expectOk(o1, "delete");
+  expectRefused(o2, "P0066", /has been deleted/, "finalise after the delete of a member");
+  const fin = await resState(w.result);
+  eq("the report stays a draft (no finalised_at, no PDF pointer)", [fin.finalised, fin.storage_path], [false, null]);
+  const st = await lineStatus(w.lines);
+  eq("the deleted member keeps its status (not flipped), the other stays in progress", [st[w.lines[1]!], st[w.lines[0]!]], ["in_progress+deleted", "in_progress"]);
+});
+
+// F11 - finalise vs a visit soft delete, both orders (the finalise's twin of C4): the finalise's shared visit lock and the
+//       delete's row lock serialise them. Delete first -> refused (no live test: the visit is deleted), the result stays a
+//       draft; finalise first -> the delete queues, then deletes (the serial finalise -> delete outcome).
+S("F11", "result_finalise_commit vs a visit soft delete, both orders - the visit row serialises them", async () => {
+  const w1 = await mkDraftWorld();
+  const a = await forced({
+    first: (x) => softDelete(x, w1.visit),
+    second: (y) => finalise(y, w1.result, vals([0, 1], 10), "f11a"),
+    wait: { kind: "row", rel: "visits" },
+    why: "the finalise's shared visit lock queues behind the visit soft delete's row lock",
+  });
+  expectOk(a.o1, "visit soft delete");
+  expectRefused(a.o2, "P0066", /no live test is linked/, "finalise after the visit delete");
+  eq("delete-first: the result stays a draft", [(await resState(w1.result)).finalised, await visitDeleted(w1.visit)], [false, true]);
+  const w2 = await mkDraftWorld();
+  const b = await forced({
+    first: (x) => finalise(x, w2.result, vals([0, 1], 10), "f11b"),
+    second: (y) => softDelete(y, w2.visit),
+    wait: { kind: "row", rel: "visits" },
+    why: "the visit soft delete queues behind the finalise's shared visit lock",
+  });
+  expectOk(b.o1, "finalise");
+  expectOk(b.o2, "visit soft delete after the finalise");
+  eq("finalise-first: finalised, then the visit deleted", [(await resState(w2.result)).finalised, await visitDeleted(w2.visit)], [true, true]);
+});
 
 // F9 - finalise vs a visit moved to another patient while it waited: the post-lock re-check refuses P0072.
 S("F9", "result_finalise_commit: finalise vs a visit moved to another patient - P0072 (the post-lock patient re-check)", async () => {
@@ -1653,6 +1695,28 @@ async function dropCtlSchemas(c: Client = monitor): Promise<void> {
   for (const { n } of rows) await c.query(`drop schema ${n} cascade`);
 }
 
+// The results UPDATE trigger (trg_results_advance_test) is the one object a control round touches outside its own schema: MT1 points it at a
+// mutant copy for the round. It is always pointed back before the copy's schema is dropped (DROP SCHEMA ... CASCADE would otherwise take the
+// trigger with it), and every entry point (start, finish, abort) heals it first, so a killed run can never leave the shared stack with a
+// mutant or a missing trigger.
+const TRIGGER_NAME = "trg_results_advance_test";
+async function pointTrigger(c: Client, schema: string): Promise<void> {
+  await c.query(`drop trigger if exists ${TRIGGER_NAME} on public.results`);
+  await c.query(`create trigger ${TRIGGER_NAME} after update on public.results for each row execute function ${schema}.advance_test_on_result_upload()`);
+}
+/** Returns true when the trigger had to be repaired (missing, or pointing at a function that is not public's). */
+async function healTrigger(c: Client = monitor): Promise<boolean> {
+  const { rows } = await c.query<{ ok: boolean }>(
+    `select exists (select 1 from pg_trigger t join pg_proc p on p.oid = t.tgfoid join pg_namespace n on n.oid = p.pronamespace
+                     where t.tgrelid = 'public.results'::regclass and t.tgname = $1 and not t.tgisinternal
+                       and n.nspname = 'public' and p.proname = 'advance_test_on_result_upload') as ok`,
+    [TRIGGER_NAME],
+  );
+  if (rows[0]!.ok) return false;
+  await pointTrigger(c, "public");
+  return true;
+}
+
 async function abortCleanup(sig: string): Promise<void> {
   aborting = true;
   console.log(`\n  ${sig} received - tearing down`);
@@ -1660,7 +1724,9 @@ async function abortCleanup(sig: string): Promise<void> {
   await cleaner.connect();
   await cleaner.query("select pg_terminate_backend(pid) from pg_stat_activity where pid <> pg_backend_pid() and application_name = $1", [APP_NAME]);
   await sleep(300);
+  await healTrigger(cleaner); // before the schemas go: the CASCADE would drop a swapped trigger
   await dropCtlSchemas(cleaner);
+  await healTrigger(cleaner);
   await sweep(cleaner);
   const left = await leftovers(cleaner);
   console.log(left > 0 ? `  FAIL     teardown - ${left} tagged rows left behind` : "  teardown: every tagged row removed");
@@ -1687,7 +1753,9 @@ async function main(): Promise<void> {
   let exit = 0;
   let seeded = false;
   try {
+    await healTrigger();
     await dropCtlSchemas();
+    if (await healTrigger()) console.log("  note: trg_results_advance_test was missing or mutated (a previous run was killed); repaired");
     await sweep();
     KEY = {
       membership: Number((await monitor.query<{ k: string }>("select (hashtext('result_membership'))::oid::bigint as k")).rows[0]!.k),
@@ -1711,7 +1779,12 @@ async function main(): Promise<void> {
   } finally {
     if (aborting) await sleep(60000); // the signal handler is cleaning up and will exit
     await closeAll();
+    if (await healTrigger().catch(() => false)) {
+      console.log("FAIL: trg_results_advance_test was left pointing at a mutant (or missing) after the run - repaired");
+      exit = 1;
+    }
     await dropCtlSchemas().catch(() => undefined);
+    if (await healTrigger().catch(() => false)) console.log("note: trg_results_advance_test repaired after the schema drop");
     if (seeded || (await leftovers().catch(() => 1)) > 0) await sweep().catch((e) => console.error(`cleanup failed: ${(e as Error).message}`));
     const left = await leftovers().catch(() => -1);
     if (left !== 0) {
@@ -1732,6 +1805,7 @@ const SIGS: Record<keyof typeof FN, string> = {
   create: "public.result_create_linked(uuid, uuid[], text, uuid, text, integer, text)",
   finalise: "public.result_finalise_commit(uuid, uuid, jsonb, text, integer, timestamp with time zone, jsonb, jsonb)",
   draft: "public.result_save_draft(uuid, jsonb)",
+  advance: "public.advance_test_on_result_upload()",
 };
 const RESULT_ROW_LOCK = "   where id = p_result_id\n   for update;";
 const PATIENT_RECHECK_RESULT =
@@ -1802,7 +1876,8 @@ const MUTANTS: Mutant[] = [
     what: "no explicit patient lock BEFORE the lines (the link-insert trigger locks it later)",
     edits: [["  perform public.lifecycle_lock_and_assert(v_patients, false);", "  null;"]],
     mustFail: ["C8"],
-    reason: /already holds the test row while it is queued on the patient lock/,
+    // without the explicit patient lock the create now runs on to the visit row (0223) - which the scenario's visit holder pins - and queues THERE: "saw tuple/transactionid", not the lifecycle lock; before 0223 it ran on to the lines and held one
+    reason: /already holds the test row while it is queued on the patient lock|creator never waited on the lifecycle advisory lock[\s\S]*; saw (tuple|transactionid)/,
   },
   {
     id: "MC3",
@@ -1839,7 +1914,15 @@ const MUTANTS: Mutant[] = [
     what: "lines locked in plan order, not id order (no ORDER BY id)",
     edits: [["where tr.id = any(v_ids) order by tr.id for update;", "where tr.id = any(v_ids) for update;"]],
     mustFail: ["C9"],
-    reason: /lock-order cycle: 40P01 victim (delete lines|create|delete lines, create) - [\s\S]*40P01 deadlock detected/, // either side can be the victim
+    reason: /lock-order cycle: 40P01 victim (unclaim|create|unclaim, create) - [\s\S]*40P01 deadlock detected/, // either side can be the victim
+  },
+  {
+    id: "MC7",
+    fn: "create",
+    what: "no visit FOR SHARE before the lines (0223)",
+    edits: [["  perform 1 from public.visits v where v.id = any(v_visits) order by v.id for share; -- 0223", "  null;"]],
+    mustFail: ["C4"],
+    reason: /second answered without waiting on a row of visits[\s\S]*\[first answered: ok; second answered: ok\]/,
   },
   // result_finalise_commit
   {
@@ -1873,6 +1956,51 @@ const MUTANTS: Mutant[] = [
     edits: [[PATIENT_RECHECK_RESULT, "  if false then"]],
     mustFail: ["F9"],
     reason: /finalise: expected P0072, but it succeeded/,
+  },
+  // 0223: result_finalise_commit's visit + line locks, one at a time and together
+  {
+    id: "MF5",
+    fn: "finalise",
+    what: "neither the visit FOR SHARE nor the lines FOR NO KEY UPDATE (the pre-0223 body)",
+    edits: [
+      ["  perform 1 from public.visits v where v.id = any(v_visits) order by v.id for share; -- 0223", "  null;"],
+      ["  perform 1 from public.test_requests tr where tr.id = any(v_lines) order by tr.id for no key update; -- 0223", "  null;"],
+    ],
+    mustFail: ["F6a", "F8b"],
+    reason: /finalise after the unclaim: expected P0066, but it succeeded|second never waited on a row of visits[\s\S]*; saw transactionid/,
+  },
+  {
+    id: "MF6",
+    fn: "finalise",
+    what: "no visit FOR SHARE (the lines are still locked)",
+    edits: [["  perform 1 from public.visits v where v.id = any(v_visits) order by v.id for share; -- 0223", "  null;"]],
+    mustFail: ["F8b", "F11"],
+    reason: /second never waited on a row of visits[\s\S]*; saw transactionid|second answered without waiting on a row of visits[\s\S]*\[first answered: ok; second answered: ok\]/,
+  },
+  {
+    id: "MF7",
+    fn: "finalise",
+    what: "no lines FOR NO KEY UPDATE (the visit is still locked)",
+    edits: [["  perform 1 from public.test_requests tr where tr.id = any(v_lines) order by tr.id for no key update; -- 0223", "  null;"]],
+    mustFail: ["F6a"],
+    reason: /finalise after the unclaim: expected P0066, but it succeeded/,
+  },
+  {
+    id: "MF8",
+    fn: "finalise",
+    what: "lines locked in plan order, not id order (no ORDER BY)",
+    edits: [["  perform 1 from public.test_requests tr where tr.id = any(v_lines) order by tr.id for no key update; -- 0223", "  perform 1 from public.test_requests tr where tr.id = any(v_lines) for no key update; -- 0223"]],
+    mustFail: ["F6d"],
+    reason: /lock-order cycle: 40P01 victim (release|finalise|release, finalise) [\s\S]*40P01 deadlock detected/, // either side can be the victim
+  },
+  // advance_test_on_result_upload (swapped in as the results trigger for the round)
+  {
+    id: "MT1",
+    fn: "advance",
+    what: "the flip UPDATE without its status guard (the pre-0223 body)",
+    edits: [["\n      and status = 'in_progress'; -- 0223: a line handed back / moved on while this UPDATE waited for its lock is left alone", ";"]],
+    mustFail: ["F6g"],
+    reason: /the lines stay handed back to 'requested' - the late flip skipped them: got \["ready_for_release","requested"\]|got \["requested","ready_for_release"\]/,
   },
   // result_save_draft
   {
@@ -1932,6 +2060,7 @@ async function installCopies(schema: string, m: Mutant | null): Promise<void> {
     await monitor.query(def.replace(`public.${name}(`, `${schema}.${name}(`));
     await monitor.query(`grant execute on function ${schema}.${sig.slice(sig.indexOf(".") + 1)} to service_role`);
   }
+  if (m && m.fn === "advance") await pointTrigger(monitor, schema); // MT1: the mutant IS the trigger for this round
 }
 
 async function controlRounds(): Promise<boolean> {
@@ -1973,6 +2102,7 @@ async function controlRounds(): Promise<boolean> {
     } finally {
       for (const k of Object.keys(FN) as Array<keyof typeof FN>) FN[k] = "public";
       await closeAll();
+      await healTrigger().catch((e) => console.error(`trigger repair failed: ${(e as Error).message}`)); // BEFORE the drop: the CASCADE would take a swapped trigger
       await monitor.query(`drop schema if exists ${schema} cascade`).catch(() => undefined);
     }
   }
