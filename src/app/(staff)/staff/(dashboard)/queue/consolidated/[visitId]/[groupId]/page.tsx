@@ -23,7 +23,7 @@ import { ConsolidatedForm } from "./consolidated-form";
 import { ReportCards, type ReportCardData } from "./report-cards";
 import { ReportEditForm } from "./report-edit-form";
 import { ClaimUndoNotice } from "../../../claim-undo-notice";
-import { parseClaimUndoParams } from "@/lib/queue/claim-undo-link";
+import { claimUndoOpen, parseClaimUndoParams } from "@/lib/queue/claim-undo-link";
 import type { ValueCells } from "./consolidated-values-table";
 import { normalisePatientSex } from "@/lib/results/types";
 import { claimRemarks, type ClaimEvent } from "@/lib/queue/claim-remarks";
@@ -184,7 +184,9 @@ export default async function ConsolidatedQueuePage({
   const editResultId = typeof editParam === "string" ? editParam : null;
   // ?claimed=<batch>&at=<ms> — set by the queue row's panel Claim (item 3).
   // eslint-disable-next-line react-hooks/purity -- per-request snapshot, passed down as a number prop
-  const { batchId: claimedParam, doneAt: claimedAt } = parseClaimUndoParams(sp, Date.now());
+  const nowMs = Date.now();
+  const { batchId: claimedParam, doneAt: claimedAt } = parseClaimUndoParams(sp, nowMs);
+  const showClaimUndo = claimedParam !== null && claimUndoOpen(claimedAt, nowMs);
   const { session, supabase, group, rows, partition, visit } = await loadConsolidatedDetail(
     visitId,
     groupId,
@@ -667,7 +669,7 @@ export default async function ConsolidatedQueuePage({
       >
         Open visit →
       </Link>
-      {claimedParam ? (
+      {showClaimUndo ? (
         <ClaimUndoNotice batchId={claimedParam} doneAt={claimedAt} reportName={group.name} />
       ) : null}
       </ReleaseOutcomeProvider>
