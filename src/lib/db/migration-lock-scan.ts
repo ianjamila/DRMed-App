@@ -199,6 +199,7 @@ interface Def {
   signature: string;
   index: number;
   body: string;
+  returnsTrigger: boolean;
 }
 
 /**
@@ -243,6 +244,7 @@ function definitions(text: string): Def[] {
       signature: normaliseSignature(text.slice(open + 1, close)),
       index: m.index!,
       body,
+      returnsTrigger: /^\s*returns\s+trigger\b/i.test(text.slice(close + 1, close + 200)),
     });
   }
   return defs;
@@ -279,9 +281,20 @@ export function lockSignals(body: string, name = ""): string[] {
   return found.sort();
 }
 
-/** Replay the migrations; return the live functions that carry lock signals. */
-export function scanLockFunctions(files: MigrationFile[]): LockFunction[] {
-  const live = new Map<string, LockFunction | null>();
+/** A live function definition: the body of its latest create in replay order. */
+export interface LiveFunction {
+  name: string;
+  signature: string;
+  /** Migration file holding the latest definition. */
+  file: string;
+  /** The body, comments stripped (string literals kept). */
+  body: string;
+  returnsTrigger: boolean;
+}
+
+/** Replay the migrations in filename order; return every live function (drops applied). */
+export function scanLiveFunctions(files: MigrationFile[]): LiveFunction[] {
+  const live = new Map<string, LiveFunction>();
   const keyOf = (name: string, sig: string) => `${name}(${sig})`;
   for (const { file, sql } of [...files].sort((a, b) => a.file.localeCompare(b.file))) {
     const text = stripComments(sql);
@@ -296,14 +309,18 @@ export function scanLockFunctions(files: MigrationFile[]): LockFunction[] {
         else for (const k of [...live.keys()]) if (k.startsWith(`${name}(`)) live.delete(k);
         continue;
       }
-      const { name, signature, body } = e.def;
-      const signals = lockSignals(body, name);
-      live.set(keyOf(name, signature), signals.length ? { name, signature, file, signals } : null);
+      const { name, signature, body, returnsTrigger } = e.def;
+      live.set(keyOf(name, signature), { name, signature, file, body, returnsTrigger });
     }
   }
-  return [...live.values()]
-    .filter((v): v is LockFunction => v !== null)
-    .sort((a, b) => a.name.localeCompare(b.name) || a.signature.localeCompare(b.signature));
+  return [...live.values()].sort((a, b) => a.name.localeCompare(b.name) || a.signature.localeCompare(b.signature));
+}
+
+/** Replay the migrations; return the live functions that carry lock signals. */
+export function scanLockFunctions(files: MigrationFile[]): LockFunction[] {
+  return scanLiveFunctions(files)
+    .map(({ name, signature, file, body }) => ({ name, signature, file, signals: lockSignals(body, name) }))
+    .filter((f) => f.signals.length > 0);
 }
 
 // ---------------------------------------------------------------------------
