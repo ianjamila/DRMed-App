@@ -196,6 +196,13 @@ class Builder implements PromiseLike<unknown> {
   eq(col: string, val: unknown): this {
     return this.f("eq", [col, val], (r) => val !== null && eqLoose(pathGet(r, col), val));
   }
+  neq(col: string, val: unknown): this {
+    // SQL <>: a NULL column never matches.
+    return this.f("neq", [col, val], (r) => {
+      const v = pathGet(r, col);
+      return v !== null && !eqLoose(v, val);
+    });
+  }
   is(col: string, val: unknown): this {
     return this.f("is", [col, val], (r) => pathGet(r, col) === val);
   }

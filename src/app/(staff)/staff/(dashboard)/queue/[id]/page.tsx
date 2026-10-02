@@ -43,6 +43,8 @@ import { PatientLifecycleBanner } from "@/components/staff/patient-lifecycle-ban
 import { ReleaseOutcomeProvider } from "@/components/staff/release/release-outcome";
 import { QueueReleaseButton } from "@/components/staff/release/queue-release-button";
 import { UndoReleaseDialog } from "@/components/staff/release/undo-release-dialog";
+import { ClaimUndoNotice } from "../claim-undo-notice";
+import { claimUndoOpen, parseClaimUndoParams } from "@/lib/queue/claim-undo-link";
 import { loadRowUndoContext } from "@/lib/visits/undo-scope.server";
 import { evaluateRelease } from "@/lib/queue/release-eligibility";
 import { isConsentGateRequired, getPatientConsentState } from "@/lib/consent/gate";
@@ -154,8 +156,9 @@ export async function generateMetadata({ params }: Props) {
 interface Props {
   params: Promise<{ id: string }>;
   // Next 16 hands searchParams over as a Promise. `?undo=1` opens the Undo
-  // confirm panel (the Released-today queue tab links here).
-  searchParams: Promise<{ undo?: string }>;
+  // confirm panel (the Released-today queue tab links here). `?claimed=<batch>
+  // &at=<ms>` is set by the single-test Claim and shows its Undo notice.
+  searchParams: Promise<{ undo?: string; claimed?: string | string[]; at?: string | string[] }>;
 }
 
 const TEST_STATUS_STYLE: Record<string, string> = {
@@ -452,7 +455,13 @@ export default async function QueueTestDetailPage({ params, searchParams }: Prop
     test.status === "released" && mayActOnResult && patientActive && visit.deleted_at === null
       ? await loadRowUndoContext(supabase, test.id)
       : null;
-  const openUndo = (await searchParams)?.undo === "1";
+  const sp = (await searchParams) ?? {};
+  const openUndo = sp.undo === "1";
+  // ?claimed=<batch>&at=<ms> — set by the single-test Claim (PR C item 4).
+  // eslint-disable-next-line react-hooks/purity -- per-request snapshot, passed down as a number prop
+  const nowMs = Date.now();
+  const { batchId: claimedParam, doneAt: claimedAt } = parseClaimUndoParams(sp, nowMs);
+  const showClaimUndo = claimedParam !== null && claimUndoOpen(claimedAt, nowMs);
 
   return (
     <div className="px-4 py-8 sm:px-6 lg:px-8">
@@ -774,6 +783,11 @@ export default async function QueueTestDetailPage({ params, searchParams }: Prop
       >
         Open visit →
       </Link>
+      {/* An expired link mounts the notice with open={false} only so it can
+          strip ?claimed=&at= from the URL (item 11). */}
+      {claimedParam !== null ? (
+        <ClaimUndoNotice batchId={claimedParam} doneAt={claimedAt} reportName={svc.name} open={showClaimUndo} />
+      ) : null}
       </ReleaseOutcomeProvider>
     </div>
   );
