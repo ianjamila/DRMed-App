@@ -14,10 +14,17 @@ export function ClaimUndoNotice({
   batchId,
   doneAt,
   reportName,
+  open,
 }: {
   batchId: string;
   doneAt: number;
   reportName: string;
+  /**
+   * The server's per-request verdict (`claimUndoOpen` on the page). False
+   * renders nothing but still strips the query string on mount (item 11) — not
+   * derived from Date.now() here, which would break render purity.
+   */
+  open: boolean;
 }) {
   const router = useRouter();
   const pathname = usePathname();
@@ -82,6 +89,8 @@ export function ClaimUndoNotice({
       });
     });
   }
+
+  if (!open) return null;
 
   return (
     <BulkOutcomePanel

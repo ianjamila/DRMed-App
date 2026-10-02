@@ -669,8 +669,10 @@ export default async function ConsolidatedQueuePage({
       >
         Open visit →
       </Link>
-      {showClaimUndo ? (
-        <ClaimUndoNotice batchId={claimedParam} doneAt={claimedAt} reportName={group.name} />
+      {/* An expired link mounts the notice with open={false} only so it can
+          strip ?claimed=&at= from the URL (item 11). */}
+      {claimedParam !== null ? (
+        <ClaimUndoNotice batchId={claimedParam} doneAt={claimedAt} reportName={group.name} open={showClaimUndo} />
       ) : null}
       </ReleaseOutcomeProvider>
     </div>

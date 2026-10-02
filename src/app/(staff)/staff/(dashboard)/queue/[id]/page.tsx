@@ -783,8 +783,10 @@ export default async function QueueTestDetailPage({ params, searchParams }: Prop
       >
         Open visit →
       </Link>
-      {showClaimUndo ? (
-        <ClaimUndoNotice batchId={claimedParam} doneAt={claimedAt} reportName={svc.name} />
+      {/* An expired link mounts the notice with open={false} only so it can
+          strip ?claimed=&at= from the URL (item 11). */}
+      {claimedParam !== null ? (
+        <ClaimUndoNotice batchId={claimedParam} doneAt={claimedAt} reportName={svc.name} open={showClaimUndo} />
       ) : null}
       </ReleaseOutcomeProvider>
     </div>

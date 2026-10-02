@@ -38,8 +38,8 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
-function renderNotice(doneAt = Date.now()) {
-  return render(<ClaimUndoNotice batchId={BATCH} doneAt={doneAt} reportName="Chemistry" />);
+function renderNotice(doneAt = Date.now(), open = true) {
+  return render(<ClaimUndoNotice batchId={BATCH} doneAt={doneAt} reportName="Chemistry" open={open} />);
 }
 const undoBtn = () => screen.queryByRole("button", { name: /Undo/ });
 
@@ -66,7 +66,7 @@ describe("ClaimUndoNotice", () => {
     const view = renderNotice(doneAt);
     await vi.advanceTimersByTimeAsync(5 * MIN);
     searchParams = new URLSearchParams();
-    view.rerender(<ClaimUndoNotice batchId={BATCH} doneAt={doneAt} reportName="Chemistry" />);
+    view.rerender(<ClaimUndoNotice batchId={BATCH} doneAt={doneAt} reportName="Chemistry" open />);
     expect(router.replace).not.toHaveBeenCalled();
     await vi.advanceTimersByTimeAsync(5 * MIN + 1);
     expect(router.replace).toHaveBeenCalledTimes(1);
@@ -78,17 +78,20 @@ describe("ClaimUndoNotice", () => {
     expect(undoBtn()).not.toBeNull();
   });
 
-  it("a notice whose window has already closed removes ?claimed=&at= at once, keeping other params", async () => {
+  it("a notice whose window has already closed (open=false) renders nothing and removes ?claimed=&at= once, keeping other params", async () => {
     searchParams = new URLSearchParams("edit=1&claimed=x&at=1");
-    render(<ClaimUndoNotice batchId={BATCH} doneAt={Date.now() - 11 * MIN} reportName="Chemistry" />);
-    await waitFor(() =>
-      expect(router.replace).toHaveBeenCalledWith("/staff/queue/consolidated/v1/g1?edit=1", { scroll: false }),
-    );
+    renderNotice(Date.now() - 11 * MIN, false);
+    await waitFor(() => expect(router.replace).toHaveBeenCalledTimes(1));
+    expect(router.replace).toHaveBeenCalledWith("/staff/queue/consolidated/v1/g1?edit=1", { scroll: false });
+    expect(screen.queryByRole("status")).toBeNull();
+    expect(screen.queryByText(/You claimed/)).toBeNull();
+    expect(undoBtn()).toBeNull();
+    expect(screen.queryByRole("button", { name: /Dismiss/ })).toBeNull();
   });
 
   it("drops the query string when the window closes while the notice is open", async () => {
     vi.useFakeTimers();
-    render(<ClaimUndoNotice batchId={BATCH} doneAt={Date.now()} reportName="Chemistry" />);
+    render(<ClaimUndoNotice batchId={BATCH} doneAt={Date.now()} reportName="Chemistry" open />);
     expect(router.replace).not.toHaveBeenCalled();
     await vi.advanceTimersByTimeAsync(10 * MIN + 1);
     expect(router.replace).toHaveBeenCalledWith("/staff/queue/consolidated/v1/g1", { scroll: false });
@@ -189,10 +192,10 @@ describe("ClaimUndoNotice", () => {
   it("an already-closed notice strips once even when searchParams changes afterwards", async () => {
     searchParams = new URLSearchParams("claimed=x&at=1");
     const doneAt = Date.now() - 11 * MIN;
-    const view = renderNotice(doneAt);
+    const view = renderNotice(doneAt, false);
     await waitFor(() => expect(router.replace).toHaveBeenCalledTimes(1));
     searchParams = new URLSearchParams();
-    view.rerender(<ClaimUndoNotice batchId={BATCH} doneAt={doneAt} reportName="Chemistry" />);
+    view.rerender(<ClaimUndoNotice batchId={BATCH} doneAt={doneAt} reportName="Chemistry" open={false} />);
     expect(router.replace).toHaveBeenCalledTimes(1);
   });
 
