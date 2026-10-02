@@ -211,9 +211,20 @@ same rows at the same moment:
 - functions that take locks (`for update`, advisory locks), or a design that accepts a lock-order cycle (0183's waive vs. undo-release cascade → `40P01`);
 - money-path writes that can race: release vs. payment void/delete, the payment gate (`enforce_payment_before_release`), the GL bridge (at most one journal entry per event).
 
+**The lock ORDER is checked statically too** (`src/lib/db/lifecycle-lock-order.test.ts`, no
+database): every live migration function must take the patient lifecycle lock
+(`lifecycle_lock_and_assert(ids, false)`, the raw `patient_lifecycle` advisory key, or a call to a
+function that starts with one, e.g. `release_report_locks`) BEFORE its first row lock on
+`visits`/`test_requests` or its first write to a table carrying `a_lifecycle_guard`. A row lock
+taken first deadlocks against merge / undo-merge / delete_patient, which take the patient lock
+EXCLUSIVE and then write visits (0215, 0216 and 0220 each fixed one). Trigger functions that run
+under the guard (AFTER, or BEFORE named after `a_lifecycle_guard`) are skipped; the few functions
+that lock first on purpose sit in its `ALLOW` list with the reviewed migration file and the reason
+no cycle exists — a redefinition must be reviewed again. Fix the order; don't add to the list.
+
 A `supabase/tests/00NN_*_smoke.sql` file proves each refusal one statement after another in
 ONE transaction — it can never prove a race, because a transaction never waits on itself. Ship
-both. Models: `scripts/panel-claim-concurrency-proof.ts` (`npm run panel-claim:concurrency-proof -- --control`, #258, 0191), `scripts/panel-undo-concurrency-proof.ts` (`npm run panel-undo:concurrency-proof -- --control`, 0200 — panel re-claim / restore vs single claim, queue delete, manual Restore, visit delete and 0198's release, with control mutants that must fail for the right reason, an asserted prod plan shape, and a startup check that its probe SQL is still the live function text), `scripts/report-release-concurrency-proof.ts` (`npm run report-release:concurrency-proof -- --control`, 0198 — release vs release / undo / claim / unclaim / payment void, package siblings, and a legacy-path reproduction of the split it fixes) and `scripts/waiver-concurrency-proof.ts` (`npm run waiver:concurrency-proof -- --control`, 0183 — waive vs payment / void / undo-release / waive, the package-cascade deadlock, six mutants of `waive_visit_balance`; it replaced the dblink `0183_waiver_race_smoke.sql`).
+both. Models: `scripts/panel-claim-concurrency-proof.ts` (`npm run panel-claim:concurrency-proof -- --control`, #258, 0191), `scripts/panel-undo-concurrency-proof.ts` (`npm run panel-undo:concurrency-proof -- --control`, 0200 — panel re-claim / restore vs single claim, queue delete, manual Restore, visit delete and 0198's release, with control mutants that must fail for the right reason, an asserted prod plan shape, and a startup check that its probe SQL is still the live function text), `scripts/report-release-concurrency-proof.ts` (`npm run report-release:concurrency-proof -- --control`, 0198 — release vs release / undo / claim / unclaim / payment void, package siblings, and a legacy-path reproduction of the split it fixes) and `scripts/waiver-concurrency-proof.ts` (`npm run waiver:concurrency-proof -- --control`, 0183 — waive vs payment / void / undo-release / waive, the package-cascade deadlock, waive vs a patient merge both ways (W1/W2, 0220), seven mutants of `waive_visit_balance` incl. MW0183 — 0183`s own order, which deadlocks with the merge as the victim; it replaced the dblink `0183_waiver_race_smoke.sql`).
 
 **`pg` runner or dblink?** Default to the `pg` runner.
 
