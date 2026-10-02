@@ -4,7 +4,8 @@
  * keyboard jump, named outcomes, dated callbacks, the Website Messages inbox
  * bulk bar (M1–M8: select-all, Escape, Mark closed + audit, Undo, stale-click
  * naming, "Last changed by" on the detail page, 390px, role redirect),
- * chemistry panels and panel Undo, Undo
+ * chemistry panels and panel Undo, the single-test / report-page Claim Undo
+ * (QC1–QC4), Undo
  * (including Release selected and the historic HMO claim actions), and the
  * audit-log bulk filter. Every check ASSERTS via c.expect — it never
  * just logs.
@@ -21,6 +22,7 @@
  * Each check is its own try/catch (via the `check()` helper) so one broken
  * check never hides the rest.
  */
+import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Page } from "playwright-core";
@@ -1141,6 +1143,229 @@ async function sectionPanelUndo(c: CheckContext, med: Page, admin: Page): Promis
   });
 }
 
+// ---------------------------------------------------------------------------
+// QC1–QC4: a SINGLE test's Claim (queue row or the bench page's own button)
+// and the chemistry REPORT page's own Claim each mint a server-side Undo batch
+// and land on / stay on a page showing "You claimed <name>." + ↶ Undo for 10
+// minutes (?claimed=<batch>&at=<ms> — src/lib/queue/claim-undo-link.ts,
+// queue/claim-undo-notice.tsx). PC1–PC3 above cover the panel ROW's Claim.
+//
+// Fixtures (every one is a PAID visit, because a claim needs the lab payment
+// gate to pass): 9101 = three single hematology/urinalysis tests (CBC, ESR,
+// UA) — QC1 uses CBC, QC2 ESR, QC4 UA; 9105 = the paid three-test chemistry
+// panel (Echo) — QC3. (9107 is the UNPAID panel used for Delete; a Claim there
+// would be refused by the gate.) Each check reseeds first, so none depends on
+// an earlier check or section — reseeding changes every test id, so ids are
+// looked up AFTER the reseed.
+// ---------------------------------------------------------------------------
+async function sectionClaimUndo(c: CheckContext, med: Page): Promise<void> {
+  const UUID = /^[0-9a-f-]{36}$/i;
+  /** The id + service name of one fixture visit's single test, by service code. */
+  const singleTest = async (visitNumber: string, code: string) => {
+    const [t] = await c.sql(
+      `select tr.id, s.name from test_requests tr
+       join visits v on v.id = tr.visit_id join services s on s.id = tr.service_id
+       where v.visit_number = $1 and s.code = $2`,
+      [visitNumber, code],
+    );
+    return { id: String(t?.id ?? ""), name: String(t?.name ?? "") };
+  };
+  const testRow = async (id: string) => {
+    const [r] = await c.sql(
+      "select status, assigned_to, deleted_at, extract(epoch from started_at)::text as started from test_requests where id = $1",
+      [id],
+    );
+    return r as { status: string; assigned_to: string | null; deleted_at: string | null; started: string | null };
+  };
+  const onBench = (id: string) => (u: URL) => u.pathname === `/staff/queue/${id}` && u.searchParams.has("claimed");
+
+  await reseed(c);
+  await check(c, "QC1 queue row single Claim -> bench page ?claimed= with 'You claimed <test>.' + ↶ Undo; Undo puts it back requested, unassigned, no start time", async () => {
+    const t = await singleTest("9101", "BSQ-CBC");
+    const medUser = await userId(c, MED.email);
+    await goto(med, `${APP_BASE}/staff/queue?visit=9101`);
+    const claimBtn = med
+      .locator("tbody tr")
+      .filter({ has: med.locator('input[type="checkbox"][aria-label*="BSQ Complete Blood Count"]') })
+      .locator("button", { hasText: /^Claim$/ });
+    const claimButtons = await claimBtn.count();
+    if (claimButtons === 1) await claimBtn.click();
+    await med.waitForURL(/\/staff\/queue\/[0-9a-f-]{36}\?claimed=/, { timeout: 20_000 });
+    await waitForCount(med.locator(OUTCOME));
+    const url = new URL(med.url());
+    const batchId = url.searchParams.get("claimed");
+    const at = url.searchParams.get("at");
+    const text = await outcomeText(med);
+    const undoButtons = await med.locator('button:has-text("↶ Undo")').count();
+    const auditedBatch = await latestBatchId(c, "test_request.claimed");
+    const [claimAudit] = batchId
+      ? await c.sql(
+          `select metadata->>'bulk_batch_size' as size, metadata->>'started_at' as started_at, metadata->>'visit_id' as visit_id
+           from audit_log where action = 'test_request.claimed' and metadata->>'bulk_batch_id' = $1`,
+          [batchId],
+        )
+      : [];
+    const afterClaim = await testRow(t.id);
+
+    const hadUndo = await clickUndo(med);
+    const undoneText = await outcomeText(med);
+    const afterUndo = await testRow(t.id);
+    const audit = batchId ? await auditPerMember(c, [t.id], "test_request.unclaimed", batchId) : null;
+    const ok =
+      t.id !== "" &&
+      claimButtons === 1 &&
+      url.pathname === `/staff/queue/${t.id}` &&
+      UUID.test(batchId ?? "") &&
+      /^\d+$/.test(at ?? "") &&
+      batchId === auditedBatch && // the link carries the batch the claim really minted
+      claimAudit?.size === "1" &&
+      !!claimAudit?.started_at &&
+      !!claimAudit?.visit_id &&
+      !!text &&
+      text.startsWith(`You claimed ${t.name}.`) &&
+      undoButtons === 1 &&
+      afterClaim.status === "in_progress" &&
+      afterClaim.assigned_to === medUser &&
+      hadUndo &&
+      !!undoneText &&
+      undoneText.startsWith(`Undone — ${t.name} is back in the queue, unclaimed.`) &&
+      afterUndo.status === "requested" &&
+      afterUndo.assigned_to === null &&
+      afterUndo.started === null &&
+      audit?.everyMemberOnce === true;
+    return {
+      ok,
+      detail: { url: med.url(), t, batchId, auditedBatch, claimAudit, text, undoButtons, afterClaim, hadUndo, undoneText, afterUndo, audit },
+    };
+  });
+
+  await reseed(c);
+  await check(c, "QC2 bench page's own Claim -> same page gains ?claimed= with the notice; Undo puts the test back requested", async () => {
+    const t = await singleTest("9101", "BSQ-ESR");
+    const medUser = await userId(c, MED.email);
+    await goto(med, `${APP_BASE}/staff/queue/${t.id}`);
+    const noNoticeBefore = (await med.locator(OUTCOME).count()) === 0;
+    const claimBtn = med.locator("button", { hasText: /^Claim$/ });
+    const claimButtons = await claimBtn.count();
+    if (claimButtons === 1) await claimBtn.click();
+    await med.waitForURL(onBench(t.id), { timeout: 20_000 });
+    await waitForCount(med.locator(OUTCOME));
+    const batchId = new URL(med.url()).searchParams.get("claimed");
+    const text = await outcomeText(med);
+    const auditedBatch = await latestBatchId(c, "test_request.claimed");
+    const afterClaim = await testRow(t.id);
+
+    const hadUndo = await clickUndo(med);
+    const undoneText = await outcomeText(med);
+    const afterUndo = await testRow(t.id);
+    const audit = batchId ? await auditPerMember(c, [t.id], "test_request.unclaimed", batchId) : null;
+    const ok =
+      t.id !== "" &&
+      noNoticeBefore &&
+      claimButtons === 1 &&
+      UUID.test(batchId ?? "") &&
+      batchId === auditedBatch &&
+      !!text &&
+      text.startsWith(`You claimed ${t.name}.`) &&
+      afterClaim.status === "in_progress" &&
+      afterClaim.assigned_to === medUser &&
+      hadUndo &&
+      !!undoneText &&
+      undoneText.startsWith(`Undone — ${t.name} is back in the queue, unclaimed.`) &&
+      afterUndo.status === "requested" &&
+      afterUndo.assigned_to === null &&
+      afterUndo.started === null &&
+      audit?.everyMemberOnce === true;
+    return {
+      ok,
+      detail: { url: med.url(), t, noNoticeBefore, batchId, auditedBatch, text, afterClaim, hadUndo, undoneText, afterUndo, audit },
+    };
+  });
+
+  await reseed(c);
+  await check(c, "QC3 report page's own 'Claim this report' (paid panel 9105) -> notice 'You claimed <report>.'; Undo puts every member back requested, one unclaimed row each", async () => {
+    const [ids] = await c.sql(
+      `select v.id as visit_id, g.id as group_id, g.name as group_name
+       from visits v, report_groups g where v.visit_number = '9105' and g.code = 'CHEMISTRY'`,
+    );
+    const medUser = await userId(c, MED.email);
+    await goto(med, `${APP_BASE}/staff/queue/consolidated/${ids?.visit_id}/${ids?.group_id}`);
+    const noNoticeBefore = (await med.locator(OUTCOME).count()) === 0;
+    const claimBtn = med.locator("button", { hasText: /^Claim this report$/ });
+    const claimButtons = await claimBtn.count();
+    if (claimButtons === 1) await claimBtn.click();
+    await med.waitForURL(/\/staff\/queue\/consolidated\/[^/]+\/[^/?]+\?claimed=/, { timeout: 20_000 });
+    await waitForCount(med.locator(OUTCOME));
+    const batchId = new URL(med.url()).searchParams.get("claimed");
+    const text = await outcomeText(med);
+    const auditedBatch = await latestBatchId(c, "test_request.claimed");
+    const afterClaim = await panelRows(c, "9105");
+
+    const hadUndo = await clickUndo(med);
+    const undoneText = await outcomeText(med);
+    const afterUndo = await panelRows(c, "9105");
+    const audit = batchId
+      ? await auditPerMember(c, afterUndo.map((r) => r.id as string), "test_request.unclaimed", batchId)
+      : null;
+    const ok =
+      !!ids &&
+      noNoticeBefore &&
+      claimButtons === 1 &&
+      UUID.test(batchId ?? "") &&
+      batchId === auditedBatch &&
+      !!text &&
+      text.startsWith(`You claimed ${ids.group_name}.`) &&
+      afterClaim.length === 3 &&
+      afterClaim.every((r) => r.status === "in_progress" && r.assigned_to === medUser) &&
+      hadUndo &&
+      !!undoneText &&
+      undoneText.startsWith(`Undone — ${ids.group_name} is back in the queue, unclaimed.`) &&
+      afterUndo.length === 3 &&
+      afterUndo.every((r) => r.status === "requested" && r.assigned_to === null && r.started === null) &&
+      audit?.everyMemberOnce === true;
+    return {
+      ok,
+      detail: { url: med.url(), group: ids?.group_name, noNoticeBefore, batchId, auditedBatch, text, afterClaim, hadUndo, undoneText, afterUndo, audit },
+    };
+  });
+
+  await reseed(c);
+  await check(c, "QC4 an expired link (?claimed=<uuid>&at=<now - 11 min>) shows no notice and the page strips claimed/at from the URL", async () => {
+    const t = await singleTest("9101", "BSQ-UA");
+    const batchId = randomUUID();
+    const at = Date.now() - 11 * 60_000;
+    await goto(med, `${APP_BASE}/staff/queue/${t.id}?claimed=${batchId}&at=${at}`);
+    const start = Date.now();
+    let stripped = false;
+    while (Date.now() - start < 15_000) {
+      const u = new URL(med.url());
+      if (!u.searchParams.has("claimed") && !u.searchParams.has("at")) {
+        stripped = true;
+        break;
+      }
+      await sleep(250);
+    }
+    await sleep(500); // let a late render settle before asserting the notice is absent
+    const finalUrl = new URL(med.url());
+    const notices = await med.locator(OUTCOME).count();
+    const bodyHasClaimed = (await med.locator("body").innerText()).includes("You claimed ");
+    const undoButtons = await med.locator('button:has-text("↶ Undo")').count();
+    const after = await testRow(t.id);
+    const ok =
+      t.id !== "" &&
+      stripped &&
+      finalUrl.pathname === `/staff/queue/${t.id}` &&
+      !finalUrl.searchParams.has("claimed") &&
+      !finalUrl.searchParams.has("at") &&
+      notices === 0 &&
+      !bodyHasClaimed &&
+      undoButtons === 0 &&
+      after.status === "requested" &&
+      after.assigned_to === null; // opening a link claims nothing
+    return { ok, detail: { stripped, finalUrl: med.url(), notices, bodyHasClaimed, undoButtons, after } };
+  });
+}
+
 // State U6/A2 read across checks in the same section — see the doc comments
 // on U6 and A2 for why (a check in isolation can't otherwise prove "existed
 // before" or "this is a batch we actually undid").
@@ -1957,6 +2182,9 @@ async function main(): Promise<void> {
 
   await reseed(c);
   await sectionPanelUndo(c, med, admin);
+
+  await reseed(c);
+  await sectionClaimUndo(c, med);
 
   await reseed(c);
   await sectionUndo(c, med, admin);
