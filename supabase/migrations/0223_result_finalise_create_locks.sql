@@ -46,8 +46,9 @@
 --     visit is the mode release (0198) takes: it conflicts with a visit soft
 --     delete (FOR NO KEY UPDATE) and with delete / restore (FOR UPDATE), is
 --     compatible with release and with another finalise, and the status flip
---     never upgrades it (the 0183 waived guard, which takes the visit FOR UPDATE,
---     does not fire on a bare status change) - so two finalises or a finalise
+--     never upgrades it (the 0183 waived guard, which can take the visit FOR
+--     UPDATE, returns early on a bare status change without taking that lock) -
+--     so two finalises or a finalise
 --     and a release on one visit cannot upgrade-deadlock.
 --   result_create_linked: membership (exclusive, the new id) -> patient
 --     (shared) -> the lines' VISIT rows FOR SHARE, ORDER BY id -> lines FOR

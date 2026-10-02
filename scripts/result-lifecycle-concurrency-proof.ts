@@ -99,6 +99,8 @@
 //   MT1 advance_test_on_result_upload without its status guard (F6g) - this mutant is swapped in AS the results trigger for its
 //       round (the one object a round touches outside its own schema; healed before the schema drop, at start, at the end and on
 //       SIGINT/SIGTERM - a run that finds it repaired reports it, and a clean run that had to repair it FAILS)
+//       NOTE: the swap is GLOBAL on the shared local stack - another proof running in that round's window would see the
+//       mutant trigger (or briefly none). Run proofs one at a time.
 //   RLC_CTL=B0,MC1 runs only those rounds; RLC_ONLY=none skips the real-function scenarios.
 //
 // FIXTURES are committed (two connections cannot see each other's uncommitted rows), tagged rlc-<hex>,
@@ -1294,7 +1296,7 @@ S("F6c", "result_finalise_commit vs release_visit_results, release first - both 
     firstAs: { uid: fx.med },
     second: (b) => finalise(b, w.result, vals([0, 1], 10), "f6c"),
     wait: { kind: "row", rel: "test_requests" },
-    why: "the finalise's trigger queues on the report members the release locked",
+    why: "the finalise queues on its own line lock (0223), on the report members the release locked",
   });
   expectOk(o1, "release");
   expectOk(o2, "finalise");
