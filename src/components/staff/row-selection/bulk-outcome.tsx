@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useSyncExternalStore } from "react";
+import { useEffect, useMemo, useRef, useSyncExternalStore } from "react";
 import { Panel } from "@/components/ui/panel";
 import { FixedBottomBar } from "@/components/staff/fixed-bottom-bar";
 
@@ -10,13 +10,42 @@ import { FixedBottomBar } from "@/components/staff/fixed-bottom-bar";
 // useSyncExternalStore gives React a separate server snapshot — the action's
 // own doneAt, i.e. "just done, window fully open" — used for the server render
 // AND the hydrating client render, after which the real clock takes over.
-// Whole-second snapshots keep getSnapshot stable between ticks; the 15 s tick
-// is the same cadence the minutes label always updated on.
-const subscribeToClock = (onTick: () => void) => {
-  const t = setInterval(onTick, 15_000);
-  return () => clearInterval(t);
-};
-const clientNow = () => Math.floor(Date.now() / 1000) * 1000;
+//
+// The clock only runs while there is an Undo to time (item 11). It ticks every
+// 15 s (the cadence the minutes label always updated on) and fires once more
+// 1 ms after the window closes, then stops — a panel with no Undo, or whose
+// window has already passed, keeps no timer at all.
+//
+// Snapshots are whole seconds so getSnapshot stays stable between ticks, but a
+// rounded-down second can land BEFORE closesAt on the closing tick (closesAt
+// is rarely second-aligned), which would leave the button up with the timer
+// already gone. So once the real clock reaches closesAt the snapshot is
+// clamped to closesAt itself: constant (stable), and exactly "window closed".
+// Rounding is always down, never up, so the button is never hidden early.
+const subscribeNever = () => () => {};
+const clockNever = () => 0;
+
+function subscribeUntil(closesAt: number) {
+  return (onTick: () => void) => {
+    if (Date.now() >= closesAt) return () => {};
+    const i = setInterval(onTick, 15_000);
+    const t = setTimeout(() => {
+      clearInterval(i);
+      onTick();
+    }, closesAt - Date.now() + 1);
+    return () => {
+      clearInterval(i);
+      clearTimeout(t);
+    };
+  };
+}
+
+function clockUntil(closesAt: number) {
+  return () => {
+    const t = Date.now();
+    return t >= closesAt ? closesAt : Math.floor(t / 1000) * 1000;
+  };
+}
 
 export interface OutcomeUndo {
   /** Epoch ms when the action finished; the button hides when the window closes. */
@@ -51,7 +80,10 @@ export function BulkOutcomePanel({
   inline?: boolean;
 }) {
   const ref = useRef<HTMLDivElement>(null);
-  const now = useSyncExternalStore(subscribeToClock, clientNow, () => undo?.doneAt ?? 0);
+  const closesAt = undo ? undo.doneAt + undo.windowMs : null;
+  const subscribe = useMemo(() => (closesAt === null ? subscribeNever : subscribeUntil(closesAt)), [closesAt]);
+  const getSnapshot = useMemo(() => (closesAt === null ? clockNever : clockUntil(closesAt)), [closesAt]);
+  const now = useSyncExternalStore(subscribe, getSnapshot, () => undo?.doneAt ?? 0);
 
   useEffect(() => {
     if (inline) return;
