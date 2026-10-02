@@ -189,13 +189,11 @@ describe("lifecycle lock order (real migrations)", () => {
       );
     });
 
-    it("0216 delete without its patient lock is flagged", () => {
+    it("delete_test_request_lines without its patient lock is flagged (whichever migration holds it now)", () => {
+      // 0216 created it and 0221 re-created it: mutate the LIVE definition's file, or the edit is a no-op.
+      const file = live.find((f) => f.name === "delete_test_request_lines")!.file;
       expect(
-        scanWith(
-          "0216_delete_restore_lock_order.sql",
-          "perform public.lifecycle_lock_and_assert(array[v_patient], false);",
-          "",
-        ),
+        scanWith(file, "perform public.lifecycle_lock_and_assert(array[v_patient], false);", ""),
       ).toContain("LOCK ORDER: delete_test_request_lines");
     });
 

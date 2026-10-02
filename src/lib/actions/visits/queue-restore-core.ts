@@ -16,6 +16,7 @@ import { translatePgError } from "@/lib/accounting/pg-errors";
 import { assertVisitPatientActive } from "@/lib/patients/require-active";
 import { withLifecycleRetry } from "@/lib/patients/lifecycle-retry";
 import { sameInstant } from "@/lib/ui/bulk-undo";
+import { VISIT_DELETED_ERRCODE } from "@/lib/visits/deletion";
 import { groupIdsByDeletedAt } from "@/lib/queue/partial-panel";
 
 // Every surface that renders visits or queue rows and must drop (or show)
@@ -28,6 +29,16 @@ export function revalidateQueueSurfaces(visitId: string) {
   revalidatePath("/staff/visits");
   revalidatePath("/staff/results");
   revalidatePath(`/staff/visits/${visitId}`);
+}
+
+/** The refusal for a deleted visit: the pre-check's wording, and what the RPC's P0083 (0221) maps to. */
+export const RESTORE_VISIT_DELETED_ERROR = "The visit itself is deleted — restore the visit first.";
+
+// A write refusal as the user reads it: the RPC's P0083 (the visit was deleted after the
+// pre-check below, caught under the visit lock; nothing was restored) says what the
+// pre-check says; everything else goes through the shared translator.
+function restoreWriteError(error: { code?: string; message?: string; details?: string }): string {
+  return error.code === VISIT_DELETED_ERRCODE ? RESTORE_VISIT_DELETED_ERROR : translatePgError(error);
 }
 
 export type RestoreOutcome =
@@ -82,10 +93,7 @@ export async function restoreTestRequestsForVisit(
     return { ok: false, error: "None of the selected tests can be restored." };
   }
   if (rows.some((r) => r.visits.deleted_at !== null)) {
-    return {
-      ok: false,
-      error: "The visit itself is deleted — restore the visit first.",
-    };
+    return { ok: false, error: RESTORE_VISIT_DELETED_ERROR };
   }
 
   // Both branches write through restore_test_request_lines (0216), which takes
@@ -121,7 +129,7 @@ export async function restoreTestRequestsForVisit(
       restored.push(...(data ?? []).map((id) => ({ id })));
     }
     if (restored.length === 0) {
-      return { ok: false, error: firstError ? translatePgError(firstError) : "None of the selected tests can be restored." };
+      return { ok: false, error: firstError ? restoreWriteError(firstError) : "None of the selected tests can be restored." };
     }
   } else {
     // Manual Restore path (restoreTestRequestsAction): no expected value to
@@ -133,7 +141,7 @@ export async function restoreTestRequestsForVisit(
         p_test_request_ids: rows.map((r) => r.id),
       }),
     );
-    if (error) return { ok: false, error: translatePgError(error) };
+    if (error) return { ok: false, error: restoreWriteError(error) };
     if (!data || data.length === 0) {
       return { ok: false, error: "None of the selected tests can be restored." };
     }
