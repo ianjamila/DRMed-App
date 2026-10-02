@@ -89,6 +89,27 @@ describe("ClaimUndoNotice", () => {
     expect(screen.queryByRole("button", { name: /Dismiss/ })).toBeNull();
   });
 
+  it("open=false with a fresh doneAt (server says closed, client clock disagrees) strips at once and renders nothing", async () => {
+    searchParams = new URLSearchParams("edit=1&claimed=x&at=1");
+    renderNotice(Date.now(), false);
+    await waitFor(() => expect(router.replace).toHaveBeenCalledTimes(1));
+    expect(router.replace).toHaveBeenCalledWith("/staff/queue/consolidated/v1/g1?edit=1", { scroll: false });
+    expect(screen.queryByRole("status")).toBeNull();
+    expect(screen.queryByText(/You claimed/)).toBeNull();
+    expect(undoBtn()).toBeNull();
+  });
+
+  it("open flipping to false after the timer already stripped does not strip a second time", async () => {
+    vi.useFakeTimers();
+    const doneAt = Date.now();
+    const view = renderNotice(doneAt);
+    await vi.advanceTimersByTimeAsync(10 * MIN + 1);
+    expect(router.replace).toHaveBeenCalledTimes(1);
+    view.rerender(<ClaimUndoNotice batchId={BATCH} doneAt={doneAt} reportName="Chemistry" open={false} />);
+    await vi.advanceTimersByTimeAsync(MIN);
+    expect(router.replace).toHaveBeenCalledTimes(1);
+  });
+
   it("drops the query string when the window closes while the notice is open", async () => {
     vi.useFakeTimers();
     render(<ClaimUndoNotice batchId={BATCH} doneAt={Date.now()} reportName="Chemistry" open />);

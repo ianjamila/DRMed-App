@@ -17,12 +17,14 @@ export function ClaimUndoNotice({
   open,
 }: {
   batchId: string;
+  /** Epoch ms of the claim: paces the Undo button and the strip timer. `open` (the server's verdict) gates rendering and an immediate strip. */
   doneAt: number;
   reportName: string;
   /**
    * The server's per-request verdict (`claimUndoOpen` on the page). False
-   * renders nothing but still strips the query string on mount (item 11) — not
-   * derived from Date.now() here, which would break render purity.
+   * renders nothing and strips the query string at once on mount (item 11),
+   * even if this client's clock still thinks the window is open — not derived
+   * from Date.now() here, which would break render purity.
    */
   open: boolean;
 }) {
@@ -52,18 +54,27 @@ export function ClaimUndoNotice({
   }, [stripParams]);
 
   // Item 11: once the window has closed the notice has nothing to offer, so
-  // strip the query string. Runs at mount for an already-closed window. After
-  // a successful Undo the timer still strips the URL at the 10-minute mark, on
-  // purpose, so Back never re-shows the notice.
+  // strip the query string. The server's `open` is authoritative: closed
+  // strips at once, whatever this client's clock says. Runs at mount for an
+  // already-closed window. After a successful Undo the timer still strips the
+  // URL at the 10-minute mark, on purpose, so Back never re-shows the notice.
+  // One replace per mount: strippedRef stops a later `open` flip (or a re-armed
+  // timer) from stripping a second time.
+  const strippedRef = useRef(false);
   useEffect(() => {
-    const left = doneAt + UNDO_WINDOW_MS - Date.now();
-    if (left <= 0) {
+    const strip = () => {
+      if (strippedRef.current) return;
+      strippedRef.current = true;
       stripRef.current();
+    };
+    const left = doneAt + UNDO_WINDOW_MS - Date.now();
+    if (!open || left <= 0) {
+      strip();
       return;
     }
-    const t = setTimeout(() => stripRef.current(), left + 1);
+    const t = setTimeout(strip, left + 1);
     return () => clearTimeout(t);
-  }, [doneAt]);
+  }, [doneAt, open]);
 
   function onUndo() {
     if (pending) return;
