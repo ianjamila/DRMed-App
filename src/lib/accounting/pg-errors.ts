@@ -319,7 +319,15 @@ export function translatePgError(err: PgError): string {
       return err.message
         ? err.message
         : "Part of this report changed since — nothing was put back.";
-<<<<<<< HEAD
+    // 0221 delete_test_request_lines / restore_test_request_lines: the visit
+    // the lines belong to was deleted (re-checked under the visit lock, after
+    // the app's own lock-free check passed) — nothing was changed. The SQL
+    // words it for staff ("Visit is already deleted." / "The visit itself is
+    // deleted — restore the visit first."); pass it through like P0077.
+    case "P0083":
+      return err.message
+        ? err.message
+        : "This visit was deleted from the queue — restore the visit first.";
     // 0224 bridge_test_request_cancelled / fn_undo_release_bridge: the line's doctor fee was already
     // paid out, so the cancel / Undo release is refused whole (nothing changes) until the payout is voided.
     case "P0084":
@@ -330,17 +338,6 @@ export function translatePgError(err: PgError): string {
       return err.message
         ? err.message
         : "This payout can't be recorded right now — refresh the list and try again.";
-=======
-    // 0221 delete_test_request_lines / restore_test_request_lines: the visit
-    // the lines belong to was deleted (re-checked under the visit lock, after
-    // the app's own lock-free check passed) — nothing was changed. The SQL
-    // words it for staff ("Visit is already deleted." / "The visit itself is
-    // deleted — restore the visit first."); pass it through like P0077.
-    case "P0083":
-      return err.message
-        ? err.message
-        : "This visit was deleted from the queue — restore the visit first.";
->>>>>>> origin/main
     default:
       return err.message ?? "Database error. Please try again.";
   }
