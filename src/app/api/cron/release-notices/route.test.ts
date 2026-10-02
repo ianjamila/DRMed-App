@@ -12,6 +12,7 @@ const fx = vi.hoisted(() => ({
   lastHeartbeat: null as string | null,
   flagOn: true,
   flagError: null as unknown,
+  alerted: [] as Array<Record<string, unknown>>,
 }));
 
 vi.mock("@/lib/ops/cron-monitor", () => ({
@@ -43,6 +44,9 @@ vi.mock("@/lib/supabase/admin", () => ({
     },
   }),
 }));
+vi.mock("@/lib/notifications/release-notice-alerts.server", () => ({
+  alertOnSweep: async (s: Record<string, unknown>) => void fx.alerted.push(s),
+}));
 vi.mock("@/lib/audit/log", () => ({ audit: async (e: Record<string, unknown>) => void fx.audits.push(e) }));
 vi.mock("@/lib/observability/report-error", () => ({ reportError: async (a: { scope: string }) => void fx.reported.push(a.scope) }));
 
@@ -62,6 +66,7 @@ beforeEach(() => {
   fx.lastHeartbeat = null;
   fx.flagOn = true;
   fx.flagError = null;
+  fx.alerted.length = 0;
 });
 
 describe("/api/cron/release-notices", () => {
@@ -163,5 +168,22 @@ describe("/api/cron/release-notices", () => {
     expect(res.status).toBe(200);
     expect(fx.failed).toBe(1);
     expect(fx.audits).toHaveLength(1);
+  });
+
+  it("hands the run summary to the alert check once per enabled run, and still answers 200", async () => {
+    fx.summary = { enabled: true, claimed: 3, abandoned: 1, audit_pending: 0, failures: 0 };
+    const res = await POST(req("Bearer s3cret"));
+    expect(res.status).toBe(200);
+    expect(fx.alerted).toEqual([fx.summary]);
+  });
+
+  it("runs no alert check while the flag is off, when unauthorised, or when the sweep fails", async () => {
+    fx.flagOn = false;
+    await POST(req("Bearer s3cret"));
+    fx.flagOn = true;
+    await POST(req("Bearer nope"));
+    fx.sweepError = new Error("claim failed");
+    await POST(req("Bearer s3cret"));
+    expect(fx.alerted).toEqual([]);
   });
 });

@@ -24,6 +24,7 @@ import { todayManilaISODate } from "@/lib/dates/manila";
 import { loadHiddenCardIds } from "@/lib/dashboards/card-prefs";
 import { loadCandidatePairsWithStatus } from "@/lib/patients/find-duplicates";
 import { fetchOutdatedCopies } from "@/lib/results/copy-followups.server";
+import { fetchAbandonedNoticeCount } from "@/lib/results/release-notice-followups.server";
 import { cappedCountLabel } from "@/lib/results/copy-followups";
 import { loadNewPatientsToday, loadPatientSourcesTrend, type PatientSourcesTrend } from "@/lib/marketing/patient-sources.server";
 import { formatNewToday, todayRows, type ReportResult, type SeriesRow } from "@/lib/marketing/patient-sources";
@@ -164,6 +165,7 @@ async function loadAdminStats(show: (id: string) => boolean) {
     booksLines,
     newMessagesCount,
     resultFollowups,
+    abandonedNotices,
     newToday,
     trend,
   ] = await Promise.all([
@@ -510,6 +512,11 @@ async function loadAdminStats(show: (id: string) => boolean) {
     show("admin.result_followups")
       ? fetchOutdatedCopies(supabase, false)
       : Promise.resolve({ ok: true as const, rows: [], capped: false }),
+    // release_notices is service_role-only: read through the admin client, and only
+    // for the admin dashboard (this component renders for admins alone).
+    show("admin.result_notices_abandoned")
+      ? fetchAbandonedNoticeCount()
+      : Promise.resolve({ ok: true as const, count: 0 }),
     // With the trend card on, the tile reads today out of the trend's one
     // report call instead (below), so only call the single-day loader without it.
     show("admin.new_patients_today") && !show("admin.patient_sources_trend")
@@ -573,6 +580,7 @@ async function loadAdminStats(show: (id: string) => boolean) {
     { scope: "new_messages", error: newMessagesCount.error },
     { scope: "queue_unclaimed", error: queueUnclaimed.error ?? queueUnclaimedXray.error },
     { scope: "result_followups", error: resultFollowups.ok ? null : resultFollowups.error },
+    { scope: "result_notices_abandoned", error: abandonedNotices.ok ? null : abandonedNotices.error },
   ];
   await Promise.all(
     namedResults
@@ -773,6 +781,8 @@ async function loadAdminStats(show: (id: string) => boolean) {
     resultFollowupsCount: resultFollowups.ok ? resultFollowups.rows.length : 0,
     resultFollowupsCapped: resultFollowups.ok && resultFollowups.capped,
     resultFollowupsError: !resultFollowups.ok,
+    abandonedNoticesCount: abandonedNotices.ok ? abandonedNotices.count : 0,
+    abandonedNoticesError: !abandonedNotices.ok,
     // Identical by construction: the trend's new_by_day and the single-day
     // loader both come from _ps_sec_series(day, new).
     newToday: (trend
@@ -933,11 +943,15 @@ export async function AdminDashboard({
   const showResultFollowupsCard =
     show("admin.result_followups") &&
     (stats.resultFollowupsError || stats.resultFollowupsCount > 0);
+  const showAbandonedNoticesCard =
+    show("admin.result_notices_abandoned") &&
+    (stats.abandonedNoticesError || stats.abandonedNoticesCount > 0);
   const showAttention =
     show("admin.strip_audit") ||
     showStaleDraftsStrip ||
     showReleasedByStaffStrip ||
-    showResultFollowupsCard;
+    showResultFollowupsCard ||
+    showAbandonedNoticesCard;
 
   return (
     <div className="px-4 py-8 sm:px-6 lg:px-8">
@@ -1225,6 +1239,16 @@ export async function AdminDashboard({
                 href="/staff/result-follow-ups"
                 accent="warn"
                 error={stats.resultFollowupsError}
+              />
+            )}
+            {showAbandonedNoticesCard && (
+              <StatCard
+                label="Result-ready messages given up on"
+                value={String(stats.abandonedNoticesCount)}
+                hint="The patient was not told their result is ready"
+                href="/staff/result-follow-ups"
+                accent="warn"
+                error={stats.abandonedNoticesError}
               />
             )}
             {show("admin.strip_audit") && (
