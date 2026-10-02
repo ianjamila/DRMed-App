@@ -319,6 +319,15 @@ export function translatePgError(err: PgError): string {
       return err.message
         ? err.message
         : "Part of this report changed since — nothing was put back.";
+    // 0221 delete_test_request_lines / restore_test_request_lines: the visit
+    // the lines belong to was deleted (re-checked under the visit lock, after
+    // the app's own lock-free check passed) — nothing was changed. The SQL
+    // words it for staff ("Visit is already deleted." / "The visit itself is
+    // deleted — restore the visit first."); pass it through like P0077.
+    case "P0083":
+      return err.message
+        ? err.message
+        : "This visit was deleted from the queue — restore the visit first.";
     default:
       return err.message ?? "Database error. Please try again.";
   }
