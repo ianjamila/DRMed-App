@@ -57,7 +57,7 @@
 // guard protects - a second reversal, a duplicate bill for one month, an active allocation on a voided payment, an edit of a
 // posted bill - not merely where the waiter queued (the normal run checks the queue relation too):
 //   MVP ap_void_bill_payment_cascade without the payment FOR UPDATE       (P1)
-//   MRA ap_reallocate_bill_payment without the payment FOR UPDATE         (P2 P4)
+//   MRA ap_reallocate_bill_payment without the payment FOR UPDATE         (P2; P4 still passes)
 //   MVB ap_void_bill_with_guard without the bill FOR UPDATE               (B1)
 //   MUD ap_update_bill_draft without the bill FOR UPDATE                  (B6 B8)
 //   MPR ap_post_recurring_template without the template FOR UPDATE        (T1 T2 T3)
@@ -87,6 +87,9 @@
 //   - the recompute trigger's bill lock against the real reallocate / void functions (K2, K3 against MK): the functions'
 //     own bill pre-lock already serialises two writers on a bill before either touches an allocation, so the trigger lock is
 //     defence in depth for a writer that does NOT pre-lock (K4, MK) - and K2 / K3 only fail when BOTH are removed (MKK).
+//   - ap_reallocate_bill_payment against a second reallocation of the same payment (P4 against MRA): both writers
+//     share the payment's old bill, so the 0222 bill pre-lock serialises them before either reads the allocations; the
+//     payment FOR UPDATE is no longer the only guard there (it still is against a void, P2).
 //
 // FIXTURES are committed (two connections cannot see each other's uncommitted rows), tagged aps-<hex> (vendor names,
 // template descriptions, one throwaway admin), swept at start, deleted in finally + SIGINT/SIGTERM (incl. the journal
