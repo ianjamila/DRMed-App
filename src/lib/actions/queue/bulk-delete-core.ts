@@ -13,7 +13,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import type { StaffSession } from "@/lib/auth/require-staff";
 import { translatePgError } from "@/lib/accounting/pg-errors";
 import { ipAndAgent } from "@/lib/server/action-helpers";
-import { QUEUE_DELETE_ROLES } from "@/lib/visits/deletion";
+import { QUEUE_DELETE_ROLES, VISIT_DELETED_ERRCODE } from "@/lib/visits/deletion";
 import { QueueDeleteReasonSchema } from "@/lib/validations/accounting";
 import { revalidateQueueSurfaces } from "@/lib/actions/visits/queue-restore-core";
 import { readInChunks } from "@/lib/supabase/in-chunks";
@@ -27,6 +27,9 @@ import {
 import type { BulkBatchContext } from "@/lib/actions/queue/bulk-cores";
 
 export const NOT_QUEUE_DELETE_STAFF = "Only reception or admin can delete queue entries.";
+
+/** The refusal for a deleted visit: the pre-check's wording, and what the RPC's P0083 (0221) maps to. */
+export const VISIT_ALREADY_DELETED_ERROR = "Visit is already deleted.";
 
 export function parseQueueDeleteReason(
   reason: string,
@@ -77,7 +80,7 @@ export async function deleteTestRequestsForVisit(
     return { ok: false, error: "None of the selected tests can be deleted." };
   }
   if (rows.some((r) => r.visits.deleted_at !== null)) {
-    return { ok: false, error: "Visit is already deleted." };
+    return { ok: false, error: VISIT_ALREADY_DELETED_ERROR };
   }
 
   // One statement per visit — the 0125 guard raises P0042/P0043/P0044 for the
@@ -86,6 +89,9 @@ export async function deleteTestRequestsForVisit(
   // locks first in the global order (patient, visit, lines + a header's
   // components by id): a bare UPDATE here deadlocked with claim / release /
   // undo. Retried once on a lost race (P0072 / 40P01): it rolls back whole.
+  // A visit deleted between the unlocked check above and the RPC is refused by
+  // the RPC under its visit lock (P0083, 0221, nothing changed): answered with
+  // the pre-check's own message.
   // The exact timestamp rides the audit metadata below so a bulk Undo can
   // predicate its restore on it (P1: exact predicates) rather than restoring
   // whatever is currently deleted.
@@ -99,7 +105,12 @@ export async function deleteTestRequestsForVisit(
       p_deleted_at: deletedAtIso,
     }),
   );
-  if (error) return { ok: false, error: translatePgError(error) };
+  if (error) {
+    return {
+      ok: false,
+      error: error.code === VISIT_DELETED_ERRCODE ? VISIT_ALREADY_DELETED_ERROR : translatePgError(error),
+    };
+  }
   if (!deletedIds || deletedIds.length === 0) {
     return { ok: false, error: "None of the selected tests can be deleted." };
   }

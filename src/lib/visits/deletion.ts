@@ -14,6 +14,15 @@ export const QUEUE_DELETE_ROLES: ReadonlySet<string> = new Set([
   "admin",
 ]);
 
+/**
+ * The errcode delete_test_request_lines / restore_test_request_lines (0221) raise
+ * when the visit is deleted - re-checked under the visit lock, after the app's own
+ * lock-free "is the visit deleted?" check passed. Nothing was changed. The two
+ * queue cores (bulk-delete-core.ts, queue-restore-core.ts) answer it with the very
+ * message their pre-check shows, so a visit deleted in between reads the same.
+ */
+export const VISIT_DELETED_ERRCODE = "P0083";
+
 export type DeleteBlockedReason =
   | "role"
   | "already_deleted"

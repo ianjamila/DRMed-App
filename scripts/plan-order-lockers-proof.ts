@@ -5,14 +5,15 @@
 //
 //   recompute_clinic_fee_for_unreleased()  (0215)             scenarios R1-R8
 //   delete_test_request_lines / restore_test_request_lines /
-//   restore_panel_members (0216) + fn_queue_delete_cascade (0125)  scenarios Q1-Q11
+//   restore_panel_members (0216; 0221 adds the deleted-visit re-check to the first two)
+//   + fn_queue_delete_cascade (0125)                           scenarios Q1-Q13
 //   fn_release_headers_on_visit_paid()     (0138)             scenarios P1-P3
 //
 // The global lock order every one of them now takes: the patient lifecycle lock
 // (shared) -> the visit row -> the lines ORDER BY id -> the write. The assertions
 // describe the CORRECT behaviour (no 40P01, no fee change on a line that has a
 // posted journal entry, both sides finish); --control proves each guard matters by
-// running the named scenarios against mutant copies (M1-M11) that must FAIL.
+// running the named scenarios against mutant copies (M1-M12) that must FAIL.
 //
 // DETERMINISTIC, NOT LUCKY. Same method as report-release-concurrency-proof.ts:
 // every forced scenario holds one side's locks in an open transaction, starts the
@@ -27,6 +28,7 @@
 //   recompute   service role   admin.rpc("recompute_clinic_fee_for_unreleased")
 //   line delete service role   queue/bulk-delete-core.ts deleteTestRequestsForVisit
 //                              -> rpc("delete_test_request_lines")
+//   visit delete service role  visits/queue-deletion.ts deleteVisitAction (a bare UPDATE of the visit row)
 //   line restore service role  visits/queue-restore-core.ts -> rpc("restore_test_request_lines")
 //   panel Undo  service role   panel-writes.ts restorePanelMembers -> rpc("restore_panel_members")
 //   payment     authenticated  payments/new/actions.ts (the staff session client)
@@ -290,6 +292,19 @@ function restorePanel(a: Actor, visit: string, ids: readonly string[], at: strin
       ids.map(() => at),
     ]),
     (r) => Number(r.rows[0].n),
+  );
+}
+
+// queue-deletion.ts deleteVisitAction (admin client): the visit soft delete - a bare UPDATE of the
+// visit row, guarded by 0125 (unpaid only). It does not touch the visit's lines. Returns the rows
+// updated (1 = this call deleted it).
+function deleteVisit(a: Actor, visit: string): Promise<Out<number>> {
+  return settle(
+    a.c.query(
+      "update public.visits set deleted_at = $2, deleted_by = $3, delete_reason = $4 where id = $1 and deleted_at is null",
+      [visit, new Date().toISOString(), fx.admin1, `${TAG} concurrency proof`],
+    ),
+    (r) => r.rowCount ?? 0,
   );
 }
 
@@ -1429,8 +1444,10 @@ async function answersOrWaitsOn<T>(
 // first, then x1 behind the claim - which then wanted x2: a cycle.
 async function cascadeRace(writer: "claim" | "unclaim"): Promise<string> {
   const ip = writer === "unclaim";
-  const p = await mkPkg({ comps: ip ? ["in_progress", "in_progress"] : ["requested", "requested"] });
-  if (!(await storedBefore(p.x2, p.x1))) throw new Fail("fixture: x2 is not stored before x1 (heap order not reversed)");
+  // Heap placement follows free space, so x2 can land after x1: rebuild (up to 8 times) until it is stored first, as mkVisit does for "desc".
+  let p = await mkPkg({ comps: ip ? ["in_progress", "in_progress"] : ["requested", "requested"] });
+  for (let i = 1; i < 8 && !(await storedBefore(p.x2, p.x1)); i++) p = await mkPkg({ comps: ip ? ["in_progress", "in_progress"] : ["requested", "requested"] });
+  if (!(await storedBefore(p.x2, p.x1))) throw new Fail("fixture: x2 is not stored before x1 (heap order not reversed) after 8 tries");
   const X1: Row = { table: "test_requests", id: p.x1, label: "X1" };
   const X2: Row = { table: "test_requests", id: p.x2, label: "X2" };
   const H: Row = { table: "test_requests", id: p.header, label: "H" };
@@ -1523,6 +1540,61 @@ async function mergeRace(kind: "delete" | "restore" | "panel"): Promise<string> 
     if (gone !== (kind === "delete")) throw new Fail(`after the ${kind}: line ${id} should be ${kind === "delete" ? "deleted" : "live"}`);
   }
   return `no deadlock - ${w1.text}; ${w2.text}`;
+}
+
+// Q12 / Q13: a line delete / restore vs a soft delete of the VISIT. The app checks the visit's
+// deleted_at WITHOUT a lock (bulk-delete-core.ts / queue-restore-core.ts) and then calls the RPC, so a
+// visit soft-deleted in between must be re-checked under the visit lock the RPC takes. The visit
+// delete (the app's UPDATE, queue-deletion.ts) holds the visit row open; the RPC - called after the
+// pre-check passed on the live visit - takes the patient lock, reads the visit and queues on its FOR
+// UPDATE behind the visit delete; the visit delete commits; the RPC must REFUSE (P0083) and change
+// nothing. Without that check (0216) a restore leaves LIVE lines under a deleted visit and a delete
+// deletes lines (and rewrites total_php) of a deleted visit.
+async function visitDeletedRace(kind: "delete" | "restore"): Promise<string> {
+  const f = await mkVisit({ states: ["requested", "requested"], paid: false, deleted: kind === "restore" });
+  const V: Row = { table: "visits", id: f.visit, label: "V" };
+  const snap = async () => {
+    const { rows } = await monitor.query<{ id: string; deleted_at: string | null }>(
+      "select id, deleted_at::text as deleted_at from public.test_requests where id = any($1::uuid[]) order by id",
+      [f.ids],
+    );
+    const { rows: v } = await monitor.query<{ deleted_at: string | null; total_php: string }>(
+      "select deleted_at::text as deleted_at, total_php::text from public.visits where id = $1",
+      [f.visit],
+    );
+    return { lines: rows, visit: v[0] };
+  };
+  const before = await snap();
+  if (before.visit.deleted_at) throw new Fail("fixture: the visit must start live");
+  if (before.lines.some((l) => (l.deleted_at !== null) !== (kind === "restore"))) throw new Fail(`fixture: the lines must start ${kind === "restore" ? "deleted" : "live"}`);
+
+  const vd = await actor("visit-delete", null);
+  await begin(vd);
+  const vOut = expectOk("visit delete", await deleteVisit(vd, f.visit));
+  if (vOut !== 1) throw new Fail(`visit delete: expected to delete 1 visit, got ${vOut}`);
+  const op = await actor(kind, null);
+  await begin(op);
+  const pop = andEnd(op, kind === "delete" ? deleteLines(op, f.visit, f.ids) : restoreLines(op, f.visit, f.ids));
+  const w1 = await mustBlockOn(op, V, vd, `the ${kind} (its caller saw a live visit) wants the visit FOR UPDATE behind the visit delete`);
+  await vd.c.query("commit");
+  const [ro] = await raceResult([kind, "visit-delete"], pop, Promise.resolve({ ok: true, v: vOut } as Out<number>));
+  if (!ro.ok && ro.code === "40P01") throw new Fail(`40P01 deadlock (victim: ${kind}): the ${kind} vs the visit delete. ${w1.text}`);
+
+  const after = await snap();
+  if (!after.visit.deleted_at) throw new Fail("after both: the visit delete committed, so the visit must be deleted");
+  const moved = after.lines.filter((l, i) => l.deleted_at !== before.lines[i].deleted_at);
+  if (moved.length > 0) {
+    throw new Fail(
+      `lines changed on a deleted visit: the ${kind} answered ${ro.ok ? `ok (${ro.v} line(s))` : fmtOut(ro)} after the visit delete committed and ${moved.length} of ${f.ids.length} line(s) were ${kind === "restore" ? "restored" : "deleted"} ` +
+        `under the deleted visit (visit total_php ${before.visit.total_php} -> ${after.visit.total_php}). ${w1.text}`,
+    );
+  }
+  if (after.visit.total_php !== before.visit.total_php) {
+    throw new Fail(`after the refused ${kind}: the deleted visit's total_php changed ${before.visit.total_php} -> ${after.visit.total_php}`);
+  }
+  if (ro.ok) throw new Fail(`${kind}: answered ok (${ro.v} line(s)) on a deleted visit but changed nothing - expected the P0083 refusal. ${w1.text}`);
+  if (ro.code !== "P0083") throw new Fail(`${kind}: expected the visit-deleted refusal (P0083), got ${fmtOut(ro)}`);
+  return `${kind} refused (${ro.code}) once the visit delete committed, lines and total untouched; ${w1.text}`;
 }
 
 async function cascadeScenarios(): Promise<void> {
@@ -1794,6 +1866,16 @@ async function cascadeScenarios(): Promise<void> {
   await scenario("Q9", "bulk delete vs a merge of the patient (W holds a line): must not deadlock", () => mergeRace("delete"));
   // concurrency-proof: restore_test_request_lines
   await scenario("Q10", "manual restore vs a merge of the patient (W holds a line): must not deadlock", () => mergeRace("restore"));
+
+  // Q12 / Q13: a delete / restore vs a soft delete of the VISIT (see visitDeletedRace).
+  // concurrency-proof: restore_test_request_lines
+  await scenario("Q12", "manual restore vs a soft delete of the visit (visit delete holds the visit): the restore is refused, nothing restored", () =>
+    visitDeletedRace("restore"),
+  );
+  // concurrency-proof: delete_test_request_lines
+  await scenario("Q13", "bulk delete vs a soft delete of the visit (visit delete holds the visit): the delete is refused, nothing deleted", () =>
+    visitDeletedRace("delete"),
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -1940,7 +2022,7 @@ async function headerReleaseScenarios(): Promise<void> {
 // shared), with ONE guard removed from the mutant's target; the named scenarios
 // run against the copies through fn.recomputeSchema / fn.lineSchema and the round
 // passes only if every one of them FAILS for its expected reason ("caught": a real
-// 40P01, the lost update, R6's P0070 - see Catch). B0 is the unmutated set and must
+// 40P01, the lost update, R6's P0070, R8's rewritten line, Q12/Q13's changed lines - see Catch). B0 is the unmutated set and must
 // pass them all, so a broken copy cannot make every mutant look caught.
 //   M1  the pre-0215 (0184) body: no visit/line pre-lock, one UPDATE over a CTE
 //   M2  no visit pre-lock (b): lines are locked first, the 0183 guard then takes the visit
@@ -1955,6 +2037,7 @@ async function headerReleaseScenarios(): Promise<void> {
 //   M9  no line pre-lock in delete_test_request_lines (the UPDATE + cascade lock in plan order)
 //   M10 no patient lifecycle lock first in the three line functions (a merge closes a cycle)
 //   M11 no `tr.visit_id = any (v_visits)` re-check in (d): a line moved to an unlocked visit is rewritten (R8)
+//   M12 no deleted-visit re-check (0221) in delete / restore_test_request_lines: lines change under a deleted visit (Q12, Q13)
 // NOT separately provable: restore_test_request_lines' / restore_panel_members' line
 // pre-lock, incl. its reach to a header's components. Every writer that can lock a
 // DELETED line takes the visit first (release / undo FOR SHARE, recompute FOR UPDATE)
@@ -2009,7 +2092,7 @@ function pre0216Panel(): string {
 }
 
 // A mutant is CAUGHT by a scenario only when that scenario fails for the expected reason (a
-// regex over its Fail text): a real 40P01, the lost update, or R6's P0070 abort. Anything else
+// regex over its Fail text): a real 40P01, the lost update, R6's P0070 abort, R8's rewritten line or Q12/Q13's changed lines. Anything else
 // - the interleaving not reached, a fixture error, a timeout - is infrastructure, not detection,
 // and fails the round (the same discipline as panel-undo-concurrency-proof.ts).
 interface Catch {
@@ -2020,6 +2103,7 @@ const DEADLOCK = /^40P01 deadlock \(victim: /;
 const LOST_UPDATE = /^lost update: /;
 const P0070_ABORT = /^recompute aborted \(P0070\)/;
 const MOVED_REWRITTEN = /^moved line rewritten: /;
+const LINES_ON_DELETED_VISIT = /^lines changed on a deleted visit: /;
 const dl = (...ids: string[]): Catch[] => ids.map((id) => ({ id, reason: DEADLOCK }));
 
 interface Mutant {
@@ -2118,6 +2202,27 @@ const MUTANTS: Mutant[] = [
     edits: [["recompute", "\n            and tr.visit_id = any (v_visits)      -- 0215: a line moved to a visit we did not lock waits for the next run", ""]],
     mustFail: [{ id: "R8", reason: MOVED_REWRITTEN }],
   },
+  {
+    key: "M12",
+    what: "no deleted-visit re-check under the visit lock (the pre-0221 bodies) - lines change under a deleted visit",
+    // Each refusal as a whole block (the texts occur once per function; the applier asserts it).
+    edits: [
+      [
+        "delete",
+        "  if v_deleted is not null then\n    raise exception 'Visit is already deleted.' using errcode = 'P0083';\n  end if;\n",
+        "",
+      ],
+      [
+        "restore",
+        "  if v_deleted is not null then\n    raise exception 'The visit itself is deleted — restore the visit first.' using errcode = 'P0083';\n  end if;\n",
+        "",
+      ],
+    ],
+    mustFail: [
+      { id: "Q12", reason: LINES_ON_DELETED_VISIT },
+      { id: "Q13", reason: LINES_ON_DELETED_VISIT },
+    ],
+  },
 ];
 
 async function installCopies(m: Mutant | null): Promise<void> {
@@ -2147,7 +2252,7 @@ async function installCopies(m: Mutant | null): Promise<void> {
 
 const CONTROL_SCENARIOS = [
   "R1", "R2a", "R3-claim", "R3-unclaim", "R4", "R5", "R6", "R7", "R8", "P3",
-  "Q1", "Q2", "Q3", "Q4", "Q5", "Q6", "Q7", "Q8", "Q9", "Q10", "Q11",
+  "Q1", "Q2", "Q3", "Q4", "Q5", "Q6", "Q7", "Q8", "Q9", "Q10", "Q11", "Q12", "Q13",
 ];
 
 async function controlRounds(): Promise<void> {
