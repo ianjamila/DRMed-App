@@ -588,6 +588,16 @@ describe("undoReleaseSelectedAction — undo_visit_release", () => {
     expect(fx.audits).toEqual([]);
   });
 
+  it("0224: undoing a line whose doctor fee was already paid out (P0084) tells the user to void the payout first; nothing is audited", async () => {
+    const fake = releasedSeed();
+    fake.failNextRpc("undo_visit_release", { code: "P0084", message: "raw database text that must not reach the user" });
+    expect(await undoReleaseSelectedAction("v1", ["x"], "r")).toEqual({
+      ok: false,
+      error: "This doctor's fee was already paid out — void the payout first.",
+    });
+    expect(fx.audits).toEqual([]);
+  });
+
   it("40001 is retried once and then succeeds", async () => {
     const fake = releasedSeed();
     fake.failNextRpc("undo_visit_release", { code: "40001", message: "changed" });

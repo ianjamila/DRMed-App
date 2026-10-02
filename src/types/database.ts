@@ -8089,6 +8089,18 @@ export type Database = {
         }[]
       }
       period_status_for: { Args: { p_date: string }; Returns: string }
+      pf_disburse_entries: {
+        Args: {
+          p_entry_ids: string[]
+          p_method: string
+          p_notes?: string
+          p_physician_id: string
+          p_posted_date: string
+          p_recorded_by: string
+          p_total_php: number
+        }
+        Returns: Json
+      }
       queue_claim_remarks: {
         Args: { p_test_request_ids: string[] }
         Returns: {

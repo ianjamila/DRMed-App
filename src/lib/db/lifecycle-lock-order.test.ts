@@ -108,6 +108,14 @@ const ALLOW: Record<string, LockOrderExemption> = {
       "callee-only: called solely from tg_hmo_item_resolution_amounts_recompute, an AFTER trigger on " +
       "hmo_claim_resolutions (a guarded table), so the shared patient lock is already held; merge never writes hmo_claim_items.",
   },
+  pf_disburse_entries: {
+    file: "0224_pf_payout_atomic.sql",
+    why:
+      "the doctor-fee payout locks doctor_pf_entries ORDER BY id and its only write to them sets disbursement_id, an " +
+      "UPDATE a_lifecycle_guard exempts (0184) — so no patient lock is ever taken and none can be ordered. Merge / " +
+      "undo-merge never write doctor_pf_entries and delete / restore lock only the patients row, so no exclusive holder " +
+      "waits on a PF entry; the cancel / undo bridges reach the same entries only after the line (0224 refusal).",
+  },
   tg_hmo_batch_voided_propagate: {
     file: "0034_hmo_ar_subledger.sql",
     why:
