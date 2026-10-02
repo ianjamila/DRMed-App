@@ -2,7 +2,7 @@
 -- =============================================================================
 -- Test-line delete and restore move into SECURITY DEFINER functions that take
 -- the global lock order: patient lifecycle lock (shared) -> visit row FOR UPDATE
--- -> every line they will touch FOR UPDATE ORDER BY id -> the write.
+-- -> every line they will touch ORDER BY id FOR NO KEY UPDATE -> the write.
 --
 -- THE BUGS (reproduced by scripts/plan-order-lockers-proof.ts, scenarios Q1,
 -- Q2, Q3, Q5, Q6, Q7, Q8 and the merge scenarios; PR 3a = 0215 fixed recompute):
@@ -42,7 +42,9 @@
 --     1. visits WHERE id = visit FOR UPDATE   (the mode the cascade's visit
 --        UPDATE and the 0183 guard take, so no lock upgrade later);
 --     2. the lock set = the requested lines + the live components of any
---        package header among them, ORDER BY id FOR UPDATE;
+--        package header among them, ORDER BY id FOR NO KEY UPDATE (the mode
+--        their UPDATE takes: deleted_at is no key column, so FK child inserts on
+--        the lines - a result link, an HMO item - are not blocked);
 --     3. the SAME UPDATE the app issued (deleted_at / deleted_by / delete_reason
 --        WHERE id = any(ids) AND visit_id AND deleted_at IS NULL), returning the
 --        deleted ids. The 0125 guards still raise P0042 / P0043 / P0044 / P0050 /
@@ -122,7 +124,7 @@ begin
      and t.deleted_at is null
      and (t.id = any (p_test_request_ids) or t.parent_id = any (p_test_request_ids))
    order by t.id
-     for update;
+     for no key update;
 
   -- 3. the app's UPDATE, unchanged.
   with d as (
@@ -142,7 +144,7 @@ end;
 $$;
 
 comment on function public.delete_test_request_lines(uuid, uuid[], uuid, text, timestamptz) is
-  'Soft delete of test_requests on one visit in the global lock order (patient lifecycle lock shared, visit FOR UPDATE, then the lines and a package header''s live components ORDER BY id FOR UPDATE), then the same UPDATE the app used to issue. The 0125 guards still raise P0042-P0044/P0050/P0067 for the whole statement. service_role only (the app checks role, reason and active patient first). Proof: scripts/plan-order-lockers-proof.ts.';
+  'Soft delete of test_requests on one visit in the global lock order (patient lifecycle lock shared, visit FOR UPDATE, then the lines and a package header''s live components ORDER BY id FOR NO KEY UPDATE), then the same UPDATE the app used to issue. The 0125 guards still raise P0042-P0044/P0050/P0067 for the whole statement. service_role only (the app checks role, reason and active patient first). Proof: scripts/plan-order-lockers-proof.ts.';
 
 revoke all on function public.delete_test_request_lines(uuid, uuid[], uuid, text, timestamptz) from public, anon, authenticated;
 grant execute on function public.delete_test_request_lines(uuid, uuid[], uuid, text, timestamptz) to service_role;
@@ -192,7 +194,7 @@ begin
    where t.visit_id = p_visit_id
      and (t.id = any (p_test_request_ids) or t.parent_id = any (p_test_request_ids))
    order by t.id
-     for update;
+     for no key update;
 
   with r as (
     update public.test_requests
@@ -209,7 +211,7 @@ end;
 $$;
 
 comment on function public.restore_test_request_lines(uuid, uuid[], timestamptz) is
-  'Restore of soft-deleted test_requests on one visit in the global lock order (patient lifecycle lock shared, visit FOR UPDATE, then the lines and a package header''s components ORDER BY id FOR UPDATE), then the same UPDATE the app used to issue: with p_deleted_at only rows deleted at exactly that instant (a bulk Undo), without it any deleted row (manual Restore). service_role only. Proof: scripts/plan-order-lockers-proof.ts.';
+  'Restore of soft-deleted test_requests on one visit in the global lock order (patient lifecycle lock shared, visit FOR UPDATE, then the lines and a package header''s components ORDER BY id FOR NO KEY UPDATE), then the same UPDATE the app used to issue: with p_deleted_at only rows deleted at exactly that instant (a bulk Undo), without it any deleted row (manual Restore). service_role only. Proof: scripts/plan-order-lockers-proof.ts.';
 
 revoke all on function public.restore_test_request_lines(uuid, uuid[], timestamptz) from public, anon, authenticated;
 grant execute on function public.restore_test_request_lines(uuid, uuid[], timestamptz) to service_role;

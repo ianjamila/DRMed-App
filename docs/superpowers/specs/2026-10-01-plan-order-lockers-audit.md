@@ -136,17 +136,31 @@ P1/P2/Q4 are clean (report-only, no fix).
    Controls: mutants M1 (pre-fix body), M2 (no visit pre-lock), M3 (no line
    pre-lock), M4 (no predicate re-check) are each caught; B0 passes.
 
-### PR 3b - package header delete / restore (later, new branch)
+### PR 3b - package header delete / restore (0216, `fix/plan-order-deletes`)
 
 Q3 showed a TRIGGER cannot fix the cascade: release/undo lock x1 then H, while a
 header delete holds H (the UPDATE target) before its AFTER trigger reaches any
 component, so an id-ordered component pre-lock inside fn_queue_delete_cascade
-still cycles (Q3b reproduces it with the pre-lock done by hand). The fix is
-therefore an RPC that takes the locks itself in the global order - visit, then
-the header and its components ORDER BY id - and then performs the soft delete /
-restore, with the app calling it instead of the bare UPDATE. It closes Q1, Q2,
-Q3 and (for the lines it covers) Q5. Until then the runner prints those as
-KNOWN - fixed by PR 3b.
+still cycles (Q3b reproduced it with the pre-lock done by hand). The fix is
+therefore RPCs that take the locks themselves in the global order and then
+perform the same soft delete / restore, with the app calling them instead of the
+bare UPDATEs:
+
+- `delete_test_request_lines` / `restore_test_request_lines` (new) and
+  `restore_panel_members` (0200, re-created): patient lifecycle lock (shared,
+  the 3a lesson - merge / undo-merge take it exclusive and then UPDATE visits)
+  -> visit FOR UPDATE, re-read (P0072 if a merge moved it) -> the lines and a
+  header's components ORDER BY id FOR NO KEY UPDATE -> the UPDATE. All SECURITY
+  DEFINER, `service_role` only.
+- Closes Q1, Q2, Q3, Q5, plus the cycles the review added: Q6 restore vs
+  release, Q8 delete vs undo of a report-mate, Q11 panel Undo vs release, and
+  Q7 / Q9 / Q10 vs a patient merge.
+- Controls: M7 (the pre-0216 writes), M8 (no visit pre-lock), M9 (no line
+  pre-lock in delete), M10 (no patient lock first) are each caught by a real
+  40P01. The restores' line pre-lock is not separately provable (every
+  locker of a deleted line takes the visit first).
+- The sibling `panel-undo-concurrency-proof.ts` S7 (manual Restore vs panel
+  restore, a documented cycle) is now asserted deadlock-free.
 
 Nothing for fn_release_headers_on_visit_paid: P1/P2 pass, and P3 is closed by 3a.
 

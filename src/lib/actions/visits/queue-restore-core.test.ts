@@ -69,6 +69,17 @@ describe("restore_test_request_lines (0216) keeps the app's write predicates", (
     expect(restoreFn).toMatch(/\(\(p_deleted_at is null and deleted_at is not null\) or deleted_at = p_deleted_at\)/);
     expect(restoreFn).toMatch(/and visit_id = p_visit_id/);
   });
+
+  it("patient lock, then visit FOR UPDATE, then the lines and a header's components by id, then the UPDATE", () => {
+    const patient = restoreFn.indexOf("lifecycle_lock_and_assert(array[v_patient], false)");
+    const visit = restoreFn.indexOf("where v.id = p_visit_id for update");
+    const lines = restoreFn.search(/t\.parent_id = any \(p_test_request_ids\)\)\s+order by t\.id\s+for no key update/);
+    const write = restoreFn.indexOf("update public.test_requests");
+    expect(patient).toBeGreaterThan(-1);
+    expect(visit).toBeGreaterThan(patient);
+    expect(lines).toBeGreaterThan(visit);
+    expect(write).toBeGreaterThan(lines);
+  });
 });
 
 // Behavioural: a restore write that loses a lock race (40P01) re-runs once.

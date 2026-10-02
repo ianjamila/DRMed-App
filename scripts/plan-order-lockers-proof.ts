@@ -5,7 +5,7 @@
 //
 //   recompute_clinic_fee_for_unreleased()  (0215)             scenarios R1-R7
 //   delete_test_request_lines / restore_test_request_lines /
-//   restore_panel_members (0216) + fn_queue_delete_cascade (0125)  scenarios Q1-Q10
+//   restore_panel_members (0216) + fn_queue_delete_cascade (0125)  scenarios Q1-Q11
 //   fn_release_headers_on_visit_paid()     (0138)             scenarios P1-P3
 //
 // The global lock order every one of them now takes: the patient lifecycle lock
@@ -1498,7 +1498,7 @@ async function cascadeScenarios(): Promise<void> {
     const rel = expectOk("release", rm);
     if (!rel.released.some((r) => r.id === p.x1)) throw new Fail(`release: x1 should be released, got ${JSON.stringify(rel)}`);
     if (rd.ok) throw new Fail("delete: a header whose component was just released must be refused, but it succeeded");
-    if (!/^P00(4[2-4]|50)$/.test(rd.code)) throw new Fail(`delete: expected a 0125 guard refusal, got ${fmtOut(rd)}`);
+    if (rd.code !== "P0043") throw new Fail(`delete: expected the 0125 released-result refusal (P0043), got ${fmtOut(rd)}`);
     for (const id of [p.header, p.x1, p.x2]) {
       if ((await lineOf(id)).deleted_at) throw new Fail("after the refused delete: nothing may be deleted");
     }
@@ -1613,6 +1613,55 @@ async function cascadeScenarios(): Promise<void> {
       if ((await lineOf(id)).deleted_at) throw new Fail("after the restore: the header and its components should be live");
     }
     return `no deadlock - restore ${heldH ? "held H" : "held no line"} while waiting on the visit; release ${rm.ok ? "answered" : fmtOut(rm)}; ${w1.text}; ${w2.text}`;
+  });
+
+  // Q11: Q6 through the panel Undo (restore_panel_members): the bulk-deleted header comes
+  // back with its components while a stale-screen release of component x1 runs (HMO visit).
+  // W holds the visit FOR SHARE. The panel restore waits for the visit FOR UPDATE holding no
+  // line, so the release runs through. 0200 took the visit only FOR NO KEY UPDATE - the 0183
+  // guard then asked for FOR UPDATE mid-statement - and a panel copy that pre-locks the lines
+  // without the visit (M8) holds H (and x1) while it queues on the visit behind W: the
+  // release then holds the visit share and queues on a line it holds -> 40P01 once W lets go.
+  // concurrency-proof: restore_panel_members
+  await scenario("Q11", "panel Undo of a deleted header vs release of its component (W holds the visit FOR SHARE): must not deadlock", async () => {
+    const p = await mkPkg({ comps: ["ready", "requested"], hmo: true, deleted: true });
+    const X1: Row = { table: "test_requests", id: p.x1, label: "X1" };
+    const H: Row = { table: "test_requests", id: p.header, label: "H" };
+    const V: Row = { table: "visits", id: p.visit, label: "V" };
+    // The exact instant, as text: a JS Date drops the microseconds the predicate compares.
+    const { rows: hd } = await monitor.query<{ d: string }>("select deleted_at::text as d from public.test_requests where id = $1", [p.header]);
+    const g = await actor("W", null);
+    await beginRaw(g);
+    await g.c.query("select 1 from public.visits where id = $1 for share", [p.visit]);
+    const r = await actor("panel", null);
+    await begin(r);
+    const pr = andEnd(r, restorePanel(r, p.visit, [p.header], hd[0].d));
+    const w1 = await mustBlockOn(r, V, g, "the panel restore wants the visit FOR UPDATE (0216 pre-lock, or 0183's guard without it) behind W");
+    const heldH = await rowLocked("test_requests", p.header);
+    const m = await actor("release", fx.med1);
+    await begin(m);
+    const pm = andEnd(m, release(m, p.visit, [p.x1]));
+    const w2 = await answersOrWaitsOn(m, pm, [X1, H], r, "release shares the visit with W, then locks x1 and H by id");
+    await g.c.query("commit");
+    const cycle = await (async () => {
+      await sleep(300);
+      return describeWaits([r, m], [X1, H, V]);
+    })();
+    const [rr, rm] = await raceResult(["panel", "release"], pr, pm);
+    const victim = deadlockVictim(["panel", "release"], rr, rm);
+    if (victim) {
+      throw new Fail(
+        `40P01 deadlock (victim: ${victim}): the panel restore ${heldH ? "held H" : "held no line"} and wanted the visit FOR UPDATE, release held it FOR SHARE and wanted a line the panel held. ` +
+          `${w1.text}; ${w2.text}; after W commits: ${cycle}`,
+      );
+    }
+    if (!rr.ok) throw new Fail(`panel restore failed: ${fmtOut(rr)}`);
+    if (rr.v !== 1) throw new Fail(`panel restore: expected the header (1 member), got ${rr.v}`);
+    if (rm.ok && rm.v.released.length > 0) throw new Fail(`release: nothing deleted may be released, got ${JSON.stringify(rm.v)}`);
+    for (const id of [p.header, p.x1, p.x2]) {
+      if ((await lineOf(id)).deleted_at) throw new Fail("after the panel restore: the header and its components should be live");
+    }
+    return `no deadlock - panel restore ${heldH ? "held H" : "held no line"} while waiting on the visit; release ${rm.ok ? "answered" : fmtOut(rm)}; ${w1.text}; ${w2.text}`;
   });
 
   // Q7 / Q9 / Q10: vs a merge of the patient (see mergeRace).
@@ -1815,8 +1864,9 @@ async function headerReleaseScenarios(): Promise<void> {
 // line functions in a throwaway schema (plo_ctl_<hex>, never public - the stack is
 // shared), with ONE guard removed from the mutant's target; the named scenarios
 // run against the copies through fn.recomputeSchema / fn.lineSchema and the round
-// passes only if every one of them FAILS ("caught"). B0 is the unmutated set and
-// must pass them all, so a broken copy cannot make every mutant look caught.
+// passes only if every one of them FAILS for its expected reason ("caught": a real
+// 40P01, the lost update, R6's P0070 - see Catch). B0 is the unmutated set and must
+// pass them all, so a broken copy cannot make every mutant look caught.
 //   M1  the pre-0215 (0184) body: no visit/line pre-lock, one UPDATE over a CTE
 //   M2  no visit pre-lock (b): lines are locked first, the 0183 guard then takes the visit
 //   M3  no line pre-lock (c): the UPDATE locks the lines in plan order
@@ -1825,13 +1875,15 @@ async function headerReleaseScenarios(): Promise<void> {
 //   M6  no patient lifecycle lock first (b0): a merge closes a cycle (R7)
 //   M7  the pre-0216 line writes: bare UPDATEs for delete / restore and 0200's
 //       restore_panel_members (visit FOR NO KEY UPDATE, no patient lock)
-//   M8  no visit pre-lock in the three line functions (lines first, the visit later)
+//   M8  no visit pre-lock in the three line functions (lines first, the visit later):
+//       Q6 (restore), Q8 (delete), Q11 (restore_panel_members)
 //   M9  no line pre-lock in delete_test_request_lines (the UPDATE + cascade lock in plan order)
 //   M10 no patient lifecycle lock first in the three line functions (a merge closes a cycle)
 // NOT separately provable: restore_test_request_lines' / restore_panel_members' line
-// pre-lock. Every writer that can lock a DELETED line takes the visit first (release /
-// undo FOR SHARE, recompute FOR UPDATE) and claim / unclaim skip deleted lines (Q4),
-// so with the visit held the restore's line order cannot meet another line locker.
+// pre-lock, incl. its reach to a header's components. Every writer that can lock a
+// DELETED line takes the visit first (release / undo FOR SHARE, recompute FOR UPDATE)
+// and claim / unclaim skip deleted lines (Q4), so with the visit held the restore's
+// line order cannot meet another line locker - a mutant of it has no scenario to fail.
 // NOT covered: the guards that live in triggers on public tables
 // (guard_test_request_on_waived_visit) - a trigger on a public table fires for
 // every session, so a mutant of it cannot be isolated.
@@ -1880,13 +1932,26 @@ function pre0216Panel(): string {
   return src.slice(start, end + 3);
 }
 
+// A mutant is CAUGHT by a scenario only when that scenario fails for the expected reason (a
+// regex over its Fail text): a real 40P01, the lost update, or R6's P0070 abort. Anything else
+// - the interleaving not reached, a fixture error, a timeout - is infrastructure, not detection,
+// and fails the round (the same discipline as panel-undo-concurrency-proof.ts).
+interface Catch {
+  id: string;
+  reason: RegExp;
+}
+const DEADLOCK = /^40P01 deadlock \(victim: /;
+const LOST_UPDATE = /^lost update: /;
+const P0070_ABORT = /^recompute aborted \(P0070\)/;
+const dl = (...ids: string[]): Catch[] => ids.map((id) => ({ id, reason: DEADLOCK }));
+
 interface Mutant {
   key: string;
   what: string;
   // [copy, from, to] replacements applied in order to the LIVE definitions; each must match.
   edits: Array<[Copy, string, string]>;
   replace?: Partial<Record<Copy, string>>; // whole pre-fix definitions instead of the live ones
-  mustFail: string[];
+  mustFail: Catch[];
 }
 
 const MUTANTS: Mutant[] = [
@@ -1895,19 +1960,25 @@ const MUTANTS: Mutant[] = [
     what: "the pre-0215 body (one UPDATE over a CTE, no pre-lock)",
     edits: [],
     replace: { recompute: PRE_FIX_BODY },
-    mustFail: ["R1", "R2a", "R3-claim", "R3-unclaim", "R4", "R5", "R6", "P3"],
+    mustFail: [
+      ...dl("R1"),
+      { id: "R2a", reason: LOST_UPDATE },
+      ...dl("R3-claim", "R3-unclaim", "R4", "R5"),
+      { id: "R6", reason: P0070_ABORT },
+      ...dl("P3"),
+    ],
   },
   {
     key: "M2",
     what: "no visit pre-lock (b)",
     edits: [["recompute", "  perform 1 from public.visits\n   where id = any (v_visits)\n   order by id\n     for update;", ""]],
-    mustFail: ["R1", "R4", "R5", "P3"],
+    mustFail: dl("R1", "R4", "R5", "P3"),
   },
   {
     key: "M3",
     what: "no line pre-lock (c) - lines locked by the UPDATE, plan order",
     edits: [["recompute", "  perform 1 from public.test_requests\n   where id = any (v_lines)\n   order by id\n     for no key update;", ""]],
-    mustFail: ["R3-claim", "R3-unclaim"],
+    mustFail: dl("R3-claim", "R3-unclaim"),
   },
   {
     key: "M4",
@@ -1916,7 +1987,7 @@ const MUTANTS: Mutant[] = [
       ["recompute", "     where tr2.id = any (v_lines)\n       and tr2.id in (", "     where tr2.id = any (v_lines)\n       and (true or tr2.id in ("],
       ["recompute", "            )\n       )\n    returning tr2.id", "            )\n       ))\n    returning tr2.id"],
     ],
-    mustFail: ["R2a"],
+    mustFail: [{ id: "R2a", reason: LOST_UPDATE }],
   },
   {
     key: "M5",
@@ -1925,20 +1996,20 @@ const MUTANTS: Mutant[] = [
       ["recompute", "        and v.payment_status is distinct from 'waived'   -- 0215\n", ""],
       ["recompute", "            and v.payment_status is distinct from 'waived'   -- 0215\n", ""],
     ],
-    mustFail: ["R6"],
+    mustFail: [{ id: "R6", reason: P0070_ABORT }],
   },
   {
     key: "M6",
     what: "no patient lifecycle lock first (b0) - the UPDATE asks for it while holding the visit",
     edits: [["recompute", "  perform public.lifecycle_lock(v_patients, false);\n", ""]],
-    mustFail: ["R7"],
+    mustFail: dl("R7"),
   },
   {
     key: "M7",
     what: "the pre-0216 line writes (bare UPDATEs; 0200's restore_panel_members)",
     edits: [],
     replace: { delete: PRE_0216_DELETE, restore: PRE_0216_RESTORE, panel: pre0216Panel() },
-    mustFail: ["Q1", "Q2", "Q3", "Q5", "Q6", "Q7", "Q8"],
+    mustFail: dl("Q1", "Q2", "Q3", "Q5", "Q6", "Q7", "Q8"),
   },
   {
     key: "M8",
@@ -1948,19 +2019,19 @@ const MUTANTS: Mutant[] = [
       "from public.visits v where v.id = p_visit_id for update;",
       "from public.visits v where v.id = p_visit_id;",
     ]),
-    mustFail: ["Q6", "Q8"],
+    mustFail: dl("Q6", "Q8", "Q11"),
   },
   {
     key: "M9",
     what: "no line pre-lock in delete_test_request_lines - the UPDATE and its cascade lock in plan order",
-    edits: [["delete", "   order by t.id\n     for update;\n\n  -- 3.", "   ;\n\n  -- 3."]],
-    mustFail: ["Q1", "Q2", "Q5"],
+    edits: [["delete", "   order by t.id\n     for no key update;\n\n  -- 3.", "   ;\n\n  -- 3."]],
+    mustFail: dl("Q1", "Q2", "Q5"),
   },
   {
     key: "M10",
     what: "no patient lifecycle lock first in the line functions - the UPDATE asks for it holding the visit",
     edits: (["delete", "restore", "panel"] as const).map((c) => [c, "  perform public.lifecycle_lock_and_assert(array[v_patient], false);\n", ""]),
-    mustFail: ["Q7", "Q9", "Q10"],
+    mustFail: dl("Q7", "Q9", "Q10"),
   },
 ];
 
@@ -1989,7 +2060,7 @@ async function installCopies(m: Mutant | null): Promise<void> {
 
 const CONTROL_SCENARIOS = [
   "R1", "R2a", "R3-claim", "R3-unclaim", "R4", "R5", "R6", "R7", "P3",
-  "Q1", "Q2", "Q3", "Q4", "Q5", "Q6", "Q7", "Q8", "Q9", "Q10",
+  "Q1", "Q2", "Q3", "Q4", "Q5", "Q6", "Q7", "Q8", "Q9", "Q10", "Q11",
 ];
 
 async function controlRounds(): Promise<void> {
@@ -1997,7 +2068,7 @@ async function controlRounds(): Promise<void> {
   const savedOnly = only;
   const rounds: Array<{ key: string; what: string; m: Mutant | null; list: string[]; wantPass: boolean }> = [
     { key: "B0", what: "unmutated copy of the live body", m: null, list: CONTROL_SCENARIOS, wantPass: true },
-    ...MUTANTS.map((m) => ({ key: m.key, what: m.what, m, list: m.mustFail, wantPass: false })),
+    ...MUTANTS.map((m) => ({ key: m.key, what: m.what, m, list: m.mustFail.map((c) => c.id), wantPass: false })),
   ].filter((r) => !ctlOnly || ctlOnly.includes(r.key));
   for (const r of rounds) {
     await installCopies(r.m);
@@ -2021,15 +2092,17 @@ async function controlRounds(): Promise<void> {
     const got = new Map(mine.map((x) => [x.id, x]));
     const missing = r.list.filter((id) => !got.has(id));
     const wrong = r.list.filter((id) => got.has(id) && got.get(id)!.ok !== r.wantPass);
-    const ok = missing.length === 0 && wrong.length === 0;
-    const caught = r.list.filter((id) => got.get(id) && !got.get(id)!.ok);
+    // A failure only counts as a catch for its expected reason (see Catch).
+    const badReason = (r.m?.mustFail ?? []).filter((c) => got.get(c.id) && !got.get(c.id)!.ok && !c.reason.test(got.get(c.id)!.detail));
+    const ok = missing.length === 0 && wrong.length === 0 && badReason.length === 0;
+    const caught = r.list.filter((id) => got.get(id) && !got.get(id)!.ok && !badReason.some((c) => c.id === id));
     const label = r.wantPass ? `B0 baseline: ${r.list.length - wrong.length - missing.length}/${r.list.length} scenarios pass` : `${r.key} (${r.what}): caught by ${caught.join(", ") || "nothing"} (${caught.length}/${r.list.length})`;
     results.push({
       id: `control-${r.key}`,
       name: label,
       ok,
       observed: false,
-      detail: ok ? "" : `${missing.length ? `not run: ${missing.join(",")}. ` : ""}${wrong.length ? (r.wantPass ? `failed on the unmutated copy: ${wrong.map((id) => `${id} (${got.get(id)!.detail.slice(0, 120)})`).join("; ")}` : `SURVIVED (passed): ${wrong.join(",")}`) : ""}`,
+      detail: ok ? "" : `${missing.length ? `not run: ${missing.join(",")}. ` : ""}${wrong.length ? (r.wantPass ? `failed on the unmutated copy: ${wrong.map((id) => `${id} (${got.get(id)!.detail.slice(0, 120)})`).join("; ")}` : `SURVIVED (passed): ${wrong.join(",")}`) : ""}${badReason.length ? ` failed for the wrong reason (not a catch): ${badReason.map((c) => `${c.id} wanted /${c.reason.source}/, got "${got.get(c.id)!.detail.slice(0, 120)}"`).join("; ")}` : ""}`,
     });
     console.log(`  ${ok ? "PASS" : "FAIL"}  ${label}${ok ? "" : ` - ${results[results.length - 1].detail}`}`);
     // Why each scenario caught the mutant (a 40P01, a lost update...), so a copy that is merely broken shows.
