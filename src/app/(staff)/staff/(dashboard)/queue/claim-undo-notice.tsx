@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState, useTransition } from "react";
+import { useCallback, useEffect, useRef, useState, useTransition } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { BulkOutcomePanel } from "@/components/staff/row-selection/bulk-outcome";
 import { UNDO_ALREADY, UNDO_EXPIRED, UNDO_WINDOW_MS } from "@/lib/ui/bulk-undo";
@@ -36,17 +36,27 @@ export function ClaimUndoNotice({
     router.replace(qs ? `${pathname}?${qs}` : pathname, { scroll: false });
   }, [pathname, router, searchParams]);
 
+  // The effect below calls the latest strip through a ref and depends on
+  // doneAt alone, so StrictMode or a searchParams identity change can never
+  // re-fire replace or re-arm the timer.
+  const stripRef = useRef(stripParams);
+  useEffect(() => {
+    stripRef.current = stripParams;
+  }, [stripParams]);
+
   // Item 11: once the window has closed the notice has nothing to offer, so
-  // strip the query string. Runs at mount for an already-closed window.
+  // strip the query string. Runs at mount for an already-closed window. After
+  // a successful Undo the timer still strips the URL at the 10-minute mark, on
+  // purpose, so Back never re-shows the notice.
   useEffect(() => {
     const left = doneAt + UNDO_WINDOW_MS - Date.now();
     if (left <= 0) {
-      stripParams();
+      stripRef.current();
       return;
     }
-    const t = setTimeout(stripParams, left + 1);
+    const t = setTimeout(() => stripRef.current(), left + 1);
     return () => clearTimeout(t);
-  }, [doneAt, stripParams]);
+  }, [doneAt]);
 
   function onUndo() {
     if (pending) return;

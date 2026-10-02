@@ -44,6 +44,34 @@ function renderNotice(doneAt = Date.now()) {
 const undoBtn = () => screen.queryByRole("button", { name: /Undo/ });
 
 describe("ClaimUndoNotice", () => {
+  it("unmounting before the window closes cancels the strip", async () => {
+    vi.useFakeTimers();
+    const { unmount } = renderNotice();
+    unmount();
+    await vi.advanceTimersByTimeAsync(10 * MIN + 1);
+    expect(router.replace).not.toHaveBeenCalled();
+  });
+
+  it("the timer path keeps other params", async () => {
+    vi.useFakeTimers();
+    searchParams = new URLSearchParams("edit=1&claimed=x&at=1");
+    renderNotice();
+    await vi.advanceTimersByTimeAsync(10 * MIN + 1);
+    expect(router.replace).toHaveBeenCalledWith("/staff/queue/consolidated/v1/g1?edit=1", { scroll: false });
+  });
+
+  it("a new searchParams object of the same content neither fires replace nor re-arms the timer", async () => {
+    vi.useFakeTimers();
+    const doneAt = Date.now();
+    const view = renderNotice(doneAt);
+    await vi.advanceTimersByTimeAsync(5 * MIN);
+    searchParams = new URLSearchParams();
+    view.rerender(<ClaimUndoNotice batchId={BATCH} doneAt={doneAt} reportName="Chemistry" />);
+    expect(router.replace).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(5 * MIN + 1);
+    expect(router.replace).toHaveBeenCalledTimes(1);
+  });
+
   it("says what was claimed and offers Undo while the window is open", () => {
     renderNotice();
     expect(screen.getByText("You claimed Chemistry.")).toBeTruthy();
@@ -64,7 +92,6 @@ describe("ClaimUndoNotice", () => {
     expect(router.replace).not.toHaveBeenCalled();
     await vi.advanceTimersByTimeAsync(10 * MIN + 1);
     expect(router.replace).toHaveBeenCalledWith("/staff/queue/consolidated/v1/g1", { scroll: false });
-    vi.useRealTimers();
   });
 
   it("Undo sends only the batch id; success says it is back in the queue, hides Undo and refreshes", async () => {
@@ -157,5 +184,22 @@ describe("ClaimUndoNotice", () => {
     renderNotice();
     await userEvent.click(screen.getByRole("button", { name: /Dismiss/ }));
     expect(router.replace).toHaveBeenCalledWith("/staff/queue/consolidated/v1/g1", { scroll: false });
+  });
+
+  it("an already-closed notice strips once even when searchParams changes afterwards", async () => {
+    searchParams = new URLSearchParams("claimed=x&at=1");
+    const doneAt = Date.now() - 11 * MIN;
+    const view = renderNotice(doneAt);
+    await waitFor(() => expect(router.replace).toHaveBeenCalledTimes(1));
+    searchParams = new URLSearchParams();
+    view.rerender(<ClaimUndoNotice batchId={BATCH} doneAt={doneAt} reportName="Chemistry" />);
+    expect(router.replace).toHaveBeenCalledTimes(1);
+  });
+
+  it("Dismiss keeps other params", async () => {
+    searchParams = new URLSearchParams("edit=1&claimed=x&at=1");
+    renderNotice();
+    await userEvent.click(screen.getByRole("button", { name: /Dismiss/ }));
+    expect(router.replace).toHaveBeenCalledWith("/staff/queue/consolidated/v1/g1?edit=1", { scroll: false });
   });
 });
