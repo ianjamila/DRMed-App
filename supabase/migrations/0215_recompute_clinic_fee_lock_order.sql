@@ -85,7 +85,7 @@
 -- Same signature, return shape ({rows_affected}), SECURITY DEFINER, pinned
 -- search_path and ACL (service_role only) as before; the ACL is restated below.
 -- No data change. Proof: npm run plan-order-lockers:proof -- --control
--- (mutants M1-M4 of this body must each be caught).
+-- (mutants M1-M6 of this body must each be caught).
 -- =============================================================================
 
 create or replace function public.recompute_clinic_fee_for_unreleased()
@@ -136,6 +136,8 @@ begin
   -- undo use, and the order merge / undo-merge need (they take it EXCLUSIVE, then UPDATE
   -- visits). Without it the (d) UPDATE would ask for the shared lock (a_lifecycle_guard) while
   -- holding the visit, against a merge holding the exclusive lock and waiting for that visit.
+  -- One lock-table slot per distinct candidate patient (max_locks_per_transaction); the
+  -- 0183/0184 triggers took as many before, one per written line, so this is no new limit.
   perform public.lifecycle_lock(v_patients, false);
 
   -- (b) visits first, FOR UPDATE (the mode the 0183 guard re-takes), ascending.
@@ -175,6 +177,7 @@ begin
             and pt.deleted_at is null and pt.merged_into_id is null   -- 0184
             and v.payment_status is distinct from 'waived'   -- 0215
             and v.patient_id = any (v_patients)   -- 0215: a visit merged to another patient meanwhile waits for the next run
+            and tr.visit_id = any (v_visits)      -- 0215: a line moved to a visit we did not lock waits for the next run
             and not exists (
               select 1 from public.journal_entries je
                where je.source_kind = 'test_request'
