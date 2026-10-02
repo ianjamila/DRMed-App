@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { claimReportHref, parseClaimUndoParams } from "./claim-undo-link";
+import { claimBenchHref, claimReportHref, claimUndoOpen, parseClaimUndoParams } from "./claim-undo-link";
 
 const NOW = 1_800_000_000_000;
 const BATCH = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
@@ -17,6 +17,22 @@ describe("claimReportHref", () => {
   });
   it("encodes the batch id", () => {
     expect(claimReportHref(PANEL, "a&b=c d", NOW)).toContain("?claimed=a%26b%3Dc%20d&at=");
+  });
+});
+
+describe("claimBenchHref", () => {
+  it("adds the batch and the claim time", () => {
+    expect(claimBenchHref("t1", BATCH, NOW)).toBe(`/staff/queue/t1?claimed=${BATCH}&at=${NOW}`);
+  });
+  it("is the bare bench URL with no batch", () => {
+    expect(claimBenchHref("t1", undefined, NOW)).toBe("/staff/queue/t1");
+  });
+});
+
+describe("claimUndoOpen", () => {
+  it("is open until exactly ten minutes, closed one millisecond later", () => {
+    expect(claimUndoOpen(NOW - 10 * 60_000, NOW)).toBe(true);
+    expect(claimUndoOpen(NOW - 10 * 60_000 - 1, NOW)).toBe(false);
   });
 });
 

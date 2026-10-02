@@ -53,7 +53,9 @@ import {
   type QueueUndoStep,
 } from "@/lib/ui/bulk-undo";
 
-export type ClaimResult = { ok: true } | { ok: false; error: string };
+// `batchId` is set only by claimTestAction (the one-test Undo batch); the
+// other actions returning this type never carry one.
+export type ClaimResult = { ok: true; batchId?: string } | { ok: false; error: string };
 
 const HOLDER_CHANGED = "Someone else holds this now — refresh the queue.";
 
@@ -92,6 +94,13 @@ export async function claimTestAction(
   );
   if (!verdict.ok) return verdict;
 
+  // Undo (PR C item 4): a one-test "bulk" batch, minted here (never from
+  // input), so the bench page can offer the bar's 10-minute ↶ Undo for this
+  // claim (undoBulkQueueAction). started_at is hoisted: withLifecycleRetry
+  // re-runs the closure, and the Undo predicates on the exact value written.
+  const batchId = crypto.randomUUID();
+  const startedAt = new Date().toISOString();
+
   // Only claim if currently 'requested' — concurrency-safe. A conditional
   // UPDATE like this is safe to retry once: a real commit rolls back whole
   // on P0072/40P01 (the lifecycle lock, 0184 — e.g. the visit's patient is
@@ -102,10 +111,13 @@ export async function claimTestAction(
       .update({
         status: "in_progress",
         assigned_to: session.user_id,
-        started_at: new Date().toISOString(),
+        started_at: startedAt,
       })
       .eq("id", testRequestId)
       .eq("status", "requested")
+      // The state the operator saw: requested AND nobody holding it (as
+      // claimTestsCore predicates).
+      .is("assigned_to", null)
       // A queue-deleted line (0125) is not claimable even via a stale link.
       .is("deleted_at", null)
       .select("id, visit_id")
@@ -127,14 +139,19 @@ export async function claimTestAction(
     action: "test_request.claimed",
     resource_type: "test_request",
     resource_id: testRequestId,
-    metadata: { visit_id: data.visit_id },
+    metadata: {
+      visit_id: data.visit_id,
+      started_at: startedAt,
+      bulk_batch_id: batchId,
+      bulk_batch_size: 1,
+    },
     ip_address: h.get("x-forwarded-for")?.split(",")[0]?.trim() ?? null,
     user_agent: h.get("user-agent"),
   });
 
   revalidatePath("/staff/queue");
   revalidatePath(`/staff/queue/${testRequestId}`);
-  return { ok: true };
+  return { ok: true, batchId };
 }
 
 // Shared by the admin unclaim (any holder) and the self-service unclaim (own

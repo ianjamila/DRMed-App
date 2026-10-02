@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { claimTestAction } from "./actions";
 import { claimPanelAction } from "./panel-actions";
-import { claimReportHref } from "@/lib/queue/claim-undo-link";
+import { claimBenchHref, claimReportHref } from "@/lib/queue/claim-undo-link";
 
 // One test, or a whole consolidated chemistry panel — the panel is named by
 // (visit, report group) and its members are resolved on the server, because
@@ -28,7 +28,8 @@ export function ClaimButton({ testRequestId, panel, navigateOnClaim }: Props) {
       className="bg-[color:var(--color-brand-cyan)] text-white hover:bg-[color:var(--color-brand-navy)]"
       onClick={() =>
         start(async () => {
-          // Only a panel claim carries an Undo batch (minted server-side).
+          // Both a panel claim and a single-test claim carry an Undo batch
+          // (minted server-side); an older server may omit it.
           let batchId: string | undefined;
           let result;
           if (panel) {
@@ -36,18 +37,23 @@ export function ClaimButton({ testRequestId, panel, navigateOnClaim }: Props) {
             if (r.ok) batchId = r.batchId;
             result = r;
           } else {
-            result = await claimTestAction(testRequestId!);
+            const r = await claimTestAction(testRequestId!);
+            if (r.ok) batchId = r.batchId;
+            result = r;
           }
           if (!result.ok) {
             alert(result.error);
             return;
           }
-          if (navigateOnClaim) {
-            // The panel claim's Undo batch rides along to the report page.
-            router.push(
-              panel ? claimReportHref(panel, batchId, Date.now()) : `/staff/queue/${testRequestId}`,
-            );
-          }
+          const href = panel
+            ? claimReportHref(panel, batchId, Date.now())
+            : claimBenchHref(testRequestId!, batchId, Date.now());
+          // The queue row goes to the page that shows the Undo notice.
+          if (navigateOnClaim) router.push(href);
+          // The bench page's own Claim stays on the page: show its Undo notice
+          // there too. With no batch nothing changes — the action's
+          // revalidatePath already re-renders the page.
+          else if (batchId) router.replace(href, { scroll: false });
         })
       }
     >

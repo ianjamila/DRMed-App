@@ -43,7 +43,8 @@
 -- remain by design, each ending ONE side as 40P01 with nothing half-done.
 -- Only the PANEL side retries it (restorePanelMembers / reclaimPanelMembers,
 -- once, via withLifecycleRetry); a manual Restore that loses the cycle is not
--- retried and sees the generic 40P01 "try again" message:
+-- retried and sees the generic 40P01 "try again" message
+-- (superseded 2026-10-02 — see Follow-up below):
 --   * a queued EXCLUSIVE patient lifecycle lock (0184, patient
 --     delete/restore) — the class 0184 accepts;
 --   * a manual queue Restore on the same visit: its UPDATE locks the line
@@ -52,6 +53,11 @@
 --     0198). The same reverse order already meets 0198's release; matching
 --     0198 keeps the release path cycle-free. Proven (S7 / F2) by
 --     scripts/panel-undo-concurrency-proof.ts.
+--
+-- Follow-up (2026-10-02, PR "queue-claim-undo"): the manual queue Restore
+-- (restoreTestRequestsForVisit) now retries once too, via withLifecycleRetry —
+-- a manual Restore that loses this cycle re-runs instead of showing 40P01.
+-- Comment only; nothing in this migration changed.
 -- =============================================================================
 
 create or replace function public.reclaim_panel_members(

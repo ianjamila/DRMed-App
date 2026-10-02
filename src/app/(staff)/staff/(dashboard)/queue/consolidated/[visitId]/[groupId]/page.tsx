@@ -22,8 +22,8 @@ import { hasRecentAudit, ipAndAgent } from "@/lib/server/action-helpers";
 import { ConsolidatedForm } from "./consolidated-form";
 import { ReportCards, type ReportCardData } from "./report-cards";
 import { ReportEditForm } from "./report-edit-form";
-import { ClaimUndoNotice } from "./claim-undo-notice";
-import { parseClaimUndoParams } from "@/lib/queue/claim-undo-link";
+import { ClaimUndoNotice } from "../../../claim-undo-notice";
+import { claimUndoOpen, parseClaimUndoParams } from "@/lib/queue/claim-undo-link";
 import type { ValueCells } from "./consolidated-values-table";
 import { normalisePatientSex } from "@/lib/results/types";
 import { claimRemarks, type ClaimEvent } from "@/lib/queue/claim-remarks";
@@ -184,7 +184,9 @@ export default async function ConsolidatedQueuePage({
   const editResultId = typeof editParam === "string" ? editParam : null;
   // ?claimed=<batch>&at=<ms> — set by the queue row's panel Claim (item 3).
   // eslint-disable-next-line react-hooks/purity -- per-request snapshot, passed down as a number prop
-  const { batchId: claimedParam, doneAt: claimedAt } = parseClaimUndoParams(sp, Date.now());
+  const nowMs = Date.now();
+  const { batchId: claimedParam, doneAt: claimedAt } = parseClaimUndoParams(sp, nowMs);
+  const showClaimUndo = claimedParam !== null && claimUndoOpen(claimedAt, nowMs);
   const { session, supabase, group, rows, partition, visit } = await loadConsolidatedDetail(
     visitId,
     groupId,
@@ -667,8 +669,10 @@ export default async function ConsolidatedQueuePage({
       >
         Open visit →
       </Link>
-      {claimedParam ? (
-        <ClaimUndoNotice batchId={claimedParam} doneAt={claimedAt} reportName={group.name} />
+      {/* An expired link mounts the notice with open={false} only so it can
+          strip ?claimed=&at= from the URL (item 11). */}
+      {claimedParam !== null ? (
+        <ClaimUndoNotice batchId={claimedParam} doneAt={claimedAt} reportName={group.name} open={showClaimUndo} />
       ) : null}
       </ReleaseOutcomeProvider>
     </div>

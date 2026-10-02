@@ -1,10 +1,7 @@
 "use server";
 
 import { z } from "zod";
-import { revalidatePath } from "next/cache";
-import { requireActiveStaff } from "@/lib/auth/require-staff";
-import { createClient } from "@/lib/supabase/server";
-import { claimPanelMembers } from "@/lib/actions/queue/panel-writes";
+import { claimPanelAction } from "../../../panel-actions";
 import {
   finaliseConsolidatedReport,
   type FinaliseResult,
@@ -15,19 +12,20 @@ import {
 } from "@/lib/actions/results/amend-consolidated";
 
 const ClaimSchema = z.object({
-  testRequestIds: z.array(z.string().uuid()).min(1),
+  visitId: z.string().uuid(),
+  groupId: z.string().uuid(),
 });
 
-type ClaimOutcome = { ok: true } | { ok: false; error: string };
+type ClaimOutcome = { ok: true; batchId?: string } | { ok: false; error: string };
 
 export async function claimConsolidated(input: unknown): Promise<ClaimOutcome> {
   try {
-    const { testRequestIds } = ClaimSchema.parse(input);
-    const session = await requireActiveStaff();
-    const supabase = await createClient();
-    const result = await claimPanelMembers(session, supabase, testRequestIds);
-    if (result.ok) revalidatePath("/staff/queue");
-    return result;
+    const { visitId, groupId } = ClaimSchema.parse(input);
+    // Undo (bulk-select PR C item 5): the queue row's panel Claim, so the
+    // SERVER resolves the panel's whole bench (a stale page can neither claim
+    // a subset nor mislabel the audit rows) and mints the one-panel batch that
+    // undoBulkQueueAction's panel branch puts back, all or nothing.
+    return await claimPanelAction({ visitId, groupId });
   } catch (err) {
     return { ok: false, error: (err as Error).message };
   }

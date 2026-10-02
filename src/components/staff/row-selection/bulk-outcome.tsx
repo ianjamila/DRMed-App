@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useSyncExternalStore } from "react";
+import { useEffect, useMemo, useRef, useSyncExternalStore } from "react";
 import { Panel } from "@/components/ui/panel";
 import { FixedBottomBar } from "@/components/staff/fixed-bottom-bar";
 
@@ -10,13 +10,56 @@ import { FixedBottomBar } from "@/components/staff/fixed-bottom-bar";
 // useSyncExternalStore gives React a separate server snapshot — the action's
 // own doneAt, i.e. "just done, window fully open" — used for the server render
 // AND the hydrating client render, after which the real clock takes over.
-// Whole-second snapshots keep getSnapshot stable between ticks; the 15 s tick
-// is the same cadence the minutes label always updated on.
-const subscribeToClock = (onTick: () => void) => {
-  const t = setInterval(onTick, 15_000);
-  return () => clearInterval(t);
-};
-const clientNow = () => Math.floor(Date.now() / 1000) * 1000;
+
+/** How often an open Undo re-reads the clock (the cadence the minutes label always updated on). */
+export const OUTCOME_TICK_MS = 15_000;
+
+// A panel with no Undo needs no clock at all: no subscription, constant snapshot.
+const subscribeNever = () => () => {};
+const clockNever = () => 0;
+
+// While an Undo is open the clock ticks every OUTCOME_TICK_MS and once more
+// just after the window closes, so the button goes on time instead of up to a
+// tick late. That closing timeout re-arms itself if it fires early (a coarse
+// Date.now(), a backwards clock step) and only stops the interval once
+// Date.now() has really reached closesAt. A window that is already closed at
+// subscribe time keeps no timer, and neither does a panel whose Undo is gone
+// (the cleanup clears both).
+function subscribeUntil(closesAt: number) {
+  return (onTick: () => void) => {
+    if (Date.now() >= closesAt) return () => {};
+    const interval = setInterval(onTick, OUTCOME_TICK_MS);
+    let closing: ReturnType<typeof setTimeout>;
+    const arm = () => {
+      closing = setTimeout(
+        () => {
+          if (Date.now() < closesAt) return arm();
+          clearInterval(interval);
+          onTick();
+        },
+        Math.max(closesAt - Date.now() + 1, 1),
+      );
+    };
+    arm();
+    return () => {
+      clearInterval(interval);
+      clearTimeout(closing);
+    };
+  };
+}
+
+// Snapshots are whole seconds, which avoids a new value every ms (React would
+// re-render on each read). Rounding is always down, so the button is never
+// hidden early. But a rounded-down second can land BEFORE closesAt on the
+// closing tick (closesAt is rarely second-aligned), leaving the button up with
+// the timer gone — so once the real clock reaches closesAt the snapshot is
+// clamped to closesAt itself: constant, and exactly "window closed".
+function clockUntil(closesAt: number) {
+  return () => {
+    const t = Date.now();
+    return t >= closesAt ? closesAt : Math.floor(t / 1000) * 1000;
+  };
+}
 
 export interface OutcomeUndo {
   /** Epoch ms when the action finished; the button hides when the window closes. */
@@ -51,7 +94,10 @@ export function BulkOutcomePanel({
   inline?: boolean;
 }) {
   const ref = useRef<HTMLDivElement>(null);
-  const now = useSyncExternalStore(subscribeToClock, clientNow, () => undo?.doneAt ?? 0);
+  const closesAt = undo ? undo.doneAt + undo.windowMs : null;
+  const subscribe = useMemo(() => (closesAt === null ? subscribeNever : subscribeUntil(closesAt)), [closesAt]);
+  const getSnapshot = useMemo(() => (closesAt === null ? clockNever : clockUntil(closesAt)), [closesAt]);
+  const now = useSyncExternalStore(subscribe, getSnapshot, () => undo?.doneAt ?? 0);
 
   useEffect(() => {
     if (inline) return;
@@ -59,8 +105,11 @@ export function BulkOutcomePanel({
     if (!active || active === document.body) ref.current?.focus();
   }, [inline]);
 
-  const open = undo ? now - undo.doneAt < undo.windowMs : false;
-  const minutesLeft = undo ? Math.max(1, Math.ceil((undo.windowMs - (now - undo.doneAt)) / 60_000)) : 0;
+  // The floored snapshot can sit just BEFORE doneAt right after the action,
+  // which would make a 10-minute window read as 11 — never count negative time.
+  const elapsed = undo ? Math.max(now, undo.doneAt) - undo.doneAt : 0;
+  const open = undo ? elapsed < undo.windowMs : false;
+  const minutesLeft = undo ? Math.max(1, Math.ceil((undo.windowMs - elapsed) / 60_000)) : 0;
 
   const content = (
     <Panel
