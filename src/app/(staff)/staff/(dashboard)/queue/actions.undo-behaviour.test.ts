@@ -179,12 +179,33 @@ const restoreRpc: RpcHandler = (rec, d) => {
   return { data: rows.length, error: null };
 };
 
-/** The three panel RPCs, dispatched by function name. */
+/**
+ * Mirrors 0216's restore_test_request_lines (a single test's restore): each requested id on
+ * p_visit_id that is deleted — at the SAME INSTANT as p_deleted_at when given (a bulk Undo), at
+ * any time when not (a manual Restore) — is cleared; returns the restored ids in id order.
+ */
+const restoreLinesRpc: RpcHandler = (rec, d) => {
+  const ids = rec.args.p_test_request_ids as string[];
+  const at = rec.args.p_deleted_at as string | undefined;
+  const rows = ids
+    .map((id) => d.row("test_requests", id))
+    .filter(
+      (r) =>
+        r.visit_id === rec.args.p_visit_id &&
+        typeof r.deleted_at === "string" &&
+        (at === undefined || Date.parse(r.deleted_at) === Date.parse(at)),
+    );
+  for (const r of rows) Object.assign(r, { deleted_at: null, deleted_by: null, delete_reason: null });
+  return { data: rows.map((r) => r.id as string).sort(), error: null };
+};
+
+/** The three panel RPCs and the single-test restore, dispatched by function name. */
 function installPanelRpcs(dbx: FakeDb) {
   dbx.hooks.rpc = (rec, d) => {
     if (rec.fn === "unclaim_panel_members") return unclaimRpc(rec, d);
     if (rec.fn === "reclaim_panel_members") return reclaimRpc(rec, d);
     if (rec.fn === "restore_panel_members") return restoreRpc(rec, d);
+    if (rec.fn === "restore_test_request_lines") return restoreLinesRpc(rec, d);
     throw new Error(`unexpected rpc ${rec.fn}`);
   };
 }
@@ -1040,7 +1061,7 @@ describe("Undo of a bulk Delete: restore", () => {
     expect(auditsOf("test_request.restored").map((a) => a.resource_id)).toEqual(["e1", "e2"]);
   });
 
-  it("(d) singles in a restore batch still go through restoreTestRequestsForVisit (an exact-deleted_at update, no rpc); only the panel uses the rpc", async () => {
+  it("(d) singles in a restore batch go through restoreTestRequestsForVisit (restore_test_request_lines with the exact deleted_at, 0216); only the panel uses restore_panel_members", async () => {
     seedDeletedPanel();
     db.seed("test_requests", [
       tr("x1", { deleted_at: pg(D), deleted_by: "user-rec", delete_reason: "dup" }),
@@ -1050,16 +1071,17 @@ describe("Undo of a bulk Delete: restore", () => {
     const r = await run();
 
     expect(r).toEqual({ ok: true, restoredIds: [KEY, "x1", "x2"], restoredTestCount: 5, notRestored: [] });
-    // the rpc carries the panel's members and nothing else
-    expect(db.rpcCalls).toEqual([
+    // the panel rpc carries the panel's members and nothing else; the singles go through the
+    // core's restore_test_request_lines, pinned to the visit and the exact deleted_at they were read at
+    expect(db.rpcCalls).toHaveLength(2);
+    expect(db.rpcCalls).toContainEqual(
       { fn: "restore_panel_members", args: { p_visit_id: VISIT, p_test_request_ids: ["d1", "d2", "d3"], p_deleted_at: [pg(D), pg(D), pg(D)] } },
-    ]);
-    // the singles are restored by the core's conditional update, pinned to deleted_at
-    const writes = db.updates("test_requests");
-    expect(writes).toHaveLength(1);
-    expect(targets(writes[0]!)).toEqual(["x1", "x2"]);
-    expect(writes[0]!.filters).toContainEqual(["eq", ["deleted_at", pg(D)]]);
-    expect(writes[0]!.filters).toContainEqual(["eq", ["visit_id", VISIT]]);
+    );
+    expect(db.rpcCalls).toContainEqual(
+      { fn: "restore_test_request_lines", args: { p_visit_id: VISIT, p_test_request_ids: ["x1", "x2"], p_deleted_at: pg(D) } },
+    );
+    // no bare UPDATE of test_requests any more (0216: it locked the line before the visit)
+    expect(db.updates("test_requests")).toEqual([]);
     for (const id of ["x1", "x2", "d1", "d2", "d3"]) expect(db.row("test_requests", id).deleted_at).toBeNull();
     expect(auditsOf("test_request.restored").map((a) => a.resource_id).sort()).toEqual(["d1", "d2", "d3", "x1", "x2"]);
   });

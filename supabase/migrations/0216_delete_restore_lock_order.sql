@@ -5,7 +5,7 @@
 -- -> every line they will touch FOR UPDATE ORDER BY id -> the write.
 --
 -- THE BUGS (reproduced by scripts/plan-order-lockers-proof.ts, scenarios Q1,
--- Q2, Q3, Q5, Q6, Q8; PR 3a = 0215 fixed recompute):
+-- Q2, Q3, Q5, Q6, Q7, Q8 and the merge scenarios; PR 3a = 0215 fixed recompute):
 --
 --  The app soft-deleted lines with ONE bare UPDATE
 --  (bulk-delete-core.ts deleteTestRequestsForVisit) and restored them with
@@ -58,11 +58,13 @@
 -- for them) BEFORE either of us holds a line; claim/unclaim never touch the
 -- visit and take lines ascending like us.
 --
--- restore_panel_members (0200) is NOT changed: it already takes the visit
--- (FOR NO KEY UPDATE, which conflicts with release/undo's FOR SHARE) before its
--- id-ordered line pre-lock; scenario Q7 proves it against release.
+-- restore_panel_members (0200) is re-created in the same order (bottom of this
+-- file): it took the visit FOR NO KEY UPDATE with no patient lock first (a
+-- cycle with merge / undo-merge, and the 0183 guard upgraded its visit lock
+-- mid-statement) and its member pre-lock missed a header's components. Same
+-- signature, checks, P0082 messages and ACL; now SECURITY DEFINER (scenario Q7).
 --
--- Both functions are SECURITY DEFINER, service_role only (the app calls them
+-- All three functions are SECURITY DEFINER, service_role only (the app calls them
 -- through the admin client after its own role / reason / active-patient checks;
 -- the tables' RLS never applied to that client), with search_path pinned as in
 -- 0184. No new error code: refusals are the existing guards' P-codes.
@@ -211,3 +213,101 @@ comment on function public.restore_test_request_lines(uuid, uuid[], timestamptz)
 
 revoke all on function public.restore_test_request_lines(uuid, uuid[], timestamptz) from public, anon, authenticated;
 grant execute on function public.restore_test_request_lines(uuid, uuid[], timestamptz) to service_role;
+
+-- restore_panel_members (0200), re-created in the same order. 0200 took the visit FOR NO
+-- KEY UPDATE with no patient lock: the UPDATE then asked for the shared patient lock
+-- (a_lifecycle_guard) while holding the visit - a cycle with merge / undo-merge, which hold
+-- the patient lock EXCLUSIVE and want the visit (Q7m) - and the 0183 guard re-took the visit
+-- FOR UPDATE mid-statement, an upgrade that queues behind any KEY SHARE (a payment insert's
+-- FK check) taken since. The members' pre-lock also missed a header's components, which the
+-- cascade then restores in heap order. Same signature, checks, P0082 messages and ACL
+-- (service_role only); now SECURITY DEFINER with a pinned search_path, because the
+-- lifecycle_lock* helpers are EXECUTE-closed to every API role (0184).
+create or replace function public.restore_panel_members(
+  p_visit_id uuid,
+  p_test_request_ids uuid[],
+  p_deleted_at timestamptz[]
+)
+returns integer
+language plpgsql
+security definer
+set search_path = pg_catalog, public, pg_temp
+as $$
+declare
+  v_wanted   integer;
+  v_restored integer;
+  v_patient  uuid;
+  v_now      uuid;
+  v_deleted  timestamptz;
+begin
+  if p_visit_id is null or p_test_request_ids is null or p_deleted_at is null
+     or cardinality(p_test_request_ids) <> cardinality(p_deleted_at) then
+    raise exception 'Could not read this report — refresh the queue.' using errcode = 'P0082';
+  end if;
+
+  select count(*) into v_wanted
+    from unnest(p_test_request_ids, p_deleted_at) as x(id, deleted_at);
+  if v_wanted = 0 or v_wanted > 200
+     or exists (select 1 from unnest(p_test_request_ids, p_deleted_at) as x(id, deleted_at)
+                 where x.id is null or x.deleted_at is null)
+     or (select count(distinct x.id) from unnest(p_test_request_ids) as x(id)) <> v_wanted then
+    raise exception 'Nothing to restore in this report.' using errcode = 'P0082';
+  end if;
+
+  -- 0. the patient lifecycle lock (shared) before any row lock, as delete / restore above.
+  select v.patient_id into v_patient from public.visits v where v.id = p_visit_id;
+  if not found then
+    raise exception 'Part of this report was already restored or changed — nothing was restored.'
+      using errcode = 'P0082';
+  end if;
+  perform public.lifecycle_lock_and_assert(array[v_patient], false);
+
+  -- 1. the visit FOR UPDATE (the mode the 0183 guard and the cascade's visit UPDATE need, so
+  --    no upgrade later), re-read under the patient lock: moved by a merge -> P0072 (retried).
+  select v.patient_id, v.deleted_at into v_now, v_deleted
+    from public.visits v where v.id = p_visit_id for update;
+  if v_now is distinct from v_patient then
+    raise exception 'the patient on this visit changed while it was being saved — try again'
+      using errcode = 'P0072';
+  end if;
+
+  -- Checked AFTER the visit lock, so the answer cannot change under us.
+  if v_deleted is not null then
+    raise exception 'The visit itself is deleted — restore the visit first.' using errcode = 'P0082';
+  end if;
+
+  -- 2. the members and any header's components (the cascade restores them), ascending.
+  --    NO KEY UPDATE, as before: the restore UPDATE needs no more on a line, and FK child
+  --    inserts (a new result link) stay unblocked.
+  perform 1 from public.test_requests t
+   where t.visit_id = p_visit_id
+     and (t.id = any (p_test_request_ids) or t.parent_id = any (p_test_request_ids))
+   order by t.id
+     for no key update;
+
+  update public.test_requests t
+     set deleted_at    = null,
+         deleted_by    = null,
+         delete_reason = null
+    from unnest(p_test_request_ids, p_deleted_at) as x(id, deleted_at)
+   where t.id = x.id
+     and t.visit_id = p_visit_id
+     and t.deleted_at = x.deleted_at
+     and t.parent_id is null;
+  get diagnostics v_restored = row_count;
+
+  if v_restored <> v_wanted then
+    -- Rolls back the members the UPDATE above did restore: all or nothing.
+    raise exception 'Part of this report was already restored or changed — nothing was restored.'
+      using errcode = 'P0082';
+  end if;
+
+  return v_restored;
+end;
+$$;
+
+comment on function public.restore_panel_members(uuid, uuid[], timestamptz[]) is
+  'Undo of a bulk queue delete: all-or-nothing restore of a consolidated report''s top-level members on one live visit, each still deleted at exactly p_deleted_at. Raises P0082 and restores nothing otherwise. Global lock order (0216): patient lifecycle lock shared, visit FOR UPDATE, then members and their components ORDER BY id. service_role only (the app checks role, reason and active patient first).';
+
+revoke all on function public.restore_panel_members(uuid, uuid[], timestamptz[]) from public, anon, authenticated;
+grant  execute on function public.restore_panel_members(uuid, uuid[], timestamptz[]) to service_role;
