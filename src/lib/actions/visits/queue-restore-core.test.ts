@@ -9,8 +9,9 @@ import { join } from "node:path";
 // that looser predicate and got silently undone by an Undo that had nothing
 // to do with it. The fix groups the validated rows by the exact deleted_at
 // value read (groupIdsByDeletedAt, src/lib/queue/partial-panel.ts — its own
-// grouping logic is unit-tested there) and issues one UPDATE per group, each
-// predicated on `.eq("deleted_at", thatValue)`. restoreTestRequestsForVisit
+// grouping logic is unit-tested there) and issues one write per group, each
+// predicated on that exact value (since 0216: restore_test_request_lines with
+// p_deleted_at). restoreTestRequestsForVisit
 // itself has no pure seam (admin client, StaffSession, audit()) — pinned here
 // as source text.
 
@@ -23,42 +24,72 @@ describe("restoreTestRequestsForVisit's bulk-Undo write predicates on the exact 
     expect(src).toMatch(/groupIdsByDeletedAt\(/);
   });
 
-  it("the expectedDeletedAtOf branch's write predicates on the exact value, never merely NOT NULL", () => {
+  it("the expectedDeletedAtOf branch writes with the exact value, never merely NOT NULL", () => {
     const branchStart = src.indexOf("if (expectedDeletedAtOf) {", src.indexOf("let restored:"));
     expect(branchStart, "expectedDeletedAtOf write branch not found").toBeGreaterThan(-1);
     const branchEnd = src.indexOf("\n  } else {", branchStart);
     expect(branchEnd).toBeGreaterThan(branchStart);
     const branch = src.slice(branchStart, branchEnd);
-    expect(branch).toMatch(/\.eq\("deleted_at",\s*deletedAtValue\)/);
-    expect(branch).not.toMatch(/\.not\("deleted_at",\s*"is",\s*null\)/);
+    expect(branch).toMatch(/rpc\("restore_test_request_lines",\s*\{[^}]*p_deleted_at:\s*deletedAtValue/);
   });
 
-  it("the manual-restore (no expectedDeletedAtOf) branch is unchanged: still predicates on NOT NULL", () => {
+  it("the manual-restore (no expectedDeletedAtOf) branch passes no p_deleted_at (the function then restores any deleted row)", () => {
     const elseStart = src.indexOf("\n  } else {", src.indexOf("let restored:"));
     expect(elseStart).toBeGreaterThan(-1);
     const elseEnd = src.indexOf("\n  }\n\n  const rowById", elseStart);
     expect(elseEnd).toBeGreaterThan(elseStart);
     const branch = src.slice(elseStart, elseEnd);
-    expect(branch).toMatch(/\.not\("deleted_at",\s*"is",\s*null\)/);
+    const call = branch.match(/rpc\("restore_test_request_lines",\s*\{[^}]*\}/);
+    expect(call, "manual-restore rpc call not found").not.toBeNull();
+    expect(call![0]).not.toMatch(/p_deleted_at/);
     expect(branch).not.toMatch(/groupIdsByDeletedAt/);
   });
 
-  it("every write in both branches still scopes to the visit", () => {
-    // Losing `.eq("visit_id", visitId)` on either branch would let a
-    // same-batch id belonging to a DIFFERENT visit slip through the write.
-    const writes = [...src.matchAll(/\.update\(\{ deleted_at: null[\s\S]{0,300}?\.select\("id"\)/g)];
-    expect(writes.length).toBeGreaterThanOrEqual(2);
-    for (const w of writes) {
-      expect(w[0]).toMatch(/\.eq\("visit_id",\s*visitId\)/);
-    }
+  it("every write in both branches goes through restore_test_request_lines (0216), scoped to the visit and retried once", () => {
+    // 0216: a bare UPDATE locked the line before the visit and deadlocked with
+    // release / undo; losing p_visit_id would let a same-batch id belonging to
+    // a DIFFERENT visit slip through the write.
+    expect(src).not.toMatch(/\.from\("test_requests"\)\s*\.update\(/);
+    const writes = [...src.matchAll(/withLifecycleRetry\(\(\) =>\s*admin\.rpc\("restore_test_request_lines",\s*\{[^}]*\}/g)];
+    expect(writes.length).toBe(2);
+    for (const w of writes) expect(w[0]).toMatch(/p_visit_id:\s*visitId/);
   });
 });
 
-// Behavioural: a restore UPDATE that loses a lock race (40P01) re-runs once.
+// The predicates themselves now live in SQL: pin them in the migration that defines the function.
+const SQL = readFileSync(join(process.cwd(), "supabase/migrations/0216_delete_restore_lock_order.sql"), "utf8");
+const restoreFn = SQL.slice(
+  SQL.indexOf("create or replace function public.restore_test_request_lines("),
+  SQL.indexOf("comment on function public.restore_test_request_lines("),
+);
+
+describe("restore_test_request_lines (0216) keeps the app's write predicates", () => {
+  it("exact deleted_at with p_deleted_at, NOT NULL without it, always on the visit", () => {
+    expect(restoreFn.length).toBeGreaterThan(100);
+    expect(restoreFn).toMatch(/\(\(p_deleted_at is null and deleted_at is not null\) or deleted_at = p_deleted_at\)/);
+    expect(restoreFn).toMatch(/and visit_id = p_visit_id/);
+  });
+
+  it("patient lock, then visit FOR UPDATE, then the lines and a header's components by id, then the UPDATE", () => {
+    const patient = restoreFn.indexOf("lifecycle_lock_and_assert(array[v_patient], false)");
+    const visit = restoreFn.indexOf("where v.id = p_visit_id for update");
+    const lines = restoreFn.search(/t\.parent_id = any \(p_test_request_ids\)\)\s+order by t\.id\s+for no key update/);
+    const write = restoreFn.indexOf("update public.test_requests");
+    expect(patient).toBeGreaterThan(-1);
+    expect(visit).toBeGreaterThan(patient);
+    expect(lines).toBeGreaterThan(visit);
+    expect(write).toBeGreaterThan(lines);
+  });
+});
+
+// Behavioural: a restore write that loses a lock race (40P01) re-runs once.
 // PR B's proof (S7, scripts/panel-undo-concurrency-proof.ts) showed a manual
-// Restore racing a panel Undo-restore on one visit can lose a deadlock. Real
-// rows live in the shared FakeDb; `beforeWrite` makes a chosen UPDATE fail
-// with 40P01 (nothing is written, exactly like a rolled-back statement).
+// Restore racing a panel Undo-restore on one visit can lose a deadlock; 0216
+// removes that cycle, but the lifecycle classes (40P01 vs an exclusive patient
+// lock, P0072 after a merge) remain and the retry stays. Real rows live in the
+// shared FakeDb; the `rpc` hook below plays restore_test_request_lines with
+// the predicates pinned above, and `loseRace` makes a chosen call fail with
+// 40P01 (nothing is written, exactly like a rolled-back transaction).
 const h = vi.hoisted(() => ({
   db: null as unknown,
   audits: [] as Array<{ resource_id: string; action: string }>,
@@ -98,25 +129,57 @@ function row(id: string, deletedAt: string | null, over: Record<string, unknown>
   };
 }
 
+type RestoreArgs = { p_visit_id: string; p_test_request_ids: string[]; p_deleted_at?: string };
+type DbErr = { code: string; message: string };
+
 let db: FakeDbT;
-/** Fail the first `times` UPDATEs whose filters satisfy `when` (default: every UPDATE) with 40P01. */
-function loseRace(times: number, when: (filters: Array<[string, unknown[]]>) => boolean = () => true) {
+/** Per call: the error it failed with, or null. Set by loseRace / failWith. */
+let failOn: (args: RestoreArgs) => DbErr | null;
+/** One entry per restore_test_request_lines call, with the ids it restored. */
+let writes: Array<{ args: RestoreArgs; restoredIds: string[] }>;
+
+/** Fail the first `times` calls whose args satisfy `when` (default: every call) with 40P01. */
+function loseRace(times: number, when: (args: RestoreArgs) => boolean = () => true) {
   let left = times;
-  db.hooks.beforeWrite = (call) => {
-    if (left > 0 && when(call.filters)) {
+  failOn = (args) => {
+    if (left > 0 && when(args)) {
       left -= 1;
       return LOST;
     }
+    return null;
   };
 }
+const failWith = (err: DbErr) => (failOn = () => err);
 const deletedAtOf = (id: string) => db.row("test_requests", id).deleted_at;
-const forGroup = (t: string) => (filters: Array<[string, unknown[]]>) =>
-  filters.some(([name, args]) => name === "eq" && args[0] === "deleted_at" && args[1] === t);
+const forGroup = (t: string) => (args: RestoreArgs) => args.p_deleted_at === t;
 
 beforeEach(() => {
   db = new FakeDb();
   h.db = db;
   h.audits = [];
+  writes = [];
+  failOn = () => null;
+  db.hooks.rpc = (rec, d) => {
+    if (rec.fn !== "restore_test_request_lines") return { error: { code: "42883", message: `no fake for ${rec.fn}` } };
+    const args = rec.args as RestoreArgs;
+    const err = failOn(args);
+    if (err) {
+      writes.push({ args, restoredIds: [] });
+      return { error: err };
+    }
+    const hit = d
+      .rows("test_requests")
+      .filter(
+        (r) =>
+          args.p_test_request_ids.includes(r.id as string) &&
+          r.visit_id === args.p_visit_id &&
+          (args.p_deleted_at === undefined ? r.deleted_at !== null : r.deleted_at === args.p_deleted_at),
+      );
+    for (const r of hit) Object.assign(r, { deleted_at: null, deleted_by: null, delete_reason: null });
+    const ids = hit.map((r) => r.id as string);
+    writes.push({ args, restoredIds: ids });
+    return { data: ids, error: null };
+  };
 });
 
 describe("manual Restore retries a lost lock race once", () => {
@@ -129,15 +192,15 @@ describe("manual Restore retries a lost lock race once", () => {
     ]);
   });
 
-  it("40P01 then success: ok, two identical UPDATEs, rows restored, one audit row per line", async () => {
+  it("40P01 then success: ok, two identical calls, rows restored, one audit row per line", async () => {
     loseRace(1);
     const out = await restoreTestRequestsForVisit(SESSION, "v1", ["a", "b"], "oops");
     expect(out).toEqual({ ok: true, restoredIds: ["a", "b"] });
-    const ups = db.updates("test_requests");
-    expect(ups).toHaveLength(2);
-    expect(ups[1]!.filters).toEqual(ups[0]!.filters);
-    expect(ups[0]!.matchedIds).toEqual([]); // the lost attempt wrote nothing
-    expect(ups[1]!.matchedIds).toEqual(["a", "b"]);
+    expect(writes).toHaveLength(2);
+    expect(writes[1]!.args).toEqual(writes[0]!.args);
+    expect(writes[0]!.args).toEqual({ p_visit_id: "v1", p_test_request_ids: ["a", "b"] }); // manual: no p_deleted_at
+    expect(writes[0]!.restoredIds).toEqual([]); // the lost attempt wrote nothing
+    expect(writes[1]!.restoredIds).toEqual(["a", "b"]);
     expect([deletedAtOf("a"), deletedAtOf("b")]).toEqual([null, null]);
     expect([deletedAtOf("c"), deletedAtOf("z")]).toEqual([T1, T1]);
     expect(h.audits.map((a) => [a.action, a.resource_id])).toEqual([
@@ -150,17 +213,17 @@ describe("manual Restore retries a lost lock race once", () => {
     loseRace(2);
     const out = await restoreTestRequestsForVisit(SESSION, "v1", ["a", "b"], "oops");
     expect(out).toEqual({ ok: false, error: translatePgError(LOST) });
-    expect(db.updates("test_requests")).toHaveLength(2);
+    expect(writes).toHaveLength(2);
     expect(db.rows("test_requests").map((r) => r.deleted_at)).toEqual([T1, T1, T1, T1]);
     expect(h.audits).toHaveLength(0);
   });
 
   it("a non-retryable error (XX000) is not retried", async () => {
     const boom = { code: "XX000", message: "boom" };
-    db.hooks.beforeWrite = () => boom;
+    failWith(boom);
     const out = await restoreTestRequestsForVisit(SESSION, "v1", ["a", "b"], "oops");
     expect(out).toEqual({ ok: false, error: translatePgError(boom) });
-    expect(db.updates("test_requests")).toHaveLength(1);
+    expect(writes).toHaveLength(1);
     expect(deletedAtOf("a")).toBe(T1);
     expect(h.audits).toHaveLength(0);
   });
@@ -179,10 +242,9 @@ describe("bulk Undo (expected deleted_at) retries each group the same way", () =
     loseRace(1, forGroup(T1));
     const out = await restoreTestRequestsForVisit(SESSION, "v1", ["a", "b"], "undo", {}, expected);
     expect(out).toEqual({ ok: true, restoredIds: ["a", "b"] });
-    const ups = db.updates("test_requests");
-    expect(ups).toHaveLength(3); // A lost, A retried, B
-    expect(ups[1]!.filters).toEqual(ups[0]!.filters);
-    expect(ups[2]!.filters).not.toEqual(ups[0]!.filters);
+    expect(writes).toHaveLength(3); // A lost, A retried, B
+    expect(writes[1]!.args).toEqual(writes[0]!.args);
+    expect(writes[2]!.args).not.toEqual(writes[0]!.args);
     expect([deletedAtOf("a"), deletedAtOf("b")]).toEqual([null, null]);
     expect(deletedAtOf("c")).toBe(T1); // same deleted_at as A but not selected
     expect(h.audits.map((a) => a.resource_id)).toEqual(["a", "b"]);
@@ -193,7 +255,7 @@ describe("bulk Undo (expected deleted_at) retries each group the same way", () =
     loseRace(2);
     const out = await restoreTestRequestsForVisit(SESSION, "v1", ["a"], "undo", {}, new Map([["a", T1]]));
     expect(out).toEqual({ ok: false, error: translatePgError(LOST) });
-    expect(db.updates("test_requests")).toHaveLength(2);
+    expect(writes).toHaveLength(2);
     expect(deletedAtOf("a")).toBe(T1);
     expect(h.audits).toHaveLength(0);
   });
@@ -204,7 +266,7 @@ describe("bulk Undo (expected deleted_at) retries each group the same way", () =
     loseRace(2, forGroup(T1));
     const out = await restoreTestRequestsForVisit(SESSION, "v1", ["a", "b"], "undo", {}, expected);
     expect(out).toEqual({ ok: true, restoredIds: ["b"] });
-    expect(db.updates("test_requests")).toHaveLength(3); // A twice, B once
+    expect(writes).toHaveLength(3); // A twice, B once
     expect(deletedAtOf("a")).toBe(T1);
     expect(deletedAtOf("b")).toBeNull();
     expect(h.audits.map((a) => a.resource_id)).toEqual(["b"]);
@@ -212,9 +274,9 @@ describe("bulk Undo (expected deleted_at) retries each group the same way", () =
 
   it("a non-retryable error (XX000) is not retried", async () => {
     db.tables.test_requests = [row("a", T1)];
-    db.hooks.beforeWrite = () => ({ code: "XX000", message: "boom" });
+    failWith({ code: "XX000", message: "boom" });
     const out = await restoreTestRequestsForVisit(SESSION, "v1", ["a"], "undo", {}, new Map([["a", T1]]));
     expect(out.ok).toBe(false);
-    expect(db.updates("test_requests")).toHaveLength(1);
+    expect(writes).toHaveLength(1);
   });
 });

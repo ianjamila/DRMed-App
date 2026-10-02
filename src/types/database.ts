@@ -7825,6 +7825,16 @@ export type Database = {
         }
         Returns: Json
       }
+      delete_test_request_lines: {
+        Args: {
+          p_actor: string
+          p_deleted_at: string
+          p_reason: string
+          p_test_request_ids: string[]
+          p_visit_id: string
+        }
+        Returns: string[]
+      }
       employee_leave_balance: {
         Args: { p_as_of_date?: string; p_employee_id: string; p_kind: string }
         Returns: number
@@ -8218,6 +8228,14 @@ export type Database = {
       restore_patient: {
         Args: { p_actor: string; p_context: Json; p_patient_id: string }
         Returns: Json
+      }
+      restore_test_request_lines: {
+        Args: {
+          p_deleted_at?: string
+          p_test_request_ids: string[]
+          p_visit_id: string
+        }
+        Returns: string[]
       }
       result_amendment_remarks: {
         Args: { p_test_request_ids: string[] }

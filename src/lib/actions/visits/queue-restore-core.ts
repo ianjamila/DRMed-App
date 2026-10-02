@@ -14,9 +14,9 @@ import type { StaffSession } from "@/lib/auth/require-staff";
 import { ipAndAgent } from "@/lib/server/action-helpers";
 import { translatePgError } from "@/lib/accounting/pg-errors";
 import { assertVisitPatientActive } from "@/lib/patients/require-active";
+import { withLifecycleRetry } from "@/lib/patients/lifecycle-retry";
 import { sameInstant } from "@/lib/ui/bulk-undo";
 import { groupIdsByDeletedAt } from "@/lib/queue/partial-panel";
-import { withLifecycleRetry } from "@/lib/patients/lifecycle-retry";
 
 // Every surface that renders visits or queue rows and must drop (or show)
 // deleted entries immediately. Moved here from queue-deletion.ts so both
@@ -88,9 +88,14 @@ export async function restoreTestRequestsForVisit(
     };
   }
 
+  // Both branches write through restore_test_request_lines (0216), which takes
+  // the locks first in the global order (patient, visit FOR UPDATE, lines + a
+  // header's components by id) — a bare UPDATE here locked the line first and
+  // the visit only through 0183's waived guard, deadlocking with release and
+  // undo. Retried once on a lost race (P0072 / 40P01): it rolls back whole.
   let restored: { id: string }[];
   if (expectedDeletedAtOf) {
-    // One UPDATE per distinct deleted_at value read above, each predicated on
+    // One call per distinct deleted_at value read above, each predicated on
     // that EXACT value — not merely "deleted_at is not null" like the branch
     // below. Without this, a restore-and-re-delete landing in the instant
     // between the read above and this write would still satisfy "is not
@@ -102,51 +107,37 @@ export async function restoreTestRequestsForVisit(
     restored = [];
     let firstError: { code?: string; message?: string; details?: string } | null = null;
     for (const [deletedAtValue, ids] of byDeletedAt) {
-      // Retried once per group on a lost lock race — see the manual branch.
       const { data, error: writeError } = await withLifecycleRetry(() =>
-        admin
-          .from("test_requests")
-          .update({ deleted_at: null, deleted_by: null, delete_reason: null })
-          .in("id", ids)
-          .eq("visit_id", visitId)
-          .eq("deleted_at", deletedAtValue)
-          .select("id"),
+        admin.rpc("restore_test_request_lines", {
+          p_visit_id: visitId,
+          p_test_request_ids: ids,
+          p_deleted_at: deletedAtValue,
+        }),
       );
       if (writeError) {
         firstError ??= writeError;
         continue;
       }
-      restored.push(...(data ?? []));
+      restored.push(...(data ?? []).map((id) => ({ id })));
     }
     if (restored.length === 0) {
       return { ok: false, error: firstError ? translatePgError(firstError) : "None of the selected tests can be restored." };
     }
   } else {
-    // Manual Restore path (restoreTestRequestsAction) — unaffected: no
-    // expected value to pin the write to, so the original "is not null"
-    // predicate is unchanged.
-    // PR B's proof (S7) showed a manual Restore racing a panel Undo-restore
-    // on one visit can lose a deadlock (40P01): 0183's waived-visit guard takes
-    // the visit after the line, the reverse of restore_panel_members. The
-    // loser is rolled back whole, so one retry in a fresh transaction can
-    // never double-restore.
+    // Manual Restore path (restoreTestRequestsAction): no expected value to
+    // pin the write to, so the function's "deleted_at is not null" predicate
+    // (no p_deleted_at) applies, as the bare UPDATE's did.
     const { data, error } = await withLifecycleRetry(() =>
-      admin
-        .from("test_requests")
-        .update({ deleted_at: null, deleted_by: null, delete_reason: null })
-        .in(
-          "id",
-          rows.map((r) => r.id),
-        )
-        .eq("visit_id", visitId)
-        .not("deleted_at", "is", null)
-        .select("id"),
+      admin.rpc("restore_test_request_lines", {
+        p_visit_id: visitId,
+        p_test_request_ids: rows.map((r) => r.id),
+      }),
     );
     if (error) return { ok: false, error: translatePgError(error) };
     if (!data || data.length === 0) {
       return { ok: false, error: "None of the selected tests can be restored." };
     }
-    restored = data;
+    restored = data.map((id) => ({ id }));
   }
 
   const rowById = new Map(rows.map((r) => [r.id, r]));

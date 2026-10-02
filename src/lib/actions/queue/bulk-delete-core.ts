@@ -17,6 +17,7 @@ import { QUEUE_DELETE_ROLES } from "@/lib/visits/deletion";
 import { QueueDeleteReasonSchema } from "@/lib/validations/accounting";
 import { revalidateQueueSurfaces } from "@/lib/actions/visits/queue-restore-core";
 import { readInChunks } from "@/lib/supabase/in-chunks";
+import { withLifecycleRetry } from "@/lib/patients/lifecycle-retry";
 import {
   ALREADY_DELETED_REASON,
   NOTHING_TO_DELETE_REFUSAL,
@@ -79,30 +80,30 @@ export async function deleteTestRequestsForVisit(
     return { ok: false, error: "Visit is already deleted." };
   }
 
-  // One UPDATE per visit — the 0125 guard raises P0042/P0043/P0044 for the
+  // One statement per visit — the 0125 guard raises P0042/P0043/P0044 for the
   // whole statement, so a mixed selection on one visit fails atomically
-  // rather than half-deleting. The exact timestamp rides the audit metadata
-  // below so a bulk Undo can predicate its restore on it (P1: exact
-  // predicates) rather than restoring whatever is currently deleted.
+  // rather than half-deleting. delete_test_request_lines (0216) takes the
+  // locks first in the global order (patient, visit, lines + a header's
+  // components by id): a bare UPDATE here deadlocked with claim / release /
+  // undo. Retried once on a lost race (P0072 / 40P01): it rolls back whole.
+  // The exact timestamp rides the audit metadata below so a bulk Undo can
+  // predicate its restore on it (P1: exact predicates) rather than restoring
+  // whatever is currently deleted.
   const deletedAtIso = new Date().toISOString();
-  const { data: deleted, error } = await admin
-    .from("test_requests")
-    .update({
-      deleted_at: deletedAtIso,
-      deleted_by: session.user_id,
-      delete_reason: reason,
-    })
-    .in(
-      "id",
-      rows.map((r) => r.id),
-    )
-    .eq("visit_id", visitId)
-    .is("deleted_at", null)
-    .select("id");
+  const { data: deletedIds, error } = await withLifecycleRetry(() =>
+    admin.rpc("delete_test_request_lines", {
+      p_visit_id: visitId,
+      p_test_request_ids: rows.map((r) => r.id),
+      p_actor: session.user_id,
+      p_reason: reason,
+      p_deleted_at: deletedAtIso,
+    }),
+  );
   if (error) return { ok: false, error: translatePgError(error) };
-  if (!deleted || deleted.length === 0) {
+  if (!deletedIds || deletedIds.length === 0) {
     return { ok: false, error: "None of the selected tests can be deleted." };
   }
+  const deleted = deletedIds.map((id) => ({ id }));
 
   const rowById = new Map(rows.map((r) => [r.id, r]));
   const { ip, ua } = await ipAndAgent();
