@@ -43,7 +43,8 @@
 -- remain by design, each ending ONE side as 40P01 with nothing half-done.
 -- Only the PANEL side retries it (restorePanelMembers / reclaimPanelMembers,
 -- once, via withLifecycleRetry); a manual Restore that loses the cycle is not
--- retried and sees the generic 40P01 "try again" message:
+-- retried and sees the generic 40P01 "try again" message
+-- (superseded 2026-10-02 — see Follow-up below):
 --   * a queued EXCLUSIVE patient lifecycle lock (0184, patient
 --     delete/restore) — the class 0184 accepts;
 --   * a manual queue Restore on the same visit: its UPDATE locks the line

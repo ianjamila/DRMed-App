@@ -56,135 +56,165 @@ describe("restoreTestRequestsForVisit's bulk-Undo write predicates on the exact 
 
 // Behavioural: a restore UPDATE that loses a lock race (40P01) re-runs once.
 // PR B's proof (S7, scripts/panel-undo-concurrency-proof.ts) showed a manual
-// Restore racing a panel Undo-restore on one visit can lose a deadlock. The
-// fake below stands in for the admin client: the read returns the candidate
-// rows, each UPDATE pops the next scripted result.
-const fx = vi.hoisted(() => ({
-  candidates: [] as unknown[],
-  updateResults: [] as Array<{ data: { id: string }[] | null; error: { code?: string; message?: string } | null }>,
-  updates: [] as Array<{ filters: Array<[string, ...unknown[]]> }>,
-  audits: [] as Array<{ resource_id: string }>,
+// Restore racing a panel Undo-restore on one visit can lose a deadlock. Real
+// rows live in the shared FakeDb; `beforeWrite` makes a chosen UPDATE fail
+// with 40P01 (nothing is written, exactly like a rolled-back statement).
+const h = vi.hoisted(() => ({
+  db: null as unknown,
+  audits: [] as Array<{ resource_id: string; action: string }>,
 }));
 vi.mock("server-only", () => ({}));
 vi.mock("next/cache", () => ({ revalidatePath: () => {} }));
 vi.mock("@/lib/supabase/admin", () => ({
-  createAdminClient: () => ({
-    from() {
-      let isUpdate = false;
-      const filters: Array<[string, ...unknown[]]> = [];
-      const q: Record<string, unknown> = {};
-      q.update = () => {
-        isUpdate = true;
-        return q;
-      };
-      for (const m of ["select", "in", "eq", "not", "is"]) {
-        q[m] = (...args: unknown[]) => {
-          filters.push([m, ...args]);
-          return q;
-        };
-      }
-      q.then = (res: (v: unknown) => unknown) => {
-        if (!isUpdate) return res({ data: fx.candidates, error: null });
-        fx.updates.push({ filters });
-        return res(fx.updateResults.shift() ?? { data: [], error: null });
-      };
-      return q;
-    },
-  }),
+  createAdminClient: () => (h.db as { client: () => unknown }).client(),
 }));
-vi.mock("@/lib/audit/log", () => ({ audit: async (e: { resource_id: string }) => void fx.audits.push(e) }));
+vi.mock("@/lib/audit/log", () => ({
+  audit: async (e: { resource_id: string; action: string }) => void h.audits.push(e),
+}));
 vi.mock("@/lib/server/action-helpers", () => ({ ipAndAgent: async () => ({ ip: null, ua: null }) }));
 vi.mock("@/lib/patients/require-active", () => ({ assertVisitPatientActive: async () => ({ ok: true }) }));
 
 const { restoreTestRequestsForVisit } = await import("./queue-restore-core");
+const { translatePgError } = await import("@/lib/accounting/pg-errors");
+const { FakeDb } = await import("@/lib/testing/fake-db");
+type FakeDbT = InstanceType<typeof FakeDb>;
 
 const SESSION = { user_id: "u1", role: "admin" } as never;
-const candidate = (id: string, deletedAt: string) => ({
-  id,
-  deleted_at: deletedAt,
-  delete_reason: "typo",
-  parent_id: null,
-  visits: { patient_id: "p1", deleted_at: null },
-  services: { name: "CBC", code: "CBC" },
-});
 const T1 = "2026-10-02T01:00:00.000Z";
 const T2 = "2026-10-02T01:00:05.000Z";
-const LOST = { data: null, error: { code: "40P01", message: "deadlock detected" } };
-const OK = (...ids: string[]) => ({ data: ids.map((id) => ({ id })), error: null });
+const LOST = { code: "40P01", message: "deadlock detected" };
+
+function row(id: string, deletedAt: string | null, over: Record<string, unknown> = {}) {
+  return {
+    id,
+    visit_id: "v1",
+    deleted_at: deletedAt,
+    deleted_by: deletedAt ? "someone" : null,
+    delete_reason: deletedAt ? "typo" : null,
+    parent_id: null,
+    services: { name: `Svc ${id}`, code: `C-${id}` },
+    visits: { patient_id: "p1", deleted_at: null },
+    ...over,
+  };
+}
+
+let db: FakeDbT;
+/** Fail the first `times` UPDATEs whose filters satisfy `when` (default: every UPDATE) with 40P01. */
+function loseRace(times: number, when: (filters: Array<[string, unknown[]]>) => boolean = () => true) {
+  let left = times;
+  db.hooks.beforeWrite = (call) => {
+    if (left > 0 && when(call.filters)) {
+      left -= 1;
+      return LOST;
+    }
+  };
+}
+const deletedAtOf = (id: string) => db.row("test_requests", id).deleted_at;
+const forGroup = (t: string) => (filters: Array<[string, unknown[]]>) =>
+  filters.some(([name, args]) => name === "eq" && args[0] === "deleted_at" && args[1] === t);
 
 beforeEach(() => {
-  fx.candidates = [];
-  fx.updateResults = [];
-  fx.updates = [];
-  fx.audits = [];
+  db = new FakeDb();
+  h.db = db;
+  h.audits = [];
 });
 
 describe("manual Restore retries a lost lock race once", () => {
   beforeEach(() => {
-    fx.candidates = [candidate("a", T1), candidate("b", T1)];
+    db.seed("test_requests", [
+      row("a", T1),
+      row("b", T1),
+      row("c", T1), // deleted but NOT selected — must stay deleted
+      row("z", T1, { visit_id: "v2" }), // another visit — must stay deleted
+    ]);
   });
 
-  it("40P01 then success: ok, exactly two UPDATEs, one audit row per line", async () => {
-    fx.updateResults = [LOST, OK("a", "b")];
+  it("40P01 then success: ok, two identical UPDATEs, rows restored, one audit row per line", async () => {
+    loseRace(1);
     const out = await restoreTestRequestsForVisit(SESSION, "v1", ["a", "b"], "oops");
     expect(out).toEqual({ ok: true, restoredIds: ["a", "b"] });
-    expect(fx.updates).toHaveLength(2);
-    expect(fx.audits.map((a) => a.resource_id)).toEqual(["a", "b"]);
+    const ups = db.updates("test_requests");
+    expect(ups).toHaveLength(2);
+    expect(ups[1]!.filters).toEqual(ups[0]!.filters);
+    expect(ups[0]!.matchedIds).toEqual([]); // the lost attempt wrote nothing
+    expect(ups[1]!.matchedIds).toEqual(["a", "b"]);
+    expect([deletedAtOf("a"), deletedAtOf("b")]).toEqual([null, null]);
+    expect([deletedAtOf("c"), deletedAtOf("z")]).toEqual([T1, T1]);
+    expect(h.audits.map((a) => [a.action, a.resource_id])).toEqual([
+      ["test_request.restored", "a"],
+      ["test_request.restored", "b"],
+    ]);
   });
 
-  it("a second 40P01 returns the translated error and audits nothing", async () => {
-    fx.updateResults = [LOST, LOST];
+  it("a second 40P01 returns the translated error, writes and audits nothing", async () => {
+    loseRace(2);
     const out = await restoreTestRequestsForVisit(SESSION, "v1", ["a", "b"], "oops");
-    expect(out.ok).toBe(false);
-    if (!out.ok) expect(out.error).not.toBe("");
-    expect(fx.updates).toHaveLength(2);
-    expect(fx.audits).toHaveLength(0);
+    expect(out).toEqual({ ok: false, error: translatePgError(LOST) });
+    expect(db.updates("test_requests")).toHaveLength(2);
+    expect(db.rows("test_requests").map((r) => r.deleted_at)).toEqual([T1, T1, T1, T1]);
+    expect(h.audits).toHaveLength(0);
   });
 
   it("a non-retryable error (XX000) is not retried", async () => {
-    fx.updateResults = [{ data: null, error: { code: "XX000", message: "boom" } }, OK("a", "b")];
+    const boom = { code: "XX000", message: "boom" };
+    db.hooks.beforeWrite = () => boom;
     const out = await restoreTestRequestsForVisit(SESSION, "v1", ["a", "b"], "oops");
-    expect(out.ok).toBe(false);
-    expect(fx.updates).toHaveLength(1);
-    expect(fx.audits).toHaveLength(0);
+    expect(out).toEqual({ ok: false, error: translatePgError(boom) });
+    expect(db.updates("test_requests")).toHaveLength(1);
+    expect(deletedAtOf("a")).toBe(T1);
+    expect(h.audits).toHaveLength(0);
   });
 });
 
 describe("bulk Undo (expected deleted_at) retries each group the same way", () => {
-  it("a group that loses the race re-runs once; the other group is untouched", async () => {
-    fx.candidates = [candidate("a", T1), candidate("b", T2)];
-    // group T1: lost, then ok; group T2: ok first time.
-    fx.updateResults = [LOST, OK("a"), OK("b")];
-    const out = await restoreTestRequestsForVisit(
-      SESSION,
-      "v1",
-      ["a", "b"],
-      "undo",
-      {},
-      new Map([
-        ["a", T1],
-        ["b", T2],
-      ]),
-    );
-    expect(out).toEqual({ ok: true, restoredIds: ["a", "b"] });
-    expect(fx.updates).toHaveLength(3);
-    expect(fx.audits.map((a) => a.resource_id)).toEqual(["a", "b"]);
+  const expected = new Map([
+    ["a", T1],
+    ["b", T2],
+  ]);
+  beforeEach(() => {
+    db.seed("test_requests", [row("a", T1), row("b", T2), row("c", T1)]);
   });
 
-  it("a second 40P01 on a group is not retried again (translated error when nothing restored)", async () => {
-    fx.candidates = [candidate("a", T1)];
-    fx.updateResults = [LOST, LOST];
+  it("a group that loses the race re-runs once with the same filters; the other group is untouched by it", async () => {
+    loseRace(1, forGroup(T1));
+    const out = await restoreTestRequestsForVisit(SESSION, "v1", ["a", "b"], "undo", {}, expected);
+    expect(out).toEqual({ ok: true, restoredIds: ["a", "b"] });
+    const ups = db.updates("test_requests");
+    expect(ups).toHaveLength(3); // A lost, A retried, B
+    expect(ups[1]!.filters).toEqual(ups[0]!.filters);
+    expect(ups[2]!.filters).not.toEqual(ups[0]!.filters);
+    expect([deletedAtOf("a"), deletedAtOf("b")]).toEqual([null, null]);
+    expect(deletedAtOf("c")).toBe(T1); // same deleted_at as A but not selected
+    expect(h.audits.map((a) => a.resource_id)).toEqual(["a", "b"]);
+  });
+
+  it("a second 40P01 on the only group is not retried again: translated error, nothing restored", async () => {
+    db.tables.test_requests = [row("a", T1)];
+    loseRace(2);
     const out = await restoreTestRequestsForVisit(SESSION, "v1", ["a"], "undo", {}, new Map([["a", T1]]));
-    expect(out.ok).toBe(false);
-    expect(fx.updates).toHaveLength(2);
-    expect(fx.audits).toHaveLength(0);
+    expect(out).toEqual({ ok: false, error: translatePgError(LOST) });
+    expect(db.updates("test_requests")).toHaveLength(2);
+    expect(deletedAtOf("a")).toBe(T1);
+    expect(h.audits).toHaveLength(0);
+  });
+
+  it("mixed: group A loses twice, group B succeeds -> ok with B only", async () => {
+    // Known gap: A's real error (40P01) is not surfaced — the core returns ok
+    // and the caller lists A as "not restored".
+    loseRace(2, forGroup(T1));
+    const out = await restoreTestRequestsForVisit(SESSION, "v1", ["a", "b"], "undo", {}, expected);
+    expect(out).toEqual({ ok: true, restoredIds: ["b"] });
+    expect(db.updates("test_requests")).toHaveLength(3); // A twice, B once
+    expect(deletedAtOf("a")).toBe(T1);
+    expect(deletedAtOf("b")).toBeNull();
+    expect(h.audits.map((a) => a.resource_id)).toEqual(["b"]);
   });
 
   it("a non-retryable error (XX000) is not retried", async () => {
-    fx.candidates = [candidate("a", T1)];
-    fx.updateResults = [{ data: null, error: { code: "XX000", message: "boom" } }, OK("a")];
+    db.tables.test_requests = [row("a", T1)];
+    db.hooks.beforeWrite = () => ({ code: "XX000", message: "boom" });
     const out = await restoreTestRequestsForVisit(SESSION, "v1", ["a"], "undo", {}, new Map([["a", T1]]));
     expect(out.ok).toBe(false);
-    expect(fx.updates).toHaveLength(1);
+    expect(db.updates("test_requests")).toHaveLength(1);
   });
 });
