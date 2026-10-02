@@ -73,6 +73,7 @@ const REGISTRY: Record<string, RegistryEntry> = {
   unclaim_panel_members: {
     proof: ["scripts/panel-claim-concurrency-proof.ts", "scripts/report-release-concurrency-proof.ts"],
   },
+  recompute_clinic_fee_for_unreleased: { proof: ["scripts/plan-order-lockers-proof.ts"] },
   claim_release_notice: { proof: ["scripts/release-notice-concurrency-proof.ts"] },
   finish_release_notice: { proof: ["scripts/release-notice-concurrency-proof.ts"] },
   reclaim_panel_members: { proof: ["scripts/panel-undo-concurrency-proof.ts"] },
@@ -191,7 +192,7 @@ describe("concurrency-proof guard (real migrations)", () => {
     // checkGuard already asserts existence and the per-function annotation;
     // this pins only a floor (non-trivial), so parallel proof PRs do not conflict on an exact count.
     const proofs = Object.values(REGISTRY).filter((e) => "proof" in e);
-    expect(proofs.length).toBeGreaterThanOrEqual(44);
+    expect(proofs.length).toBeGreaterThanOrEqual(45);
   });
 });
 
