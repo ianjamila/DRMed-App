@@ -57,7 +57,6 @@ export function ConsolidatedForm(props: Props) {
       const res = await claimConsolidated({
         visitId: props.visit.id,
         groupId: props.group.id,
-        testRequestIds: props.testRequestIds,
       });
       if (!res.ok) {
         startTransition(() => {

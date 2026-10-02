@@ -43,13 +43,13 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe("ConsolidatedForm Claim", () => {
-  it("sends the visit and group, then replaces the URL with the Undo handshake", async () => {
+  it("sends only the visit and group (the server resolves the panel), then replaces the URL with the Undo handshake", async () => {
     vi.mocked(claimConsolidated).mockResolvedValue({ ok: true, batchId: BATCH });
     render(form());
     await userEvent.setup().click(screen.getByRole("button", { name: "Claim this report" }));
 
     await vi.waitFor(() => expect(router.replace).toHaveBeenCalledTimes(1));
-    expect(claimConsolidated).toHaveBeenCalledWith({ visitId: VISIT, groupId: GROUP, testRequestIds: ["m1", "m2"] });
+    expect(claimConsolidated).toHaveBeenCalledWith({ visitId: VISIT, groupId: GROUP });
     const [href, opts] = router.replace.mock.calls[0]!;
     expect(href).toMatch(new RegExp(`^/staff/queue/consolidated/${VISIT}/${GROUP}\\?claimed=${BATCH}&at=\\d+$`));
     expect(opts).toEqual({ scroll: false });
