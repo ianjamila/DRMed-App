@@ -151,30 +151,31 @@
 //       selection is the panel members queued: both complete, no 40P01.
 //       S9 the same with the release first. (The second caller is stopped at the
 //       visit before it holds any member row; mutant F removes exactly that.)
-//   S7  FINDING, documented not hidden: the manual Restore UPDATE locks the
-//       line (the BEFORE-trigger tuple lock) and THEN the visit (0183's
-//       waived-visit guard takes the visit FOR UPDATE for every restored line;
-//       fn_queue_delete_cascade also re-adds a priced line's total), the
-//       reverse of restore_panel_members (visit, then lines). Forced with both
-//       queued on one gated member, the cycle forms: exactly one side ends
-//       40P01 (still all-or-nothing: the panel restore lands whole or restores
-//       nothing) and the state is consistent. 0200's header lists this cycle
-//       (and the patient-lifecycle one) as remaining by design; only the PANEL
-//       side retries it.
+//   S7  manual Restore first (holding the visit, queued on a gated member), panel
+//       restore queued: it must wait at the VISIT row, never on a member; no
+//       40P01, the manual Restore lands, the panel restore is refused P0082 with
+//       nothing restored by it. S7b the same with the panel restore first: the
+//       manual Restore waits at the visit, the panel lands whole, the manual
+//       Restore then matches nothing. Until 0216 this was a documented FINDING -
+//       the bare manual Restore UPDATE locked the line and THEN the visit (0183's
+//       waived-visit guard), the reverse of restore_panel_members, and the cycle
+//       ended one side 40P01. Since 0216 both go through
+//       restore_test_request_lines / restore_panel_members: patient (shared) ->
+//       visit FOR UPDATE -> lines ORDER BY id, so the cycle cannot form.
 //   F1  PUC_ROUNDS free rounds: reclaim vs a three-way single-claim race on one
 //       panel - never split.
 //   F2  PUC_ROUNDS free rounds: panel restore vs a manual Restore of a random
-//       member - the panel is either fully restored or refused with no member
-//       restored by the panel call (a 40P01 from the S7 cycle counts as a
-//       refusal and is tallied).
+//       member - the panel is either fully restored or refused (P0082) with no
+//       member restored by the panel call. Since 0216 any 40P01, or any manual
+//       Restore error, fails the round.
 //
 // CONTROL ROUNDS (--control) prove the proof can fail: each copies the two live
 // functions into a throwaway schema (puc_ctl_<hex>, never public - the stack is
 // shared) with ONE guard removed, reruns the forced scenarios against the copy
 // and passes only if the named scenarios FAIL in both modes FOR THE EXPECTED
 // REASON (a regex over the failure text: "expected P0082, but it succeeded" for
-// the dropped row-count / predicate guards, the cycle's 40P01 for the dropped
-// visit lock). A scenario that fails because its interleaving was not reached,
+// the dropped row-count / predicate guards, a member-row wait or a real 40P01
+// for the dropped visit lock). A scenario that fails because its interleaving was not reached,
 // a wait never happened or a statement timed out is infrastructure: it counts as
 // NOT caught and fails the round, as does any such failure elsewhere in it.
 //   A drops reclaim's row-count check          -> R1, R4, R13 must fail
@@ -184,14 +185,17 @@
 //     race. R13 is the only state it alone refuses.)
 //   C drops restore's row-count check          -> S1, S4 must fail
 //   D drops restore's deleted_at predicate     -> S4 must fail
-//   F drops restore's visit lock               -> S7, S8 must fail (S7: with no
-//     visit lock the panel restore never holds the visit first, so the line ->
-//     visit cycle cannot form - which also confirms the visit lock is its
-//     cause; S8: the release then holds the visit FOR SHARE and waits for a
-//     member the restore holds while the restore waits for the visit: 40P01).
-//     S6a/S6b do NOT discriminate F: the restore's BEFORE trigger (0183's
-//     waived-visit guard) takes the visit FOR UPDATE on every restored line
-//     anyway, so a restore queues at the visit with or without its own lock.
+//   F turns restore's visit FOR UPDATE into a plain read -> S1, S5, S7, S7b, S8
+//     must fail. (S1/S7/S7b: the second caller is no longer stopped at the visit
+//     and waits on a member row instead; S5: a visit soft-delete committing
+//     first is no longer serialised behind the visit lock, so the panel restore
+//     succeeds against a deleted visit; S8: the release holds the visit FOR
+//     SHARE and waits for a member the restore holds while the restore's
+//     trigger waits for the visit: a real 40P01.) RESULT (this stack,
+//     2026-10-02): caught by all five, in both modes. S6a/S6b do NOT
+//     discriminate F: the restore's BEFORE trigger (0183's waived-visit guard)
+//     takes the visit FOR UPDATE on every restored line anyway, so a restore
+//     queues at the visit with or without its own lock.
 //   E drops reclaim's id-ordered pre-lock      -> INFORMATIONAL, reported per mode.
 //     RESULT (this stack, 2026-10-01, three --control runs with the forced
 //     indexed plans, identical each time): R9 and R10 caught it as a real
@@ -471,34 +475,35 @@ function claimOne(a: Actor, id: string): Promise<N> {
   );
 }
 
-// The UPDATE deleteTestRequestsManyCore issues per visit (via
+// What deleteTestRequestsManyCore issues per visit (via
 // deleteTestRequestsForVisit, lib/actions/queue/bulk-delete-core.ts), through
-// the service-role admin client.
+// the service-role admin client: since 0216 the rpc("delete_test_request_lines"),
+// which takes the global lock order (patient lifecycle lock shared -> visit FOR
+// UPDATE -> lines ORDER BY id) before the same UPDATE the app used to issue bare.
+// The row count is the length of the returned id array.
 function queueDelete(a: Actor, ids: readonly string[], visitId: string): Promise<N> {
   return settle(
-    a.c.query(
-      `update public.test_requests
-          set deleted_at = now(), deleted_by = $3, delete_reason = $4
-        where id = any($1::uuid[]) and visit_id = $2 and deleted_at is null
-        returning id`,
-      [ids, visitId, fx.admin1, `${TAG} concurrency proof`],
-    ),
-    (r) => r.rowCount ?? 0,
+    a.c.query("select public.delete_test_request_lines($1::uuid, $2::uuid[], $3::uuid, $4, now()) as ids", [
+      visitId,
+      ids,
+      fx.admin1,
+      `${TAG} concurrency proof`,
+    ]),
+    (r) => ((r.rows[0].ids as string[] | null) ?? []).length,
   );
 }
 
-// The manual Restore UPDATE (restoreTestRequestsForVisit's non-bulk branch,
-// lib/actions/visits/queue-restore-core.ts), through the admin client.
+// The manual Restore (restoreTestRequestsForVisit's non-bulk branch,
+// lib/actions/visits/queue-restore-core.ts), through the admin client: since 0216
+// rpc("restore_test_request_lines", { p_visit_id, p_test_request_ids }) with NO
+// p_deleted_at (so its predicate is the old bare UPDATE's "deleted_at is not null"),
+// which takes the global lock order (patient lifecycle lock shared -> visit FOR
+// UPDATE -> the lines and a header's components ORDER BY id) before the UPDATE.
+// The row count is the length of the returned id array (0 = nothing was deleted).
 function manualRestore(a: Actor, ids: readonly string[], visitId: string): Promise<N> {
   return settle(
-    a.c.query(
-      `update public.test_requests
-          set deleted_at = null, deleted_by = null, delete_reason = null
-        where id = any($1::uuid[]) and visit_id = $2 and deleted_at is not null
-        returning id`,
-      [ids, visitId],
-    ),
-    (r) => r.rowCount ?? 0,
+    a.c.query("select public.restore_test_request_lines($1::uuid, $2::uuid[]) as ids", [visitId, ids]),
+    (r) => ((r.rows[0].ids as string[] | null) ?? []).length,
   );
 }
 
@@ -666,8 +671,11 @@ const RESTORE_UPDATE = `update public.test_requests t
    where t.id = x.id and t.visit_id = $1 and t.deleted_at = x.deleted_at and t.parent_id is null`;
 const RECLAIM_PRELOCK =
   "select 1 from public.test_requests t where t.id = any ($1::uuid[]) order by t.id for no key update";
+// 0216: the members AND any header's components (the cascade restores them), the
+// visit predicate first - hand-copied from restore_panel_members, which locks them
+// ascending after the patient lock and the visit FOR UPDATE.
 const RESTORE_PRELOCK =
-  "select 1 from public.test_requests t where t.id = any ($1::uuid[]) and t.visit_id = $2 order by t.id for no key update";
+  "select 1 from public.test_requests t where t.visit_id = $2 and (t.id = any ($1::uuid[]) or t.parent_id = any ($1::uuid[])) order by t.id for no key update";
 
 const nulls = (n: number): null[] => Array.from({ length: n }, () => null);
 const x3 = <T>(v: T): T[] => [v, v, v];
@@ -743,10 +751,16 @@ const flat = (lines: string[]) =>
 
 // Does this mode's plan have prod's shape? (Printed, not asserted: the local
 // planner's choice moves with table statistics.)
+// The table side is a full Index Scan on a few-row table with no usable index
+// condition, so WHICH index the local planner walks (the status one prod's plan
+// shows, or the visit_id one, 2026-10-02 on this stack) is a cost tie decided by
+// the heap's column correlation. Both give the same shape - a table-driven Hash
+// Join (t.id = x.id) over an index scan - and a lock order of (index key, TID),
+// which arrangeInverted controls either way, so either is accepted.
 const prodReclaimShape = (lines: string[]) =>
   /Hash Join/.test(flat(lines)) &&
   lines.some((l) => /Hash Cond: \(t\.id = x\.id\)/.test(l)) &&
-  /Index Scan using idx_test_requests_status/.test(flat(lines)) &&
+  /Index Scan using idx_test_requests_(status|visit_id)\b/.test(flat(lines)) &&
   drivenBy(lines) === "table";
 const prodRestoreShape = (lines: string[]) =>
   /Merge Join/.test(flat(lines)) && /Index Scan using test_requests_deleted_idx/.test(flat(lines)) && /Sort/.test(flat(lines));
@@ -1582,40 +1596,74 @@ async function forcedScenarios(mode: Mode): Promise<void> {
     restoreReleaseRace(mode, "release"),
   );
 
-  await scenario(s("S7", "FINDING: manual Restore (line -> visit) vs panel restore (visit -> lines) on a gated member -> the cycle forms, exactly one 40P01, atomic"), async () => {
+  // S7 / S7b: manual Restore vs panel restore on a gated member. Until 0216 this was a
+  // documented FINDING (the manual Restore took the line and then the visit, the panel
+  // restore the visit and then the lines: a cycle, exactly one 40P01). Both now take
+  // patient (shared) -> visit FOR UPDATE -> lines, so the SECOND caller must be stopped
+  // at the VISIT row before it holds any line, and no cycle can form. Asserted, not
+  // reported: no 40P01, both complete or the panel restore is refused P0082 with
+  // nothing restored by it, and the final state is consistent.
+  await scenario(s("S7", "manual Restore first (holds the visit, waits on a gated member), panel restore queued at the VISIT -> no 40P01; manual lands, panel P0082, nothing restored by it"), async () => {
     const stamps = await setDeleted(P);
     const man = await actor("service_role (manual)", null);
     const pan = await actor("service_role (panel)", null);
     const gate = await holdRows([p1]);
     let rm: N;
     let rp: N;
+    let waited: string[];
     try {
       await begin(man, mode);
       await begin(pan, mode);
       const pm = andEnd(man, manualRestore(man, [p1], fx.visits.P));
-      await mustWait(man, "the manual Restore queues on the gated member", "test_requests");
+      await mustWait(man, "the manual Restore holds the visit and queues on the gated member", "test_requests");
       const pp = andEnd(pan, restore(pan, fx.visits.P, P, stamps));
-      await mustWait(pan, "the panel restore holds the visit + p0 and queues on the gated member", "test_requests");
+      waited = await mustWait(pan, "the panel restore queues at the VISIT behind the manual Restore, before it holds any member", "visits");
+      if (waited.includes("test_requests")) {
+        throw new Fail(`unexpected wait: the panel restore holds a row-lock wait on a member [${waited.join(",")}] while queued at the visit`);
+      }
       await gate.query("rollback");
       [rm, rp] = await Promise.all([pm, pp]);
     } finally {
       await gate.end();
     }
     const dead = [rm, rp].filter((o) => !o.ok && o.code === "40P01");
-    const other = [rm, rp].filter((o) => !o.ok && o.code !== "40P01");
-    if (dead.length !== 1 || other.length !== 0) {
-      throw new Fail(`expected the cycle to end exactly one side with 40P01, got manual=${tally([rm])} panel=${tally([rp])}`);
-    }
-    // Atomic either way: the panel restore landed whole (manual aborted), or it
-    // aborted and only the manual Restore's member is live.
-    if (rp.ok) {
-      expectOk("panel restore", rp, 3);
-      await expectStamps("after (manual aborted)", P, [null, null, null]);
-      return "manual Restore aborted 40P01; the panel restore landed whole";
-    }
+    if (dead.length) throw new Fail(`deadlock (40P01): manual=${tally([rm])} panel=${tally([rp])}`);
     expectOk("manual restore", rm, 1);
-    await expectStamps("after (panel aborted)", P, [stamps[0], null, stamps[2]]);
-    return "panel restore aborted 40P01 (nothing restored by it); the manual Restore landed";
+    expectCode("panel restore", rp, "P0082", RESTORE_REFUSED);
+    await expectStamps("after", P, [stamps[0], null, stamps[2]]);
+    await expectTotal("after", fx.visits.P);
+    return "the panel restore waited on the visit; manual landed, panel P0082 with nothing restored by it";
+  });
+
+  await scenario(s("S7b", "panel restore first (holds the visit + p0, waits on a gated member), manual Restore queued at the VISIT -> no 40P01; both complete, panel whole, manual restores nothing"), async () => {
+    const stamps = await setDeleted(P);
+    const man = await actor("service_role (manual)", null);
+    const pan = await actor("service_role (panel)", null);
+    const gate = await holdRows([p1]);
+    let rm: N;
+    let rp: N;
+    let waited: string[];
+    try {
+      await begin(man, mode);
+      await begin(pan, mode);
+      const pp = andEnd(pan, restore(pan, fx.visits.P, P, stamps));
+      await mustWait(pan, "the panel restore holds the visit and p0 and queues on the gated member", "test_requests");
+      const pm = andEnd(man, manualRestore(man, [p1], fx.visits.P));
+      waited = await mustWait(man, "the manual Restore queues at the VISIT behind the panel restore, before it holds any line", "visits");
+      await gate.query("rollback");
+      [rm, rp] = await Promise.all([pm, pp]);
+    } finally {
+      await gate.end();
+    }
+    const dead = [rm, rp].filter((o) => !o.ok && o.code === "40P01");
+    if (dead.length) throw new Fail(`deadlock (40P01): manual=${tally([rm])} panel=${tally([rp])}`);
+    expectOk("panel restore", rp, 3);
+    // The manual Restore's predicate is "deleted_at is not null": by the time it
+    // gets the visit the panel has restored p1, so it matches nothing (not an error).
+    expectOk("manual restore", rm, 0);
+    await expectStamps("after", P, [null, null, null]);
+    await expectTotal("after", fx.visits.P);
+    return `the manual Restore waited on [${waited.join(",")}]; panel landed whole, manual restored nothing`;
   });
 }
 
@@ -1689,9 +1737,11 @@ async function freeRaces(mode: Mode, rounds: number): Promise<void> {
           return andEnd(man, manualRestore(man, [P[k]], fx.visits.P));
         })(),
       ]);
-      const mRows = rm.ok ? rm.v : 0;
-      if (!rm.ok && rm.code !== "40P01") throw new Fail(`round ${i}: manual restore ${rm.code} ${rm.message}`);
-      if (!rp.ok && rp.code !== "P0082" && rp.code !== "40P01") throw new Fail(`round ${i}: panel restore ${rp.code} ${rp.message}`);
+      // 0216: both take patient -> visit -> lines, so a 40P01 (or any error but the
+      // panel's P0082 refusal) is a FAILURE here, not a tallied outcome.
+      if (!rm.ok) throw new Fail(`round ${i}: manual restore ${rm.code} ${rm.message}`);
+      const mRows = rm.v;
+      if (!rp.ok && rp.code !== "P0082") throw new Fail(`round ${i}: panel restore ${rp.code} ${rp.message}`);
       const got = await stampsOf(P);
       if (rp.ok) {
         if (rp.v !== 3) throw new Fail(`round ${i}: panel restore returned ${rp.v}`);
@@ -1706,7 +1756,7 @@ async function freeRaces(mode: Mode, rounds: number): Promise<void> {
         }
       }
       await expectTotal(`round ${i}`, fx.visits.P);
-      const key = rp.ok ? "panel landed" : rp.code === "40P01" ? "panel 40P01" : "panel P0082";
+      const key = rp.ok ? "panel landed" : "panel P0082";
       t[key] = (t[key] ?? 0) + 1;
       await closeActors();
     }
@@ -1855,7 +1905,8 @@ async function seed(): Promise<void> {
   }
 }
 
-// The probe statements above are hand-copied from 0200's function bodies. If a
+// The probe statements above are hand-copied from 0200's function bodies (the
+// restore's pre-lock from 0216's re-creation of restore_panel_members). If a
 // later migration changes the live text, the plans and the arrangement would be
 // measured on a statement the function no longer runs: compare them with
 // pg_get_functiondef (whitespace-normalised, parameters mapped back to the
@@ -1977,6 +2028,9 @@ const INFRA =
 // The mutant's guard let a refused call through.
 const SUCCEEDED = /expected P0082, but it succeeded/;
 const DEADLOCK = /deadlock \(40P01\)/;
+// A queued restore / Restore was seen waiting on a member row instead of the visit row
+// (the visit lock it should have stopped at is gone).
+const WAIT_NOT_ON_VISIT = /unexpected wait: service_role \((?:panel|manual)\) waited on a row of \[test_requests\], not visits/;
 
 const MUTANTS: Mutant[] = [
   {
@@ -2024,12 +2078,15 @@ const MUTANTS: Mutant[] = [
   },
   {
     key: "F",
-    what: "restore without its visit lock",
+    what: "restore without its visit lock (the visit is only read, not FOR UPDATE)",
     fn: "restore_panel_members",
-    from: "perform 1 from public.visits v where v.id = p_visit_id for no key update;",
-    to: "",
+    from: "from public.visits v where v.id = p_visit_id for update;",
+    to: "from public.visits v where v.id = p_visit_id;",
     mustFail: [
-      { id: "S7", reason: /expected the cycle to end exactly one side with 40P01/ },
+      { id: "S1", reason: WAIT_NOT_ON_VISIT },
+      { id: "S5", reason: SUCCEEDED },
+      { id: "S7", reason: WAIT_NOT_ON_VISIT },
+      { id: "S7b", reason: WAIT_NOT_ON_VISIT },
       { id: "S8", reason: DEADLOCK },
     ],
     modes: REAL_MODES,
