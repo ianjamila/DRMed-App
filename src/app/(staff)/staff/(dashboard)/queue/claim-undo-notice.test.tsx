@@ -60,7 +60,7 @@ describe("ClaimUndoNotice", () => {
     expect(router.replace).toHaveBeenCalledWith("/staff/queue/consolidated/v1/g1?edit=1", { scroll: false });
   });
 
-  it("a new searchParams object of the same content neither fires replace nor re-arms the timer", async () => {
+  it("a new searchParams object of the same content keeps a single strip at the original deadline", async () => {
     vi.useFakeTimers();
     const doneAt = Date.now();
     const view = renderNotice(doneAt);

@@ -37,8 +37,8 @@ export function ClaimUndoNotice({
   }, [pathname, router, searchParams]);
 
   // The effect below calls the latest strip through a ref and depends on
-  // doneAt alone, so StrictMode or a searchParams identity change can never
-  // re-fire replace or re-arm the timer.
+  // doneAt alone, so a searchParams identity change (e.g. the replace itself)
+  // can never re-fire replace or re-arm the timer.
   const stripRef = useRef(stripParams);
   useEffect(() => {
     stripRef.current = stripParams;
