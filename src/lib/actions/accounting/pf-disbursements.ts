@@ -7,7 +7,7 @@ import { audit } from "@/lib/audit/log";
 import { translatePgError } from "@/lib/accounting/pg-errors";
 import { voidPfDisbursementAndUnlink } from "@/lib/accounting/pf-disbursement-void";
 import { PfDisbursementCreateSchema } from "@/lib/validations/accounting";
-import { parsePayoutResult } from "@/lib/accounting/pf-payout-result";
+import { isTransportError, parsePayoutResult, PAYOUT_MAY_EXIST } from "@/lib/accounting/pf-payout-result";
 
 type ActionResult<T = unknown> =
   | { ok: true; data: T }
@@ -39,7 +39,13 @@ export async function createPfDisbursement(
     p_recorded_by: staff.user_id,
     p_notes: data.notes ?? undefined,
   });
-  if (rpcErr) return { ok: false, error: translatePgError(rpcErr) };
+  if (rpcErr) {
+    // No database code = the call never got an answer (dropped connection, timeout): the payout may have committed.
+    if (isTransportError(rpcErr)) {
+      return { ok: false, error: `The connection dropped before the payout was confirmed, so it may have been recorded — ${PAYOUT_MAY_EXIST}.` };
+    }
+    return { ok: false, error: translatePgError(rpcErr) };
+  }
   const disb = parsePayoutResult(res);
   if (!disb) {
     // The call may have committed: don't guess — send the operator to the Already paid list.

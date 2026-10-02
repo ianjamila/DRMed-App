@@ -228,7 +228,8 @@ describe("createBulkPfPayoutCash — one RPC per doctor, earlier payouts voided 
     expect(res.ok).toBe(false);
     const msg = !res.ok ? res.error : "";
     expect(msg).toMatch(/^One or more PF entries are not open for disbursement/);
-    expect(msg).toMatch(/PF-41 could not be voided again \(journal entry is locked\) and still stands — void it from Pay Doctors › Already paid/);
+    expect(msg).toMatch(/PF-41 could not be fully voided again \(journal entry is locked\) — check Pay Doctors › Already paid/);
+    expect(msg).not.toMatch(/still stands/);
     expect(msg).not.toMatch(/nothing was left half-done/);
     expect(msg).not.toMatch(/have been rolled back/);
   });
@@ -243,7 +244,55 @@ describe("createBulkPfPayoutCash — one RPC per doctor, earlier payouts voided 
     const msg = !res.ok ? res.error : "";
     expect(fx.voided.map((v) => v.disbursementId)).toEqual([D1, D2]);
     expect(msg).toMatch(/1 of 3 payouts in this batch were already created and have been rolled back/);
-    expect(msg).toMatch(/PF-41 could not be voided again/);
+    expect(msg).toMatch(/PF-41 could not be fully voided again/);
+  });
+});
+
+describe("a transport-level RPC error is not a refusal: the payout may have been recorded", () => {
+  const single = { physician_id: PHYS, posted_date: "2026-10-02", method: "cash" as const, total_php: 600, entry_ids: [E1] };
+  const bulk = {
+    posted_date: "2026-10-02",
+    by_physician: [
+      { physician_id: PHYS, entry_ids: [E1, E2], total_php: 600 },
+      { physician_id: PHYS2, entry_ids: [E3], total_php: 150 },
+    ],
+  };
+  const dropped = { data: null, error: { code: "", message: "TypeError: fetch failed" } };
+
+  it("single payout: says it may have been recorded and to check Already paid (and audits nothing)", async () => {
+    fx.rpcResults.push(dropped);
+    const res = await createPfDisbursement(single);
+    expect(res.ok).toBe(false);
+    expect(!res.ok && res.error).toMatch(/may have been recorded — check Pay Doctors › Already paid/);
+    expect(!res.ok && res.error).not.toMatch(/fetch failed/);
+    expect(fx.audits).toEqual([]);
+  });
+
+  it("a database error code is still a definite refusal", async () => {
+    fx.rpcResults.push({ data: null, error: { code: "57014", message: "canceling statement due to statement timeout" } });
+    const res = await createPfDisbursement(single);
+    expect(!res.ok && res.error).not.toMatch(/may have been recorded/);
+  });
+
+  it("bulk, first doctor: stops with the may-exist warning and no 'nothing was left half-done'", async () => {
+    fx.rpcResults.push(dropped);
+    const res = await createBulkPfPayoutCash(bulk);
+    const msg = !res.ok ? res.error : "";
+    expect(msg).toMatch(/connection dropped/);
+    expect(msg).toMatch(/one more payout may have been recorded — check Pay Doctors › Already paid/);
+    expect(msg).not.toMatch(/nothing was left half-done/);
+    expect(fx.voided).toEqual([]);
+    expect(fx.audits).toEqual([]);
+  });
+
+  it("bulk, second doctor: the first payout is voided, the warning is still given", async () => {
+    fx.rpcResults.push(ok(D1, 5), dropped);
+    const res = await createBulkPfPayoutCash(bulk);
+    const msg = !res.ok ? res.error : "";
+    expect(fx.voided.map((v) => v.disbursementId)).toEqual([D1]);
+    expect(msg).toMatch(/1 of 2 payouts in this batch were already created and have been rolled back/);
+    expect(msg).toMatch(/one more payout may have been recorded/);
+    expect(msg).not.toMatch(/nothing was left half-done/);
   });
 });
 

@@ -7,7 +7,7 @@ import { audit } from "@/lib/audit/log";
 import { translatePgError } from "@/lib/accounting/pg-errors";
 import { voidPfDisbursementAndUnlink } from "@/lib/accounting/pf-disbursement-void";
 import { PfBulkPayoutSchema } from "@/lib/validations/accounting";
-import { parsePayoutResult } from "@/lib/accounting/pf-payout-result";
+import { isTransportError, parsePayoutResult, PAYOUT_MAY_EXIST } from "@/lib/accounting/pf-payout-result";
 
 type ActionResult<T = unknown> =
   | { ok: true; data: T }
@@ -67,12 +67,11 @@ export async function createBulkPfPayoutCash(
     }
     if (failed.length > 0) {
       const names = failed.map((f) => `PF-${f.batch}`).join(", ");
-      notes.push(
-        `${names} could not be voided again (${failed[0]!.error}) and still ${failed.length === 1 ? "stands" : "stand"} — void ${failed.length === 1 ? "it" : "them"} from Pay Doctors › Already paid`,
-      );
+      // The void is several steps (journal reversal, header, entries): a failure can land after some of them, so say "not fully", never "still stands".
+      notes.push(`${names} could not be fully voided again (${failed[0]!.error}) — check Pay Doctors › Already paid`);
     }
     if (uncertain) {
-      notes.push("one more payout may have been recorded — check Pay Doctors › Already paid before trying again");
+      notes.push(`one more payout may have been recorded — ${PAYOUT_MAY_EXIST}`);
     }
     if (notes.length === 0) return cause;
     const clean = failed.length === 0 && !uncertain;
@@ -94,9 +93,12 @@ export async function createBulkPfPayoutCash(
       p_notes: `Bulk EOD payout ${data.posted_date}`,
     });
     if (rpcErr) {
-      const message = translatePgError(rpcErr);
+      // A transport-level failure (no database code: dropped connection, timeout, unreadable gateway reply) is NOT a refusal - the payout
+      // may have committed. Treated like an unreadable result.
+      const transport = isTransportError(rpcErr);
+      const message = transport ? "The connection dropped before a payout was confirmed, so the batch was stopped." : translatePgError(rpcErr);
       const failed = await rollbackCreated(message);
-      return { ok: false, error: partialFailureMessage(message, failed) };
+      return { ok: false, error: partialFailureMessage(message, failed, transport) };
     }
     const disb = parsePayoutResult(res);
     if (!disb) {

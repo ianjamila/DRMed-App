@@ -56,8 +56,8 @@
 --     the audit rows stay in the actions exactly as before.
 --
 --  B. A line whose PF entry is DISBURSED can no longer be cancelled or un-released.
---     bridge_test_request_cancelled and fn_undo_release_bridge lock the line's live PF
---     entries  ORDER BY id  FOR UPDATE  as their FIRST statement (after the function's own
+--     bridge_test_request_cancelled and fn_undo_release_bridge lock the line's live RECOGNISED PF
+--     entries (a pending HMO entry cannot be paid out - see HMO BRIDGES)  ORDER BY id  FOR UPDATE  as their FIRST statement (after the function's own
 --     "does this row concern me" guards, before the waiver / journal / PF writes) and
 --     raise P0084 - "This doctor's fee was already paid out — void the
 --     payout first." - when any of them carries a disbursement_id. The raise is inside the
@@ -88,7 +88,9 @@
 --       bridge_pf_at_hmo_writeoff     voids only entries with recognized_at IS NULL (a
 --                                     pending HMO fee, nothing accrued) - a payout
 --                                     requires recognized_at, so it can never be disbursed
---                                     -> the refusal does not apply.
+--                                     -> the refusal does not apply (and see HMO BRIDGES
+--                                     below: its lock order is why undo / cancel do not
+--                                     lock pending entries).
 --       bridge_pf_at_hmo_allocation   recognises a PENDING (recognized_at IS NULL) entry
 --                                     and re-prices it; never touches a disbursed one
 --                                     -> does not apply. (A payout racing it waits on the
@@ -107,13 +109,31 @@
 --     and both are fixed here. (Deleting a line is refused once it is released - P0043 -
 --     and the delete path never voids PF entries.)
 --
+-- HMO BRIDGES (why the locks cover RECOGNISED entries only). bridge_pf_at_hmo_allocation and _writeoff
+-- (0141) update a PENDING entry (recognized_at is null) - but only after the same transaction has taken the
+-- journal-entry number counter: the resolution / payment bridge that fires first posts its own JE. So an HMO
+-- transaction runs  counter -> pending entry,  and no re-ordering INSIDE the two PF bridges can change that
+-- (re-creating them to lock first would still sit behind the earlier trigger's counter). If undo / cancel
+-- locked the pending entry up front (entry -> counter) it would close a 40P01 with them - new with 0224,
+-- because before it the undo also went counter -> entry. A pending entry can never be disbursed, so the
+-- payout-facing locks and refusals cover recognised entries only (disjoint from what the HMO bridges
+-- touch); a pending entry is still voided by the unchanged UPDATE, after the counter, in the HMO order.
+-- The one gap that opens - an HMO allocation recognising the entry and a payout paying it between the
+-- first look and that UPDATE - is closed by the re-check block before each void UPDATE (all live entries,
+-- refusing P0084 when one is disbursed; scenario K1g proves the no-deadlock order, the unit test the text).
+--
 -- LOCK ORDER. The bridges take  PF entries (id order)  ->  journal entry  for the line they were
 -- called for, AFTER the line (and, for the undo RPC, the patient lock and visit) the caller already
 -- holds; undo_visit_release takes ALL its candidates' PF entries up front (B2), so the per-row bridge
 -- firings never meet a PF entry they have not locked yet while holding the JE counter. A line is never
 -- locked while a PF entry is held.
 --
--- KNOWN, RARE, HARMLESS: voidPfDisbursementAndUnlink unlinks with one `update ... where disbursement_id = X`
+-- KNOWN, RARE, HARMLESS (no corruption either way; one side is aborted by Postgres and retries):
+--   (1) a 3-way: an HMO allocation RECOGNISES a pending entry while an Undo / cancel of its line is already past
+--       its first look, and a payout pays it before the bridge's re-check - the bridge holds the journal-entry
+--       counter and waits for the entry the payout holds, the payout waits for the counter: 40P01. The re-check
+--       refuses P0084 whenever it does get the entry, so no paid-out entry is ever voided.
+--   (2) voidPfDisbursementAndUnlink unlinks with one `update ... where disbursement_id = X`
 -- (scan order, not id order; the Supabase client cannot lock first). Against a STALE payout of entries
 -- that are still linked, the two can close a 40P01 between the unlink and the payout's id-ordered entry
 -- locks. One side is aborted and retries; nothing is corrupted - and the payout refuses a still-linked
@@ -259,6 +279,7 @@ begin
       from public.doctor_pf_entries e
      where e.test_request_id = new.id
        and e.voided_at is null
+       and e.recognized_at is not null  -- only a recognised entry can be paid out (see the lock-order note)
      order by e.id
        for update
   loop
@@ -298,6 +319,22 @@ begin
   perform public.waiver_unrecognise_line(new.id, v_actor, 'release undone');
 
   -- (The send-out subledger void that followed was removed by 0166.)
+  -- 0224: re-check under the lock, before voiding: an HMO allocation may have RECOGNISED a pending entry since the
+  -- first look (that one is deliberately not locked up front) and a payout may have paid it. Same refusal.
+  for v_pf in
+    select e.id, e.disbursement_id
+      from public.doctor_pf_entries e
+     where e.test_request_id = new.id
+       and e.voided_at is null
+     order by e.id
+       for update
+  loop
+    if v_pf.disbursement_id is not null then
+      raise exception 'This doctor''s fee was already paid out — void the payout first.'
+        using errcode = 'P0084';
+    end if;
+  end loop;
+
   update public.doctor_pf_entries
      set voided_at = now(), voided_by = v_actor, void_reason = 'release_undone'
    where test_request_id = new.id and voided_at is null;
@@ -376,6 +413,7 @@ begin
       from public.doctor_pf_entries e
      where e.test_request_id = new.id
        and e.voided_at is null
+       and e.recognized_at is not null  -- only a recognised entry can be paid out (see the lock-order note)
      order by e.id
        for update
   loop
@@ -399,6 +437,22 @@ begin
   if v_original_je is null then
     -- Test request was released but has no posted JE (defensive edge case).
     -- Still soft-void subledger rows in case they were inserted before the JE.
+    -- 0224: re-check under the lock, before voiding: an HMO allocation may have RECOGNISED a pending entry since the
+    -- first look (that one is deliberately not locked up front) and a payout may have paid it. Same refusal.
+    for v_pf in
+      select e.id, e.disbursement_id
+        from public.doctor_pf_entries e
+       where e.test_request_id = new.id
+         and e.voided_at is null
+       order by e.id
+         for update
+    loop
+      if v_pf.disbursement_id is not null then
+        raise exception 'This doctor''s fee was already paid out — void the payout first.'
+          using errcode = 'P0084';
+      end if;
+    end loop;
+
     update public.doctor_pf_entries
       set voided_at   = now(),
           voided_by   = v_actor,
@@ -458,6 +512,22 @@ begin
   -- 'cash_at_release' (PF now reversed by the JE above) and 'hmo_at_settlement'
   -- (PF was deferred; cancellation withdraws the pending claim entirely).
   -- (The send-out subledger void that followed was removed by 0166.)
+  -- 0224: re-check under the lock, before voiding: an HMO allocation may have RECOGNISED a pending entry since the
+  -- first look (that one is deliberately not locked up front) and a payout may have paid it. Same refusal.
+  for v_pf in
+    select e.id, e.disbursement_id
+      from public.doctor_pf_entries e
+     where e.test_request_id = new.id
+       and e.voided_at is null
+     order by e.id
+       for update
+  loop
+    if v_pf.disbursement_id is not null then
+      raise exception 'This doctor''s fee was already paid out — void the payout first.'
+        using errcode = 'P0084';
+    end if;
+  end loop;
+
   update public.doctor_pf_entries
     set voided_at   = now(),
         voided_by   = v_actor,
@@ -642,9 +712,14 @@ begin
   -- already holds that entry and waits for the same counter in bridge_pf_disbursement_post: a 40P01.
   -- Taken after the lines (release_report_locks) and in the payout's own id order, so the payout and this
   -- call can only queue behind each other. The bridge's own lock then finds the rows already held.
+  -- ONLY RECOGNISED entries: a pending HMO entry (recognized_at is null) can never be paid out, and the HMO
+  -- bridges (bridge_pf_at_hmo_allocation / _writeoff) reach it only AFTER their transaction has already
+  -- taken the journal-entry counter (the resolution / payment bridge that fires first) - locking it here
+  -- would put this call on the opposite order (entry -> counter) and close a 40P01 with them (K1g).
   perform 1
      from public.doctor_pf_entries e
     where e.voided_at is null
+      and e.recognized_at is not null  -- only a recognised entry can be paid out (see the lock-order note)
       and (e.test_request_id = any (v_cands)
            or e.test_request_id in (select t.parent_id from public.test_requests t
                                      where t.id = any (v_cands) and t.parent_id is not null))

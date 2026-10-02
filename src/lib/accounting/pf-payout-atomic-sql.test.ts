@@ -1,6 +1,8 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { readdirSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
+import { scanLiveFunctions } from "@/lib/db/migration-lock-scan";
 
 vi.mock("server-only", () => ({}));
 
@@ -12,7 +14,24 @@ const { translatePgError } = await import("./pg-errors");
 // wording of the two new codes.
 
 const sql = readFileSync(join(process.cwd(), "supabase/migrations/0224_pf_payout_atomic.sql"), "utf8");
-const old = readFileSync(join(process.cwd(), "supabase/migrations/0183_waived_balance_gl.sql"), "utf8");
+const MIGRATIONS = join(process.cwd(), "supabase/migrations");
+const migrations = readdirSync(MIGRATIONS)
+  .filter((f) => f.endsWith(".sql"))
+  .sort()
+  .map((file) => ({ file, sql: readFileSync(join(MIGRATIONS, file), "utf8") }));
+// The definition each 0224 function replaced: the LATEST migration before 0224 that defines it, computed so a future
+// redefinition between two migrations can never leave the "verbatim" check comparing against a stale body.
+const before0224 = scanLiveFunctions(migrations.filter((m) => m.file < "0224"));
+const previousBody = (name: string): string => {
+  const prev = before0224.find((fn) => fn.name === name);
+  if (!prev) throw new Error(`${name} had no definition before 0224`);
+  return fnBody(migrations.find((m) => m.file === prev.file)!.sql, name);
+};
+/** Remove every block 0224 added to a function: a comment starting `-- 0224:` through the `end loop;` / `for update;` that closes it. */
+const withoutHunks = (body: string): string =>
+  body
+    .replace(/  v_pf {11}record; {2}-- 0224\n/, "")
+    .replace(/\n *-- 0224:[\s\S]*?(?:end loop;|for update;)\n/g, "");
 
 const fnBody = (src: string, name: string): string => {
   const start = src.indexOf(`create or replace function public.${name}(`);
@@ -72,24 +91,36 @@ describe("0224 cancel / undo bridges refuse a disbursed entry", () => {
   for (const name of ["bridge_test_request_cancelled", "fn_undo_release_bridge"]) {
     describe(name, () => {
       const body = fnBody(sql, name);
-      const was = fnBody(old, name);
+      const was = previousBody(name);
 
-      it("is 0183's body VERBATIM except the marked -- 0224 lines", () => {
-        const stripped = body
-          .replace(/  v_pf {11}record; {2}-- 0224\n/, "")
-          .replace(/\n  -- 0224: a line whose[\s\S]*?  end loop;\n(?:\n)?/, "\n");
+      it("is the previous definition's body VERBATIM except the marked -- 0224 blocks", () => {
+        const stripped = withoutHunks(body);
         expect(stripped).not.toContain("0224");
         expect(stripped.replace(/\n{2,}/g, "\n")).toBe(was.replace(/\n{2,}/g, "\n"));
       });
 
-      it("locks the line's live entries by id and refuses P0084 BEFORE any other write", () => {
-        const lock = body.search(/where e\.test_request_id = new\.id\s+and e\.voided_at is null\s+order by e\.id\s+for update/);
+      it("locks the line's live RECOGNISED entries by id and refuses P0084 BEFORE any other write", () => {
+        const lock = body.search(/where e\.test_request_id = new\.id\s+and e\.voided_at is null\s+and e\.recognized_at is not null[^\n]*\s+order by e\.id\s+for update/);
         const refuse = body.indexOf("errcode = 'P0084'");
         const firstWrite = body.search(/waiver_unrecognise_line|insert into public\.journal_entries|update public\./);
         expect(lock).toBeGreaterThan(-1);
         expect(refuse).toBeGreaterThan(lock);
         expect(firstWrite).toBeGreaterThan(refuse);
         expect(body).toContain("This doctor''s fee was already paid out — void the payout first.");
+      });
+
+      it("re-checks ALL live entries (pending ones included) under the lock right before every void UPDATE", () => {
+        const updates = [...body.matchAll(/update public\.doctor_pf_entries\s+set voided_at/g)].map((m) => m.index!);
+        expect(updates.length).toBe(name === "bridge_test_request_cancelled" ? 2 : 1);
+        for (const at of updates) {
+          const before = body.slice(0, at);
+          const recheck = before.lastIndexOf("-- 0224: re-check under the lock");
+          expect(recheck, "a re-check block precedes the void UPDATE").toBeGreaterThan(-1);
+          const block = before.slice(recheck);
+          expect(block).toMatch(/where e\.test_request_id = new\.id\s+and e\.voided_at is null\s+order by e\.id\s+for update/);
+          expect(block).not.toMatch(/recognized_at/);
+          expect(block).toContain("errcode = 'P0084'");
+        }
       });
     });
   }
@@ -103,14 +134,18 @@ describe("0224 cancel / undo bridges refuse a disbursed entry", () => {
 });
 
 describe("0224 undo_visit_release pre-locks every candidate line's PF entries", () => {
-  const prev = readFileSync(join(process.cwd(), "supabase/migrations/0214_release_notice_enqueue.sql"), "utf8");
   const body = fnBody(sql, "undo_visit_release");
-  const was = fnBody(prev, "undo_visit_release");
+  const was = previousBody("undo_visit_release");
 
-  it("is 0214's body VERBATIM except the marked -- 0224 hunk", () => {
-    const stripped = body.replace(/  -- 0224: pre-lock the doctor PF entries[\s\S]*?      for update;\n\n/, "");
+  it("is the previous definition's body VERBATIM except the marked -- 0224 hunk", () => {
+    const stripped = withoutHunks(body);
     expect(stripped).not.toContain("0224");
     expect(stripped).toBe(was);
+  });
+
+  it("locks RECOGNISED entries only: a pending HMO entry is updated by the HMO bridges after the JE counter, so locking it first would close a 40P01 (K1g)", () => {
+    const lock = body.slice(body.indexOf("perform 1\n"), body.indexOf("for update;", body.indexOf("perform 1\n")));
+    expect(lock).toMatch(/and e\.recognized_at is not null/);
   });
 
   it("locks the entries by id AFTER the candidate lines are known and BEFORE the line UPDATE", () => {
