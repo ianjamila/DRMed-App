@@ -39,8 +39,10 @@
 --     0. lifecycle_lock_and_assert(the visit's patient, shared) - P0058 when the
 --        patient is deleted / merged, as the guard raised before; the visit is
 --        re-read under it and a moved visit raises P0072 (retry);
---     1. visits WHERE id = visit FOR UPDATE   (the mode the cascade's visit
---        UPDATE and the 0183 guard take, so no lock upgrade later);
+--     1. visits WHERE id = visit FOR UPDATE   (the mode 0183's guard re-takes on
+--        a RESTORE, so restore never upgrades mid-statement; a delete needs only
+--        the cascade's total_php UPDATE - FOR NO KEY UPDATE - and takes the
+--        stronger mode too so both functions share one proven order);
 --     2. the lock set = the requested lines + the live components of any
 --        package header among them, ORDER BY id FOR NO KEY UPDATE (the mode
 --        their UPDATE takes: deleted_at is no key column, so FK child inserts on

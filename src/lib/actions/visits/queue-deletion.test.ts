@@ -82,3 +82,29 @@ describe("delete_test_request_lines (0216) keeps the app's UPDATE and takes the 
     expect(write).toBeGreaterThan(lines);
   });
 });
+
+describe("0216's functions are closed to every runtime role but service_role", () => {
+  // All three are SECURITY DEFINER (restore_panel_members was INVOKER in 0200):
+  // a grant to anon/authenticated would let a JWT write test_requests past RLS.
+  const fnSlice = (name: string) =>
+    SQL.slice(
+      SQL.indexOf(`create or replace function public.${name}(`),
+      SQL.indexOf("$$;", SQL.indexOf(`create or replace function public.${name}(`)),
+    );
+
+  it("security definer with a pinned search_path, EXECUTE service_role only", () => {
+    for (const [name, sig] of [
+      ["delete_test_request_lines", "public.delete_test_request_lines(uuid, uuid[], uuid, text, timestamptz)"],
+      ["restore_test_request_lines", "public.restore_test_request_lines(uuid, uuid[], timestamptz)"],
+      ["restore_panel_members", "public.restore_panel_members(uuid, uuid[], timestamptz[])"],
+    ] as const) {
+      const body = fnSlice(name);
+      expect(body.length, `${name} not found`).toBeGreaterThan(100);
+      expect(body).toContain("security definer");
+      expect(body).toContain("set search_path = pg_catalog, public, pg_temp");
+      expect(SQL).toMatch(new RegExp(`revoke all on function ${sig.replace(/[()[\]]/g, "\\$&")} from public, anon, authenticated;`));
+      expect(SQL).toMatch(new RegExp(`grant\\s+execute on function ${sig.replace(/[()[\]]/g, "\\$&")} to service_role;`));
+      expect(SQL).not.toMatch(new RegExp(`grant\\s+execute on function public\\.${name}\\([^)]*\\) to [^;]*(anon|authenticated)`));
+    }
+  });
+});
