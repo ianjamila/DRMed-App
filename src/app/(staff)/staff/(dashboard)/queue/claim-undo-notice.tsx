@@ -1,12 +1,12 @@
 "use client";
 
-import { useState, useTransition } from "react";
-import { usePathname, useRouter } from "next/navigation";
+import { useCallback, useEffect, useState, useTransition } from "react";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { BulkOutcomePanel } from "@/components/staff/row-selection/bulk-outcome";
 import { UNDO_ALREADY, UNDO_EXPIRED, UNDO_WINDOW_MS } from "@/lib/ui/bulk-undo";
-import { undoBulkQueueAction } from "../../../actions";
+import { undoBulkQueueAction } from "./actions";
 
-// Shown on a report page right after the queue row's panel Claim sent the
+// Shown on a report or bench page right after the queue row's Claim sent the
 // operator here (?claimed=<batch>&at=<ms>): the same 10-minute ↶ Undo the
 // bulk bar offers, over the same server action — which re-proves actor,
 // window and state, so the batch id in the URL grants nothing by itself.
@@ -21,9 +21,32 @@ export function ClaimUndoNotice({
 }) {
   const router = useRouter();
   const pathname = usePathname();
+  const searchParams = useSearchParams();
   const [pending, start] = useTransition();
   const [message, setMessage] = useState(`You claimed ${reportName}.`);
   const [undoable, setUndoable] = useState(true);
+
+  // Drops ?claimed=&at= (other params kept) so Back never re-shows a stale
+  // "You claimed …".
+  const stripParams = useCallback(() => {
+    const next = new URLSearchParams(searchParams.toString());
+    next.delete("claimed");
+    next.delete("at");
+    const qs = next.toString();
+    router.replace(qs ? `${pathname}?${qs}` : pathname, { scroll: false });
+  }, [pathname, router, searchParams]);
+
+  // Item 11: once the window has closed the notice has nothing to offer, so
+  // strip the query string. Runs at mount for an already-closed window.
+  useEffect(() => {
+    const left = doneAt + UNDO_WINDOW_MS - Date.now();
+    if (left <= 0) {
+      stripParams();
+      return;
+    }
+    const t = setTimeout(stripParams, left + 1);
+    return () => clearTimeout(t);
+  }, [doneAt, stripParams]);
 
   function onUndo() {
     if (pending) return;
@@ -54,7 +77,7 @@ export function ClaimUndoNotice({
     <BulkOutcomePanel
       message={message}
       undo={undoable ? { doneAt, windowMs: UNDO_WINDOW_MS, pending, onUndo } : null}
-      onDismiss={() => router.replace(pathname)}
+      onDismiss={stripParams}
     />
   );
 }

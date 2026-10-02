@@ -1026,7 +1026,7 @@ async function sectionPanelUndo(c: CheckContext, med: Page, admin: Page): Promis
   // -------------------------------------------------------------------------
   // PC1–PC3: the queue row's own panel Claim opens the report page with a
   // 10-minute ↶ Undo for that claim (?claimed=<batch>&at=<ms> — see
-  // src/lib/queue/claim-undo-link.ts and claim-undo-notice.tsx). One state
+  // src/lib/queue/claim-undo-link.ts and queue/claim-undo-notice.tsx). One state
   // chain: PC1 claims and lands there; PC2 undoes from that notice; PC3 claims
   // again and has the claim move on before Undo.
   // -------------------------------------------------------------------------

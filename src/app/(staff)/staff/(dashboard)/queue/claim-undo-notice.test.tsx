@@ -4,13 +4,15 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const router = vi.hoisted(() => ({ replace: vi.fn(), refresh: vi.fn() }));
+let searchParams = new URLSearchParams();
 vi.mock("next/navigation", () => ({
   useRouter: () => router,
   usePathname: () => "/staff/queue/consolidated/v1/g1",
+  useSearchParams: () => searchParams,
 }));
-vi.mock("../../../actions", () => ({ undoBulkQueueAction: vi.fn() }));
+vi.mock("./actions", () => ({ undoBulkQueueAction: vi.fn() }));
 
-import { undoBulkQueueAction } from "../../../actions";
+import { undoBulkQueueAction } from "./actions";
 import { UNDO_ALREADY, UNDO_EXPIRED } from "@/lib/ui/bulk-undo";
 import { ClaimUndoNotice } from "./claim-undo-notice";
 
@@ -24,13 +26,17 @@ beforeEach(() => {
   vi.mocked(undoBulkQueueAction).mockReset();
   router.replace.mockReset();
   router.refresh.mockReset();
+  searchParams = new URLSearchParams();
   (globalThis as { ResizeObserver?: unknown }).ResizeObserver = class {
     observe() {}
     unobserve() {}
     disconnect() {}
   };
 });
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  vi.useRealTimers();
+});
 
 function renderNotice(doneAt = Date.now()) {
   return render(<ClaimUndoNotice batchId={BATCH} doneAt={doneAt} reportName="Chemistry" />);
@@ -44,10 +50,21 @@ describe("ClaimUndoNotice", () => {
     expect(undoBtn()).not.toBeNull();
   });
 
-  it("offers no Undo once the 10-minute window has closed", () => {
-    renderNotice(Date.now() - 11 * MIN);
-    expect(screen.getByText("You claimed Chemistry.")).toBeTruthy();
-    expect(undoBtn()).toBeNull();
+  it("a notice whose window has already closed removes ?claimed=&at= at once, keeping other params", async () => {
+    searchParams = new URLSearchParams("edit=1&claimed=x&at=1");
+    render(<ClaimUndoNotice batchId={BATCH} doneAt={Date.now() - 11 * MIN} reportName="Chemistry" />);
+    await waitFor(() =>
+      expect(router.replace).toHaveBeenCalledWith("/staff/queue/consolidated/v1/g1?edit=1", { scroll: false }),
+    );
+  });
+
+  it("drops the query string when the window closes while the notice is open", async () => {
+    vi.useFakeTimers();
+    render(<ClaimUndoNotice batchId={BATCH} doneAt={Date.now()} reportName="Chemistry" />);
+    expect(router.replace).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(10 * MIN + 1);
+    expect(router.replace).toHaveBeenCalledWith("/staff/queue/consolidated/v1/g1", { scroll: false });
+    vi.useRealTimers();
   });
 
   it("Undo sends only the batch id; success says it is back in the queue, hides Undo and refreshes", async () => {
@@ -139,6 +156,6 @@ describe("ClaimUndoNotice", () => {
   it("Dismiss replaces the URL with the bare path, dropping ?claimed=&at=", async () => {
     renderNotice();
     await userEvent.click(screen.getByRole("button", { name: /Dismiss/ }));
-    expect(router.replace).toHaveBeenCalledWith("/staff/queue/consolidated/v1/g1");
+    expect(router.replace).toHaveBeenCalledWith("/staff/queue/consolidated/v1/g1", { scroll: false });
   });
 });

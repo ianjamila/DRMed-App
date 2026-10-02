@@ -3,6 +3,8 @@
 // share one definition. Nothing here grants anything: Undo re-proves actor,
 // window and state server-side from the audit rows.
 
+import { UNDO_WINDOW_MS } from "@/lib/ui/bulk-undo";
+
 const UUID_SHAPE = /^[0-9a-f-]{36}$/i;
 
 /** The report page URL for a panel, carrying its Undo batch when it has one. */
@@ -13,6 +15,17 @@ export function claimReportHref(
 ): string {
   const base = `/staff/queue/consolidated/${panel.visitId}/${panel.groupId}`;
   return batchId ? `${base}?claimed=${encodeURIComponent(batchId)}&at=${nowMs}` : base;
+}
+
+/** The bench page URL for a single test, carrying its Undo batch when it has one. */
+export function claimBenchHref(testRequestId: string, batchId: string | undefined, nowMs: number): string {
+  const base = `/staff/queue/${testRequestId}`;
+  return batchId ? `${base}?claimed=${encodeURIComponent(batchId)}&at=${nowMs}` : base;
+}
+
+/** Whether a claim done at `doneAt` is still inside the 10-minute Undo window (the server re-proves it). */
+export function claimUndoOpen(doneAt: number, nowMs: number): boolean {
+  return nowMs - doneAt <= UNDO_WINDOW_MS;
 }
 
 type Param = string | string[] | undefined;

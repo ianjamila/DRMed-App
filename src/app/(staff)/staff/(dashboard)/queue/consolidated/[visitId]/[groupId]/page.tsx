@@ -22,7 +22,7 @@ import { hasRecentAudit, ipAndAgent } from "@/lib/server/action-helpers";
 import { ConsolidatedForm } from "./consolidated-form";
 import { ReportCards, type ReportCardData } from "./report-cards";
 import { ReportEditForm } from "./report-edit-form";
-import { ClaimUndoNotice } from "./claim-undo-notice";
+import { ClaimUndoNotice } from "../../../claim-undo-notice";
 import { parseClaimUndoParams } from "@/lib/queue/claim-undo-link";
 import type { ValueCells } from "./consolidated-values-table";
 import { normalisePatientSex } from "@/lib/results/types";
