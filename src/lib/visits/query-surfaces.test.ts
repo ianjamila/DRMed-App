@@ -186,7 +186,7 @@ const SURFACES: Record<string, Surface> = {
   },
   "app/(staff)/staff/(dashboard)/queue/actions.ts": {
     meaning: "lab",
-    why: "Claim/unclaim/reassign bench work, and the reclaim / unclaim branches of undoBulkQueueAction. A consultation has no bench step to claim, and claiming one would park it in in_progress forever. ONE deliberate exception: undoBulkQueueAction's restore branch reads DELETED rows through the admin client with no doctor-kind exclusion (and no services embed at all, so this guard does not see it). That is intended, not an oversight: a bulk Delete means the whole bill line of any kind (deleteTestRequestsManyCore is \"all\"), so its Undo must be able to put back whichever kind was deleted. What bounds it is the id set — only test ids from the caller's OWN bulk-Delete audit rows for one batch (loadOwnBatchRows, 10-minute window) — plus the exact deleted_at that batch stamped; the write is restoreTestRequestsForVisit (\"all\"). Nothing here presents a restored row as lab work.",
+    why: "Claim (single, with its one-test Undo batch) / unclaim / reassign / release bench work, and the reclaim / unclaim branches of undoBulkQueueAction (a panel reclaim goes through reclaimPanelMembers / reclaim_panel_members, 0200). A consultation has no bench step to claim, and claiming one would park it in in_progress forever. ONE deliberate exception: undoBulkQueueAction's restore branch reads DELETED rows through the admin client with no doctor-kind exclusion (and no services embed at all, so this guard does not see it). That is intended, not an oversight: a bulk Delete means the whole bill line of any kind (deleteTestRequestsManyCore is \"all\"), so its Undo must be able to put back whichever kind was deleted. What bounds it is the id set — only test ids from the caller's OWN bulk-Delete audit rows for one batch (loadOwnBatchRows, 10-minute window) — plus the exact deleted_at that batch stamped; the write is restoreTestRequestsForVisit (\"all\"). Nothing here presents a restored row as lab work.",
   },
   "app/(staff)/staff/(dashboard)/queue/[id]/actions.ts": {
     meaning: "structural",
@@ -198,7 +198,7 @@ const SURFACES: Record<string, Surface> = {
   },
   "lib/actions/queue/panel-writes.ts": {
     meaning: "structural",
-    why: "Claims a consolidated panel's members by id. The ids come only from the report-group-scoped panel page or from panel-members.ts (report-group scoped, doctor kinds excluded) — no doctor line can reach it.",
+    why: "Claims a consolidated panel's members by id, and the panel Undo helpers reclaimPanelMembers / restorePanelMembers (0200 — Undo of a bulk Unclaim / Delete). The ids come only from the report-group-scoped panel page, from panel-members.ts (report-group scoped, doctor kinds excluded), or from the caller's own bulk-Unclaim / Delete audit rows for a panel — no doctor line can reach any of them. restorePanelMembers' audit pre-read addresses its members by that id set (plus the batch's visit) and carries no services filter.",
   },
   "lib/queue/panel-members.ts": {
     meaning: "lab",
@@ -520,7 +520,7 @@ const LIFECYCLES: Record<string, LifecycleSurface> = {
   },
   "app/(staff)/staff/(dashboard)/queue/actions.ts": {
     lifecycle: "live",
-    why: "Claim/unclaim/reassign. Claiming a deleted line would park it in in_progress with nobody able to finish it. ONE deliberate exception, classified here anyway because every other read in the file is live: undoBulkQueueAction's restore branch reads DELETED rows (.not(\"deleted_at\", \"is\", null)) through the admin client, since finding the deleted_at a bulk Delete stamped is its whole job. The guard only passes that chain on its selected deleted_at / visits ( deleted_at ) evidence, not because it filters live rows. The gate is the caller's own batch audit rows (ids), the exact-deleted_at comparison (sameInstant) before anything is written, and restoreTestRequestsForVisit's visit-deleted refusal.",
+    why: "Claim (single, with its one-test Undo batch: the claim's own live-filtered UPDATE) / unclaim / reassign / release. Claiming a deleted line would park it in in_progress with nobody able to finish it. undoBulkQueueAction's reclaim branch pre-reads its rows (doctor kinds excluded) and refuses in JS unless each is live, on a live visit, still requested and unheld, then reclaims, a panel through reclaimPanelMembers / reclaim_panel_members (0200). ONE deliberate exception, classified here anyway because every other read in the file is live: undoBulkQueueAction's restore branch reads DELETED rows (.not(\"deleted_at\", \"is\", null)) through the admin client, since finding the deleted_at a bulk Delete stamped is its whole job; a single test then goes through restoreTestRequestsForVisit and a panel through restorePanelMembers / restore_panel_members (0200). The guard only passes that chain on its selected deleted_at / visits ( deleted_at ) evidence, not because it filters live rows. The gate is the caller's own batch audit rows (ids), the exact-deleted_at comparison (sameInstant) before anything is written, and the restore's visit-deleted refusal.",
   },
   "app/(staff)/staff/(dashboard)/queue/[id]/actions.ts": {
     lifecycle: "live",
@@ -540,7 +540,7 @@ const LIFECYCLES: Record<string, LifecycleSurface> = {
   },
   "lib/actions/queue/panel-writes.ts": {
     lifecycle: "live",
-    why: "Claims a consolidated panel. A deleted line (or a line on a deleted visit) must not be claimed — the pre-read refuses both, and claim_panel_members (0191) re-checks deleted_at.",
+    why: "Claims a consolidated panel. A deleted line (or a line on a deleted visit) must not be claimed — the pre-read refuses both, and claim_panel_members (0191) re-checks deleted_at. Also the panel Undo helpers (0200): reclaimPanelMembers goes through the reclaim_panel_members RPC with no table read of its own (it re-checks live rows itself), but restorePanelMembers' audit pre-read deliberately reads DELETED members on the admin client — by the batch's own ids, the batch's visit and a live visits.deleted_at filter — because the restore_panel_members RPC (service_role only) matches each member's exact deleted_at stamp and refuses the whole panel on any mismatch, before anything is restored.",
   },
   "lib/queue/panel-members.ts": {
     lifecycle: "live",
