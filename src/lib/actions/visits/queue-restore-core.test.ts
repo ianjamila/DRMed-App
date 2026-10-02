@@ -280,3 +280,88 @@ describe("bulk Undo (expected deleted_at) retries each group the same way", () =
     expect(writes).toHaveLength(1);
   });
 });
+
+// 0221: the app reads the visit's deleted_at WITHOUT a lock and then calls the RPC. A visit
+// soft-deleted in between is refused by the RPC under its visit lock (P0083, nothing restored);
+// the core answers it with the very message the pre-check shows - and does not retry it (a retry
+// reads the same answer).
+describe("a visit deleted after the pre-check: the RPC's P0083 reads like the pre-check's refusal (0221)", () => {
+  const VISIT_DELETED = { code: "P0083", message: "The visit itself is deleted — restore the visit first." };
+  const PRE_CHECK = "The visit itself is deleted — restore the visit first.";
+
+  beforeEach(() => {
+    db.seed("test_requests", [row("a", T1), row("b", T2)]);
+  });
+
+  it("manual Restore: the same message as the pre-check, one call (not retried), nothing restored or audited", async () => {
+    failWith(VISIT_DELETED);
+    const out = await restoreTestRequestsForVisit(SESSION, "v1", ["a", "b"], "oops");
+    expect(out).toEqual({ ok: false, error: PRE_CHECK });
+    expect(writes).toHaveLength(1);
+    expect([deletedAtOf("a"), deletedAtOf("b")]).toEqual([T1, T2]);
+    expect(h.audits).toHaveLength(0);
+  });
+
+  it("the pre-check itself (a visit already deleted when read) says the same", async () => {
+    db.tables.test_requests = [row("a", T1, { visits: { patient_id: "p1", deleted_at: T2 } })];
+    const out = await restoreTestRequestsForVisit(SESSION, "v1", ["a"], "oops");
+    expect(out).toEqual({ ok: false, error: PRE_CHECK });
+    expect(writes).toHaveLength(0);
+  });
+
+  it("the message does not depend on the RPC's wording (the code decides)", async () => {
+    failWith({ code: "P0083", message: "something else entirely" });
+    const out = await restoreTestRequestsForVisit(SESSION, "v1", ["a"], "oops");
+    expect(out).toEqual({ ok: false, error: PRE_CHECK });
+  });
+
+  it("bulk Undo: every group refused -> the pre-check's message, no audit rows", async () => {
+    failWith(VISIT_DELETED);
+    const out = await restoreTestRequestsForVisit(SESSION, "v1", ["a", "b"], "undo", {}, new Map([["a", T1], ["b", T2]]));
+    expect(out).toEqual({ ok: false, error: PRE_CHECK });
+    expect(writes).toHaveLength(2); // one per deleted_at group, neither retried
+    expect([deletedAtOf("a"), deletedAtOf("b")]).toEqual([T1, T2]);
+    expect(h.audits).toHaveLength(0);
+  });
+
+  it("a refusal that is NOT P0083 still goes through the shared translator", async () => {
+    const other = { code: "P0072", message: "moved" };
+    failWith(other);
+    const out = await restoreTestRequestsForVisit(SESSION, "v1", ["a"], "oops");
+    expect(out).toEqual({ ok: false, error: translatePgError(other) });
+    expect(writes).toHaveLength(2); // P0072 is the lifecycle retry's code: one retry
+  });
+});
+
+describe("restore_test_request_lines (0221) re-checks the visit's deleted_at under the visit lock", () => {
+  const SQL221 = readFileSync(join(process.cwd(), "supabase/migrations/0221_delete_restore_visit_deleted_recheck.sql"), "utf8");
+  const fn221 = SQL221.slice(
+    SQL221.indexOf("create or replace function public.restore_test_request_lines("),
+    SQL221.indexOf("comment on function public.restore_test_request_lines("),
+  );
+
+  it("reads deleted_at in the visit's FOR UPDATE select and refuses with P0083 right after the P0072 re-check, before any line is locked or written", () => {
+    expect(fn221.length).toBeGreaterThan(100);
+    const lock = fn221.indexOf("select v.patient_id, v.deleted_at into v_now, v_deleted");
+    const forUpdate = fn221.indexOf("from public.visits v where v.id = p_visit_id for update;");
+    const moved = fn221.indexOf("errcode = 'P0072'");
+    const refuse = fn221.search(/if v_deleted is not null then\s+raise exception '[^']+' using errcode = 'P0083';/);
+    const lines = fn221.indexOf("for no key update;");
+    const write = fn221.indexOf("update public.test_requests");
+    expect(lock).toBeGreaterThan(-1);
+    expect(forUpdate).toBeGreaterThan(lock);
+    expect(moved).toBeGreaterThan(forUpdate);
+    expect(refuse).toBeGreaterThan(moved);
+    expect(lines).toBeGreaterThan(refuse);
+    expect(write).toBeGreaterThan(lines);
+  });
+
+  it("keeps 0216's write predicates and ACL", () => {
+    expect(fn221).toMatch(/\(\(p_deleted_at is null and deleted_at is not null\) or deleted_at = p_deleted_at\)/);
+    expect(fn221).toMatch(/and visit_id = p_visit_id/);
+    expect(fn221).toContain("security definer");
+    expect(fn221).toContain("set search_path = pg_catalog, public, pg_temp");
+    expect(SQL221).toMatch(/revoke all on function public\.restore_test_request_lines\(uuid, uuid\[\], timestamptz\) from public, anon, authenticated;/);
+    expect(SQL221).toMatch(/grant execute on function public\.restore_test_request_lines\(uuid, uuid\[\], timestamptz\) to service_role;/);
+  });
+});
