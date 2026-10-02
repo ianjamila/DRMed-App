@@ -52,6 +52,11 @@
 --     0198). The same reverse order already meets 0198's release; matching
 --     0198 keeps the release path cycle-free. Proven (S7 / F2) by
 --     scripts/panel-undo-concurrency-proof.ts.
+--
+-- Follow-up (2026-10-02, PR "queue-claim-undo"): the manual queue Restore
+-- (restoreTestRequestsForVisit) now retries once too, via withLifecycleRetry —
+-- a manual Restore that loses this cycle re-runs instead of showing 40P01.
+-- Comment only; nothing in this migration changed.
 -- =============================================================================
 
 create or replace function public.reclaim_panel_members(

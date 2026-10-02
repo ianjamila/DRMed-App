@@ -16,6 +16,7 @@ import { translatePgError } from "@/lib/accounting/pg-errors";
 import { assertVisitPatientActive } from "@/lib/patients/require-active";
 import { sameInstant } from "@/lib/ui/bulk-undo";
 import { groupIdsByDeletedAt } from "@/lib/queue/partial-panel";
+import { withLifecycleRetry } from "@/lib/patients/lifecycle-retry";
 
 // Every surface that renders visits or queue rows and must drop (or show)
 // deleted entries immediately. Moved here from queue-deletion.ts so both
@@ -101,13 +102,16 @@ export async function restoreTestRequestsForVisit(
     restored = [];
     let firstError: { code?: string; message?: string; details?: string } | null = null;
     for (const [deletedAtValue, ids] of byDeletedAt) {
-      const { data, error: writeError } = await admin
-        .from("test_requests")
-        .update({ deleted_at: null, deleted_by: null, delete_reason: null })
-        .in("id", ids)
-        .eq("visit_id", visitId)
-        .eq("deleted_at", deletedAtValue)
-        .select("id");
+      // Retried once per group on a lost lock race — see the manual branch.
+      const { data, error: writeError } = await withLifecycleRetry(() =>
+        admin
+          .from("test_requests")
+          .update({ deleted_at: null, deleted_by: null, delete_reason: null })
+          .in("id", ids)
+          .eq("visit_id", visitId)
+          .eq("deleted_at", deletedAtValue)
+          .select("id"),
+      );
       if (writeError) {
         firstError ??= writeError;
         continue;
@@ -121,16 +125,23 @@ export async function restoreTestRequestsForVisit(
     // Manual Restore path (restoreTestRequestsAction) — unaffected: no
     // expected value to pin the write to, so the original "is not null"
     // predicate is unchanged.
-    const { data, error } = await admin
-      .from("test_requests")
-      .update({ deleted_at: null, deleted_by: null, delete_reason: null })
-      .in(
-        "id",
-        rows.map((r) => r.id),
-      )
-      .eq("visit_id", visitId)
-      .not("deleted_at", "is", null)
-      .select("id");
+    // PR B's proof (S7) showed a manual Restore racing a panel Undo-restore
+    // on one visit can lose a deadlock (40P01): 0183's waived-visit guard takes
+    // the visit after the line, the reverse of restore_panel_members. The
+    // loser is rolled back whole, so one retry in a fresh transaction can
+    // never double-restore.
+    const { data, error } = await withLifecycleRetry(() =>
+      admin
+        .from("test_requests")
+        .update({ deleted_at: null, deleted_by: null, delete_reason: null })
+        .in(
+          "id",
+          rows.map((r) => r.id),
+        )
+        .eq("visit_id", visitId)
+        .not("deleted_at", "is", null)
+        .select("id"),
+    );
     if (error) return { ok: false, error: translatePgError(error) };
     if (!data || data.length === 0) {
       return { ok: false, error: "None of the selected tests can be restored." };

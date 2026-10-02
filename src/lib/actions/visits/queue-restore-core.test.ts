@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
@@ -51,5 +51,140 @@ describe("restoreTestRequestsForVisit's bulk-Undo write predicates on the exact 
     for (const w of writes) {
       expect(w[0]).toMatch(/\.eq\("visit_id",\s*visitId\)/);
     }
+  });
+});
+
+// Behavioural: a restore UPDATE that loses a lock race (40P01) re-runs once.
+// PR B's proof (S7, scripts/panel-undo-concurrency-proof.ts) showed a manual
+// Restore racing a panel Undo-restore on one visit can lose a deadlock. The
+// fake below stands in for the admin client: the read returns the candidate
+// rows, each UPDATE pops the next scripted result.
+const fx = vi.hoisted(() => ({
+  candidates: [] as unknown[],
+  updateResults: [] as Array<{ data: { id: string }[] | null; error: { code?: string; message?: string } | null }>,
+  updates: [] as Array<{ filters: Array<[string, ...unknown[]]> }>,
+  audits: [] as Array<{ resource_id: string }>,
+}));
+vi.mock("server-only", () => ({}));
+vi.mock("next/cache", () => ({ revalidatePath: () => {} }));
+vi.mock("@/lib/supabase/admin", () => ({
+  createAdminClient: () => ({
+    from() {
+      let isUpdate = false;
+      const filters: Array<[string, ...unknown[]]> = [];
+      const q: Record<string, unknown> = {};
+      q.update = () => {
+        isUpdate = true;
+        return q;
+      };
+      for (const m of ["select", "in", "eq", "not", "is"]) {
+        q[m] = (...args: unknown[]) => {
+          filters.push([m, ...args]);
+          return q;
+        };
+      }
+      q.then = (res: (v: unknown) => unknown) => {
+        if (!isUpdate) return res({ data: fx.candidates, error: null });
+        fx.updates.push({ filters });
+        return res(fx.updateResults.shift() ?? { data: [], error: null });
+      };
+      return q;
+    },
+  }),
+}));
+vi.mock("@/lib/audit/log", () => ({ audit: async (e: { resource_id: string }) => void fx.audits.push(e) }));
+vi.mock("@/lib/server/action-helpers", () => ({ ipAndAgent: async () => ({ ip: null, ua: null }) }));
+vi.mock("@/lib/patients/require-active", () => ({ assertVisitPatientActive: async () => ({ ok: true }) }));
+
+const { restoreTestRequestsForVisit } = await import("./queue-restore-core");
+
+const SESSION = { user_id: "u1", role: "admin" } as never;
+const candidate = (id: string, deletedAt: string) => ({
+  id,
+  deleted_at: deletedAt,
+  delete_reason: "typo",
+  parent_id: null,
+  visits: { patient_id: "p1", deleted_at: null },
+  services: { name: "CBC", code: "CBC" },
+});
+const T1 = "2026-10-02T01:00:00.000Z";
+const T2 = "2026-10-02T01:00:05.000Z";
+const LOST = { data: null, error: { code: "40P01", message: "deadlock detected" } };
+const OK = (...ids: string[]) => ({ data: ids.map((id) => ({ id })), error: null });
+
+beforeEach(() => {
+  fx.candidates = [];
+  fx.updateResults = [];
+  fx.updates = [];
+  fx.audits = [];
+});
+
+describe("manual Restore retries a lost lock race once", () => {
+  beforeEach(() => {
+    fx.candidates = [candidate("a", T1), candidate("b", T1)];
+  });
+
+  it("40P01 then success: ok, exactly two UPDATEs, one audit row per line", async () => {
+    fx.updateResults = [LOST, OK("a", "b")];
+    const out = await restoreTestRequestsForVisit(SESSION, "v1", ["a", "b"], "oops");
+    expect(out).toEqual({ ok: true, restoredIds: ["a", "b"] });
+    expect(fx.updates).toHaveLength(2);
+    expect(fx.audits.map((a) => a.resource_id)).toEqual(["a", "b"]);
+  });
+
+  it("a second 40P01 returns the translated error and audits nothing", async () => {
+    fx.updateResults = [LOST, LOST];
+    const out = await restoreTestRequestsForVisit(SESSION, "v1", ["a", "b"], "oops");
+    expect(out.ok).toBe(false);
+    if (!out.ok) expect(out.error).not.toBe("");
+    expect(fx.updates).toHaveLength(2);
+    expect(fx.audits).toHaveLength(0);
+  });
+
+  it("a non-retryable error (XX000) is not retried", async () => {
+    fx.updateResults = [{ data: null, error: { code: "XX000", message: "boom" } }, OK("a", "b")];
+    const out = await restoreTestRequestsForVisit(SESSION, "v1", ["a", "b"], "oops");
+    expect(out.ok).toBe(false);
+    expect(fx.updates).toHaveLength(1);
+    expect(fx.audits).toHaveLength(0);
+  });
+});
+
+describe("bulk Undo (expected deleted_at) retries each group the same way", () => {
+  it("a group that loses the race re-runs once; the other group is untouched", async () => {
+    fx.candidates = [candidate("a", T1), candidate("b", T2)];
+    // group T1: lost, then ok; group T2: ok first time.
+    fx.updateResults = [LOST, OK("a"), OK("b")];
+    const out = await restoreTestRequestsForVisit(
+      SESSION,
+      "v1",
+      ["a", "b"],
+      "undo",
+      {},
+      new Map([
+        ["a", T1],
+        ["b", T2],
+      ]),
+    );
+    expect(out).toEqual({ ok: true, restoredIds: ["a", "b"] });
+    expect(fx.updates).toHaveLength(3);
+    expect(fx.audits.map((a) => a.resource_id)).toEqual(["a", "b"]);
+  });
+
+  it("a second 40P01 on a group is not retried again (translated error when nothing restored)", async () => {
+    fx.candidates = [candidate("a", T1)];
+    fx.updateResults = [LOST, LOST];
+    const out = await restoreTestRequestsForVisit(SESSION, "v1", ["a"], "undo", {}, new Map([["a", T1]]));
+    expect(out.ok).toBe(false);
+    expect(fx.updates).toHaveLength(2);
+    expect(fx.audits).toHaveLength(0);
+  });
+
+  it("a non-retryable error (XX000) is not retried", async () => {
+    fx.candidates = [candidate("a", T1)];
+    fx.updateResults = [{ data: null, error: { code: "XX000", message: "boom" } }, OK("a")];
+    const out = await restoreTestRequestsForVisit(SESSION, "v1", ["a"], "undo", {}, new Map([["a", T1]]));
+    expect(out.ok).toBe(false);
+    expect(fx.updates).toHaveLength(1);
   });
 });
