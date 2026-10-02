@@ -8,9 +8,10 @@
  * A function that row-locks a visit or a line FIRST, or writes a patient-owned
  * row FIRST, holds a row lock and only then reaches the patient lock — either
  * its own later lifecycle_lock call, or the a_lifecycle_guard trigger that the
- * write fires. merge_patients_guarded / undo_patient_merge_guarded (0196) and
- * delete_patient / restore_patient go the other way round (exclusive patient
- * lock first, then `update visits`), so the two deadlock (40P01). That is the
+ * write fires. merge_patients_guarded / undo_patient_merge_guarded (0196) go
+ * the other way round (exclusive patient lock first, then `update visits`),
+ * so the two deadlock (40P01). (delete_patient / restore_patient also lock the
+ * patient exclusive, but then touch only the patients row.) That is the
  * cycle 3a's review found in recompute_clinic_fee_for_unreleased.
  *
  * This module is pure (no database): it reads the live function bodies the
@@ -288,7 +289,7 @@ export function checkLockOrder(
           `    ${v.finding.statement}\n` +
           `  Take it first — \`perform public.lifecycle_lock_and_assert(<patient ids>, false);\` (shared) — then the visit\n` +
           `  row, then lines ORDER BY id (see 0216's delete_test_request_lines). A row lock taken before the patient lock\n` +
-          `  deadlocks (40P01) against merge_patients_guarded / delete_patient, which lock the patient first.`,
+          `  deadlocks (40P01) against merge_patients_guarded / undo_patient_merge_guarded, which lock the patient EXCLUSIVE and then update visits.`,
       );
       continue;
     }

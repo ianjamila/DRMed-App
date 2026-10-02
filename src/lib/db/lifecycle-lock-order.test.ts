@@ -7,8 +7,8 @@
  * DRMed's global lock order is: patient lifecycle advisory lock (shared for
  * writers, `lifecycle_lock_and_assert(ids, false)`) → visit row → lines ORDER
  * BY id → write. merge_patients_guarded / undo_patient_merge_guarded (0196)
- * and delete_patient / restore_patient take the patient lock EXCLUSIVE first
- * and then UPDATE visits. A function that grabs the visit (or a line) first
+ * take the patient lock EXCLUSIVE first and then UPDATE visits (delete_patient
+ * / restore_patient take it exclusive too, but touch only the patients row). A function that grabs the visit (or a line) first
  * and only reaches the patient lock later — its own lifecycle_lock call, or
  * the a_lifecycle_guard trigger its write fires — closes a cycle with them:
  * 40P01. 3a's review found it in recompute_clinic_fee_for_unreleased (fixed by
@@ -27,11 +27,20 @@
  *   (on a guarded table, AFTER, or BEFORE with a name sorting after
  *   a_lifecycle_guard): the guard already holds the patient lock for the row.
  *
- * KNOWN LIMITS
+ * KNOWN LIMITS (none has a live instance today — checked when this was written)
  *   - Text order, not control flow: a lock taken in one branch counts for the
- *     whole body. Statements inside called (non-lifecycle-first) functions are
- *     not followed.
- *   - Writes through dynamic SQL are seen only when the table name is literal.
+ *     whole body, and a lock call in the SAME statement as a row lock (a
+ *     `for r in select … for update loop perform lifecycle_lock(…)`) counts as
+ *     first. Statements inside called (non-lifecycle-first) functions are not
+ *     followed.
+ *   - Comma joins (`from a, visits v … for update`), `merge into` and
+ *     `lock table` are not recognised; writes through dynamic SQL are seen only
+ *     when the table name is literal. String literals are not blanked, so a
+ *     message mentioning `update payments` can be a false positive.
+ *   - "Runs under the guard" assumes a_lifecycle_guard took the patient lock;
+ *     it takes none for its exempt writes (a results INSERT, appointment
+ *     cancel / no-show, PIN counters, alert acknowledgement, the 0179 notice
+ *     columns, no-op updates), so a trigger on those runs unlocked.
  *
  * THE ALLOW-LIST
  *   Functions that take a row lock first ON PURPOSE, each with the reason no

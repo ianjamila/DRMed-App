@@ -77,6 +77,25 @@ describe("migration 0183 — waived balance GL bridge", () => {
     expect(w).toMatch(/errcode = 'P0071'/);
   });
 
+  it("0220 re-creates waive_visit_balance as 0183's body plus ONLY the patient-lock prologue and re-check", () => {
+    // The tests above read 0183's text; 0220 is the live definition. Strip 0220's three marked
+    // additions and the rest must be 0183's body byte for byte, so a later edit cannot hide here.
+    const live = readFileSync(join(process.cwd(), "supabase/migrations/0220_waive_visit_balance_lock_order.sql"), "utf8");
+    const w220 = live.match(/create or replace function public\.waive_visit_balance\([\s\S]*?\n\$\$;/)?.[0];
+    expect(w220, "0220 should define waive_visit_balance").toBeTruthy();
+    const decl = "  v_patient      uuid;  -- 0220\n";
+    const prologue = /  -- 0220: the patient lifecycle lock \(shared, 0184\) BEFORE any row lock[\s\S]*?perform public\.lifecycle_lock_and_assert\(array\[v_patient\], false\);\n\n/;
+    const recheck = /  -- 0220: re-read under the patient lock[\s\S]*?using errcode = 'P0072';\n  end if;\n/;
+    expect(w220).toContain(decl);
+    expect(w220).toMatch(prologue);
+    expect(w220).toMatch(recheck);
+    // the prologue comes before the visit lock, the re-check right after it
+    const at = (re: RegExp | string) => (typeof re === "string" ? w220!.indexOf(re) : w220!.search(re));
+    expect(at(prologue)).toBeLessThan(at("select * into v_visit from public.visits where id = p_visit_id for update;"));
+    expect(at(recheck)).toBeGreaterThan(at("select * into v_visit from public.visits where id = p_visit_id for update;"));
+    expect(w220!.replace(decl, "").replace(prologue, "").replace(recheck, "")).toBe(fn("waive_visit_balance"));
+  });
+
   it("standalone JE: DR discount account / CR 1100, Manila date, idempotent", () => {
     const p = fn("waiver_post_allocation");
     expect(p).toMatch(/coa_uuid_for_code\(a\.discount_account\), a\.amount_php, 0/);
