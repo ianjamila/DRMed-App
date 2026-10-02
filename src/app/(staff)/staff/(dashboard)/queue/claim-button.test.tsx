@@ -1,9 +1,9 @@
 // @vitest-environment jsdom
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const router = vi.hoisted(() => ({ push: vi.fn(), replace: vi.fn(), refresh: vi.fn() }));
+const router = vi.hoisted(() => ({ push: vi.fn(), replace: vi.fn() }));
 vi.mock("next/navigation", () => ({ useRouter: () => router }));
 vi.mock("./actions", () => ({ claimTestAction: vi.fn() }));
 vi.mock("./panel-actions", () => ({ claimPanelAction: vi.fn() }));
@@ -21,7 +21,6 @@ beforeEach(() => {
   vi.mocked(claimPanelAction).mockReset();
   router.push.mockReset();
   router.replace.mockReset();
-  router.refresh.mockReset();
   alertSpy.mockReset();
   vi.stubGlobal("alert", alertSpy);
 });
@@ -29,6 +28,16 @@ afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
 });
+
+type ClaimResult = Awaited<ReturnType<typeof claimTestAction>>;
+function deferred() {
+  let resolve!: (r: ClaimResult) => void;
+  const promise = new Promise<ClaimResult>((res) => {
+    resolve = res;
+  });
+  return { promise, resolve };
+}
+const claimBtn = () => screen.getByRole("button", { name: /^Claim/ }) as HTMLButtonElement;
 
 async function clickClaim() {
   await userEvent.click(screen.getByRole("button", { name: "Claim" }));
@@ -65,14 +74,32 @@ describe("ClaimButton: single test", () => {
   });
 
   it("with no batch, the bench page's own button navigates nowhere (the action's revalidate refreshes it)", async () => {
-    vi.mocked(claimTestAction).mockResolvedValue({ ok: true });
+    const d = deferred();
+    vi.mocked(claimTestAction).mockReturnValue(d.promise);
     render(<ClaimButton testRequestId="t1" />);
     await clickClaim();
-    await waitFor(() => expect(claimTestAction).toHaveBeenCalled());
-    await waitFor(() => expect((screen.getByRole("button", { name: "Claim" }) as HTMLButtonElement).disabled).toBe(false));
+    await waitFor(() => expect(claimBtn().disabled).toBe(true));
+    await act(async () => d.resolve({ ok: true }));
+    await waitFor(() => expect(claimBtn().disabled).toBe(false));
     expect(router.push).not.toHaveBeenCalled();
     expect(router.replace).not.toHaveBeenCalled();
     expect(alertSpy).not.toHaveBeenCalled();
+  });
+
+  it("while a claim is in flight the button is disabled and a second click does nothing", async () => {
+    const d = deferred();
+    vi.mocked(claimTestAction).mockReturnValue(d.promise);
+    render(<ClaimButton testRequestId="t1" navigateOnClaim />);
+    await clickClaim();
+    await waitFor(() => expect(claimBtn().disabled).toBe(true));
+    expect(claimBtn().textContent).toBe("Claiming…");
+    await userEvent.click(claimBtn());
+    expect(claimTestAction).toHaveBeenCalledTimes(1);
+    expect(router.push).not.toHaveBeenCalled();
+    await act(async () => d.resolve({ ok: true, batchId: BATCH }));
+    await waitFor(() => expect(router.push).toHaveBeenCalledTimes(1));
+    expect(router.push.mock.calls[0][0]).toMatch(new RegExp(`^/staff/queue/t1\\?claimed=${BATCH}&at=\\d+$`));
+    expect(claimTestAction).toHaveBeenCalledTimes(1);
   });
 
   it.each([true, false])("an error alerts and does not navigate (navigateOnClaim=%s)", async (nav) => {
