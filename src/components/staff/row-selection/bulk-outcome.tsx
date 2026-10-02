@@ -10,36 +10,50 @@ import { FixedBottomBar } from "@/components/staff/fixed-bottom-bar";
 // useSyncExternalStore gives React a separate server snapshot — the action's
 // own doneAt, i.e. "just done, window fully open" — used for the server render
 // AND the hydrating client render, after which the real clock takes over.
-//
-// The clock only runs while there is an Undo to time (item 11). It ticks every
-// 15 s (the cadence the minutes label always updated on) and fires once more
-// 1 ms after the window closes, then stops — a panel with no Undo, or whose
-// window has already passed, keeps no timer at all.
-//
-// Snapshots are whole seconds so getSnapshot stays stable between ticks, but a
-// rounded-down second can land BEFORE closesAt on the closing tick (closesAt
-// is rarely second-aligned), which would leave the button up with the timer
-// already gone. So once the real clock reaches closesAt the snapshot is
-// clamped to closesAt itself: constant (stable), and exactly "window closed".
-// Rounding is always down, never up, so the button is never hidden early.
+
+/** How often an open Undo re-reads the clock (the cadence the minutes label always updated on). */
+export const OUTCOME_TICK_MS = 15_000;
+
+// A panel with no Undo needs no clock at all: no subscription, constant snapshot.
 const subscribeNever = () => () => {};
 const clockNever = () => 0;
 
+// While an Undo is open the clock ticks every OUTCOME_TICK_MS and once more
+// just after the window closes, so the button goes on time instead of up to a
+// tick late. That closing timeout re-arms itself if it fires early (a coarse
+// Date.now(), a backwards clock step) and only stops the interval once
+// Date.now() has really reached closesAt. A window that is already closed at
+// subscribe time keeps no timer, and neither does a panel whose Undo is gone
+// (the cleanup clears both).
 function subscribeUntil(closesAt: number) {
   return (onTick: () => void) => {
     if (Date.now() >= closesAt) return () => {};
-    const i = setInterval(onTick, 15_000);
-    const t = setTimeout(() => {
-      clearInterval(i);
-      onTick();
-    }, closesAt - Date.now() + 1);
+    const interval = setInterval(onTick, OUTCOME_TICK_MS);
+    let closing: ReturnType<typeof setTimeout>;
+    const arm = () => {
+      closing = setTimeout(
+        () => {
+          if (Date.now() < closesAt) return arm();
+          clearInterval(interval);
+          onTick();
+        },
+        Math.max(closesAt - Date.now() + 1, 1),
+      );
+    };
+    arm();
     return () => {
-      clearInterval(i);
-      clearTimeout(t);
+      clearInterval(interval);
+      clearTimeout(closing);
     };
   };
 }
 
+// Snapshots are whole seconds, which avoids a new value every ms (React would
+// re-render on each read). Rounding is always down, so the button is never
+// hidden early. But a rounded-down second can land BEFORE closesAt on the
+// closing tick (closesAt is rarely second-aligned), leaving the button up with
+// the timer gone — so once the real clock reaches closesAt the snapshot is
+// clamped to closesAt itself: constant, and exactly "window closed".
 function clockUntil(closesAt: number) {
   return () => {
     const t = Date.now();
@@ -91,8 +105,11 @@ export function BulkOutcomePanel({
     if (!active || active === document.body) ref.current?.focus();
   }, [inline]);
 
-  const open = undo ? now - undo.doneAt < undo.windowMs : false;
-  const minutesLeft = undo ? Math.max(1, Math.ceil((undo.windowMs - (now - undo.doneAt)) / 60_000)) : 0;
+  // The floored snapshot can sit just BEFORE doneAt right after the action,
+  // which would make a 10-minute window read as 11 — never count negative time.
+  const elapsed = undo ? Math.max(now, undo.doneAt) - undo.doneAt : 0;
+  const open = undo ? elapsed < undo.windowMs : false;
+  const minutesLeft = undo ? Math.max(1, Math.ceil((undo.windowMs - elapsed) / 60_000)) : 0;
 
   const content = (
     <Panel

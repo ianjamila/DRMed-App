@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { act, cleanup, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { BulkOutcomePanel, type OutcomeUndo } from "./bulk-outcome";
+import { BulkOutcomePanel, OUTCOME_TICK_MS, type OutcomeUndo } from "./bulk-outcome";
 
 const MIN = 60_000;
 const WINDOW = 10 * MIN;
@@ -26,13 +26,19 @@ afterEach(() => {
 
 const undoBtn = () => screen.queryByRole("button", { name: /Undo/ });
 const outcomeIntervals = (spy: { mock: { calls: unknown[][] } }) =>
-  spy.mock.calls.filter((c) => c[1] === 15_000).length;
+  spy.mock.calls.filter((c) => c[1] === OUTCOME_TICK_MS).length;
 
 function undoProp(over: Partial<OutcomeUndo> = {}): OutcomeUndo {
-  return { doneAt: T0, windowMs: WINDOW, pending: false, onUndo: vi.fn(), ...over };
+  return {
+    doneAt: T0,
+    windowMs: WINDOW,
+    pending: false,
+    onUndo: vi.fn(),
+    ...over,
+  };
 }
 
-describe("BulkOutcomePanel clock (item 11)", () => {
+describe("BulkOutcomePanel clock (ticks only while an Undo is open)", () => {
   it("a panel with no Undo never sets an interval", async () => {
     const setSpy = vi.spyOn(globalThis, "setInterval");
     render(<BulkOutcomePanel message="Done" onDismiss={() => {}} />);
@@ -70,13 +76,7 @@ describe("BulkOutcomePanel clock (item 11)", () => {
 
   it("an Undo whose window already closed at mount sets no interval and shows no button", async () => {
     const setSpy = vi.spyOn(globalThis, "setInterval");
-    render(
-      <BulkOutcomePanel
-        message="Done"
-        undo={undoProp({ doneAt: T0 - WINDOW - 5_000 })}
-        onDismiss={() => {}}
-      />,
-    );
+    render(<BulkOutcomePanel message="Done" undo={undoProp({ doneAt: T0 - WINDOW - 5_000 })} onDismiss={() => {}} />);
     await act(async () => {
       await vi.advanceTimersByTimeAsync(1);
     });
@@ -90,7 +90,7 @@ describe("BulkOutcomePanel clock (item 11)", () => {
     const { rerender } = render(<BulkOutcomePanel message="Done" undo={undoProp()} onDismiss={() => {}} />);
     expect(outcomeIntervals(setSpy)).toBe(1);
     const timersBefore = vi.getTimerCount(); // the interval + the close timeout
-    const id = setSpy.mock.results.find((_, i) => setSpy.mock.calls[i]?.[1] === 15_000)?.value;
+    const id = setSpy.mock.results.find((_, i) => setSpy.mock.calls[i]?.[1] === OUTCOME_TICK_MS)?.value;
     clearSpy.mockClear();
     await act(async () => {
       rerender(<BulkOutcomePanel message="Undone" undo={null} onDismiss={() => {}} />);
@@ -99,5 +99,56 @@ describe("BulkOutcomePanel clock (item 11)", () => {
     expect(undoBtn()).toBeNull();
     expect(vi.getTimerCount()).toBe(timersBefore - 2);
     expect(outcomeIntervals(setSpy)).toBe(1);
+  });
+
+  it("re-arms the closing tick if it fires early, and still hides the button once the clock passes closesAt", async () => {
+    const realNow = Date.now.bind(Date);
+    let skew = 0;
+    vi.spyOn(Date, "now").mockImplementation(() => realNow() - skew);
+    render(<BulkOutcomePanel message="Done" undo={undoProp()} onDismiss={() => {}} />);
+    skew = 5; // Date.now() now reads 5 ms behind the timers
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(WINDOW + 1); // first closing timeout fires "early"
+    });
+    expect(undoBtn()).not.toBeNull(); // not closed yet by the (skewed) clock
+    expect(vi.getTimerCount()).toBeGreaterThanOrEqual(2); // interval + re-armed timeout
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(10);
+    });
+    expect(undoBtn()).toBeNull();
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("the tooltip reads 10 minutes at mount, even though the floored clock is behind doneAt", () => {
+    render(<BulkOutcomePanel message="Done" undo={undoProp()} onDismiss={() => {}} />);
+    expect(undoBtn()?.getAttribute("title")).toBe("Available for about 10 more minutes");
+  });
+
+  it("a new undo object with the same doneAt/windowMs keeps the same timers", async () => {
+    const setSpy = vi.spyOn(globalThis, "setInterval");
+    const clearSpy = vi.spyOn(globalThis, "clearInterval");
+    const { rerender } = render(<BulkOutcomePanel message="Done" undo={undoProp()} onDismiss={() => {}} />);
+    clearSpy.mockClear();
+    await act(async () => {
+      rerender(
+        <BulkOutcomePanel message="Done" undo={undoProp({ onUndo: vi.fn(), pending: true })} onDismiss={() => {}} />,
+      );
+    });
+    expect(outcomeIntervals(setSpy)).toBe(1);
+    expect(clearSpy).not.toHaveBeenCalled();
+  });
+
+  it("a new doneAt re-arms the clock for the new window", async () => {
+    const setSpy = vi.spyOn(globalThis, "setInterval");
+    const { rerender } = render(<BulkOutcomePanel message="Done" undo={undoProp()} onDismiss={() => {}} />);
+    await act(async () => {
+      rerender(<BulkOutcomePanel message="Done" undo={undoProp({ doneAt: T0 + 1000 })} onDismiss={() => {}} />);
+    });
+    expect(outcomeIntervals(setSpy)).toBe(2);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(WINDOW + 1000 + 1);
+    });
+    expect(undoBtn()).toBeNull();
+    expect(vi.getTimerCount()).toBe(0);
   });
 });
