@@ -3,7 +3,7 @@
 // while release / undo (0198) and claim / unclaim (0211) lock visit -> lines in
 // id order. Design: docs/superpowers/specs/2026-10-01-plan-order-lockers-audit.md.
 //
-//   recompute_clinic_fee_for_unreleased()  (0184, body 0136)  scenarios R1-R5
+//   recompute_clinic_fee_for_unreleased()  (0184, body 0136)  scenarios R1-R7
 //   fn_queue_delete_cascade()              (0125)             scenarios Q1-Q5
 //   fn_release_headers_on_visit_paid()     (0138)             scenarios P1-P3
 //
@@ -102,6 +102,8 @@ const fx = {
   pkgService: randomUUID(),
   compServices: [randomUUID(), randomUUID()],
   patient: randomUUID(),
+  mergeSource: randomUUID(), // R7: a patient of its own, merged (and rolled back) into mergeKeep
+  mergeKeep: randomUUID(),
   physician: randomUUID(),
   hmo: randomUUID(),
 };
@@ -287,6 +289,14 @@ function insertPayment(a: Actor, visit: string, amount: number): Promise<Out<str
   );
 }
 
+// admin/patient-merge/actions.ts: admin.rpc("merge_patients_guarded") - service role (0196).
+function merge(a: Actor, keep: string, source: string): Promise<Out<unknown>> {
+  return settle(
+    a.c.query("select public.merge_patients_guarded($1, $2, $3, $4::jsonb) as r", [keep, source, fx.admin1, JSON.stringify({ source: "admin" })]),
+    (r) => r.rows[0].r as unknown,
+  );
+}
+
 // Commit on success, roll back on refusal, the moment the call answers - the way
 // PostgREST ends each RPC. Racers never wait for each other's answers first.
 function andEnd<T>(a: Actor, p: Promise<Out<T>>): Promise<Out<T>> {
@@ -443,6 +453,27 @@ async function mustBlockOn(
   );
 }
 
+// The backend must be seen waiting on the patient lifecycle advisory lock (0184)
+// or on `row` behind `behind`, within ~5s. Returns which one.
+async function mustWaitPatientLockOr(a: Actor, row: Row, behind: Actor, why: string): Promise<{ on: "patient lock" | string; text: string }> {
+  const ctid = await ctidIn(row.table, row.id);
+  const wantXid = await xidOf(behind);
+  let last: BlockInfo = { tuple: null, tupleGranted: false, waitXid: null };
+  for (let i = 0; i < 50; i++) {
+    const { rows } = await monitor.query(
+      "select 1 from pg_locks where pid = $1 and locktype = 'advisory' and not granted",
+      [a.pid],
+    );
+    if (rows.length) return { on: "patient lock", text: `${a.name} waits on the patient lifecycle lock` };
+    last = await blockInfo(a.pid);
+    if (last.tuple === ctid && last.waitXid === wantXid) {
+      return { on: row.label, text: `${a.name} waits on ${row.label} ${ctid} behind ${behind.name} (xid ${wantXid})` };
+    }
+    await sleep(100);
+  }
+  throw new Fail(`interleaving not reached: ${a.name} waited on neither the patient lock nor ${row.label} ${ctid} (${why}); last seen: ${fmtBlock(last)}`);
+}
+
 // Right after the holder lets go, read who waits on what (the cycle forms in
 // milliseconds; the deadlock detector resolves it after deadlock_timeout = 1s).
 async function describeWaits(actors: Actor[], rows: Row[]): Promise<string> {
@@ -503,6 +534,7 @@ async function mkVisitOnce(spec: {
   physical?: "desc";
   fee?: boolean;
   holder?: string;
+  patient?: string;
 }): Promise<Fix> {
   const n = spec.states.length;
   const ids = Array.from({ length: n }, () => randomUUID()).sort();
@@ -519,7 +551,7 @@ async function mkVisitOnce(spec: {
     await monitor.query(
       `insert into public.visits (id, visit_number, patient_id, visit_date, payment_status, total_php, paid_php, attending_physician_id, hmo_provider_id)
        values ($1, $2, $3, (now() at time zone 'Asia/Manila')::date, 'unpaid', $4, 0, $5, $6)`,
-      [visit, `V-${TAG_UP}-${seq}`, fx.patient, 100 * n, spec.fee ? fx.physician : null, spec.hmo ? fx.hmo : null],
+      [visit, `V-${TAG_UP}-${seq}`, spec.patient ?? fx.patient, 100 * n, spec.fee ? fx.physician : null, spec.hmo ? fx.hmo : null],
     );
     for (const i of order) {
       await monitor.query(
@@ -1148,6 +1180,55 @@ async function recomputeScenarios(): Promise<void> {
     if (out.v.rows_affected !== el[0].n) throw new Fail(`rows_affected ${out.v.rows_affected}, expected ${el[0].n} (every eligible non-waived line)`);
     return `waived line untouched, normal line scrubbed, rows_affected ${out.v.rows_affected} = ${el[0].n} eligible non-waived lines`;
   });
+
+  // R7: recompute vs a patient MERGE (0196). Merge takes the patient lifecycle lock
+  // EXCLUSIVE and then UPDATEs the source's visits. A recompute that holds a visit and
+  // only then asks for the SHARED patient lock (its UPDATE fires a_lifecycle_guard)
+  // closes a cycle. W holds the line A, so recompute (holding V) is queued on A; the
+  // merge starts: with the fix it queues on the patient lock recompute took first
+  // (b0); without it, it takes the patient lock and queues on V. When W lets go,
+  // recompute's UPDATE wants the shared patient lock -> 40P01. Both sides roll back:
+  // nothing is merged.
+  // concurrency-proof: recompute_clinic_fee_for_unreleased
+  await scenario("R7", "recompute vs a merge of the line's patient (W holds the line): must not deadlock", async () => {
+    const f = await mkVisit({ states: ["requested"], paid: false, fee: true, patient: fx.mergeSource });
+    const A: Row = { table: "test_requests", id: f.ids[0], label: "A" };
+    const V: Row = { table: "visits", id: f.visit, label: "V" };
+    const g = await actor("W", null);
+    await beginRaw(g);
+    await g.c.query("select 1 from public.test_requests where id = $1 for update", [f.ids[0]]);
+    const rec = await actor("recompute", null);
+    await begin(rec);
+    const prec = andRollback(rec, recompute(rec));
+    const w1 = await mustBlockOn(rec, A, g, "recompute pre-locks V and queues on A behind W");
+    const heldV = await rowLocked("visits", f.visit);
+    const mg = await actor("merge", null);
+    await begin(mg);
+    const pmg = andRollback(mg, merge(mg, fx.mergeKeep, fx.mergeSource));
+    let w2 = "merge answered at once (recompute holds neither V nor the patient lock)";
+    if (heldV) {
+      w2 = (await mustWaitPatientLockOr(mg, V, rec, "merge needs the patient lock exclusive, then V")).text;
+    } else {
+      const early = await mustNotWait(mg, pmg.then((x) => x.out), "recompute holds no visit while queued on A");
+      if (!early.ok) throw new Fail(`merge failed: ${fmtOut(early)}`);
+    }
+    await g.c.query("commit");
+    const cycle = await (async () => {
+      await sleep(300);
+      return describeWaits([rec, mg], [A, V]);
+    })();
+    const [rr, rm] = await raceResult(["recompute", "merge"], prec.then((x) => x.out), pmg.then((x) => x.out));
+    const victim = deadlockVictim(["recompute", "merge"], rr, rm);
+    if (victim) {
+      throw new Fail(
+        `40P01 deadlock (victim: ${victim}): recompute held V and wanted the shared patient lock, merge held it exclusive and wanted V. ` +
+          `${w1.text}; ${w2}; after W commits: ${cycle}`,
+      );
+    }
+    if (!rr.ok) throw new Fail(`recompute failed: ${fmtOut(rr)}`);
+    if (!rm.ok) throw new Fail(`merge failed: ${fmtOut(rm)}`);
+    return `no deadlock - ${w1.text}; ${w2}`;
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -1479,6 +1560,7 @@ async function headerReleaseScenarios(): Promise<void> {
 //   M3  no line pre-lock (c): the UPDATE locks the lines in plan order
 //   M4  no predicate re-check in (d): updates every line collected in (a)
 //   M5  no waived-visit filter (a, d): one waived line aborts the whole scrub (P0070)
+//   M6  no patient lifecycle lock first (b0): a merge closes a cycle (R7)
 // NOT covered: the guards that live in triggers on public tables
 // (guard_test_request_on_waived_visit) - a trigger on a public table fires for
 // every session, so a mutant of it cannot be isolated.
@@ -1514,7 +1596,7 @@ const MUTANTS: Mutant[] = [
   {
     key: "M3",
     what: "no line pre-lock (c) - lines locked by the UPDATE, plan order",
-    edits: [["  perform 1 from public.test_requests\n   where id = any (v_lines)\n   order by id\n     for update;", ""]],
+    edits: [["  perform 1 from public.test_requests\n   where id = any (v_lines)\n   order by id\n     for no key update;", ""]],
     mustFail: ["R3-claim", "R3-unclaim"],
   },
   {
@@ -1534,6 +1616,12 @@ const MUTANTS: Mutant[] = [
       ["            and v.payment_status is distinct from 'waived'   -- 0215\n", ""],
     ],
     mustFail: ["R6"],
+  },
+  {
+    key: "M6",
+    what: "no patient lifecycle lock first (b0) - the UPDATE asks for it while holding the visit",
+    edits: [["  perform public.lifecycle_lock(v_patients, false);\n", ""]],
+    mustFail: ["R7"],
   },
 ];
 
@@ -1558,7 +1646,7 @@ async function installCopy(m: Mutant | null): Promise<void> {
   await monitor.query(`grant execute on function ${CTL_SCHEMA}.recompute_clinic_fee_for_unreleased() to service_role`);
 }
 
-const CONTROL_SCENARIOS = ["R1", "R2a", "R3-claim", "R3-unclaim", "R4", "R5", "R6", "P3"];
+const CONTROL_SCENARIOS = ["R1", "R2a", "R3-claim", "R3-unclaim", "R4", "R5", "R6", "R7", "P3"];
 
 async function controlRounds(): Promise<void> {
   console.log("\ncontrol rounds (a mutant must make its scenarios FAIL):");
@@ -1742,6 +1830,12 @@ async function seed(): Promise<void> {
       `insert into public.patients (id, drm_id, first_name, last_name, birthdate, sex) values ($1, $2, 'Plo', 'Fixture', '1990-01-01', 'female')`,
       [fx.patient, `DRM-${TAG_UP}`],
     );
+    for (const [id, k] of [[fx.mergeSource, "S"], [fx.mergeKeep, "K"]] as const) {
+      await monitor.query(
+        `insert into public.patients (id, drm_id, first_name, last_name, birthdate, sex) values ($1, $2, $3, 'Fixture', '1990-01-01', 'female')`,
+        [id, `DRM-${TAG_UP}-${k}`, `Plo${k}`],
+      );
+    }
     // A physician whose clinic cut is 0: every fixture line carrying a clinic fee is
     // eligible for recompute_clinic_fee_for_unreleased.
     await monitor.query("insert into public.physicians (id, slug, full_name, specialty) values ($1, $2, $3, 'General')", [
